@@ -3,13 +3,10 @@
 This experiment integrates pristine author LayerRoPE LLaMA code
 and portable mHC torch operators. It compares a fixed depth ladder and
 bounded write-code controls with paired seeds and an equal LR grid.
-The modules accept local public-dataset arrays and a frozen experiment
-plan. Check operators before preparing measured training with:
-
-```sh
-mkdir -p run
-python -m research.tinystories_depth.qualify --root run --device cpu
-```
+Use `make defconfig-layerrope-mhc-tinystories-depth` followed by plain
+`make` to prepare the pinned public data, qualify operators, freeze the
+plan, train the matrix and evaluate checkpoints. See
+`research/reproduction/README.md` for dependencies and resource controls.
 
 Modules: data builds pinned packed arrays; qualify checks finite-function
 fidelity; probe measures disposable cost; train runs the frozen matrix;

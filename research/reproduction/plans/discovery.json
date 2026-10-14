@@ -1,0 +1,3379 @@
+{
+  "model": {
+    "width": 128,
+    "heads": 2,
+    "ffn": 352,
+    "streams": 4,
+    "repeat": 20,
+    "sinkhorn_eps": 1e-06,
+    "token_batch": 2048,
+    "sequence": 256,
+    "precision": "inherited BF16 branch/residual, FP32 routing/norms/masters/state",
+    "optimizer": "AdamW .9/.95, eps1e-8, weight_decay0, no clipping, warmup100 then constant LR"
+  },
+  "potential_jobs_A_B": [
+    {
+      "id": "A-qual-V00-76390",
+      "stage": "A-qualification",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V00-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V00-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V00-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V00-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V00-76311",
+      "stage": "A-discovery",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V00-76311",
+      "stage": "B",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V00-76312",
+      "stage": "A-discovery",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V00-76312",
+      "stage": "B",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V00-76313",
+      "stage": "A-discovery",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V00-76313",
+      "stage": "B",
+      "variant": "V00",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V01-76390",
+      "stage": "A-qualification",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V01-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V01-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V01-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V01-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V01-76311",
+      "stage": "A-discovery",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V01-76311",
+      "stage": "B",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V01-76312",
+      "stage": "A-discovery",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V01-76312",
+      "stage": "B",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V01-76313",
+      "stage": "A-discovery",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V01-76313",
+      "stage": "B",
+      "variant": "V01",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V02-76390",
+      "stage": "A-qualification",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V02-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V02-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V02-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V02-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V02-76311",
+      "stage": "A-discovery",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V02-76311",
+      "stage": "B",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V02-76312",
+      "stage": "A-discovery",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V02-76312",
+      "stage": "B",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V02-76313",
+      "stage": "A-discovery",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V02-76313",
+      "stage": "B",
+      "variant": "V02",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V03-76390",
+      "stage": "A-qualification",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V03-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V03-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V03-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V03-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V03-76311",
+      "stage": "A-discovery",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V03-76311",
+      "stage": "B",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V03-76312",
+      "stage": "A-discovery",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V03-76312",
+      "stage": "B",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V03-76313",
+      "stage": "A-discovery",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V03-76313",
+      "stage": "B",
+      "variant": "V03",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V04-76390",
+      "stage": "A-qualification",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V04-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V04-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V04-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V04-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V04-76311",
+      "stage": "A-discovery",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V04-76311",
+      "stage": "B",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V04-76312",
+      "stage": "A-discovery",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V04-76312",
+      "stage": "B",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V04-76313",
+      "stage": "A-discovery",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V04-76313",
+      "stage": "B",
+      "variant": "V04",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V05-76390",
+      "stage": "A-qualification",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V05-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V05-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V05-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V05-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V05-76311",
+      "stage": "A-discovery",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V05-76311",
+      "stage": "B",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V05-76312",
+      "stage": "A-discovery",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V05-76312",
+      "stage": "B",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V05-76313",
+      "stage": "A-discovery",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V05-76313",
+      "stage": "B",
+      "variant": "V05",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V06-76390",
+      "stage": "A-qualification",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V06-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V06-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V06-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V06-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V06-76311",
+      "stage": "A-discovery",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V06-76311",
+      "stage": "B",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V06-76312",
+      "stage": "A-discovery",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V06-76312",
+      "stage": "B",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V06-76313",
+      "stage": "A-discovery",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V06-76313",
+      "stage": "B",
+      "variant": "V06",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V07-76390",
+      "stage": "A-qualification",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V07-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V07-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V07-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V07-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V07-76311",
+      "stage": "A-discovery",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V07-76311",
+      "stage": "B",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V07-76312",
+      "stage": "A-discovery",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V07-76312",
+      "stage": "B",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V07-76313",
+      "stage": "A-discovery",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V07-76313",
+      "stage": "B",
+      "variant": "V07",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V08-76390",
+      "stage": "A-qualification",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V08-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V08-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V08-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V08-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V08-76311",
+      "stage": "A-discovery",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V08-76311",
+      "stage": "B",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V08-76312",
+      "stage": "A-discovery",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V08-76312",
+      "stage": "B",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V08-76313",
+      "stage": "A-discovery",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V08-76313",
+      "stage": "B",
+      "variant": "V08",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V09-76390",
+      "stage": "A-qualification",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V09-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V09-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V09-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V09-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V09-76311",
+      "stage": "A-discovery",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V09-76311",
+      "stage": "B",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V09-76312",
+      "stage": "A-discovery",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V09-76312",
+      "stage": "B",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V09-76313",
+      "stage": "A-discovery",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V09-76313",
+      "stage": "B",
+      "variant": "V09",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V10-76390",
+      "stage": "A-qualification",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V10-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V10-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V10-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V10-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V10-76311",
+      "stage": "A-discovery",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V10-76311",
+      "stage": "B",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V10-76312",
+      "stage": "A-discovery",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V10-76312",
+      "stage": "B",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V10-76313",
+      "stage": "A-discovery",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V10-76313",
+      "stage": "B",
+      "variant": "V10",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V11-76390",
+      "stage": "A-qualification",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V11-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V11-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V11-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V11-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V11-76311",
+      "stage": "A-discovery",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V11-76311",
+      "stage": "B",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V11-76312",
+      "stage": "A-discovery",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V11-76312",
+      "stage": "B",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V11-76313",
+      "stage": "A-discovery",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V11-76313",
+      "stage": "B",
+      "variant": "V11",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V12-76390",
+      "stage": "A-qualification",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V12-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V12-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V12-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V12-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V12-76311",
+      "stage": "A-discovery",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V12-76311",
+      "stage": "B",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V12-76312",
+      "stage": "A-discovery",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V12-76312",
+      "stage": "B",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V12-76313",
+      "stage": "A-discovery",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V12-76313",
+      "stage": "B",
+      "variant": "V12",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V13-76390",
+      "stage": "A-qualification",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V13-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V13-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V13-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V13-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V13-76311",
+      "stage": "A-discovery",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V13-76311",
+      "stage": "B",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V13-76312",
+      "stage": "A-discovery",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V13-76312",
+      "stage": "B",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V13-76313",
+      "stage": "A-discovery",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V13-76313",
+      "stage": "B",
+      "variant": "V13",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V14-76390",
+      "stage": "A-qualification",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V14-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V14-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V14-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V14-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V14-76311",
+      "stage": "A-discovery",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V14-76311",
+      "stage": "B",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V14-76312",
+      "stage": "A-discovery",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V14-76312",
+      "stage": "B",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V14-76313",
+      "stage": "A-discovery",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V14-76313",
+      "stage": "B",
+      "variant": "V14",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V15-76390",
+      "stage": "A-qualification",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V15-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V15-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V15-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V15-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V15-76311",
+      "stage": "A-discovery",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V15-76311",
+      "stage": "B",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V15-76312",
+      "stage": "A-discovery",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V15-76312",
+      "stage": "B",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V15-76313",
+      "stage": "A-discovery",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V15-76313",
+      "stage": "B",
+      "variant": "V15",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V16-76390",
+      "stage": "A-qualification",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V16-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V16-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V16-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V16-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V16-76311",
+      "stage": "A-discovery",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V16-76311",
+      "stage": "B",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V16-76312",
+      "stage": "A-discovery",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V16-76312",
+      "stage": "B",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V16-76313",
+      "stage": "A-discovery",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V16-76313",
+      "stage": "B",
+      "variant": "V16",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V17-76390",
+      "stage": "A-qualification",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V17-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V17-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V17-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V17-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V17-76311",
+      "stage": "A-discovery",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V17-76311",
+      "stage": "B",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V17-76312",
+      "stage": "A-discovery",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V17-76312",
+      "stage": "B",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V17-76313",
+      "stage": "A-discovery",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V17-76313",
+      "stage": "B",
+      "variant": "V17",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V18-76390",
+      "stage": "A-qualification",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V18-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V18-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V18-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V18-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V18-76311",
+      "stage": "A-discovery",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V18-76311",
+      "stage": "B",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V18-76312",
+      "stage": "A-discovery",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V18-76312",
+      "stage": "B",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V18-76313",
+      "stage": "A-discovery",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V18-76313",
+      "stage": "B",
+      "variant": "V18",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V19-76390",
+      "stage": "A-qualification",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V19-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V19-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V19-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V19-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V19-76311",
+      "stage": "A-discovery",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V19-76311",
+      "stage": "B",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V19-76312",
+      "stage": "A-discovery",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V19-76312",
+      "stage": "B",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V19-76313",
+      "stage": "A-discovery",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V19-76313",
+      "stage": "B",
+      "variant": "V19",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V20-76390",
+      "stage": "A-qualification",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V20-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V20-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V20-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V20-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V20-76311",
+      "stage": "A-discovery",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V20-76311",
+      "stage": "B",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V20-76312",
+      "stage": "A-discovery",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V20-76312",
+      "stage": "B",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V20-76313",
+      "stage": "A-discovery",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V20-76313",
+      "stage": "B",
+      "variant": "V20",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V21-76390",
+      "stage": "A-qualification",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V21-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V21-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V21-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V21-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V21-76311",
+      "stage": "A-discovery",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V21-76311",
+      "stage": "B",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V21-76312",
+      "stage": "A-discovery",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V21-76312",
+      "stage": "B",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V21-76313",
+      "stage": "A-discovery",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V21-76313",
+      "stage": "B",
+      "variant": "V21",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V22-76390",
+      "stage": "A-qualification",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V22-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V22-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V22-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V22-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V22-76311",
+      "stage": "A-discovery",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V22-76311",
+      "stage": "B",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V22-76312",
+      "stage": "A-discovery",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V22-76312",
+      "stage": "B",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V22-76313",
+      "stage": "A-discovery",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V22-76313",
+      "stage": "B",
+      "variant": "V22",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V23-76390",
+      "stage": "A-qualification",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V23-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V23-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V23-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V23-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V23-76311",
+      "stage": "A-discovery",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V23-76311",
+      "stage": "B",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V23-76312",
+      "stage": "A-discovery",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V23-76312",
+      "stage": "B",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V23-76313",
+      "stage": "A-discovery",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V23-76313",
+      "stage": "B",
+      "variant": "V23",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V24-76390",
+      "stage": "A-qualification",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V24-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V24-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V24-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V24-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V24-76311",
+      "stage": "A-discovery",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V24-76311",
+      "stage": "B",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V24-76312",
+      "stage": "A-discovery",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V24-76312",
+      "stage": "B",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V24-76313",
+      "stage": "A-discovery",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V24-76313",
+      "stage": "B",
+      "variant": "V24",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V25-76390",
+      "stage": "A-qualification",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V25-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V25-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V25-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V25-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V25-76311",
+      "stage": "A-discovery",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V25-76311",
+      "stage": "B",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V25-76312",
+      "stage": "A-discovery",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V25-76312",
+      "stage": "B",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V25-76313",
+      "stage": "A-discovery",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V25-76313",
+      "stage": "B",
+      "variant": "V25",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V26-76390",
+      "stage": "A-qualification",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V26-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V26-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V26-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V26-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V26-76311",
+      "stage": "A-discovery",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V26-76311",
+      "stage": "B",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V26-76312",
+      "stage": "A-discovery",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V26-76312",
+      "stage": "B",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V26-76313",
+      "stage": "A-discovery",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V26-76313",
+      "stage": "B",
+      "variant": "V26",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V27-76390",
+      "stage": "A-qualification",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V27-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V27-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V27-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V27-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V27-76311",
+      "stage": "A-discovery",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V27-76311",
+      "stage": "B",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V27-76312",
+      "stage": "A-discovery",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V27-76312",
+      "stage": "B",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V27-76313",
+      "stage": "A-discovery",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V27-76313",
+      "stage": "B",
+      "variant": "V27",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V28-76390",
+      "stage": "A-qualification",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V28-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V28-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V28-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V28-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V28-76311",
+      "stage": "A-discovery",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V28-76311",
+      "stage": "B",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V28-76312",
+      "stage": "A-discovery",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V28-76312",
+      "stage": "B",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V28-76313",
+      "stage": "A-discovery",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V28-76313",
+      "stage": "B",
+      "variant": "V28",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V29-76390",
+      "stage": "A-qualification",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V29-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V29-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V29-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V29-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V29-76311",
+      "stage": "A-discovery",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V29-76311",
+      "stage": "B",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V29-76312",
+      "stage": "A-discovery",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V29-76312",
+      "stage": "B",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V29-76313",
+      "stage": "A-discovery",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V29-76313",
+      "stage": "B",
+      "variant": "V29",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V30-76390",
+      "stage": "A-qualification",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V30-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V30-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V30-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V30-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V30-76311",
+      "stage": "A-discovery",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V30-76311",
+      "stage": "B",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V30-76312",
+      "stage": "A-discovery",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V30-76312",
+      "stage": "B",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V30-76313",
+      "stage": "A-discovery",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V30-76313",
+      "stage": "B",
+      "variant": "V30",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-qual-V31-76390",
+      "stage": "A-qualification",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76390,
+      "steps": 50,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V31-76301-lr0.0003",
+      "stage": "A-pilot",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.0003
+    },
+    {
+      "id": "A-pilot-V31-76301-lr0.001",
+      "stage": "A-pilot",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.001
+    },
+    {
+      "id": "A-pilot-V31-76301-lr0.003",
+      "stage": "A-pilot",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.003
+    },
+    {
+      "id": "A-pilot-V31-76301-lr0.01",
+      "stage": "A-pilot",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76301,
+      "steps": 500,
+      "lr": 0.01
+    },
+    {
+      "id": "A-discovery-V31-76311",
+      "stage": "A-discovery",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76311,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V31-76311",
+      "stage": "B",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76311,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V31-76312",
+      "stage": "A-discovery",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76312,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V31-76312",
+      "stage": "B",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76312,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    },
+    {
+      "id": "A-discovery-V31-76313",
+      "stage": "A-discovery",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76313,
+      "steps": 1000,
+      "lr": "per-row frozen pilot selection"
+    },
+    {
+      "id": "B-extension-V31-76313",
+      "stage": "B",
+      "variant": "V31",
+      "depth": 32,
+      "seed": 76313,
+      "resume_step": 1000,
+      "steps": 2000,
+      "condition": "variant in committed B shortlist, maximum 12 rows"
+    }
+  ],
+  "conditional_stages": {
+    "B": {
+      "rows": "union of four lowest clean means, four eligible lowest absolute INT4 means, V00,V01,V02,V03",
+      "quantization_eligibility": {
+        "max_mean_clean_regret": 0.02,
+        "max_seed_clean_regret": 0.05
+      },
+      "ties": "lower worst-seed loss, then numeric variant ID",
+      "max_rows": 12,
+      "primary": "mean clean CE at 1000..2000, every100",
+      "resume_exact_states": true
+    },
+    "C": {
+      "rows": "V00,V01 and at most two nominees plus their frozen same-operator SHUFFLE/CONSTANT mappings",
+      "max_rows": 8,
+      "seeds": [
+        76411,
+        76412,
+        76413,
+        76414,
+        76415,
+        76416,
+        76417,
+        76418
+      ],
+      "steps": 4000,
+      "lr": "discovery selected rate; controls inherit candidate rate",
+      "primary": "mean clean CE at 2000..4000 every100; separate1000..2000 report",
+      "gate": "SELECTION.json committed before confirmation; no nominees => stop",
+      "nomination": {
+        "training": "best non-V00 mean; better in at least2/3 pairs; lower mean clean endpoint",
+        "quantization": "best non-V00 absolute INT4 with lower mean penalty; mean clean within.01 of V00"
+      }
+    },
+    "D": {
+      "condition": "confirmed candidate only",
+      "depths": [
+        16,
+        64
+      ],
+      "max_rows_per_depth": 4,
+      "rows": "V00,V01 and at most two confirmed candidates",
+      "lr_grid": [
+        0.0003,
+        0.001,
+        0.003,
+        0.01
+      ],
+      "pilot_seed": 76501,
+      "pilot_steps": 500,
+      "seeds": [
+        76511,
+        76512,
+        76513
+      ],
+      "steps": 2000
+    }
+  },
+  "decisions": {
+    "training": "all8 negative paired primary differences, mean gain>=.005, lower final mean, no endpoint regression>.01; apply separately versus M and M-O",
+    "quantization": "all8 lower absolute INT4 CE, penalty gain>=.01 vsM or.005 vsM-O, penalty better>=7/8, clean regression<=.01 each seed",
+    "order": "all8 favorable versus own SHUFFLE and CONSTANT, mean gain>=.005; analogous penalty rule for quantization",
+    "depth": "all3 favorable pairs at each tested depth for relevant primary outcome",
+    "precision_pass": "each seed CE increase<=.1 over own clean baseline on same array",
+    "convergence": "CE<=3 at two consecutive100-step evaluations; CE<=4 diagnostic; report censored failures",
+    "statistics": "paired seed differences, mean/median/range and paired CI; predeclared one-sided sign tests and Holm over every confirmation claim"
+  },
+  "data_gate": "passed: inherited hashes plus new document-disjoint confirmation files reserved; no confirmation model evaluation",
+  "quantization": {
+    "discovery_bits": [
+      4,
+      3
+    ],
+    "confirmation_bits": [
+      8,
+      4,
+      3,
+      2
+    ],
+    "primary": "inherited rowwise symmetric max-absolute nearest rounding; all backbone Linear/Embedding weights including untied head; controls/norms FP32",
+    "secondary_confirmation_only": [
+      "groupwise128 INT4/INT3",
+      "block-only INT4/INT3",
+      "backboneINT4 + BF16-rounded angles/strengths restoredFP32",
+      "backboneINT4 + BF16-rounded routing/code restoredFP32"
+    ],
+    "accounting": "absolute CE, delta, perplexity ratio, quantized fraction, unquantized/scale/ideal-packed bytes and dequantized hashes; no packed-kernel performance claim"
+  },
+  "stops": [
+    "nonfinite state or broken invariant",
+    "unsafe disk watermark",
+    "duplicate job",
+    "finite-function fixture failure blocks operator",
+    "sampled fidelity misses retained and block qualified nomination",
+    "no eligible nominee stopsC/D",
+    "no confirmed candidate stopsD"
+  ],
+  "confirmation_control_rule": "compose candidate code lookup with separately recorded nonidentity active-block permutation; retain placement/gain indices; deduplicate exactly constant controls before C selection commit",
+  "execution_order_A": "32 qualification rows in numeric order;128 pilots balanced in LR-major then variant order;96 discovery jobs in seed-major then variant order, on the selected device"
+}
