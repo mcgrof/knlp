@@ -15,7 +15,10 @@ def label(value):
     global _label
     _label = value
     if _sink is not None:
-        Path(str(_sink) + ".label").write_text(json.dumps(value))
+        flag = Path(str(_sink) + ".label")
+        temporary = flag.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value))
+        temporary.replace(flag)
 
 
 def install(path, external_labels=False):
