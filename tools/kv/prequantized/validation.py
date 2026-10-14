@@ -10,6 +10,7 @@ from tools.kv.prequantized.contract import (
     validate_matrix,
 )
 from tools.kv.prequantized.recipes import manifest_recipe
+from tools.kv.prequantized.sensitivity import CRITERION
 
 
 def validate_execution_manifest(manifest, source):
@@ -26,7 +27,26 @@ def validate_execution_manifest(manifest, source):
         if settings[key] != manifest[key]:
             raise ValueError(f"model {key} differs from the matrix")
     manifest_recipe(manifest)
+    if manifest.get("schema_version") not in (1, 2) or "cache_recipe" not in manifest:
+        raise ValueError("execution needs a supported explicit cache recipe manifest")
+    deferred = (
+        manifest["matrix"].get("retrieval_family") == "retrieval_v3_deferred_query"
+    )
+    if deferred and manifest["schema_version"] != 2:
+        raise ValueError("deferred queries require manifest schema 2")
+    if deferred and manifest.get("sensitivity_criterion") != CRITERION:
+        raise ValueError(
+            "deferred-query sensitivity criterion differs from its implementation"
+        )
     for sample in manifest["samples"]:
+        if sample["kind"] not in (
+            "nll",
+            "calibration",
+            "retrieval",
+            "dev",
+            "generation",
+        ):
+            raise ValueError("unknown manifest sample kind")
         if sample["prompt_hash"] != digest(sample["token_ids"]):
             raise ValueError("sample token hash mismatch")
         if sample["kind"] in ("nll", "calibration"):
@@ -42,6 +62,8 @@ def validate_execution_manifest(manifest, source):
         elif len(sample["token_ids"]) != sample["length"]:
             raise ValueError("prompt token length mismatch")
         if sample.get("generator_version") == 3:
+            if not deferred or sample.get("family") != "retrieval_v3_deferred_query":
+                raise ValueError("deferred sample differs from the declared workload")
             if not 0 < sample["catalogue_tokens"] < sample["length"]:
                 raise ValueError("invalid deferred-query cache split")
             if sample["query_tokens"] + sample["catalogue_tokens"] != sample["length"]:
@@ -55,6 +77,31 @@ def validate_execution_manifest(manifest, source):
             ]
             if len(chosen) != expected:
                 raise ValueError(f"incomplete manifest: {kind} at {length}")
+            if (
+                kind in ("nll", "calibration")
+                and len({s["article_id"] for s in chosen}) != expected
+            ):
+                raise ValueError("primary document windows repeat an article")
+        if deferred:
+            chosen = [
+                s
+                for s in manifest["samples"]
+                if s["kind"] in ("retrieval", "dev") and s["length"] == length
+            ]
+            if (
+                any(s.get("generator_version") != 3 for s in chosen)
+                or sum(s["kind"] == "dev" for s in chosen) != 5
+            ):
+                raise ValueError(
+                    "deferred-query development/evaluation family is incomplete"
+                )
+    generation = [
+        s
+        for s in manifest["samples"]
+        if s["kind"] == "generation" and not s.get("reserve")
+    ]
+    if len(generation) != manifest["matrix"]["quality"]["generation_prompts"]:
+        raise ValueError("generation sample count differs from the declared matrix")
 
 
 def validate_gates(receipts, base):
@@ -81,6 +128,11 @@ def validate_scales(data, base, manifest):
         not math.isfinite(x) or x <= 0 for x in data["scales"].values()
     ):
         raise ValueError("invalid frozen scale")
+    layers = 36 if manifest["model"] == "Qwen/Qwen3-8B-AWQ" else 24
+    if set(data["scales"]) != {
+        f"{i}.{kind}" for i in range(layers) for kind in ("k", "v")
+    }:
+        raise ValueError("calibration does not cover both components of every layer")
 
 
 def row_provenance(base, manifest, arm, scale_hash):
