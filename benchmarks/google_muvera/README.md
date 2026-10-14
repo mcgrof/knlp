@@ -128,6 +128,35 @@ reproduce its search-latency claims.
 
 ## Tests to run next
 
+The GPU preparation and post-run audit have standalone entrypoints.
+Submit the preparation command through the host's GPU scheduler. It
+requires immutable local model snapshots and full dataset revisions,
+checks GPU output, and records truncation, retained vector counts and
+cache hashes. It refuses CPU fallback and an existing output directory.
+
+```bash
+python benchmarks/google_muvera/scripts/prepare_cache.py \
+  --output-dir /path/to/frozen-inputs \
+  --colbert-snapshot /path/to/colbert/snapshots/FULL_REVISION \
+  --bge-snapshot /path/to/bge/snapshots/FULL_REVISION \
+  --dataset-revision FULL_REVISION --qrels-revision FULL_REVISION
+```
+
+Set `CONFIG_GOOGLE_MUVERA_EMBEDDING_CACHE` to that directory before the
+pilot or sweep. The audit uses saved FP32 sweep output and runs on CPU:
+
+```bash
+python benchmarks/google_muvera/scripts/analyze_results.py \
+  --run-dir /path/to/fp32-sweep --output-dir /path/to/new-analysis
+```
+
+It checks all expected seeds, input denominators and saved candidate
+fidelity. It writes the seed summary, per-query recovery and per-target
+length diagnostics with query-bootstrap intervals. Its default gate is
+0.95 at 100 candidates for seeds 1, 1001 and 2001. It refuses an existing
+analysis directory. See [prepare_cache.py](scripts/prepare_cache.py) and
+[analyze_results.py](scripts/analyze_results.py) for command options.
+
 First run the build, test, and synthetic smoke commands above. A failure
 blocks interpretation of quality results. Then run the full default
 SciFact configuration once to check the dataset path, output schema,
