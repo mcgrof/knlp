@@ -13,6 +13,9 @@ can be generated with `tools.kv.prequantized`; no private repository is needed.
 GSM8K questions come from the pinned public dataset. `gsm8k.build` renders
 stock and explicitly instructed chat adaptations with thinking disabled.
 The latter may be selected using training examples before test scoring.
+Extraction uses the pinned harness regular expressions. Numeric comparison
+removes commas and dollar signs and uses finite decimal equality, so this
+is a labelled chat/numeric adaptation rather than an unmodified harness score.
 
 The command-line implementation is provided here. CUDA execution must pass
 the supplied runtime gates on the selected stack before a result is claimed.
@@ -99,7 +102,7 @@ all views by their actual storage identity; do not count shared K/V storage
 twice. `storage.reconcile` checks disjoint occupied byte intervals and padding.
 Use actual resident requests, no preemption, a predeclared latency limit and
 a common total-memory envelope for a capacity claim. `retrieval-batch` adds
-a separate full-prompt, APC-disabled regression at the claimed schedule;
+a separate full-prompt regression with automatic prefix caching disabled at the claimed schedule;
 it is not labelled as a deferred-query prefix-reuse measurement.
 
 For a legacy API pilot, set `VLLM_ENABLE_V1_MULTIPROCESSING=1` and
