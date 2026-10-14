@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT
+# Subliminal learning on MNIST (research/subliminal_learning).
+#
+#   subliminal-doctor   read-only environment and recipe checks
+#   subliminal-test     synthetic CPU tests (no downloads, no GPU)
+#   subliminal-probe    measured timing of a few steps, projected
+#   subliminal-run      the configured experiment (plain `make` runs this)
+#   subliminal-report   summarize runs from their receipts
+#   subliminal-oracle   the unmodified reference script, 100 models
+#
+# SUBLIMINAL_OUT=/path overrides the result root and SUBLIMINAL_CKPT=/path
+# the checkpoint root, SUBLIMINAL_SET="f=v ..." adds recorded recipe
+# overrides, SUBLIMINAL_RESUME=/run/dir resumes a budget-stopped run, and
+# RUNS="dir ..." selects runs for the report.
+
+SUBLIMINAL_MOD := research.subliminal_learning
+SUBLIMINAL_ARGS := --config $(CONFIG_FILE) \
+	$(if $(SUBLIMINAL_OUT),--set output_dir=$(SUBLIMINAL_OUT)) \
+	$(if $(SUBLIMINAL_CKPT),--set checkpoint_dir=$(SUBLIMINAL_CKPT)) \
+	$(foreach s,$(SUBLIMINAL_SET),--set $(s))
+SUBLIMINAL_ROOT = $(or $(SUBLIMINAL_OUT),$(subst ~,$(HOME),$(CONFIG_SUBLIMINAL_OUTPUT_DIR)))
+
+.PHONY: subliminal-doctor subliminal-test subliminal-probe subliminal-run \
+	subliminal-report subliminal-oracle subliminal-conflicts
+
+SUBLIMINAL_CONFLICTS := $(strip $(foreach v,KNLP_LMCACHE_SNAPKV KNLP_MODULAR_REPRO \
+	KNLP_REPRODUCE_DECODE CARTRIDGES_CAS KNLP_REPRODUCE_PD KNLP_TF_REPRO \
+	KNLP_REPRODUCE_KVIO KVTIDE KNLP_QUANT_FP8 KNLP_REPRODUCE_CARTRIDGES \
+	MATCHED_MICRO RESIDUAL_REPRODUCTION KV_LINGO,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v))))
+
+ifeq ($(CONFIG_SUBLIMINAL_LEARNING),y)
+.DEFAULT_GOAL := subliminal-run
+endif
+
+subliminal-conflicts:
+	@if [ "$(CONFIG_SUBLIMINAL_LEARNING)" != "y" ]; then \
+		echo "CONFIG_SUBLIMINAL_LEARNING is not enabled;" \
+		     "run make defconfig-subliminal-mnist-paper-smoke first"; exit 1; fi
+	@if [ -n "$(SUBLIMINAL_CONFLICTS)" ]; then \
+		echo "Conflicting research workloads enabled with" \
+		     "CONFIG_SUBLIMINAL_LEARNING: $(SUBLIMINAL_CONFLICTS)"; exit 1; fi
+
+subliminal-doctor: subliminal-conflicts
+	$(PYTHON) -m $(SUBLIMINAL_MOD).run doctor $(SUBLIMINAL_ARGS)
+
+subliminal-test:
+	$(PYTHON) -m pytest -q research/subliminal_learning/tests
+
+subliminal-probe: subliminal-conflicts
+	$(PYTHON) -m $(SUBLIMINAL_MOD).run probe $(SUBLIMINAL_ARGS)
+
+subliminal-run: subliminal-conflicts
+	$(PYTHON) -m $(SUBLIMINAL_MOD).run run $(SUBLIMINAL_ARGS) \
+		$(if $(SUBLIMINAL_RESUME),--resume $(SUBLIMINAL_RESUME))
+
+subliminal-report:
+	$(PYTHON) -m $(SUBLIMINAL_MOD).report summary \
+		$(or $(RUNS),$(patsubst %/recipe.json,%,$(wildcard $(SUBLIMINAL_ROOT)/*/recipe.json)))
+
+subliminal-oracle:
+	$(PYTHON) -m $(SUBLIMINAL_MOD).oracle \
+		--out $(SUBLIMINAL_ROOT)/upstream-oracle-$(shell date -u +%Y%m%dT%H%M%SZ)

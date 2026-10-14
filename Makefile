@@ -54,6 +54,7 @@ include Makefile.quant
 # CONFIG_KNLP_TF_REPRO=y this overrides .DEFAULT_GOAL.
 include Makefile.tensorflow
 include Makefile.modular
+include Makefile.subliminal
 
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
@@ -69,7 +70,9 @@ endif
 .PHONY: all
 # The GNN workload is not an optimizer/pruning sweep, so model selection
 # wins over the optimizer/model multiple-mode test matrix.
-ifeq ($(CONFIG_MODEL_GNN),y)
+ifeq ($(CONFIG_SUBLIMINAL_LEARNING),y)
+all: subliminal-run
+else ifeq ($(CONFIG_MODEL_GNN),y)
 all: check-config gnn-run
 else ifeq ($(CONFIG_OPTIMIZER_MODE_MULTIPLE),y)
 all: check-config test-matrix

@@ -1,0 +1,406 @@
+# Subliminal learning on MNIST: does the residual connection mechanism
+# change how much digit knowledge transfers through auxiliary outputs?
+# Sourced from the top-level knlp Kconfig. Every scientific knob lives in
+# the SUBLIMINAL_ namespace so the LeNet-5 defaults (batch 512, lr 1e-3,
+# AMP, compile) can never leak into this recipe. The runner is
+# research/subliminal_learning/run.py; the Make targets are in
+# Makefile.subliminal.
+
+menu "Subliminal learning on MNIST (auxiliary-output transfer)"
+
+config SUBLIMINAL_LEARNING
+	bool "Enable the subliminal-learning MNIST workload"
+	default n
+	help
+	  Master switch. When enabled, plain `make` and `make all` run
+	  `subliminal-run` instead of the LeNet/GPT-2 training dispatch.
+	  A teacher MLP is trained on MNIST digits; students that share
+	  its initialization are then distilled on uniform noise images
+	  using only its three auxiliary outputs, and their MNIST digit
+	  accuracy measures how much capability leaked through those
+	  outputs. See research/subliminal_learning/README.md.
+
+if SUBLIMINAL_LEARNING
+
+choice
+	prompt "Architecture"
+	default SUBLIMINAL_ARCH_PAPER_MLP
+
+config SUBLIMINAL_ARCH_PAPER_MLP
+	bool "paper_mlp: 784-256-256-13 ReLU MLP from the paper"
+
+config SUBLIMINAL_ARCH_RESIDUAL_MLP
+	bool "residual_mlp: pre-LayerNorm residual MLP, one stream"
+
+config SUBLIMINAL_ARCH_NOSKIP_MLP
+	bool "noskip_mlp: the residual MLP with its skip connections removed"
+	help
+	  Same stem, blocks, final LayerNorm and head as residual_mlp,
+	  but each block replaces h by F(h) instead of adding F(h) to h.
+	  A depth control for what the skip connection itself does.
+
+config SUBLIMINAL_ARCH_HC
+	bool "hc: dynamic Hyper-Connections around the residual blocks"
+
+config SUBLIMINAL_ARCH_HC_STATIC
+	bool "hc_static: static Hyper-Connections (development check only)"
+
+config SUBLIMINAL_ARCH_MHC
+	bool "mhc: Manifold-Constrained Hyper-Connections"
+
+config SUBLIMINAL_ARCH_GR
+	bool "gr: Gated Residual (Qwen3.8-Next report), four branches"
+	help
+	  Per-branch RMSNorm, an elementwise sigmoid read gate predicted
+	  from all branches through a rank d/8 bottleneck, a 2*sigmoid
+	  per-branch write, no branch-mixing matrix, no block pre-norm.
+
+config SUBLIMINAL_ARCH_ALTUP
+	bool "altup: width-only baseline (simplified AltUp), four branches"
+	help
+	  Learned scalar read over the branches, block output added to
+	  branch k mod n only. Isolates what widening the stream does.
+
+endchoice
+
+config SUBLIMINAL_ARCH
+	string
+	default "paper_mlp" if SUBLIMINAL_ARCH_PAPER_MLP
+	default "residual_mlp" if SUBLIMINAL_ARCH_RESIDUAL_MLP
+	default "noskip_mlp" if SUBLIMINAL_ARCH_NOSKIP_MLP
+	default "hc" if SUBLIMINAL_ARCH_HC
+	default "hc_static" if SUBLIMINAL_ARCH_HC_STATIC
+	default "mhc" if SUBLIMINAL_ARCH_MHC
+	default "gr" if SUBLIMINAL_ARCH_GR
+	default "altup" if SUBLIMINAL_ARCH_ALTUP
+
+config SUBLIMINAL_LAYERROPE
+	bool "Generate block pre-LayerNorm gains with LayerRoPE"
+	depends on SUBLIMINAL_ARCH_RESIDUAL_MLP || SUBLIMINAL_ARCH_HC || SUBLIMINAL_ARCH_HC_STATIC
+	default n
+	help
+	  Vision-model adaptation of arXiv:2610.09179: rotate and scale
+	  one shared gain by depth. Keep layer-wise centering and bias,
+	  final normalization and HC routing unchanged. No output norm
+	  is added. Model parameters remain independent across seeds.
+
+config SUBLIMINAL_LAYERROPE_BASE
+	string "LayerRoPE frequency base"
+	default "100.0"
+
+config SUBLIMINAL_LAYERROPE_MAG_SLOPE
+	string "Initial LayerRoPE log-magnitude depth slope"
+	default "0.0"
+
+config SUBLIMINAL_LAYERROPE_ROT_SLOPE
+	string "Initial LayerRoPE log-angle depth slope"
+	default "-0.5"
+
+config SUBLIMINAL_LAYERROPE_MAG_INTERCEPT
+	string "Initial LayerRoPE log-magnitude intercept"
+	default "0.0"
+
+config SUBLIMINAL_LAYERROPE_ROT_INTERCEPT
+	string "Initial LayerRoPE log-angle intercept"
+	default "0.0"
+
+choice
+	prompt "Loss normalization protocol"
+	default SUBLIMINAL_PROTOCOL_UPSTREAM
+
+config SUBLIMINAL_PROTOCOL_UPSTREAM
+	bool "upstream_batched_v1: reproduce the reference script's reductions"
+	help
+	  Teacher cross-entropy is the per-image mean divided by the
+	  logical cohort size; student KL is summed over the images of a
+	  minibatch and divided by the logical cohort size. This is what
+	  the reference script optimizes when it packs its models into
+	  one tensor.
+
+config SUBLIMINAL_PROTOCOL_PER_EXAMPLE
+	bool "per_example_v1: ordinary per-image mean CE and KL"
+	help
+	  Each model's loss is its own per-image mean, independent of how
+	  many models share a tensor. Use this for architecture comparisons
+	  only after the plain MLP is shown to transfer under it.
+
+endchoice
+
+config SUBLIMINAL_PROTOCOL
+	string
+	default "upstream_batched_v1" if SUBLIMINAL_PROTOCOL_UPSTREAM
+	default "per_example_v1" if SUBLIMINAL_PROTOCOL_PER_EXAMPLE
+
+choice
+	prompt "Student KL numerical implementation"
+	default SUBLIMINAL_STUDENT_LOSS_EXACT_CANCEL
+
+config SUBLIMINAL_STUDENT_LOSS_LEGACY
+	bool "legacy_kl_v1: composed FP32 softmax/log-softmax/KL"
+	help
+	  Preserve the historical PyTorch composition and its exact optimizer
+	  trajectory for legacy comparisons.
+
+config SUBLIMINAL_STUDENT_LOSS_EXACT_CANCEL
+	bool "exact_cancel_v1: explicit analytic cancellation"
+	help
+	  Keep the historical FP32 KL forward value, but implement the intended
+	  student-logit derivative directly as softmax(student)-softmax(target).
+	  Bit-identical logits therefore have an exactly zero gradient without
+	  inspecting the target scale.
+
+endchoice
+
+config SUBLIMINAL_STUDENT_LOSS_MODE
+	string
+	default "legacy_kl_v1" if SUBLIMINAL_STUDENT_LOSS_LEGACY
+	default "exact_cancel_v1" if SUBLIMINAL_STUDENT_LOSS_EXACT_CANCEL
+
+config SUBLIMINAL_SEEDS
+	string "Controlled-run seeds"
+	default "1101 1102 1103 1104 1105"
+	help
+	  Space-separated integer seeds. Each seed is one independent
+	  teacher/student family; all random streams (initialization,
+	  alternate initialization, noise, teacher order, student order)
+	  are derived from it by name with SHA-256. Leave empty to run
+	  the reference cohort instead (SUBLIMINAL_REFERENCE_MODELS).
+
+config SUBLIMINAL_REFERENCE_MODELS
+	int "Reference cohort size (used when no seeds are given)"
+	default 0
+	range 0 1000
+	help
+	  When SUBLIMINAL_SEEDS is empty, run this many independently
+	  initialized models under global seed SUBLIMINAL_REFERENCE_SEED,
+	  matching the 100-model cohort of the paper's MNIST figure. Setting
+	  both seeds and a nonzero reference count is rejected.
+
+config SUBLIMINAL_REFERENCE_SEED
+	int "Reference cohort global seed"
+	default 0
+
+config SUBLIMINAL_LOGICAL_COHORT
+	int "Logical cohort size for upstream loss denominators (0 = number of models)"
+	default 0
+	help
+	  Under upstream_batched_v1 the loss of each model is divided by
+	  this number. Zero means the number of models in the run, which
+	  is what the reference script does. Physical packing never
+	  changes it.
+
+config SUBLIMINAL_TEACHER_EPOCHS
+	int "Teacher epochs"
+	default 5
+
+config SUBLIMINAL_STUDENT_EPOCHS
+	int "Student epochs"
+	default 5
+
+config SUBLIMINAL_BATCH_SIZE
+	int "Minibatch size per model"
+	default 1024
+
+config SUBLIMINAL_LR
+	string "Adam learning rate"
+	default "0.0003"
+
+config SUBLIMINAL_AUX_OUTPUTS
+	int "Auxiliary outputs"
+	default 3
+	range 1 64
+
+config SUBLIMINAL_WIDTH
+	int "Residual-family width"
+	default 256
+
+config SUBLIMINAL_BLOCKS
+	int "Residual-family blocks"
+	default 4
+
+config SUBLIMINAL_STREAMS
+	int "Residual streams (HC/mHC expansion rate)"
+	default 4
+	help
+	  Ignored by paper_mlp and residual_mlp, which always have one
+	  stream.
+
+config SUBLIMINAL_SINKHORN_ITERS
+	int "Sinkhorn-Knopp iterations for mHC"
+	default 20
+
+config SUBLIMINAL_MHC_INIT_LOGIT
+	string "mHC static-bias magnitude that encodes the HC initialization"
+	default "4.0"
+	help
+	  The mHC paper does not state its bias initialization. We encode
+	  the Hyper-Connections initialization (block k reads stream
+	  k mod n, writes to every stream with weight 1, residual mix is
+	  the identity) through the sigmoid and Sinkhorn maps: pre-map
+	  logits are +c on stream k mod n and -c elsewhere, residual-map
+	  logits are +c on the diagonal and -c elsewhere, and post-map
+	  logits are 0 (2*sigmoid(0) = 1).
+
+config SUBLIMINAL_LN_EPS
+	string "LayerNorm / RMSNorm epsilon"
+	default "1e-5"
+
+config SUBLIMINAL_DATA_DIR
+	string "MNIST cache directory (empty = the global DATA_DIR)"
+	default "~/.cache/knlp/mnist"
+	help
+	  torchvision downloads MNIST here and the runner caches the
+	  normalized 28x28 tensors beside it. Relative paths are taken
+	  from the repository root, never the working directory.
+
+config SUBLIMINAL_BLOCK_NORM
+	bool "LayerNorm inside each block and before the head"
+	default y
+	help
+	  Only residual_mlp and noskip_mlp may turn this off; it removes
+	  every LayerNorm so depth effects are not masked by normalization.
+
+config SUBLIMINAL_RESIDUAL_SCALE
+	string "Scale on F(h) in residual_mlp"
+	default "1.0"
+	help
+	  residual_mlp computes h + scale * F(h). With scale 1/n it is the
+	  functional control for AltUp with frozen uniform reads.
+
+config SUBLIMINAL_MS_WRITE
+	string "AltUp write: dense, cyclic, cyclic_l2 or cyclic_sum"
+	default "cyclic"
+
+config SUBLIMINAL_MS_WRITE_SCALE
+	string "Fixed amplitude of a cyclic AltUp write"
+	default "1.0"
+
+config SUBLIMINAL_MS_READ
+	string "AltUp read: learned or uniform (frozen at 1/n)"
+	default "learned"
+
+config SUBLIMINAL_MS_STEM
+	string "Input streams: dup (copies) or diverse (centred random spread)"
+	default "dup"
+
+config SUBLIMINAL_GR_WRITE
+	string "GR write: dense, cyclic, cyclic_l2 or cyclic_sum"
+	default "dense"
+
+config SUBLIMINAL_GR_WRITE_SCALE
+	string "Fixed amplitude of a cyclic GR write"
+	default "1.0"
+
+config SUBLIMINAL_MHC_WRITE
+	string "mHC post (write) map: dense, cyclic, cyclic_l2 or cyclic_sum"
+	default "dense"
+
+config SUBLIMINAL_MHC_WRITE_SCALE
+	string "Fixed amplitude of a cyclic mHC write"
+	default "1.0"
+
+config SUBLIMINAL_STUDENT_EVAL_EPOCHS
+	string "Student epochs at which to snapshot results (empty = final only)"
+	default ""
+	help
+	  Space-separated epochs of one continued student trajectory with
+	  the teacher frozen; each writes seeds_e<epoch>.csv.
+
+config SUBLIMINAL_HELDOUT_NOISE
+	int "Held-out noise images per model for diagnostics"
+	default 10000
+
+config SUBLIMINAL_POST_SCALE
+	string "Fixed factor on the write (post) map of HC, GR and mHC"
+	default "1.0"
+	help
+	  The multi-stream counterpart of SUBLIMINAL_RESIDUAL_SCALE: the
+	  whole block-output write is multiplied by this factor while reads,
+	  normalization and any stream mixing are unchanged.
+
+config SUBLIMINAL_SINKHORN_LOG
+	bool "Run mHC's Sinkhorn-Knopp iteration in the log domain"
+	default n
+
+config SUBLIMINAL_TARGET_SCALE
+	string "Attenuate distillation targets to z0 + a (zT - z0) (1 = off)"
+	default "1.0"
+
+config SUBLIMINAL_TARGET_MATCH_KL
+	string "Pick the attenuation per model to hit this aux KL from W0 (0 = off)"
+	default "0"
+	help
+	  Calibrated on unlabeled training noise only, after the teacher is
+	  trained and before any student sees a target.
+
+config SUBLIMINAL_FRESH_NOISE
+	bool "Draw fresh training noise every student epoch"
+	default n
+
+config SUBLIMINAL_NOISE_SAMPLES
+	int "Noise images per model"
+	default 60000
+
+config SUBLIMINAL_TRAIN_LIMIT
+	int "Limit MNIST training images (0 = all 60000; smoke only)"
+	default 0
+
+config SUBLIMINAL_TEST_LIMIT
+	int "Limit MNIST test images (0 = all 10000; smoke only)"
+	default 0
+
+config SUBLIMINAL_PACK_SIZE
+	int "Models packed into one tensor (execution only)"
+	default 0
+	help
+	  How many seeds train together in one batched tensor. Zero packs
+	  every model of the run. Packing changes speed and memory, not
+	  the losses or updates.
+
+config SUBLIMINAL_PRECISION
+	string "Arithmetic precision"
+	default "fp32"
+
+config SUBLIMINAL_COMPILE
+	bool "torch.compile"
+	default n
+
+config SUBLIMINAL_SMOKE
+	bool "Smoke run (cannot issue a scientific verdict)"
+	default n
+
+config SUBLIMINAL_OUTPUT_DIR
+	string "Result root (outside the source tree)"
+	default "~/subliminal-learning-runs"
+	help
+	  Each run writes a directory beneath this root. Override on the
+	  command line with `make SUBLIMINAL_OUT=/path`.
+
+config SUBLIMINAL_CHECKPOINT_DIR
+	string "Checkpoint root (empty = inside each run directory)"
+	default "~/subliminal-learning-checkpoints"
+	help
+	  Checkpoints and resume states are written to <root>/<run name>,
+	  apart from the small receipts, so the receipts can be archived
+	  without hundreds of megabytes of weights. Each run's
+	  manifest.json records every checkpoint's path, size and SHA-256.
+	  Override with `make SUBLIMINAL_CKPT=/path`.
+
+config SUBLIMINAL_RUN_NAME
+	string "Run name (empty = derived from arch, protocol and time)"
+	default ""
+
+config SUBLIMINAL_MAX_SECONDS
+	int "Wall-clock budget in seconds (0 = unlimited)"
+	default 3600
+	help
+	  Checked at epoch boundaries. When exceeded, the run saves a
+	  resumable state, marks itself incomplete and exits nonzero.
+
+config SUBLIMINAL_SAVE_CHECKPOINTS
+	bool "Save initial, teacher and student checkpoints"
+	default y
+
+endif
+
+endmenu
