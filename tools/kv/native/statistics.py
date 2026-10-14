@@ -31,8 +31,9 @@ def paired(arm, baseline, margin=0.02, seed=20261021):
     bootstrap = [float(x) for x in np.quantile(samples, [0.025, 0.975])]
     loss_bounds = bounds(losses, total)
     gain_bounds = bounds(gains, total)
-    loss_bonferroni = bounds(losses, total, alpha=0.025)
-    gain_bonferroni = bounds(gains, total, alpha=0.025)
+    # Four component tails jointly cover the two-sided net interval.
+    loss_bonferroni = bounds(losses, total, alpha=0.05 / 4)
+    gain_bonferroni = bounds(gains, total, alpha=0.05 / 4)
     return {
         "cases": total,
         "baseline_accuracy": sum(bool(baseline[k]) for k in keys) / total,
@@ -47,6 +48,7 @@ def paired(arm, baseline, margin=0.02, seed=20261021):
             gain_bonferroni[0] - loss_bonferroni[1],
             gain_bonferroni[1] - loss_bonferroni[0],
         ],
+        "net_accuracy_change_exact_component_tail_alpha": 0.05 / 4,
         "loss_margin": margin,
         "supported_margin": loss_bounds[1] <= margin,
         "bootstrap_seed": seed,
