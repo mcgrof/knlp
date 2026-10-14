@@ -30,7 +30,10 @@ The caller-owned input directory contains:
 
 `protocol.json` records `source_sha`, `backend_sources`, `torch`,
 `runner_files_sha256`, `inputs_sha256`, `torch_allocator_reserved_cap_bytes`
-and `engine`. The engine object contains the standard vLLM LLM configuration,
+`packed_execution`, and `engine`. The packed execution object freezes the
+linear method, kernel class, weight bit width and profiler operator marker.
+New serving stacks may repack AWQ weights for Machete without replacing them
+with persistent full-precision weights. The engine object contains the standard vLLM LLM configuration,
 including explicit FlashInfer attention, AWQ, FP16, TP=1, eager execution,
 block size 16 and no automatic KV scale calculation. Hash every Python file
 in this package. Input hashes bind all numerical references and manifests.

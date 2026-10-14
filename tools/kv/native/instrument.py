@@ -156,7 +156,7 @@ def native_memory_state(worker):
     }
 
 
-def install(model, scales, arm, trace_dir):
+def install(model, scales, arm, trace_dir, packed_expectation=None):
     import vllm.v1.attention.backends.flashinfer as backend
 
     selected = []
@@ -169,6 +169,16 @@ def install(model, scales, arm, trace_dir):
                 {
                     "name": name,
                     "method": type(getattr(module, "quant_method", None)).__name__,
+                    "kernel": type(
+                        getattr(getattr(module, "quant_method", None), "kernel", None)
+                    ).__name__,
+                    "weight_bits": getattr(
+                        getattr(
+                            getattr(module, "quant_method", None), "quant_config", None
+                        ),
+                        "weight_bits",
+                        4,
+                    ),
                     "buffers": tensor_inventory(
                         (module.qweight, module.qzeros, module.scales)
                     ),
@@ -201,10 +211,20 @@ def install(model, scales, arm, trace_dir):
             )
     if len(selected) != 36 or len(packed) != 144:
         raise RuntimeError("native packed attention inventory is incomplete")
-    if any(module["method"] != "AWQLinearMethod" for module in packed):
-        raise RuntimeError(
-            "native AWQ method changed from the selected packed implementation"
-        )
+    expected = packed_expectation or {
+        "method": "AWQLinearMethod",
+        "kernel": "NoneType",
+        "weight_bits": 4,
+        "dispatch_marker": "gemm_forward_4bit_cuda",
+    }
+    for module in packed:
+        if any(
+            module[key] != expected[key] for key in ("method", "kernel", "weight_bits")
+        ):
+            raise RuntimeError(
+                "native packed AWQ implementation differs from frozen expectation"
+            )
+    model._study_packed_dispatch_marker = expected["dispatch_marker"]
     save(
         Path(trace_dir) / "installed.json",
         {
@@ -288,7 +308,9 @@ def finish_profile(model, trace_dir):
         Path(trace_dir) / "jit-module-operators.json",
         [name for name in events if name.startswith("flashinfer::")],
     )
-    matched = any("gemm_forward_4bit_cuda" in name.lower() for name in events)
+    matched = any(
+        model._study_packed_dispatch_marker.lower() in name.lower() for name in events
+    )
     if not matched:
         raise RuntimeError("native model-specific packed AWQ kernel missing")
     model._study_profiler = None

@@ -89,6 +89,15 @@ def summarize(quality, gsm, task_path, protocol_path):
         installed = load(directory / "full/installed.json")
         if len(installed["layers"]) != 36 or len(installed["packed"]) != 144:
             raise ValueError("native cache/packed weight coverage incomplete")
+        packed_expectation = load(protocol_path)["packed_execution"]
+        for module in installed["packed"]:
+            if any(
+                module[key] != packed_expectation[key]
+                for key in ("method", "kernel", "weight_bits")
+            ):
+                raise ValueError(
+                    "packed weight implementation differs from the frozen protocol"
+                )
         from .storage import reconcile
 
         reconcile([t for layer in installed["layers"] for t in layer["cache"]])
