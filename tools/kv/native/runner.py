@@ -81,6 +81,12 @@ def make_engine(arm, manifest, performance=False):
     geometry = read_json(ROOT / "geometry.json")
     if geometry["passed"] is not True:
         raise RuntimeError("allocation/writer/read gate is closed")
+    os.environ["KNLP_NATIVE_TORCH_LIMIT_BYTES"] = str(
+        PROTOCOL["torch_allocator_reserved_cap_bytes"]
+    )
+    os.environ["KNLP_NATIVE_ALLOC_TRACE"] = str(
+        OUT / f"allocator-{arm}-{OPTIONS.stage}-{OPTIONS.repeat}.jsonl"
+    )
     engine = LLM(
         model=manifest["model"],
         revision=manifest["model_revision"],
