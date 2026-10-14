@@ -109,3 +109,11 @@ record the configuration bridge before timing that mode. Scheduler labels
 are published atomically to the engine process; the observer is installed
 there through the uniprocess executor callback. Keep these results separate
 from controlled in-process active-concurrency measurements.
+
+Set `engine.worker_cls` to
+`tools.kv.native.memory_worker.ObservedWorker` to record device initialization
+before model load, raw cache allocation and typed-view materialization. It
+delegates to the pinned worker and allocator without changing their results.
+The per-process Torch allocator ceiling is applied in the actual worker,
+including when the engine runs in a separate process. Driver memory and
+non-Torch allocations remain separate measurements.
