@@ -140,6 +140,7 @@ def test_make_overrides_are_in_the_effective_plan(tmp_path):
     result = subprocess.run(
         [
             "make",
+            "--no-print-directory",
             "residual-plan",
             "PYTHON=" + sys.executable,
             "CONFIG_RESIDUAL_OUTPUT_DIR=" + str(tmp_path / "output"),
