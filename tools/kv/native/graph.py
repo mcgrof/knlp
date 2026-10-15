@@ -73,6 +73,16 @@ def resolve_variant(name, definitions):
     return definition
 
 
+def pure_decode_padding(scheduled_tokens, captured_tokens):
+    """Derive active decode rows from scheduled work, not optional hints."""
+    counts = list(scheduled_tokens)
+    if not counts or any(value != 1 for value in counts):
+        raise ValueError("pure decode requires one token per request")
+    if captured_tokens < len(counts):
+        raise ValueError("captured shape is smaller than active decode work")
+    return [False] * len(counts) + [True] * (captured_tokens - len(counts))
+
+
 def install_capture_hooks(worker_type, runner_type, configure, check, variant):
     """Configure before warmup, then validate immediately before capture.
 

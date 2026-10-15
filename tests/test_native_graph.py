@@ -6,6 +6,7 @@ import pytest
 from tools.kv.native.graph import (
     ExecutionVariant,
     install_capture_hooks,
+    pure_decode_padding,
     resolve_variant,
 )
 
@@ -30,6 +31,18 @@ def test_source_identity_is_frozen_against_caller_mutation():
     assert variant.sources["backend"] == "1" * 40
     with pytest.raises(TypeError):
         variant.sources["backend"] = "3" * 40
+
+
+def test_active_decode_rows_do_not_depend_on_an_unused_padding_hint():
+    # A captured dummy run can leave this optional optimization hint true.
+    unused_hint = [True] * 8
+    padding = pure_decode_padding([1, 1, 1], len(unused_hint))
+    assert padding == [False, False, False, True, True, True, True, True]
+    assert unused_hint == [True] * 8
+    with pytest.raises(ValueError, match="one token per request"):
+        pure_decode_padding([8192], 8192)
+    with pytest.raises(ValueError, match="smaller than active"):
+        pure_decode_padding([1, 1], 1)
 
 
 def test_configuration_precedes_warmup_and_capture(monkeypatch):
