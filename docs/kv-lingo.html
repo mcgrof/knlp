@@ -261,13 +261,12 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px
 
 <section id="reproduce">
 <h2>Source, data, and reproduction boundary</h2>
-<p class="sub">The public code is a clean import of the executed snapshot. Provider launch wrappers and private resource records are excluded. A file-hash manifest records the mapping and packaging changes. The aggregate reproduces the 16 multi-turn decisions. Full inference needs the public models, the pinned data construction, and trained translator maps; the map tensors are not published.</p>
+<p class="sub">The public code contains the translator, controls, scoring, and selection logic. Provider launch wrappers and resource records are excluded. This page contains the 16 multi-turn development decisions. Full inference needs the public models, the pinned data construction, and newly trained translator maps; the tested map tensors are not published.</p>
 <div class="links">
 <a href="https://github.com/mcgrof/knlp/tree/main/research/kv_translate/published"><b>Source and README</b><span>Training, retained inference, controls, scoring, audit, selection, CPU tests, and explicit commands.</span></a>
-<a href="data/kv-lingo-results.json"><b>Aggregate JSON</b><span>Four checkpoint pairs, 16 comparisons, both references, full-precision metrics, gates, and descriptive intervals.</span></a>
 <a href="https://arxiv.org/abs/2609.32610"><b>KV-Lingo paper</b><span>The primary paper that motivates cross-model KV-cache translation.</span></a>
 </div>
-<p class="fine" style="margin-top:15px">Public source integration: <a href="https://github.com/mcgrof/knlp/commit/8bb7f320e8c14c4654509d530e3709db24dd6a25">8bb7f320</a>. Aggregate and guide: <a href="https://github.com/mcgrof/knlp/commit/5cf299ed510b73f968bf9b1315fbbf7a0b41fb1f">5cf299ed</a>. Aggregate SHA-256: <code>2051e9abdb85ad49c38872d7caf15d8488d4e3a3795115d363e5355d238d44b1</code>. Raw outputs and trained maps are not released.</p>
+<p class="fine" style="margin-top:15px">Raw outputs, trained maps, and machine-readable result records are not released.</p>
 <div class="decision"><b>Practical status</b><span>Research code merged; checkpoint search closed; unrestricted sharing unqualified; restricted 8B-first use unconfirmed.</span></div>
 </section>
 </main>
