@@ -15,7 +15,15 @@ import time
 import uuid
 
 REPO = Path(__file__).resolve().parents[2]
-STUDIES = ("mnist", "null", "layerrope", "tinystories", "depth", "confirmation")
+STUDIES = (
+    "mnist",
+    "null",
+    "layerrope",
+    "tinystories",
+    "depth",
+    "confirmation",
+    "cache",
+)
 
 
 def configuration(path, overrides=()):
@@ -37,6 +45,9 @@ def configuration(path, overrides=()):
             "SEEDS",
             "MAX_SECONDS",
             "CPU_THREADS",
+            "KV_CACHE",
+            "CACHE_DEPTH_RUN",
+            "CACHE_CONFIRMATION_RUN",
         }
         if name not in allowed:
             raise ValueError("Unknown configuration override: " + name)
@@ -57,6 +68,9 @@ def configuration(path, overrides=()):
         "seeds": [int(s) for s in get("SEEDS", "").replace(",", " ").split()],
         "max_seconds": int(get("MAX_SECONDS", 86400)),
         "cpu_threads": int(get("CPU_THREADS", 8)),
+        "kv_cache": get("KV_CACHE", "y") == "y",
+        "cache_depth_run": get("CACHE_DEPTH_RUN", ""),
+        "cache_confirmation_run": get("CACHE_CONFIRMATION_RUN", ""),
     }
     if result["study"] not in STUDIES or result["device"] not in ("cpu", "cuda"):
         raise ValueError("Unknown study or device")
@@ -90,6 +104,16 @@ def plan(config):
             "auxiliary_outputs": 3,
         },
         "tinystories": {
+            "kv_cache": {
+                "enabled": config["kv_cache"],
+                "cases_per_checkpoint": 13,
+                "depth_cohort": "21 saved endpoints, three seeds, 2000 updates; R/M depths 4/16/32 plus M-O at 32",
+                "confirmation_cohort": "56 saved endpoints, eight seeds, 4000 updates; seven mHC-derived rows",
+                "pass_rule": "Every seed adds <=0.1 nats over its own clean CE",
+                "source_depth_run": config["cache_depth_run"],
+                "source_confirmation_run": config["cache_confirmation_run"],
+                "training": "none in the cache-only preset",
+            },
             "depth_screen": json.loads(
                 (REPO / "research/reproduction/plans/depth-screen.json").read_text()
             ),
@@ -139,7 +163,9 @@ class Runner:
         self.lock = threading.Lock()
         self.env = {
             **os.environ,
-            "PYTHONPATH": str(REPO),
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, (str(REPO), os.environ.get("PYTHONPATH", "")))
+            ),
             "OMP_NUM_THREADS": str(config["cpu_threads"]),
             "MKL_NUM_THREADS": str(config["cpu_threads"]),
             "MPLBACKEND": "Agg",
@@ -234,6 +260,8 @@ class Runner:
                 "--device",
                 self.config["device"],
             )
+            if self.config["kv_cache"]:
+                self.cache("depth", smoke=True)
             return
         if self.config["device"] != "cuda":
             raise ValueError(
@@ -257,8 +285,40 @@ class Runner:
                 "--config-json",
                 self.root / "EFFECTIVE.json",
             )
+            if self.config["kv_cache"]:
+                self.cache("depth", self.root)
         if self.config["study"] in ("confirmation", "tinystories"):
             self.confirmation()
+            if self.config["kv_cache"]:
+                self.cache("confirmation", self.root)
+
+    def cache(self, cohort, source=None, smoke=False):
+        args = [
+            "--root",
+            self.root / ("cache-" + cohort),
+            "--cohort",
+            cohort,
+            "--device",
+            self.config["device"],
+            "--max-seconds",
+            self.config["max_seconds"],
+        ]
+        if smoke:
+            args.append("--smoke")
+        else:
+            args.extend(("--input-run", source))
+        self.command("research.reproduction.kv_cache", *args)
+
+    def saved_cache(self):
+        if self.config["smoke"]:
+            self.cache("depth", smoke=True)
+            return
+        for cohort, field in (
+            ("depth", "cache_depth_run"),
+            ("confirmation", "cache_confirmation_run"),
+        ):
+            if self.config[field]:
+                self.cache(cohort, Path(self.config[field]).expanduser().resolve())
 
     def confirmation(self):
         from research.mo_variants.stage_c_common import read, sha
@@ -356,11 +416,23 @@ class Runner:
 def execute(config):
     import torch
 
+    if (
+        config["study"] == "cache"
+        and not config["smoke"]
+        and not (config["cache_depth_run"] or config["cache_confirmation_run"])
+    ):
+        raise ValueError(
+            "Set CACHE_DEPTH_RUN and/or CACHE_CONFIRMATION_RUN to saved reproduction run directories"
+        )
+    parent = Path(config["output_dir"]).expanduser().resolve()
+    if parent.is_relative_to(REPO):
+        raise ValueError(
+            "Set OUTPUT_DIR outside the source checkout; generated artifacts do not belong in knlp"
+        )
     if config["device"] == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(
             "CUDA/ROCm was requested but is unavailable; select cpu explicitly"
         )
-    parent = Path(config["output_dir"]).expanduser()
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = parent / f"{config['study']}-{stamp}-{uuid.uuid4().hex[:8]}"
     root.mkdir(parents=True, exist_ok=False)
@@ -379,10 +451,14 @@ def execute(config):
     try:
         if config["study"] in ("mnist", "null", "layerrope"):
             runner.mnist()
+        elif config["study"] == "cache":
+            runner.saved_cache()
         else:
             runner.tinystories()
         report["status"] = "complete"
-        report["scientific_confirmation_allowed"] = not config["smoke"]
+        report["scientific_confirmation_allowed"] = (
+            not config["smoke"] and config["study"] != "cache"
+        )
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise

@@ -18,6 +18,8 @@ PRESETS = (
     "layerrope-mhc-tinystories-depth",
     "layerrope-mhc-tinystories-confirmation",
     "layerrope-mhc-tinystories-smoke",
+    "layerrope-mhc-tinystories-kv-cache",
+    "layerrope-mhc-tinystories-kv-cache-smoke",
 )
 
 
@@ -172,3 +174,37 @@ def test_confirmation_respects_the_callers_reserved_devices():
     ]
     with pytest.raises(RuntimeError, match="too small"):
         gpu_slots({"CUDA_VISIBLE_DEVICES": ""})
+
+
+def test_saved_cache_requires_sources_before_device_initialization(tmp_path):
+    config = configuration(REPO / "defconfigs/layerrope-mhc-tinystories-kv-cache")
+    config["output_dir"] = str(tmp_path)
+    with pytest.raises(ValueError, match="saved reproduction run"):
+        execute(config)
+
+
+def test_new_outputs_cannot_pollute_the_source_checkout():
+    config = configuration(REPO / "defconfigs/layerrope-mhc-tinystories-kv-cache-smoke")
+    config["output_dir"] = str(REPO / "results")
+    with pytest.raises(ValueError, match="outside"):
+        execute(config)
+
+
+def test_saved_cache_dispatch_does_not_prepare_data_or_train(tmp_path, monkeypatch):
+    config = configuration(REPO / "defconfigs/layerrope-mhc-tinystories-kv-cache")
+    config.update(
+        cache_depth_run=str(tmp_path / "old-depth"),
+        cache_confirmation_run=str(tmp_path / "old-confirmation"),
+    )
+    runner = Runner(config, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        runner, "command", lambda module, *args, **kwargs: calls.append((module, args))
+    )
+    runner.saved_cache()
+    assert len(calls) == 2
+    assert all(module == "research.reproduction.kv_cache" for module, _ in calls)
+    assert [args[args.index("--cohort") + 1] for _, args in calls] == [
+        "depth",
+        "confirmation",
+    ]

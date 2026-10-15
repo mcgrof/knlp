@@ -23,11 +23,13 @@ and reporting order. A failed qualification prevents measured training.
 | `subliminal-mnist` | Reference MNIST assay, historical cohorts, deeper controls, repaired residual-scale, HC write-scale and null controls, four-arm LayerRoPE comparison |
 | `subliminal-mnist-null-repaired` | Eighty-epoch identical-target stationarity control with repaired first-order loss |
 | `subliminal-mnist-layerrope-study` | Residual, HC, LayerRoPE gain adaptation, and HC plus that adaptation; ten fresh seeds |
-| `layerrope-mhc-tinystories` | Initial depth screen followed by the fixed seven-row confirmation |
-| `layerrope-mhc-tinystories-depth` | Initial 16-cell language-model depth and write-code screen |
-| `layerrope-mhc-tinystories-confirmation` | Seven rows, eight paired seeds, depth 32, width 128, 4,000 updates |
+| `layerrope-mhc-tinystories` | Initial depth screen, fixed seven-row confirmation, and separate saved-checkpoint KV-cache sweeps |
+| `layerrope-mhc-tinystories-depth` | Initial 16-cell language-model screen, then the three-seed residual/mHC cache comparison |
+| `layerrope-mhc-tinystories-confirmation` | Seven rows, eight paired seeds, depth 32, width 128, 4,000 updates, then the cache sweep |
 | `subliminal-mnist-smoke` | Small CPU runs on real MNIST, four arms, one epoch |
-| `layerrope-mhc-tinystories-smoke` | CPU operators, exact resume checks, and two updates for seven rows on synthetic tokens |
+| `layerrope-mhc-tinystories-smoke` | CPU operators, exact resume checks, two updates for seven rows, and cache checks on synthetic tokens |
+| `layerrope-mhc-tinystories-kv-cache` | Cache-only evaluation of one or both saved cohorts; no training |
+| `layerrope-mhc-tinystories-kv-cache-smoke` | Bounded CPU cache-operator, checkpoint and reporting path on synthetic tokens |
 
 For example:
 
@@ -70,8 +72,8 @@ in the assay. Full language-model LayerRoPE, its MNIST gain adaptation and
 mHC depth codes use different implementations and controls.
 
 Training curve cross-entropy, final GPU loss and final CPU loss are separate
-metrics. Quantization damage uses each checkpoint's own CPU clean baseline
-on identical inputs. The rounding experiments simulate stored weights;
+metrics. Weight-quantization damage uses each checkpoint's own CPU clean baseline
+on identical inputs. The weight-rounding experiments simulate stored weights;
 they do not measure packed-kernel speed or allocated inference memory.
 Block-only INT3 covers about 31.9% of parameters and leaves other weights
 FP32. It is not a three-bit model. The original confirmation qualified no
@@ -94,3 +96,74 @@ source, data-order, model and optimizer checks. Selection and analysis helpers
 remain available for discovery work. The make-based confirmation route uses
 the fixed seven-row definitions; it does not rediscover or replace nominees.
 The upstream reference files retain their licenses and attribution.
+
+## KV-cache fake quantization
+
+The existing full TinyStories presets now evaluate cache rounding after their
+training and weight screens. Set `CONFIG_RESIDUAL_KV_CACHE=n` to omit this
+follow-up. The aggregate route retains separate depth-screen and confirmation
+data, models and cache reports.
+
+Run the bounded CPU route first:
+
+```sh
+make defconfig-layerrope-mhc-tinystories-kv-cache-smoke
+make
+```
+
+It checks independent scalar quantizer references, token-local statistics,
+incremental cached attention, exact noquant parity for the ordinary-residual
+and mHC callers, checkpoint loading and all 13 settings on synthetic tokens.
+It does not reproduce training or issue a scientific verdict.
+
+To evaluate saved models without training again:
+
+```sh
+make defconfig-layerrope-mhc-tinystories-kv-cache
+make CONFIG_RESIDUAL_CACHE_DEPTH_RUN=/path/to/depth-run \
+     CONFIG_RESIDUAL_CACHE_CONFIRMATION_RUN=/path/to/confirmation-run
+```
+
+Supply either directory or both. These are the top-level run directories
+printed by the original reproduction supervisor. The first contains
+`depth-screen/` and `data/`; the second contains `confirmation/` and its data
+link. Checkpoint receipts name their files. If the original paths no longer
+exist, the evaluator also checks `depth-screen/checkpoints/JOB.pt` or
+`confirmation/checkpoints/JOB/step4000.pt` in the supplied run directory.
+Checkpoints written to a separate configured root must remain at their saved
+paths or be placed under those directories. Every resolved file is checked
+against the original checksum and model-state hash.
+
+The cache-only route requires no H100 or second GPU; select `cuda` or explicitly
+select `cpu`. Full confirmation *training* retains its two-H100 qualification.
+The depth cohort contains ordinary residual and mHC at depths 4/16/32, plus
+M-O at depth 32: three paired seeds, 2,000 updates, learning rate 0.003 and
+the original final array. Initial common weights, data orders and optimizer
+recipes must match between seed pairs. The confirmation cohort contains
+seven mHC-derived rows, eight seeds and 4,000 updates, using its separate
+final array. It has no ordinary-residual baseline. Never pool these cohorts.
+
+Each checkpoint is evaluated clean, with symmetric and affine K/V at
+8/4/3/2 bits, and with symmetric K8/V4, K4/V8, K16/V4 and K4/V16. Quantization
+occurs after token RoPE for K and before attention for V. Statistics use each
+token/head's 64 channels, with no future-token scale leakage or unquantized
+residual window. Symmetric 2-bit has three levels; affine 2-bit has four and
+stores a floating minimum as well as a scale. Quantization arithmetic and
+metadata are FP32; dequantized attention values are BF16. Weights, queries,
+routing and norm precision remain unchanged.
+
+Reports retain own-clean CE increases, absolute CE, every window loss,
+per-seed passes and ideal packed bytes including metadata. The pass boundary
+is <=0.1 nats on every seed. Three-seed comparisons are descriptive. The
+eight-seed primary endpoint is symmetric K4/V4 damage, with six one-sided
+paired sign tests and Holm correction. The effect rule also requires a mean
+damage decrease of at least 0.005 nats and lower absolute quantized CE. Other
+precisions and the affine quantizer are exploratory. Cache qualification
+does not clear inherited model numerical flags or establish a new architecture
+winner. Fake quantization measures quality, not packed memory savings or speed.
+
+Configure an output directory outside the source checkout. The supervisor
+writes `cache-depth/` and/or `cache-confirmation/`, including `PLAN.json`,
+`STATUS.json`, `QUALIFICATION.json`, `REPORT.md`, `REPORT.json` and `cells/`.
+Generated JSON, checkpoints, logs and experiment artifacts stay in that
+external directory; commit only the reproducible source and curated findings.
