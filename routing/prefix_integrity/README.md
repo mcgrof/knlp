@@ -90,6 +90,29 @@ python -m routing.prefix_integrity.semantic_drift \
 Fold the result back into the verdict with `--semantic-json semantic.json` on
 the `validate` call.
 
+## KVPress compression drift
+
+The [KVPress drift runner](kvpress_drift.py) compares actual KVPress compression
+methods with an uncompressed model cache. It uses four synthetic questions
+over a shared context and writes next-token KL divergence, top-1 agreement,
+greedy-answer match, and expected-answer retrieval to JSON.
+
+Install `torch`, `kvpress`, `transformers`, and `accelerate` in the model
+environment, then run:
+
+```bash
+python -m routing.prefix_integrity.kvpress_drift \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --compression-ratio 0.75 \
+  --out kvpress.json
+```
+
+`--compression-ratio 0.75` removes about 75% of the context cache. Compression
+happens before each question is appended, so this measures query-independent
+quality loss. Cross-query prefix reuse needs a separate cache-contract replay.
+The runner records a per-method error if a press has an incompatible API and
+continues with the remaining methods.
+
 ## Writing an adapter
 
 Implement `select_blocks(request, num_blocks, budget_k) -> list[int]` (selector)
