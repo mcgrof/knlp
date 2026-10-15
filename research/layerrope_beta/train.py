@@ -4,6 +4,7 @@
 import argparse
 import gc
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -104,6 +105,8 @@ def train(root, job, checkpoints, max_seconds):
                 seconds=time.monotonic() - began,
             )
         )
+        if not math.isfinite(value["ce"]):
+            raise FloatingPointError("Nonfinite clean validation loss")
         model.train()
 
     completed = 0
@@ -161,6 +164,8 @@ def train(root, job, checkpoints, max_seconds):
                 destination / "QUANTIZATION.json",
                 quantization(model, arrays["final"], "cuda"),
             )
+        if not all(c["model_finite"] for c in result["checkpoints"]):
+            raise FloatingPointError("Nonfinite saved model state")
         result["status"] = "complete"
     except BaseException as error:
         result.update(
