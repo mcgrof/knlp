@@ -1,0 +1,6 @@
+huggingface-hub==0.35.3
+peft==0.17.1
+safetensors==0.6.2
+sentencepiece==0.2.1
+tokenizers==0.22.1
+transformers==4.57.1
