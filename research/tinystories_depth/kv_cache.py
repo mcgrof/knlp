@@ -147,7 +147,12 @@ def bytes_per_token(case, depth=32, heads=2, head_dim=64):
 
 
 def cases():
-    """Return the fixed clean, two-quantizer and K/V attribution sweep."""
+    """Return both quantizers' full 5x5 K/V grid and one shared clean cell.
+
+    Unequal K/V bit widths are independent of the quantizer's codebook:
+    both the signed symmetric and floating-offset affine methods sweep
+    every pair. Preserve the original 13-cell order for old report readers.
+    """
     rows = [dict(name="clean", k_bits=16, v_bits=16, method="symmetric")]
     for method in ("symmetric", "affine"):
         for bits in (8, 4, 3, 2):
@@ -163,6 +168,15 @@ def cases():
         rows.append(
             dict(name=f"symmetric-K{k}V{v}", k_bits=k, v_bits=v, method="symmetric")
         )
+    present = {(r["method"], r["k_bits"], r["v_bits"]) for r in rows}
+    for method in ("symmetric", "affine"):
+        for k in (16, 8, 4, 3, 2):
+            for v in (16, 8, 4, 3, 2):
+                if (k, v) == (16, 16) or (method, k, v) in present:
+                    continue
+                rows.append(
+                    dict(name=f"{method}-K{k}V{v}", k_bits=k, v_bits=v, method=method)
+                )
     return rows
 
 
