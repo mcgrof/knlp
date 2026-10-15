@@ -159,3 +159,16 @@ serving speedup or the workspace required by a serving implementation.
 `runner.timing_record(..., output_tokens=512)` changes the forced output length
 and derives token accounting and mean decode intervals from that length. The
 default remains 128. Compare complete-request rates at each length separately.
+
+`prefill_evidence.py` captures all explicit-backend dispatch calls in one
+profiler session after timing. Synchronized named regions bind each call to
+complete device kernel events. The combined trace is retained with derived
+per-cell slices; a missing expected attention family fails the evidence gate.
+No profiled duration enters the unprofiled timing verdict.
+
+The expansion diagnostic allocates one flat V scratch buffer per fixed batch,
+sized from actual read pages, and reuses its backing storage across layers.
+Each case releases its wrappers and plan closures before the next layer.
+Pointer/size records, post-case allocator state, and reset per-case peaks make
+that lifetime auditable. Component timing still excludes serving-pool gathering
+and scratch allocation. It does not qualify a serving implementation.
