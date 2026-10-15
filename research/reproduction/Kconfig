@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache"
 	default "mnist"
 
 config RESIDUAL_SMOKE
@@ -51,6 +51,28 @@ config RESIDUAL_CPU_THREADS
 	int "CPU thread limit"
 	default 8
 	range 1 64
+
+config RESIDUAL_KV_CACHE
+	bool "Evaluate KV-cache fake quantization after TinyStories training"
+	default y
+	help
+	  Reuse saved final checkpoints. Keep the three-seed residual/mHC
+	  cohort separate from the eight-seed depth-code confirmation.
+	  No quantization-aware training or packed-kernel benchmark runs.
+
+config RESIDUAL_CACHE_DEPTH_RUN
+	string "Saved depth-screen reproduction run for cache-only evaluation"
+	default ""
+	help
+	  The top-level external run directory containing depth-screen/ and
+	  data/. Used only by the cache-only preset; no training is repeated.
+
+config RESIDUAL_CACHE_CONFIRMATION_RUN
+	string "Saved confirmation reproduction run for cache-only evaluation"
+	default ""
+	help
+	  The top-level external run directory containing confirmation/.
+	  Supply either saved cohort or both. Reports stay separate.
 
 endif
 endmenu
