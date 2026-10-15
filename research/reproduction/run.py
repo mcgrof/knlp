@@ -24,6 +24,7 @@ STUDIES = (
     "confirmation",
     "cache",
     "gsm8k",
+    "beta",
 )
 
 
@@ -77,6 +78,10 @@ def configuration(path, overrides=()):
         raise ValueError("Unknown study or device")
     if result["max_seconds"] < 0 or not 1 <= result["cpu_threads"] <= 64:
         raise ValueError("Invalid resource limit")
+    if result["study"] == "beta" and result["max_seconds"] == 0:
+        raise ValueError(
+            "The full-gain beta study requires a finite elapsed-time limit"
+        )
     if result["seeds"] and result["study"] not in ("null", "layerrope"):
         raise ValueError("Aggregate and confirmation seed sets cannot be replaced")
     return result
@@ -89,7 +94,19 @@ def plan(config):
     return {
         "effective_config": config,
         "scope": "smoke" if config["smoke"] else "scientific reproduction",
-        "scientific_confirmation_allowed": not config["smoke"],
+        "scientific_confirmation_allowed": not config["smoke"]
+        and config["study"] != "beta",
+        "full_gain_beta": {
+            "beta_initializations": [-1.0, -0.5, 0.0],
+            "language_depth": 32,
+            "language_pilots": 32,
+            "language_finals": 24,
+            "mnist_rows": 14,
+            "mnist_paired_seeds": 10,
+            "checkpointed": True,
+            "gpu_count": 2,
+            "metrics": "Own-clean cross-entropy, incremental cache damage, residual distributions, separate FP4/FP8 scopes and MNIST transfer/utility",
+        },
         "mnist": {
             "reference_models": 100,
             "historical_cohort_seeds": list(range(2101, 2121)),
@@ -321,6 +338,45 @@ class Runner:
             if self.config[field]:
                 self.cache(cohort, Path(self.config[field]).expanduser().resolve())
 
+    def beta(self):
+        if self.config["smoke"]:
+            self.command(
+                "research.layerrope_beta.smoke",
+                "--root",
+                self.root / "beta-smoke",
+                "--device",
+                self.config["device"],
+            )
+            return
+        root = self.root / "beta"
+        checkpoints = (
+            Path(self.config["checkpoint_dir"]).expanduser() / self.root.name
+            if self.config["checkpoint_dir"]
+            else root / "checkpoints"
+        )
+        self.command(
+            "research.layerrope_beta.run",
+            "prepare",
+            "--root",
+            root,
+            "--data-cache",
+            self.config["data_dir"],
+            "--checkpoints",
+            checkpoints,
+            cpu=True,
+        )
+        self.command(
+            "research.layerrope_beta.run",
+            "run",
+            "--root",
+            root,
+            "--checkpoints",
+            checkpoints,
+            "--max-seconds",
+            max(1, self.config["max_seconds"] - int(time.monotonic() - self.started)),
+        )
+        self.command("research.layerrope_beta.analyze", "--root", root, cpu=True)
+
     def gsm8k(self):
         if self.config["smoke"]:
             raise ValueError("Use residual-test for bounded CPU generation checks")
@@ -473,12 +529,14 @@ def execute(config):
             runner.saved_cache()
         elif config["study"] == "gsm8k":
             runner.gsm8k()
+        elif config["study"] == "beta":
+            runner.beta()
         else:
             runner.tinystories()
         report["status"] = "complete"
         report["scientific_confirmation_allowed"] = not config["smoke"] and config[
             "study"
-        ] not in ("cache", "gsm8k")
+        ] not in ("cache", "gsm8k", "beta")
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise
