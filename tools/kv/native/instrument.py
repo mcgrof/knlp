@@ -193,7 +193,7 @@ def native_memory_state(worker):
     }
 
 
-def install(model, scales, arm, trace_dir, packed_expectation=None):
+def configure(model, scales, arm, trace_dir, packed_expectation=None):
     selected = []
     packed = []
     for name, module in model.named_modules():
@@ -301,6 +301,16 @@ def install(model, scales, arm, trace_dir, packed_expectation=None):
                 raise RuntimeError(
                     "mixed K/V regions are not contiguous disjoint views"
                 )
+    return {
+        "layers": len(selected),
+        "packed_modules": len(packed),
+        "cache_dtypes": sorted(expected),
+    }
+
+
+def install(model, scales, arm, trace_dir, packed_expectation=None):
+    receipt = configure(model, scales, arm, trace_dir, packed_expectation)
+    expected = set(receipt.pop("cache_dtypes"))
     model._study_profiler = torch.profiler.profile(
         activities=[
             torch.profiler.ProfilerActivity.CPU,
@@ -309,7 +319,7 @@ def install(model, scales, arm, trace_dir, packed_expectation=None):
     )
     model._study_profiler.__enter__()
     observe_wrappers(model, trace_dir, expected_types=expected)
-    return {"layers": len(selected), "packed_modules": len(packed)}
+    return receipt
 
 
 def finish_profile(model, trace_dir):
