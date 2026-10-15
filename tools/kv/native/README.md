@@ -135,3 +135,27 @@ delegates to the pinned worker and allocator without changing their results.
 The per-process Torch allocator ceiling is applied in the actual worker,
 including when the engine runs in a separate process. Driver memory and
 non-Torch allocations remain separate measurements.
+
+`prefill.py` captures complete single-request paged prefill inputs from selected
+model layers. The component path targets one fixed geometry: 8,192 tokens,
+16-token pages, 32 query heads, eight K/V heads, and a head dimension of 128.
+Its component runner compares explicit attention backends on the
+same query, key, and stored value bytes, including causal page tails. Larger
+component batches repeat a captured request in distinct page storage. They
+measure a kernel workload; replicas are not independent quality observations.
+Fixture copies and workspace allocation stay outside the measured operation.
+The inclusive duration includes planning, attention, and required output scaling;
+CUDA event and host planning times are also retained. Compilation and separate
+profiler calls do not enter the unprofiled measurements. Inspect each trace for
+device kernels before using it as dispatch evidence. Numerical checks retain
+full-tensor hashes and fixed output samples, rather than every output tensor.
+
+The value-expansion diagnostic uses transient FP16 scratch for the pages
+read by each layer. It includes the cast and the scale multiply after the native
+attention output has rounded to its output dtype. Its compact page layout does
+not include gathering from a serving engine's full pool. It cannot establish a
+serving speedup or the workspace required by a serving implementation.
+
+`runner.timing_record(..., output_tokens=512)` changes the forced output length
+and derives token accounting and mean decode intervals from that length. The
+default remains 128. Compare complete-request rates at each length separately.
