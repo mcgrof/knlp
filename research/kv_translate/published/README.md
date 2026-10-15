@@ -12,24 +12,21 @@ reproduction of their data protocol. It is opt-in research code. No import,
 help command, Kconfig target, or default build downloads a model, rents a GPU,
 or starts training.
 
-## Released and withheld artifacts
+## Released code and report
 
 The repository releases:
 
 - translator fitting, distillation, retained-cache inference, native controls,
   scoring, audit, migration comparison, and checkpoint-selection code;
 - CPU fixtures for shapes, cache ownership, scoring, gates, resume contracts,
-  checkpoint comparison, and receipt handling;
-- the 16-comparison aggregate at
-  [`docs/data/kv-lingo-results.json`](../../../docs/data/kv-lingo-results.json);
-  and
-- [`SOURCE_MANIFEST.json`](SOURCE_MANIFEST.json), which maps the clean public
-  import to the executed source snapshot.
+  checkpoint comparison, and receipt handling; and
+- the final static [KV-Lingo results page](../../../docs/kv-lingo.html), which
+  presents all 16 development comparisons and the reproduction limits.
 
 The four trained translator checkpoints, raw conversations, raw model outputs,
-and full frozen token stream are not released. The aggregate can reproduce the
-published decisions and figures. It cannot independently replay model
-inference or training without equivalent inputs and newly trained maps.
+full frozen token stream, and machine-readable result records are not released.
+The HTML page records the published decisions and figures. It cannot replay
+model inference or training without equivalent inputs and newly trained maps.
 
 ## Recorded configuration
 
@@ -67,15 +64,8 @@ make defconfig-kv-lingo
 make CONFIG_KV_LINGO_PYTHON=/path/to/python
 ```
 
-This runs only offline CPU tests and verifies the released aggregate SHA-256.
-The direct aggregate check is:
-
-```sh
-python -m research.kv_translate.published.verify_public_results \
-  docs/data/kv-lingo-results.json \
-  --expect-sha256 \
-  2051e9abdb85ad49c38872d7caf15d8488d4e3a3795115d363e5355d238d44b1
-```
+This runs only offline CPU tests. It does not download models or reproduce the
+GPU evaluation.
 
 ## Full data preparation
 
