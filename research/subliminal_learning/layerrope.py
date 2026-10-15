@@ -4,8 +4,9 @@
 Rotate the shared gain vector, not the activations. Adjacent real gain
 entries form complex pairs. This MNIST adaptation follows the paper's
 Vision Transformer setting: condition existing pre-LayerNorm gains and
-retain each layer's centering and bias. Packed models share across depth
-only; each model has its own gain and all four schedule parameters.
+retain each layer's centering and bias. The same gain generator can also
+gate a block output without output normalization. Each site and packed
+model has its own gain and four schedule parameters, shared across depth.
 """
 
 import torch

@@ -53,9 +53,10 @@ class Recipe:
     mhc_init_logit: float = 4.0
     ln_eps: float = 1e-5
     block_norm: bool = True
-    # Vision-model LayerRoPE adaptation: existing block input gains only.
+    # Vision-model gains at block inputs, with an optional independent write gain.
     # Intercepts are explicit choices; the paper does not specify them.
     layerrope: bool = False
+    layerrope_output_gain: bool = False
     layerrope_base: float = 100.0
     layerrope_mag_slope: float = 0.0
     layerrope_rot_slope: float = -0.5
@@ -198,6 +199,7 @@ KCONFIG_KEYS = {
     "SUBLIMINAL_LN_EPS": ("ln_eps", _float),
     "SUBLIMINAL_BLOCK_NORM": ("block_norm", _bool),
     "SUBLIMINAL_LAYERROPE": ("layerrope", _bool),
+    "SUBLIMINAL_LAYERROPE_OUTPUT_GAIN": ("layerrope_output_gain", _bool),
     "SUBLIMINAL_LAYERROPE_BASE": ("layerrope_base", _float),
     "SUBLIMINAL_LAYERROPE_MAG_SLOPE": ("layerrope_mag_slope", _float),
     "SUBLIMINAL_LAYERROPE_ROT_SLOPE": ("layerrope_rot_slope", _float),
@@ -335,6 +337,8 @@ def validate(r):
         errors.append("HC/mHC need at least two streams")
     if not r.block_norm and r.arch not in ("residual_mlp", "noskip_mlp"):
         errors.append("block_norm=n is only defined for residual_mlp and noskip_mlp")
+    if r.layerrope_output_gain and not r.layerrope:
+        errors.append("layerrope_output_gain requires layerrope")
     if r.layerrope:
         if r.arch not in ("residual_mlp", "hc", "hc_static", "mhc") or not r.block_norm:
             errors.append(
