@@ -570,10 +570,12 @@ def run_gsm(args, manifest, scales):
     )
 
 
-def timing_record(llm, prompts, batch, label, out, provenance):
+def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128):
     import numpy as np
 
-    params = SamplingParams(temperature=0, max_tokens=128, ignore_eos=True)
+    if not isinstance(output_tokens, int) or output_tokens < 2:
+        raise ValueError("timing requires at least two output tokens")
+    params = SamplingParams(temperature=0, max_tokens=output_tokens, ignore_eos=True)
     # Prefix caching is disabled. All requests are enqueued before stepping
     # by the in-process engine; the observer still verifies actual concurrency.
     schedule.label(None)
@@ -606,7 +608,7 @@ def timing_record(llm, prompts, batch, label, out, provenance):
     metrics = []
     for output in outputs:
         completion = output.outputs[0]
-        if len(completion.token_ids) != 128 or output.num_cached_tokens:
+        if len(completion.token_ids) != output_tokens or output.num_cached_tokens:
             raise RuntimeError("synthetic timing output/cache coverage mismatch")
         m = dict(vars(output.metrics))
         m["request_id"] = output.request_id
@@ -651,7 +653,10 @@ def timing_record(llm, prompts, batch, label, out, provenance):
     prefill_span = max(
         m["arrival_time"] + m["first_token_latency"] for m in metrics
     ) - min(m["arrival_time"] for m in metrics)
-    itl = [(m["last_token_ts"] - m["first_token_ts"]) / 127 for m in metrics]
+    itl = [
+        (m["last_token_ts"] - m["first_token_ts"]) / (output_tokens - 1)
+        for m in metrics
+    ]
     memory = llm.collective_rpc(callbacks.native_memory_state)
     driver_peak = max(x["cuda_device_used_bytes"] for x in warm_memory + memory)
     from .completion import decode_intervals
@@ -684,12 +689,14 @@ def timing_record(llm, prompts, batch, label, out, provenance):
         "scheduler_rate_note": "Historical full_active_decode field is a scheduler-window rate, not isolated GPU decode.",
         "batch": batch,
         "seconds": ended - started,
-        "output_tokens": batch * 128,
+        "output_tokens": batch * output_tokens,
         "input_tokens_per_request": len(prompts[0]["prompt_token_ids"]),
-        "output_tokens_per_request": 128,
+        "output_tokens_per_request": output_tokens,
         "ignore_eos": True,
         "warmup_excluded": True,
-        "end_to_end_output_tokens_per_second": batch * 128 / (ended - started),
+        "end_to_end_output_tokens_per_second": batch
+        * output_tokens
+        / (ended - started),
         "full_active_decode_tokens_per_second": (
             batch * len(intervals) / sum(intervals) if intervals else None
         ),
