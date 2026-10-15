@@ -113,7 +113,7 @@ make
 
 It checks independent scalar quantizer references, token-local statistics,
 incremental cached attention, exact noquant parity for the ordinary-residual
-and mHC callers, checkpoint loading and all 13 settings on synthetic tokens.
+and mHC callers, checkpoint loading and all 49 settings on synthetic tokens.
 It does not reproduce training or issue a scientific verdict.
 
 To evaluate saved models without training again:
@@ -143,10 +143,14 @@ recipes must match between seed pairs. The confirmation cohort contains
 seven mHC-derived rows, eight seeds and 4,000 updates, using its separate
 final array. It has no ordinary-residual baseline. Never pool these cohorts.
 
-Each checkpoint is evaluated clean, with symmetric and affine K/V at
-8/4/3/2 bits, and with symmetric K8/V4, K4/V8, K16/V4 and K4/V16. Quantization
-occurs after token RoPE for K and before attention for V. Statistics use each
-token/head's 64 channels, with no future-token scale leakage or unquantized
+Each checkpoint is evaluated on the full Cartesian product of K and V at
+16/8/4/3/2 bits for both quantizers, sharing one clean K16/V16 cell: 49
+settings. Unequal K/V precision and the choice of symmetric or affine
+codebook are separate controls. This includes both directions of mixed
+2/3-bit pairs and K-only or V-only quantization at every low bit width.
+Quantization occurs after token RoPE for K and before attention for V.
+Statistics use each token/head's 64 channels, with no future-token scale
+leakage or unquantized
 residual window. Symmetric 2-bit has three levels; affine 2-bit has four and
 stores a floating minimum as well as a scale. Quantization arithmetic and
 metadata are FP32; dequantized attention values are BF16. Weights, queries,
@@ -154,8 +158,12 @@ routing and norm precision remain unchanged.
 
 Reports retain own-clean CE increases, absolute CE, every window loss,
 per-seed passes and ideal packed bytes including metadata. The pass boundary
-is <=0.1 nats on every seed. Three-seed comparisons are descriptive. The
-eight-seed primary endpoint is symmetric K4/V4 damage, with six one-sided
+is <=0.1 nats on every seed. Reports show every minimum-byte passing tie,
+savings against the best passing equal-bit case, and byte versus worst-seed
+damage Pareto frontiers. Equal K/V bit minima alone do not describe the
+asymmetric boundary. The expanded grid is exploratory on the reused final
+arrays. Three-seed comparisons are descriptive. The eight-seed primary
+endpoint is symmetric K4/V4 damage, with six one-sided
 paired sign tests and Holm correction. The effect rule also requires a mean
 damage decrease of at least 0.005 nats and lower absolute quantized CE. Other
 precisions and the affine quantizer are exploratory. Cache qualification

@@ -185,6 +185,49 @@ def paired(values):
     )
 
 
+def cache_frontier(case_summary, method):
+    """Compare packed byte cost with the worst seed's own-clean damage.
+
+    The pass rule requires every seed. Keep equal-cost ties at the minimum,
+    and report the full exploratory Pareto set, including failing cells.
+    """
+    selected = {
+        name: c
+        for name, c in case_summary.items()
+        if name == "clean" or name.startswith(method + "-")
+    }
+    passing = [name for name, c in selected.items() if c["passes"] == c["n"]]
+    definitions = {c["name"]: c for c in cases()}
+
+    def cost(name):
+        return selected[name]["ideal_cache_bytes_per_token"]
+
+    minimum = min(cost(name) for name in passing)
+    equal = min(
+        cost(name)
+        for name in passing
+        if name == "clean" or definitions[name]["k_bits"] == definitions[name]["v_bits"]
+    )
+    frontier = []
+    for name, c in selected.items():
+        dominated = any(
+            cost(other) <= cost(name)
+            and d["max_damage"] <= c["max_damage"]
+            and (cost(other) < cost(name) or d["max_damage"] < c["max_damage"])
+            for other, d in selected.items()
+        )
+        if not dominated:
+            frontier.append(name)
+    return dict(
+        minimum_passing_bytes=minimum,
+        minimum_passing_cases=sorted(name for name in passing if cost(name) == minimum),
+        fraction_of_bf16=minimum / cost("clean"),
+        minimum_equal_bits_passing_bytes=equal,
+        saving_vs_equal_bits_percent=100 * (1 - minimum / equal),
+        pareto_cases=sorted(frontier, key=lambda name: (cost(name), name)),
+    )
+
+
 def summarize(root, records, cohort, smoke=False):
     groups = {}
     for record in records:
@@ -220,6 +263,9 @@ def summarize(root, records, cohort, smoke=False):
                     or [16]
                 )
                 for method in ("symmetric", "affine")
+            },
+            cache_frontiers={
+                method: cache_frontier(c, method) for method in ("symmetric", "affine")
             },
         )
     contrasts = []
@@ -301,6 +347,20 @@ def summarize(root, records, cohort, smoke=False):
         text.append(
             f"| {key} | {g['cases']['symmetric-K4V4']['mean_damage']:.6f} | {g['cases']['affine-K2V2']['mean_damage']:.6f} | {g['lowest_passing_bits']['symmetric']} / {g['lowest_passing_bits']['affine']} |"
         )
+    text.extend(
+        [
+            "",
+            "Lowest bits above refers only to equal K/V precision. Unequal precision must be compared by total bytes, including quantizer metadata. The expanded grid and its minimum-byte choices are exploratory on reused final arrays.",
+            "",
+            "| Model | Quantizer | Minimum all-seed bytes/token | K/V choices | Saving vs best passing equal-bit case |",
+            "| --- | --- | ---: | --- | ---: |",
+        ]
+    )
+    for key, g in summary.items():
+        for method, frontier in g["cache_frontiers"].items():
+            text.append(
+                f"| {key} | {method} | {frontier['minimum_passing_bytes']:g} | {', '.join(frontier['minimum_passing_cases'])} | {frontier['saving_vs_equal_bits_percent']:.2f}% |"
+            )
     text.extend(
         [
             "",
