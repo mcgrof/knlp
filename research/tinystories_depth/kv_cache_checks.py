@@ -70,7 +70,11 @@ def qualify(device):
         ("symmetric", 4, 4),
         ("symmetric", 16, 2),
         ("symmetric", 2, 16),
+        ("symmetric", 3, 2),
+        ("symmetric", 2, 3),
         ("affine", 2, 2),
+        ("affine", 3, 2),
+        ("affine", 2, 3),
     ):
         policy = CachePolicy(kb, vb, method)
         with install(model, policy), cast():
