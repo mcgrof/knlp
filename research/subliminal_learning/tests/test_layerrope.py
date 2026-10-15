@@ -72,9 +72,19 @@ def test_packed_models_do_not_share_layerrope_updates(arch):
     assert state_digest(model, 1) == before
 
 
-@pytest.mark.parametrize("arch", ["residual_mlp", "hc"])
-def test_layerrope_active_null_is_stationary_and_signal_learns(arch):
-    model = build(Recipe(arch=arch, width=16, blocks=4, layerrope=True), 2)
+@pytest.mark.parametrize("arch", ["residual_mlp", "hc", "mhc"])
+@pytest.mark.parametrize("output_gain", [False, True])
+def test_layerrope_active_null_is_stationary_and_signal_learns(arch, output_gain):
+    model = build(
+        Recipe(
+            arch=arch,
+            width=16,
+            blocks=4,
+            layerrope=True,
+            layerrope_output_gain=output_gain,
+        ),
+        2,
+    )
     init_model(model, ["seed-1", "seed-2"], "init")
     initial = copy.deepcopy(model)
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -126,6 +136,45 @@ def test_recipe_records_layerrope_and_rejects_invalid_combinations():
     ):
         with pytest.raises(ValueError):
             validate(Recipe(**{"arch": "residual_mlp", "layerrope": True, **changes}))
+
+
+@pytest.mark.parametrize("arch", ["residual_mlp", "hc", "mhc"])
+@pytest.mark.parametrize("beta", [-1.0, -0.5, 0.0])
+def test_input_and_output_gains_follow_the_author_equation(arch, beta):
+    recipe = Recipe(
+        arch=arch,
+        width=16,
+        blocks=4,
+        layerrope=True,
+        layerrope_output_gain=True,
+        layerrope_mag_slope=beta,
+        layerrope_rot_slope=beta,
+    )
+    model = build(recipe, 2).double()
+    init_model(model, ["seed-1", "seed-2"], "init")
+    for schedule in (model.layerrope, model.output_layerrope):
+        gains = schedule()
+        layers = torch.arange(1, 5, dtype=torch.double)
+        angle = layers.pow(beta)[:, None] * 100 ** (
+            -torch.arange(8, dtype=torch.double) / 8
+        )
+        expected = torch.view_as_real(
+            torch.complex(torch.ones(8), torch.ones(8)).to(torch.complex128)[None]
+            * torch.polar(layers.pow(beta)[:, None].expand_as(angle), angle)
+        ).flatten(-2)
+        torch.testing.assert_close(gains[0], expected)
+    x = torch.randn(2, 7, 784, dtype=torch.double)
+    out = model(x)
+    out.square().mean().backward()
+    assert all(
+        p.grad is not None and p.grad.isfinite().all()
+        for p in model.output_layerrope.parameters()
+    )
+    with torch.no_grad():
+        model.output_layerrope.weight.zero_()
+    # Zeroing the write gate removes all block updates, without an output norm.
+    expected = model.head(model.final_norm(model.stem(x)))
+    torch.testing.assert_close(model(x), expected)
 
 
 @pytest.mark.parametrize(

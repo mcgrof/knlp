@@ -95,9 +95,10 @@ class Block(nn.Module):
         self.fc1 = MLinear(n_models, width, width)
         self.fc2 = MLinear(n_models, width, width)
 
-    def forward(self, h, gain=None):
+    def forward(self, h, gain=None, output_gain=None):
         h = self.norm(h) if gain is None else self.norm(h, gain=gain)
-        return self.fc2(F.relu(self.fc1(h)))
+        out = self.fc2(F.relu(self.fc1(h)))
+        return out if output_gain is None else out * output_gain[:, None, :]
 
 
 class ResidualFamily(nn.Module):
@@ -115,6 +116,7 @@ class ResidualFamily(nn.Module):
         norm=True,
         routing=None,
         layerrope=None,
+        layerrope_output_gain=False,
     ):
         super().__init__()
         r = {**ROUTING_DEFAULTS, **(routing or {})}
@@ -126,6 +128,11 @@ class ResidualFamily(nn.Module):
         block_norm = norm and arch != "gr"
         self.layerrope = (
             LayerRoPE(n_models, width, blocks, **layerrope) if layerrope else None
+        )
+        self.output_layerrope = (
+            LayerRoPE(n_models, width, blocks, **layerrope)
+            if layerrope and layerrope_output_gain
+            else None
         )
         self.blocks = nn.ModuleList(
             Block(n_models, width, eps, block_norm, self.layerrope is not None)
@@ -236,8 +243,20 @@ class ResidualFamily(nn.Module):
     def forward(self, x):
         h = self.stem(x)
         gains = self.layerrope() if self.layerrope is not None else None
+        output_gains = (
+            self.output_layerrope() if self.output_layerrope is not None else None
+        )
         block_fns = (
-            [partial(blk, gain=gains[:, k]) for k, blk in enumerate(self.blocks)]
+            [
+                partial(
+                    blk,
+                    gain=gains[:, k],
+                    output_gain=(
+                        output_gains[:, k] if output_gains is not None else None
+                    ),
+                )
+                for k, blk in enumerate(self.blocks)
+            ]
             if gains is not None
             else self.blocks
         )
@@ -297,6 +316,7 @@ def build(recipe, n_models):
             if recipe.layerrope
             else None
         ),
+        recipe.layerrope_output_gain,
     )
 
 
