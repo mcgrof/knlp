@@ -61,6 +61,21 @@ include Makefile.modular
 include Makefile.subliminal
 include Makefile.residual_reproduction
 
+# MUVERA presets use their own runners rather than the model training path.
+MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
+	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
+ifneq ($(strip $(MUVERA_SELECTED)),)
+MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
+	RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
+	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO KNLP_REPRODUCE_KVIO \
+	KNLP_REPRODUCE_PD KVTIDE KNLP_QUANT_FP8 KNLP_TF_REPRO \
+	KNLP_MODULAR_REPRO MATCHED_MICRO,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
+ifneq ($(words $(MUVERA_SELECTED) $(MUVERA_CONFLICTS)),1)
+$(error Conflicting workloads: $(strip $(MUVERA_SELECTED) $(MUVERA_CONFLICTS)))
+endif
+.DEFAULT_GOAL := all
+endif
+
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
 export GPT2_MAX_TIME := $(TIME)
@@ -75,7 +90,11 @@ endif
 .PHONY: all
 # The GNN workload is not an optimizer/pruning sweep, so model selection
 # wins over the optimizer/model multiple-mode test matrix.
-ifeq ($(CONFIG_RESIDUAL_REPRODUCTION),y)
+ifeq ($(CONFIG_GOOGLE_MUVERA_SMALL),y)
+all: google-muvera-small
+else ifeq ($(CONFIG_MUVERA_SMALL),y)
+all: muvera-small
+else ifeq ($(CONFIG_RESIDUAL_REPRODUCTION),y)
 all: residual-run
 else ifeq ($(CONFIG_SUBLIMINAL_LEARNING),y)
 all: subliminal-run
