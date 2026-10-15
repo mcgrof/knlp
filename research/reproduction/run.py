@@ -23,6 +23,7 @@ STUDIES = (
     "depth",
     "confirmation",
     "cache",
+    "gsm8k",
 )
 
 
@@ -106,7 +107,7 @@ def plan(config):
         "tinystories": {
             "kv_cache": {
                 "enabled": config["kv_cache"],
-                "cases_per_checkpoint": 13,
+                "cases_per_checkpoint": 49,
                 "depth_cohort": "21 saved endpoints, three seeds, 2000 updates; R/M depths 4/16/32 plus M-O at 32",
                 "confirmation_cohort": "56 saved endpoints, eight seeds, 4000 updates; seven mHC-derived rows",
                 "pass_rule": "Every seed adds <=0.1 nats over its own clean CE",
@@ -320,6 +321,21 @@ class Runner:
             if self.config[field]:
                 self.cache(cohort, Path(self.config[field]).expanduser().resolve())
 
+    def gsm8k(self):
+        if self.config["smoke"]:
+            raise ValueError("Use residual-test for bounded CPU generation checks")
+        self.command(
+            "research.reproduction.gsm8k",
+            "--root",
+            self.root / "gsm8k",
+            "--source-run",
+            self.config["cache_depth_run"],
+            "--cache",
+            self.config["data_dir"],
+            "--device",
+            self.config["device"],
+        )
+
     def confirmation(self):
         from research.mo_variants.stage_c_common import read, sha
 
@@ -416,6 +432,8 @@ class Runner:
 def execute(config):
     import torch
 
+    if config["study"] == "gsm8k" and not config["cache_depth_run"]:
+        raise ValueError("Set CACHE_DEPTH_RUN to a saved depth reproduction run")
     if (
         config["study"] == "cache"
         and not config["smoke"]
@@ -453,12 +471,14 @@ def execute(config):
             runner.mnist()
         elif config["study"] == "cache":
             runner.saved_cache()
+        elif config["study"] == "gsm8k":
+            runner.gsm8k()
         else:
             runner.tinystories()
         report["status"] = "complete"
-        report["scientific_confirmation_allowed"] = (
-            not config["smoke"] and config["study"] != "cache"
-        )
+        report["scientific_confirmation_allowed"] = not config["smoke"] and config[
+            "study"
+        ] not in ("cache", "gsm8k")
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise
