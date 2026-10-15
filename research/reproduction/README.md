@@ -31,6 +31,8 @@ and reporting order. A failed qualification prevents measured training.
 | `layerrope-mhc-tinystories-kv-cache` | Cache-only evaluation of one or both saved cohorts; no training |
 | `layerrope-mhc-tinystories-kv-cache-smoke` | Bounded CPU cache-operator, checkpoint and reporting path on synthetic tokens |
 | `layerrope-mhc-tinystories-gsm8k` | First 16 GSM8K questions on saved clean 32-layer residual/mHC/M-O checkpoints; feasibility only |
+| `layerrope-mhc-beta` | Full input/output gains with three beta initializations; paired MNIST and 32-layer TinyStories comparisons |
+| `layerrope-mhc-beta-smoke` | Synthetic CPU training, checkpoint, observer and FP4/FP8 evaluation checks |
 
 For example:
 

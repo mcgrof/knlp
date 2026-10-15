@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta"
 	default "mnist"
 
 config RESIDUAL_SMOKE

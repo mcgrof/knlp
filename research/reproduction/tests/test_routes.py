@@ -21,6 +21,8 @@ PRESETS = (
     "layerrope-mhc-tinystories-kv-cache",
     "layerrope-mhc-tinystories-kv-cache-smoke",
     "layerrope-mhc-tinystories-gsm8k",
+    "layerrope-mhc-beta",
+    "layerrope-mhc-beta-smoke",
 )
 
 
