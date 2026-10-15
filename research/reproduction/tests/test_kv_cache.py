@@ -5,8 +5,13 @@ import json
 import pytest
 import torch
 
-from research.reproduction.kv_cache import load, paired, run
-from research.tinystories_depth.kv_cache import CachePolicy, install
+from research.reproduction.kv_cache import cache_frontier, load, paired, run
+from research.tinystories_depth.kv_cache import (
+    CachePolicy,
+    bytes_per_token,
+    cases,
+    install,
+)
 from research.tinystories_depth.kv_cache_checks import qualify
 from research.tinystories_depth.model import Model
 from research.tinystories_depth.train import state_hash
@@ -79,8 +84,47 @@ def test_full_cache_smoke_checks_all_cases_without_a_verdict(tmp_path):
     )
     assert set(report["groups"]) == {"R-D2", "M-D2", "M-O-D2"}
     records = [json.loads(p.read_text()) for p in (root / "cells").glob("*.json")]
-    assert all(len(r["cases"]) == 13 and r["weights_unchanged"] for r in records)
+    assert all(len(r["cases"]) == 49 and r["weights_unchanged"] for r in records)
     assert all(c["predicted_tokens"] == 32 for r in records for c in r["cases"])
+
+
+def test_grid_includes_both_directions_and_metadata_cost():
+    grid = cases()
+    assert len(grid) == len({c["name"] for c in grid}) == 49
+    for method in ("symmetric", "affine"):
+        pairs = {
+            (c["k_bits"], c["v_bits"])
+            for c in grid
+            if c["method"] == method or c["name"] == "clean"
+        }
+        assert pairs == {(k, v) for k in (16, 8, 4, 3, 2) for v in (16, 8, 4, 3, 2)}
+    asym = next(c for c in grid if c["name"] == "symmetric-K3V2")
+    assert bytes_per_token(asym)["ideal_total_bytes"] == 3072
+    affine = next(c for c in grid if c["name"] == "affine-K2V2")
+    assert bytes_per_token(affine)["ideal_total_bytes"] == 3072
+
+
+def test_byte_frontier_requires_every_seed_and_rejects_dominated_pairs():
+    values = {
+        "clean": (16384, 0, 3),
+        "symmetric-K3V3": (3584, 0.07, 3),
+        "symmetric-K3V2": (3072, 0.09, 3),
+        "symmetric-K2V3": (3072, 0.11, 2),
+        "symmetric-K2V2": (2560, 0.4, 0),
+    }
+    summary = {
+        name: dict(ideal_cache_bytes_per_token=b, max_damage=d, passes=p, n=3)
+        for name, (b, d, p) in values.items()
+    }
+    result = cache_frontier(summary, "symmetric")
+    assert result["minimum_passing_bytes"] == 3072
+    assert result["minimum_passing_cases"] == ["symmetric-K3V2"]
+    assert result["saving_vs_equal_bits_percent"] == pytest.approx(100 / 7)
+    assert "symmetric-K2V3" not in result["pareto_cases"]
+    assert "symmetric-K2V2" in result["pareto_cases"]
+    summary["symmetric-K2V3"].update(passes=3, max_damage=0.09)
+    ties = cache_frontier(summary, "symmetric")
+    assert ties["minimum_passing_cases"] == ["symmetric-K2V3", "symmetric-K3V2"]
 
 
 def test_seed_statistics_do_not_treat_windows_as_replicates():
