@@ -379,28 +379,15 @@ def screen(fixtures, destination, config):
                                         rows=rows,
                                     )
                                 )
-                        # Profile separate calls, after all unprofiled measurements.
-                        for backend in ["fa3", "fa2"]:
-                            with torch.profiler.profile(
-                                activities=[
-                                    torch.profiler.ProfilerActivity.CPU,
-                                    torch.profiler.ProfilerActivity.CUDA,
-                                ]
-                            ) as prof:
-                                operations[backend]()
-                                torch.cuda.synchronize()
-                            prof.export_chrome_trace(
-                                str(
-                                    destination
-                                    / f"trace-{dtype}-{layer}-{batch}-{backend}.json"
-                                )
-                            )
                     save(destination / "numerical.json", numerical)
                     save(destination / "timings.json", results)
                     save(destination / "compilation.json", compilation)
                     save(destination / "dispatch.json", dispatch)
                     del operations, plans, outputs, keep, q, k, v
                     torch.cuda.empty_cache()
+    from .prefill_evidence import profile_dispatch
+
+    dispatch_evidence = profile_dispatch(fixtures, destination, config)
     ratios = []
     for block in range(3):
         sums = {
@@ -421,10 +408,16 @@ def screen(fixtures, destination, config):
     numerical_passed = numerical_passed and all(
         all(row.get("exact_scale_fusion", {}).values()) for row in numerical
     )
-    passed = numerical_passed and min(ratios) > 1 and statistics.median(ratios) >= 1.01
+    passed = (
+        numerical_passed
+        and dispatch_evidence["passed"]
+        and min(ratios) > 1
+        and statistics.median(ratios) >= 1.01
+    )
     decision = dict(
         passed=passed,
         numerical_passed=numerical_passed,
+        dispatch_passed=dispatch_evidence["passed"],
         ratios=ratios,
         median=statistics.median(ratios),
         baseline="FA3",
@@ -437,78 +430,9 @@ def screen(fixtures, destination, config):
 
 
 def expansion_diagnostic(fixtures, destination, config):
-    """Count a transient value cast, native attention, and rounded output scale."""
-    destination = Path(destination)
-    rows = []
-    for layer in config["layers"]:
-        path = Path(fixtures) / "mixed" / f"layer-{layer}.pt"
-        meta = json.loads(path.with_suffix(".json").read_text())
-        data = torch.load(path, weights_only=True, map_location="cpu")
-        for batch in [1, 8]:
-            q, k, v, metadata = fixture(data, batch)
-            scratch = torch.empty(v.shape, dtype=torch.float16, device="cuda")
-            scratch.copy_(v)
-            mixed, mplan, mout, mlse, _ = build(q, k, v, metadata, "fa3")
-            native, nplan, nout, nlse, seconds = build(q, k, scratch, metadata, "fa3")
+    """Count transient expansion while reusing actual-read scratch across layers."""
+    from .prefill_evidence import expansion_reuse
 
-            def baseline(
-                mixed=mixed, q=q, k=k, v=v, mout=mout, mlse=mlse, scale=meta["scale"]
-            ):
-                return mixed.run(
-                    q,
-                    (k, v),
-                    v_scale=scale,
-                    out=mout,
-                    lse=mlse,
-                    return_lse=True,
-                )
-
-            def expanded(
-                scratch=scratch,
-                v=v,
-                native=native,
-                q=q,
-                k=k,
-                nout=nout,
-                nlse=nlse,
-                scale=meta["scale"],
-            ):
-                scratch.copy_(v)
-                native.run(q, (k, scratch), out=nout, lse=nlse, return_lse=True)
-                nout.mul_(scale)
-
-            baseline()
-            expanded()
-            numerical = dict(
-                output=compare_close(nout, mout), lse=compare_close(nlse, mlse)
-            )
-            for block, order in enumerate(config["component_orders"]):
-                for choice in order:
-                    operation, plan = (
-                        (baseline, mplan) if choice == "fa3" else (expanded, nplan)
-                    )
-                    measurements = measure(
-                        operation, plan, config["warmup"], config["repetitions"]
-                    )
-                    rows.append(
-                        dict(
-                            layer=layer,
-                            batch=batch,
-                            block=block,
-                            operation=(
-                                "mixed-fa3"
-                                if choice == "fa3"
-                                else "expand-native-fa3-scale"
-                            ),
-                            rows=measurements,
-                            numerical=numerical,
-                            scratch_bytes=scratch.numel() * scratch.element_size(),
-                            first_native_plan_seconds=seconds,
-                            torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),
-                            device_used_bytes=torch.cuda.device_memory_used(),
-                        )
-                    )
-                    save(destination / "expansion.json", rows)
-            del q, k, v, scratch, mixed, native, baseline, expanded
-            torch.cuda.empty_cache()
+    rows = expansion_reuse(fixtures, destination, config)
+    save(Path(destination) / "expansion.json", rows)
     return rows
