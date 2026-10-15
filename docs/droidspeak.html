@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DroidSpeak: partial receiver recomputation for KV-cache reuse</title>
+<meta name="description" content="An independent DroidSpeak mechanism study: a four-layer receiver interval preserved held-out HotpotQA quality while reusing the sender cache outside that interval. Distributed-system speedup remains untested.">
+<link rel="canonical" href="https://knlp.io/droidspeak.html">
+<style>
+:root{
+  --bg:#080a0e;--bg2:#0d1118;--card:#111722;--card2:#0c121b;--line:#273142;
+  --text:#e8edf5;--muted:#9aa8ba;--dim:#6e7b8e;--blue:#63b3ff;
+  --cyan:#55e1d5;--green:#55dda1;--amber:#f4bd68;--red:#ff8282;
+  --sender:#263a56;--receiver:#174f46;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 73% -8%,rgba(85,225,213,.1),transparent 36%),var(--bg);color:var(--text);font:15px/1.68 var(--sans)}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:3px}
+header{position:sticky;top:0;z-index:10;background:rgba(8,10,14,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1160px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--cyan)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1160px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--cyan)}
+h1{font-size:clamp(40px,6.8vw,76px);line-height:1;letter-spacing:-.05em;max-width:1080px;margin:16px 0 24px}h2{font-size:30px;letter-spacing:-.025em;margin:0 0 12px}h3{line-height:1.25}.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(85,221,161,.45);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(85,221,161,.09),rgba(85,225,213,.03))}.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.badge.good{color:var(--green);border-color:rgba(85,221,161,.45)}.badge.info{color:var(--cyan);border-color:rgba(85,225,213,.45)}.badge.warn{color:var(--amber);border-color:rgba(244,189,104,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);max-width:980px;margin:0 0 28px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:11px;padding:21px}.card h3{margin:5px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--cyan)}
+.metric{font:700 clamp(25px,4vw,40px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.warn{color:var(--amber)}.metric.bad{color:var(--red)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.warn{border-left-color:var(--amber)}.rule.bad{border-left-color:var(--red)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.warn strong{color:var(--amber)}.rule.bad strong{color:var(--red)}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(244,189,104,.06);color:var(--muted)}.note strong{color:var(--text)}
+.layer-demo{padding:23px;background:var(--card2);border:1px solid var(--line);border-radius:11px}.layers{display:grid;grid-template-columns:14fr 4fr 14fr;gap:3px;min-height:76px}.layers div{display:grid;place-items:center;text-align:center;padding:11px 6px;font:700 11px/1.35 var(--mono)}.reuse{background:var(--sender);color:#abd1ff}.recompute{background:var(--receiver);color:#87f5cf;outline:2px solid var(--green);outline-offset:-2px}.layer-labels{display:grid;grid-template-columns:14fr 4fr 14fr;gap:3px;margin-top:8px;color:var(--dim);font:10px var(--mono)}.layer-labels span:nth-child(2){text-align:center}.layer-labels span:last-child{text-align:right}.boundary{display:flex;align-items:center;gap:12px;margin-top:18px;color:var(--muted)}.boundary i{width:17px;height:17px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 5px rgba(85,225,213,.12)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--cyan);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.bar-chart{display:grid;gap:13px}.bar-row{display:grid;grid-template-columns:155px minmax(170px,1fr) 92px;gap:12px;align-items:center}.bar-label{font:700 11px var(--mono);color:var(--muted)}.track{height:18px;background:#080c12;border:1px solid var(--line);border-radius:4px;overflow:hidden}.fill{display:block;height:100%;background:var(--blue)}.fill.good{background:var(--green)}.fill.bad{background:var(--red)}.bar-value{text-align:right;font:700 12px var(--mono)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card2)}table{width:100%;border-collapse:collapse;min-width:800px}th,td{padding:14px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#101722;color:var(--cyan);font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:700}tbody tr:last-child td{border-bottom:0}.status{font:700 10px var(--mono);text-transform:uppercase}.status.good{color:var(--green)}.status.warn{color:var(--amber)}
+.links{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.links a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.links a:hover{border-color:rgba(99,179,255,.55);text-decoration:none}.links b{display:block;color:var(--text);margin-bottom:5px}.links span{color:var(--muted)}.fine{font-size:12px;color:var(--dim)}code{font-family:var(--mono);font-size:.92em;color:#a6d9ff}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:950px){.grid4{grid-template-columns:repeat(2,1fr)}.flow{grid-template-columns:repeat(2,1fr)}.flow div:nth-child(2):after{display:none}}
+@media(max-width:700px){main{padding:48px 17px 70px}.grid2,.grid4,.flow,.links{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}.layers{grid-template-columns:7fr 3fr 7fr}.layer-labels{grid-template-columns:7fr 3fr 7fr}.bar-row{grid-template-columns:110px minmax(110px,1fr) 70px}}
+</style>
+</head>
+<body>
+<header><nav aria-label="Page navigation">
+<a class="logo" href="./">KNLP</a><a href="kv-cache-sharing.html">all KV sharing</a><span class="spacer"></span>
+<a href="#method">method</a><a href="#profile">profile</a><a href="#held-out">held-out result</a><a href="#paper">paper vs us</a><a href="#lmcache">LMCache</a><a href="#source">source</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">DroidSpeak · independent mechanism baseline · October 2026</div>
+<h1>Reuse most sender KV.<br>Recompute the receiver layers that matter.</h1>
+<p class="lead"><strong>Our DroidSpeak baseline selected four receiver layers out of 32 and passed its held-out quality rule on a paper-named Mistral adapter pair.</strong> The receiver reused sender KV before and after that interval. It did not translate every KV tensor and did not train a new checkpoint.</p>
+<p class="lead">This result validates the partial-recomputation mechanism in one process. It does not reproduce the paper's remote transfer pipeline or its end-to-end speedups.</p>
+<div class="decision"><b>Current decision</b><span>Mechanism quality: pass. Production system and distributed speedup: not yet tested.</span></div>
+<div class="badges"><span class="badge good">4 OF 32 LAYERS RECOMPUTED</span><span class="badge info">50 PROFILE + 50 HELD-OUT RECORDS</span><span class="badge info">FULL-KV PARITY: EXACT</span><span class="badge warn">LOCAL TIMING ONLY</span></div>
+</div>
+
+<section id="method">
+<h2>What DroidSpeak changes</h2>
+<p class="sub">The key-value (KV) cache stores the attention keys and values for prior tokens. Two models can have the same architecture and token vocabulary but different weights, such as two adapters on one base model. Their caches are not normally interchangeable. DroidSpeak profiles where the receiver must regain its own representation, then recomputes only one contiguous layer interval.</p>
+<div class="layer-demo" role="img" aria-label="The receiver reuses sender KV in layers zero through thirteen and eighteen through thirty-one, and recomputes receiver layers fourteen through seventeen.">
+<div class="layers"><div class="reuse">reuse sender KV<br>layers 0–13</div><div class="recompute">receiver<br>14–17</div><div class="reuse">reuse sender KV<br>layers 18–31</div></div>
+<div class="layer-labels"><span>layer 0</span><span>selected interval [14,18)</span><span>layer 31</span></div>
+<div class="boundary"><i aria-hidden="true"></i><span>The sender's layer-input embedding at layer 14 starts receiver recomputation. The receiver produces new KV inside the interval. Sender KV remains outside it.</span></div>
+</div>
+<div class="flow" style="margin-top:18px">
+<div><b>1 · Sender prefill</b><span>Cache the whole prompt except its final input token. Record KV and possible transition embeddings.</span></div>
+<div><b>2 · Offline profile</b><span>Test all contiguous two-layer-boundary intervals and measure answer F1 and local time to first token.</span></div>
+<div><b>3 · Select</b><span>Choose the fewest receiver layers that stay within 5% of full-receiver profile F1.</span></div>
+<div><b>4 · Receiver handoff</b><span>Assemble reused and recomputed KV, then process the final input token to obtain receiver logits.</span></div>
+</div>
+<p class="note"><strong>The cache covers the whole prompt, not only the passage.</strong> Holding back the last input token is part of the generation contract. The receiver processes that token after the hybrid cache is ready and uses its output logits for the first generated token.</p>
+</section>
+
+<section id="profile">
+<h2>The profiler chose four receiver layers</h2>
+<p class="sub">The profile used 50 HotpotQA multi-hop question-answering records. It tested 137 intervals on two-layer boundaries, including full reuse and full receiver prefill. Token F1 measures normalized word overlap with the reference answer on a scale from 0 to 1. The selection rule allowed at most a 5% relative F1 drop from full receiver prefill.</p>
+<div class="grid4">
+<div class="card"><div class="kicker">Full receiver</div><div class="metric">0.2067</div><p>Mean profile token F1 and the quality reference.</p></div>
+<div class="card"><div class="kicker">Quality floor</div><div class="metric warn">0.1963</div><p>95% of full-receiver profile F1.</p></div>
+<div class="card"><div class="kicker">Selected [14,18)</div><div class="metric good">0.2030</div><p>Four recomputed layers. This meets the floor.</p></div>
+<div class="card"><div class="kicker">Direct full reuse</div><div class="metric bad">0.0767</div><p>No receiver recomputation. This fails badly.</p></div>
+</div>
+<p class="note"><strong>This is an offline profile decision, not a trained model.</strong> The selected interval is configuration for this model pair. No learned DroidSpeak weights or checkpoint were produced.</p>
+</section>
+
+<section id="held-out">
+<h2>The selected interval passed on disjoint records</h2>
+<p class="sub">A separate set of 50 HotpotQA records tested the selected interval. These records were not used to choose it. The full receiver reached 0.2887 F1, which set a held-out 5%-drop floor of 0.2742.</p>
+<div class="grid2">
+<div class="card">
+<div class="kicker">Held-out mean token F1</div><h3>Selected DroidSpeak exceeded the receiver-relative floor</h3>
+<div class="bar-chart" aria-label="Held-out F1 comparison">
+<div class="bar-row"><span class="bar-label">selected</span><span class="track"><i class="fill good" style="width:89.97%"></i></span><span class="bar-value">0.3149</span></div>
+<div class="bar-row"><span class="bar-label">full receiver</span><span class="track"><i class="fill" style="width:82.48%"></i></span><span class="bar-value">0.2887</span></div>
+<div class="bar-row"><span class="bar-label">direct reuse</span><span class="track"><i class="fill bad" style="width:64.65%"></i></span><span class="bar-value">0.2263</span></div>
+<div class="bar-row"><span class="bar-label">full sender</span><span class="track"><i class="fill" style="width:9.14%"></i></span><span class="bar-value">0.0320</span></div>
+</div>
+</div>
+<div class="card rule good"><strong>QUALITY DECISION: PASS</strong><p>The selected interval reached 109.1% of the full-receiver F1 point estimate and exceeded the required floor. Direct reuse reached only 78.4% of full receiver and failed the floor.</p><p>The point estimate above full receiver is not evidence that DroidSpeak improves model quality. This is a small, single-split evaluation, and the selection used a related profile set from the same dataset.</p></div>
+</div>
+<div class="grid4" style="margin-top:18px">
+<div class="card"><div class="kicker">Full receiver time to first token</div><div class="metric">0.2218 s</div><p>Native receiver prefill in the same process.</p></div>
+<div class="card"><div class="kicker">Selected time to first token</div><div class="metric good">0.0551 s</div><p>Hybrid assembly and four-layer recomputation.</p></div>
+<div class="card"><div class="kicker">Local ratio</div><div class="metric warn">4.03×</div><p>Full-receiver TTFT divided by selected TTFT.</p></div>
+<div class="card"><div class="kicker">Direct reuse TTFT</div><div class="metric">0.0273 s</div><p>Fastest local control, but below the quality floor.</p></div>
+</div>
+<p class="note"><strong>Do not read 4.03× as a DroidSpeak system speedup.</strong> The timing is from one in-process Transformers run. It excludes sender cache production, network transfer, remote cache lookup, serialization, scheduling, and communication overlap. It is useful as a compute-path signal only.</p>
+</section>
+
+<section id="paper">
+<h2>Paper versus this work</h2>
+<p class="sub">We implemented the paper's central partial-recomputation method. The evaluation is a bounded mechanism study, not a paper-scale system reproduction.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Item</th><th>DroidSpeak paper</th><th>This work</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Core method</td><td>Reuse sender KV outside one contiguous receiver interval. Transfer a transition embedding and recompute the interval.</td><td>The same cache ownership and interval-recomputation contract.</td><td><span class="status good">Matched</span></td></tr>
+<tr><td>Model pair</td><td>Includes Mistral-7B with public <code>conllpp</code> and <code>glue_sst2</code> adapters. Exact repository revisions are not reported.</td><td>The same named base and adapters, using resolved public revisions.</td><td><span class="status warn">Names match</span></td></tr>
+<tr><td>Profiler</td><td>Searches contiguous intervals and uses a receiver-relative quality budget.</td><td>All 137 intervals on two-layer boundaries; 50 profile records; 5% relative F1 budget.</td><td><span class="status good">Method matched</span></td></tr>
+<tr><td>Evaluation</td><td>Long-input and cross-dataset experiments at paper scale.</td><td>50 disjoint held-out HotpotQA records, 2,048-token passage limit, 32-token answer limit.</td><td><span class="status warn">Smaller and narrower</span></td></tr>
+<tr><td>Selected interval</td><td>The paper shows pair-dependent intervals and an example near 11 recomputed layers.</td><td>Layers <code>[14,18)</code>: four of 32 layers. The exact paper checkpoints and sample IDs were unavailable.</td><td><span class="status warn">Not directly comparable</span></td></tr>
+<tr><td>System</td><td>Distributed sender and receiver with transfer and compute overlap.</td><td>One-process Transformers baseline. No remote data path and no overlap.</td><td><span class="status warn">Not reproduced</span></td></tr>
+</tbody>
+</table>
+</div>
+<div class="grid2" style="margin-top:20px">
+<div class="card rule good"><strong>WHAT THE RESULT SUPPORTS</strong><p>For one same-base adapter pair, direct cache reuse was poor, while a profiled four-layer receiver interval restored held-out quality under the stated rule. The full-receiver interval produced bit-exact KV tensors relative to ordinary receiver prefill.</p></div>
+<div class="card rule warn"><strong>WHAT IT DOES NOT SUPPORT</strong><p>It does not establish arbitrary cross-family sharing, paper-scale generalization, remote-transfer speedup, production readiness, or an exact reproduction of the authors' interval.</p></div>
+</div>
+</section>
+
+<section id="lmcache">
+<h2>LMCache can carry the cache, but it does not supply DroidSpeak</h2>
+<p class="sub">A separate control used one LMCache server and two same-model serving processes. The second process retrieved 7,168 cached tokens, and both processes produced the same completion. This verifies shared same-model transport.</p>
+<div class="grid2">
+<div class="card rule good"><strong>VERIFIED TRANSPORT</strong><p>LMCache can move and retrieve a compatible KV cache across serving processes. The cache server reported the retrieval in 0.003 seconds in this bounded control.</p></div>
+<div class="card rule warn"><strong>MISSING CROSS-MODEL BRIDGE</strong><p>Stock LMCache does not select a DroidSpeak interval, transfer the arbitrary transition embedding, run only that receiver interval, or assemble sender and receiver layers into one cache.</p></div>
+</div>
+<p class="note"><strong>System role:</strong> LMCache is a useful transport substrate. A production integration still needs model-pair namespaces, compatibility checks, transition-embedding transport, partial receiver execution, hybrid-cache assembly, and transfer/recomputation overlap.</p>
+</section>
+
+<section id="source">
+<h2>Source and claim boundary</h2>
+<p class="sub">The public code contains the in-process mechanism, exhaustive interval profiler, exact full-recompute audit, scoring, deterministic data split, and LMCache transport control. Raw run records are not part of the public code tree.</p>
+<div class="links">
+<a href="https://github.com/mcgrof/knlp/tree/main/research/droidspeak"><b>Source and README</b><span>Mechanism baseline, profiler, correctness audit, and LMCache boundary.</span></a>
+<a href="https://www.usenix.org/system/files/nsdi26-liu-yuhan.pdf"><b>DroidSpeak paper</b><span>The NSDI 2026 primary paper.</span></a>
+<a href="kv-cache-sharing.html"><b>Compare both efforts</b><span>DroidSpeak, KV-Lingo, LMCache, and the possible hybrid.</span></a>
+</div>
+<p class="fine" style="margin-top:15px">Run shape: 16-bit brain floating point (BF16), scaled dot-product attention, one 48 GB accelerator, 2,048-token passage limit, and at most 32 generated tokens. No DroidSpeak training checkpoint exists because the method profiles an interval rather than fitting new weights.</p>
+<div class="decision"><b>Practical status</b><span>Research mechanism implemented and quality-qualified for one adapter pair; distributed serving integration remains open.</span></div>
+</section>
+</main>
+<footer>KNLP · DroidSpeak mechanism baseline · aggregate results and current limits</footer>
+</body>
+</html>

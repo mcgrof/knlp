@@ -105,6 +105,38 @@
     <section class="mb-14">
       <h2 class="text-2xl font-bold mb-6 text-center">Serving and Systems</h2>
       <div class="grid md:grid-cols-2 gap-4">
+        <a href="kv-cache-sharing.html" class="card rounded-lg p-5 block">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-blue-400">Cross-Model KV-Cache Sharing</h3>
+            <span class="text-xs bg-blue-900 text-blue-300 px-2 py-1 rounded ml-3 whitespace-nowrap">comparison</span>
+          </div>
+          <p class="text-gray-500 text-sm mb-3">
+            A direct comparison of KV-Lingo cache translation and DroidSpeak
+            partial receiver recomputation, with the evidence boundary for
+            each method and a proposed hybrid.
+          </p>
+          <div class="flex gap-3 text-xs">
+            <span class="text-blue-400">two independent efforts</span>
+            <span class="text-gray-600">&middot;</span>
+            <span class="text-gray-500">LMCache transport boundary</span>
+          </div>
+        </a>
+        <a href="droidspeak.html" class="card rounded-lg p-5 block">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-teal-400">DroidSpeak Partial Recompute</h3>
+            <span class="text-xs bg-teal-900 text-teal-300 px-2 py-1 rounded ml-3 whitespace-nowrap">mechanism pass</span>
+          </div>
+          <p class="text-gray-500 text-sm mb-3">
+            A four-layer receiver interval preserved held-out quality for one
+            Mistral adapter pair. The page separates mechanism quality from
+            the distributed-system result that remains untested.
+          </p>
+          <div class="flex gap-3 text-xs">
+            <span class="text-teal-400">4 of 32 layers recomputed</span>
+            <span class="text-gray-600">&middot;</span>
+            <span class="text-gray-500">50 held-out records</span>
+          </div>
+        </a>
         <a href="kv-lingo.html" class="card rounded-lg p-5 block">
           <div class="flex items-start justify-between mb-2">
             <h3 class="font-semibold text-emerald-400">KV-Lingo Cache Translation</h3>
@@ -116,7 +148,7 @@
             sharing; a restricted 8B-first schedule remains unconfirmed.
           </p>
           <div class="flex gap-3 text-xs">
-            <span class="text-emerald-400">code + aggregate data</span>
+            <span class="text-emerald-400">code + aggregate results</span>
             <span class="text-gray-600">&middot;</span>
             <span class="text-gray-500">0/4 full pairs pass</span>
           </div>
