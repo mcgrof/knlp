@@ -19,6 +19,24 @@ PD_DIR := tools/reproduce/pd
 PD_SERIAL := $(patsubst "%",%,$(CONFIG_KNLP_PD_DEVICE_SERIAL))
 PD_RUNGS := $(patsubst "%",%,$(CONFIG_KNLP_PD_RUNGS))
 
+# Current public source pins and CPU contracts use the DMA-BUF profile.
+PD_CURRENT_TESTS := pd-lmcache-test pd-mp-test pd-vllm-test
+PD_REQUIRED_PATH ?= dmabuf_fixed
+.PHONY: pd-test-plan pd-cpu-test $(PD_CURRENT_TESTS) pd-timeline-check
+.NOTPARALLEL: pd-cpu-test
+
+pd-test-plan:
+	@$(PD_PY) tools/reproduce/dmabuf/run.py --config "$(DMABUF_CONFIG)" plan
+
+$(PD_CURRENT_TESTS):
+	@$(PD_PY) tools/reproduce/dmabuf/run.py --config "$(DMABUF_CONFIG)" $@
+
+pd-cpu-test: $(PD_CURRENT_TESTS)
+
+pd-timeline-check:
+	@$(PD_PY) tools/reproduce/dmabuf/run.py --config "$(DMABUF_CONFIG)" \
+		--timeline "$(PD_TIMELINE)" --require-path "$(PD_REQUIRED_PATH)" $@
+
 .PHONY: pd-doctor pd-run pd-all
 
 pd-doctor:

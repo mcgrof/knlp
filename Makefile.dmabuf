@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+DMABUF_CONFIG ?= .config
+DMABUF_STAGES := plan fetch kernel-config kernel-build kernel-install \
+	selftest-build doctor peer-check storage-test lmcache-install \
+	cpu-test mp-host-test gpu-test
+
+.PHONY: $(addprefix dmabuf-,$(DMABUF_STAGES))
+$(addprefix dmabuf-,$(DMABUF_STAGES)): dmabuf-%:
+	@$(PYTHON) tools/reproduce/dmabuf/run.py --config "$(DMABUF_CONFIG)" $*
+
+ifeq ($(CONFIG_KNLP_DMABUF),y)
+.DEFAULT_GOAL := dmabuf-plan
+endif

@@ -43,6 +43,7 @@ include Makefile.kvio
 # Storage-mediated prefill/decode ladder (pd-doctor, pd-run).  When
 # CONFIG_KNLP_REPRODUCE_PD=y this overrides .DEFAULT_GOAL.
 include Makefile.pd
+include Makefile.dmabuf
 
 # Include KVTide NVMe-KV target + initiator bench targets (kvtide-doctor,
 # kvtide-fetch, kvtide-build, kvtide-target-up, kvtide-bench,
@@ -68,7 +69,7 @@ ifneq ($(strip $(MUVERA_SELECTED)),)
 MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
 	RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
 	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO KNLP_REPRODUCE_KVIO \
-	KNLP_REPRODUCE_PD KVTIDE KNLP_QUANT_FP8 KNLP_TF_REPRO \
+	KNLP_REPRODUCE_PD KNLP_DMABUF KVTIDE KNLP_QUANT_FP8 KNLP_TF_REPRO \
 	KNLP_MODULAR_REPRO MATCHED_MICRO,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
 ifneq ($(words $(MUVERA_SELECTED) $(MUVERA_CONFLICTS)),1)
 $(error Conflicting workloads: $(strip $(MUVERA_SELECTED) $(MUVERA_CONFLICTS)))

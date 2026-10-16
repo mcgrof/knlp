@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+menu "io_uring DMA-BUF enablement"
+
+config KNLP_DMABUF
+	bool "Enable the pinned DMA-BUF reproduction workflow"
+	default n
+	help
+	  Select defconfig-io-uring-dmabuf for source preparation, kernel
+	  builds and separate CPU, storage and GPU checks. Plain make
+	  prints the plan; installation and hardware tests are explicit.
+
+if KNLP_DMABUF
+config KNLP_DMABUF_WORKDIR
+	string "Dedicated source, build and result directory"
+	default ".cache/io-uring-dmabuf"
+
+config KNLP_DMABUF_BASE_CONFIG
+	string "Base kernel config (empty uses the running kernel config)"
+	default ""
+
+config KNLP_DMABUF_JOBS
+	int "Kernel build jobs"
+	default 4
+	range 1 256
+
+config KNLP_DMABUF_SCRATCH
+	string "Existing owned scratch directory on NVMe-backed XFS/ext4"
+	default ""
+	help
+	  Tests create new files here. A raw block device is not accepted.
+
+config KNLP_DMABUF_EXPORTER
+	string "Host-memory selftest exporter: sysheap or udmabuf"
+	default "sysheap"
+
+config KNLP_DMABUF_GPU_PROVIDER
+	string "GPU staging provider: native or vulkan_rm"
+	default "native"
+
+config KNLP_DMABUF_GPU
+	string "GPU PCI address for the topology diagnostic"
+	default ""
+
+config KNLP_DMABUF_NVME
+	string "NVMe controller PCI address for the topology diagnostic"
+	default ""
+endif
+endmenu
