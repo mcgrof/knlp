@@ -3,83 +3,109 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="KMesh investigates explicit state relationships for sharing inference state, starting with a correctness-first TokenDance-style baseline in vLLM.">
 <title>KMesh: Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0a0e14; --bg2: #10151c; --bg3: #161d26;
-  --surface: #1a222e; --border: #2a3444; --border2: #3a4a5c;
-  --text: #c8d6e5; --text2: #7a8ea0; --text3: #4a5e70;
-  --green: #00e87c; --green2: #00b85f; --green-bg: #00e87c18;
-  --cyan: #00d4c8; --amber: #f0a030; --red: #e84040;
-  --purple: #a070e8; --blue: #4090e8; --orange: #e87840;
-  --mono: 'JetBrains Mono', monospace;
-  --sans: 'IBM Plex Sans', sans-serif;
+  color-scheme: dark;
+  --bg: #070b09; --card: #101914; --card2: #0c1410; --line: #203128;
+  --text: #e2ece5; --muted: #93a59a; --dim: #62736a;
+  --green: #2ae6a3; --cyan: #62dce5; --amber: #f0b65c;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; }
-.container { max-width: 960px; margin: 0 auto; padding: 24px; }
-header { text-align: center; padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
-header h1 { font-family: var(--mono); font-size: 24px; font-weight: 600; color: var(--green); margin-bottom: 6px; letter-spacing: 0.5px; }
-header .sub { font-family: var(--mono); font-size: 13px; color: var(--cyan); margin-bottom: 14px; }
-header p { color: var(--text2); font-size: 13px; max-width: 720px; margin: 0 auto 6px; }
-header a { color: var(--cyan); text-decoration: none; }
-header a:hover { text-decoration: underline; }
-section { margin-bottom: 40px; scroll-margin-top: 20px; }
-h2 { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-h3 { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--cyan); margin: 22px 0 10px; }
-p { margin-bottom: 14px; color: var(--text2); }
-strong { color: var(--text); font-weight: 600; }
-em { color: var(--amber); font-style: normal; }
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: radial-gradient(circle at 78% -10%, rgba(42,230,163,.08), transparent 34%), var(--bg); color: var(--text); font: 15px/1.67 var(--sans); }
 a { color: var(--cyan); text-decoration: none; }
 a:hover { text-decoration: underline; }
-ul { margin: 0 0 14px 20px; color: var(--text2); }
-li { margin-bottom: 8px; }
-code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
-.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 0 0 32px; columns: 2; column-gap: 32px; font-family: var(--mono); font-size: 12px; }
-.toc a { color: var(--text2); display: block; padding: 3px 0; }
-.toc a:hover { color: var(--green); text-decoration: none; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
-.stat .val { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--green); }
+a:focus-visible { outline: 2px solid var(--cyan); outline-offset: 5px; }
+.skip { position: absolute; top: -80px; left: 24px; z-index: 20; padding: 12px; background: var(--card); }
+.skip:focus { top: 8px; }
+header { position: sticky; top: 0; z-index: 10; background: rgba(7,11,9,.94); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+nav { max-width: 1180px; margin: auto; padding: 13px 24px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+nav a { color: var(--muted); font: 12px var(--mono); }
+.logo { color: var(--green); font: 700 14px var(--mono); letter-spacing: .1em; }
+.spacer { flex: 1; }
+main { max-width: 1180px; margin: auto; padding: 66px 24px 70px; }
+.hero { padding-bottom: 40px; }
+.eyebrow { color: var(--green); font: 700 11px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+h1 { font-size: clamp(54px, 8vw, 92px); line-height: .99; letter-spacing: -.05em; margin: 20px 0 18px; }
+.sub { color: var(--text); font-size: clamp(22px, 3.5vw, 36px); line-height: 1.25; letter-spacing: -.025em; max-width: 930px; margin-bottom: 24px; }
+.lead { max-width: 970px; font-size: 19px; }
+.paper-links { margin-top: 22px; font: 12px var(--mono); }
+p { color: var(--muted); max-width: 1030px; margin: 0 0 18px; }
+strong { color: var(--text); }
+em { color: var(--amber); font-style: normal; }
+section { padding: 54px 0; border-top: 1px solid var(--line); scroll-margin-top: 90px; }
+h2 { font-size: 29px; line-height: 1.3; letter-spacing: -.02em; margin: 0 0 24px; }
+.toc { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 28px 0 40px; font: 12px/1.7 var(--mono); }
+.toc a { color: var(--muted); }
+.toc a:hover { color: var(--green); }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 28px 0; }
+.stat { background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+.stat .val { font: 700 clamp(26px, 3vw, 36px)/1.2 var(--mono); color: var(--green); }
 .stat .val.cyan { color: var(--cyan); }
 .stat .val.amber { color: var(--amber); }
-.stat .label { font-size: 10px; color: var(--text3); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.4; }
-.table-wrap { overflow-x: auto; margin: 16px 0; }
-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
-th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2px solid var(--border); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; white-space: nowrap; }
-td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text2); vertical-align: top; }
-td.hi { color: var(--green); font-weight: 600; white-space: nowrap; }
-tr:hover td { background: var(--bg3); }
-.note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
-.note strong { color: var(--green); }
-.note.amber { background: #f0a03018; border-left-color: var(--amber); }
-.note.amber strong { color: var(--amber); }
-.papers { list-style: none; margin-left: 0; }
-.papers li { margin-bottom: 14px; padding-left: 14px; border-left: 2px solid var(--border2); }
+.stat .label { margin-top: 12px; color: var(--muted); font: 11px/1.7 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+code { font-family: var(--mono); font-size: .92em; color: #c8b6ff; overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; border-radius: 9px; margin: 24px 0; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
+th, td { padding: 15px 17px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { color: var(--muted); font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+td { color: var(--muted); font-size: 14px; }
+td.hi { color: var(--green); font: 650 12px/1.7 var(--mono); }
+tr:last-child td { border-bottom: 0; }
+.note { margin-top: 24px; padding: 20px 24px; border-left: 3px solid var(--amber); background: rgba(240,182,92,.06); color: var(--muted); border-radius: 0 9px 9px 0; }
+.note strong { display: block; margin-bottom: 8px; color: var(--amber); }
+.papers { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 28px 0 0; }
+.papers li { min-width: 0; padding: 24px; background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 14px; }
 .papers .t { color: var(--text); font-weight: 600; }
-footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
-footer a { color: var(--text2); }
-@media (max-width: 640px) { .toc { columns: 1; } }
+footer { border-top: 1px solid var(--line); padding: 28px 0; color: var(--dim); font: 11px/1.8 var(--mono); }
+footer a { color: var(--muted); }
+@media (max-width: 900px) { .stat-grid, .papers { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  main { padding: 38px 18px 40px; }
+  nav { padding: 12px 18px; gap: 12px; }
+  .spacer { display: none; }
+  .hero { padding-bottom: 18px; }
+  .lead { font-size: 18px; }
+  .stat, .papers li { padding: 20px; }
+  section { padding: 36px 0; scroll-margin-top: 120px; }
+  h2 { font-size: 25px; }
+  th, td { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
-<div class="container">
-
+<a class="skip" href="#content">Skip to content</a>
 <header>
+  <nav aria-label="Main navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="#redundancies">reuse</a>
+    <a href="#milestone">first milestone</a>
+    <a href="#papers">papers</a>
+    <a href="io-uring-dmabuf.html">storage interface</a>
+  </nav>
+</header>
+<main id="content">
+<div class="hero">
+  <span class="eyebrow">Inference systems · Research goals</span>
   <h1>KMesh</h1>
   <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
-  <p>Request-centric inference execution flattens round, segment, branch, and
+  <p class="lead">Request-centric inference execution flattens round, segment, branch, and
   lineage structure before it reaches the runtime, forcing the engine to
   rediscover relationships the orchestrator already knew — or miss them. KMesh
   investigates whether an inference engine can be given explicit, keyed state
   relationships so that recovery, scheduling, and storage operate on groups of
   related requests rather than isolated token streams. This page states the goals;
   it does not yet report results.</p>
-  <p><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
+  <p class="paper-links"><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
   &middot; <a href="https://arxiv.org/abs/2604.03143">TokenDance</a>
   &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a></p>
-</header>
+</div>
 
 <div class="stat-grid">
   <div class="stat"><div class="val">cross-turn</div><div class="label">temporal reuse<br>(DualPath)</div></div>
@@ -190,7 +216,7 @@ workloads, each stage validated against the one below it before any performance
 claim is made.</p>
 <div class="table-wrap">
 <table>
-<tr><th>Stage</th><th>What it establishes</th></tr>
+<tr><th scope="col">Stage</th><th scope="col">What it establishes</th></tr>
 <tr><td class="hi">Baselines</td><td>Ordinary vLLM with prefix caching off and on, and the existing serial position-independent recovery path, measured on controlled workloads.</td></tr>
 <tr><td class="hi">Observer</td><td>Typed request and segment metadata, compatibility grouping, and structural-overlap metrics that change nothing about scheduling or output — reporting how much workload structure the engine could exploit before any cache is touched.</td></tr>
 <tr><td class="hi">Collective reuse</td><td>Group recovery driven under one plan, validated to agree with the serial recovery baseline within declared tolerances, with operation counters that show whether the work is actually shared rather than merely batched.</td></tr>
@@ -242,6 +268,6 @@ vLLM baseline, not a finished system.</div>
 <a href="learned_prefix_caches.html">Learned Prefix Caches</a>
 </footer>
 
-</div>
+</main>
 </body>
 </html>
