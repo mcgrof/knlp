@@ -2,6 +2,7 @@
 """Importable vLLM callbacks; observe buffers and preserve original logits."""
 
 import json
+import math
 from pathlib import Path
 import torch
 
@@ -195,6 +196,17 @@ def native_memory_state(worker):
     }
 
 
+def query_scale(scales, index, arm):
+    """Return an optional frozen query scale for symmetric FP8 attention."""
+    value = scales.get(f"{index}.q", 1.0) if arm == "k8_v8" else 1.0
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("query scale must be finite and positive")
+    encoded = float(torch.tensor(value, dtype=torch.float32))
+    if not math.isfinite(encoded) or encoded <= 0:
+        raise ValueError("query scale is not representable as positive FP32")
+    return encoded
+
+
 def configure(model, scales, arm, trace_dir, packed_expectation=None):
     selected = []
     packed = []
@@ -242,8 +254,9 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
             module._k_scale.fill_(k)
             module._v_scale.fill_(v)
             module._k_scale_float, module._v_scale_float = k, v
-            module._q_scale.fill_(1)
-            module._q_scale_float = 1.0
+            q = query_scale(scales, index, arm)
+            module._q_scale.fill_(q)
+            module._q_scale_float = q
             module.calculate_kv_scales = False
             if hasattr(module.impl, "bmm1_scale"):
                 module.impl.bmm1_scale = None
@@ -251,6 +264,7 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
             selected.append(
                 {
                     "name": name,
+                    "q_scale": q,
                     "k_scale": k,
                     "v_scale": v,
                     "impl": type(module.impl).__name__,
