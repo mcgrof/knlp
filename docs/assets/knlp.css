@@ -141,6 +141,7 @@ html:has(.concept-correlation) { font-size: 20px; }
 .concept-page .big-val { font-family: var(--site-font); font-size: clamp(28px, 3.4vw, 44px); font-weight: 650; }
 .concept-page .panel-grid > *, .concept-page .controls > *, .concept-page .r2-layout > * { min-width: 0; }
 .concept-page main { max-width: 1244px; }
+.concept-page .concept-bandwidth-main { width: min(1180px, calc(100% - 64px)); margin-inline: auto; }
 .concept-page .controls { gap: 20px 28px; }
 .concept-page .ctrl-group label { font: 12px/1.6 var(--site-font); letter-spacing: .02em; }
 .concept-page .tag { border-radius: 999px; padding: 3px 10px; }
@@ -165,7 +166,6 @@ html:has(.concept-correlation) { font-size: 20px; }
   .concept-page .left-plots { height: 580px; border-right: 0; }
   .concept-page .rank-diagram { overflow-x: auto; padding-bottom: 12px; }
   .concept-page .r2-layout { flex-direction: column; }
-  .concept-page .concept-bandwidth { padding-inline: 20px; }
 }
 @media (max-width: 600px) {
   .site-wrap, .site-nav, .concept-hero, .concept-footer { width: calc(100% - 36px); }
@@ -195,7 +195,7 @@ html:has(.concept-correlation) { font-size: 20px; }
   .concept-page .sd-result { grid-template-columns: 1fr; }
   .concept-page .reuse-grid { grid-template-columns: 1fr; }
   .concept-page .comparison-arrow { min-height: 50px; transform: rotate(90deg); }
-  .concept-page .concept-bandwidth { padding-inline: 14px; }
+  .concept-page .concept-bandwidth-main { width: calc(100% - 36px); }
 }
 @media (prefers-reduced-motion: reduce) {
   html:has(.concept-page) { scroll-behavior: auto; }
