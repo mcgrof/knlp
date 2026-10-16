@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Certified LM-head decode — read a quarter of the output head, losslessly</title>
-  <meta name="description" content="A lossless decoder that returns the exact dense argmax of the LM head while reading ~25% of its bytes. A low-rank int8 shadow gives a provable per-row upper bound; contiguous vocabulary blocks are opened in descending bound and the search stops the instant the answer is certified. ~5x output-head traffic reduction, 1.97x batch-1 decode on a bandwidth-bound GPU, 1.85x on H100 via a CUDA graph, deployed as a measured Pareto switch.">
+  <meta name="description" content="Completed research with public Triton kernels and artifact-generation tools, not upstreamed. Certified argmax selection reduces output-head reads; measured low-batch head speedups need separate numerical and full-model serving qualification.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -32,10 +32,10 @@
   <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
-      <a href="lm_head_decode_visualization.html" class="px-3 py-1.5 bg-emerald-600 rounded text-sm font-medium text-white">LM-head decode</a>
+      <a href="lm_head_decode.html" class="px-3 py-1.5 bg-emerald-600 rounded text-sm font-medium text-white">LM-head decode</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
-      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Linear Attn</a>
-      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+      <a href="linear_attention.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Linear Attn</a>
+      <a href="kvsplice.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
     </div>
   </nav>
 
@@ -150,7 +150,7 @@
     }
     function ChartFrame({title, sub, height, children}) {
       return (
-        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+        <div className="min-w-0 bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
           {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
           {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
           <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
@@ -177,14 +177,35 @@
             </p>
           </header>
 
+          <section id="availability" className="anchor card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.emerald}} aria-labelledby="availability-title">
+            <div className="text-xs uppercase tracking-widest text-emerald-400 mb-2">R&amp;D complete · implementation available · not upstreamed</div>
+            <h2 id="availability-title" className="text-xl font-semibold mb-3">Use the research implementation</h2>
+            <p className="text-gray-300 text-[15px] leading-relaxed mb-3">
+              The <a href="https://github.com/mcgrof/knlp/tree/main/lm_head/kernel" className="text-emerald-300 hover:underline">public Triton kernels</a>,
+              {' '}<a href="https://github.com/mcgrof/knlp/blob/main/lm_head/kernel/gen_artifact.py" className="text-emerald-300 hover:underline">offline artifact generator</a>
+              {' '}and benchmark drivers are available for reuse. This completed study targets greedy argmax selection
+              at the output head. It is research code that needs integration into a serving engine; it is not an upstream vLLM feature.
+            </p>
+            <p className="text-gray-400 text-sm leading-relaxed mb-3">
+              The speedups below measure the output head, not whole-model decoding. The H100 1.85× number is graph replay;
+              including the measured fallback cost gives about 1.63× for the head at batch 1. Choose the sparse or dense path
+              for the model, GPU and batch. Sampling distributions, full-vocabulary logprobs and logit modifications need separate support.
+            </p>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              The mathematical certificate and floating-point parity are separate checks. Some optimized runs recorded
+              0.998 agreement with their dense reference, rather than 1.000. Before serving, qualify reduction precision,
+              near-tie handling and dense fallback against the exact reference you intend to replace.
+            </p>
+          </section>
+
           {/* Key stats */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
             <StatCard label="Output head" value="150K" sub="rows, read every token" />
             <StatCard label="Head bytes" value="20" unit="%" sub="of dense, at 7B" color={C.emerald}/>
             <StatCard label="Reduction" value="5" unit="×" sub="lossless" color={C.emerald}/>
-            <StatCard label="Batch-1 decode" value="1.97" unit="×" sub="W7900, 7B" color={C.teal}/>
-            <StatCard label="H100 (graph)" value="1.85" unit="×" sub="batch-1, 7B" color={C.teal}/>
-            <StatCard label="Argmax match" value="1.0000" sub="provably exact" color={C.green}/>
+            <StatCard label="Batch-1 head" value="1.97" unit="×" sub="W7900, 7B" color={C.teal}/>
+            <StatCard label="H100 replay" value="1.85" unit="×" sub="head only, 7B, no fallback" color={C.teal}/>
+            <StatCard label="Byte replay match" value="1.0000" sub="optimized kernels: see limits above" color={C.green}/>
           </div>
 
           {/* TLDR */}
@@ -198,8 +219,8 @@
               you haven't opened</strong> &mdash; at that point the dense argmax is mathematically guaranteed to be in
               hand. On Qwen2.5-7B that closes after reading about <strong className="text-white">2%</strong> of the
               vocabulary, on top of an 18% shadow read, for a <strong className="text-white">~5× lossless</strong>{" "}
-              reduction in output-head traffic and a <strong className="text-white">1.97×</strong> batch-1 decode win.
-              It is exact, not approximate: there is no accuracy knob and no path to a wrong answer.
+              reduction in output-head traffic and a <strong className="text-white">1.97×</strong> batch-1 output-head win.
+              The certificate is exact in real arithmetic; floating-point implementations still need the reference checks above.
             </p>
           </div>
 
@@ -457,9 +478,9 @@
             </ChartFrame>
             <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
               <strong className="text-gray-200">One dose of realism.</strong> The output head is only ~7% of per-token
-              decode traffic at 7B, so this head-only win dilutes to roughly <strong>+6%</strong> on the full step. It
-              becomes a real double-digit full-model gain only for small models with large vocabularies, short context,
-              and small batch &mdash; and the lossless byte reduction itself holds in every regime.
+              decode traffic at 7B, giving an estimated full-step gain of roughly <strong>+6%</strong> under that traffic model.
+              This is an estimate, not a measured whole-model serving result. Models with larger output-head shares may
+              offer more, provided their head kernel also wins; byte reduction alone does not establish a latency gain.
             </div>
           </Section>
 
