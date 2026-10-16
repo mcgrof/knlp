@@ -172,3 +172,13 @@ Each case releases its wrappers and plan closures before the next layer.
 Pointer/size records, post-case allocator state, and reset per-case peaks make
 that lifetime auditable. Component timing still excludes serving-pool gathering
 and scratch allocation. It does not qualify a serving implementation.
+
+`compact.py` checks a caller-supplied bounded serving implementation against
+stored quantized cache bytes. It places saved inputs in sparse, repeated,
+page-zero layouts, checks exact gathering and untouched guards, and compares
+complete attention outputs at fixed tolerances. Its model validator checks
+every routed layer against the original mixed-cache attention wrapper.
+Route observation joins qualification requests to the actual scheduler.
+These hooks run outside serving timing. The worker receipt reports allocated
+workspace capacity separately from its active page payload and retains
+storage pointers so cross-layer reuse can be checked.
