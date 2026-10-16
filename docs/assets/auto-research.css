@@ -1,0 +1,29 @@
+.auto-research .site-lead { max-width: 850px; }
+.auto-intro { max-width: 780px; margin: 22px 0 0; color: #94a3b8; font-size: 15px; line-height: 1.85; }
+.auto-components, .auto-findings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.auto-components .site-card { padding: 30px; }
+.auto-components .site-card h3 { font-size: 24px; }
+.auto-pipeline { counter-reset: research-step; list-style: none; padding: 0; margin: 0; border-top: 1px solid #334155; }
+.auto-pipeline li { counter-increment: research-step; display: grid; grid-template-columns: 56px 1fr; gap: 24px; padding: 27px 0; border-bottom: 1px solid #334155; }
+.auto-pipeline li::before { content: counter(research-step, decimal-leading-zero); color: #67e8f9; font-size: 22px; font-weight: 650; line-height: 1.35; }
+.auto-pipeline h3 { margin: 0 0 9px; color: #f1f5f9; font-size: 19px; letter-spacing: -.02em; }
+.auto-pipeline p { max-width: 850px; margin: 0; color: #aebcd0; font-size: 15px; line-height: 1.85; }
+.auto-finding { min-width: 0; padding: 30px; border: 1px solid #475569; border-radius: 16px; background: #182235; }
+.auto-finding h3 { margin: 14px 0; font-size: 27px; letter-spacing: -.03em; }
+.auto-finding p { color: #aebcd0; font-size: 15px; line-height: 1.85; }
+.auto-finding .auto-verdict { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.auto-verdict.risk { color: #fda4af; }
+.auto-verdict.pass { color: #6ee7b7; }
+.auto-links { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-top: 18px; margin-top: 24px; border-top: 1px solid #334155; font-size: 12px; }
+.auto-links a { color: #67e8f9; }
+.auto-links a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.auto-note { max-width: 950px; margin: 24px 0 0; padding-left: 18px; border-left: 2px solid #64748b; color: #a6b4c8; font-size: 14px; line-height: 1.85; }
+.auto-prose { max-width: 900px; color: #b4c0d2; font-size: 17px; line-height: 1.9; }
+.auto-prose p { margin: 0 0 22px; }
+@media (max-width: 760px) {
+  .auto-components, .auto-findings { grid-template-columns: 1fr; }
+  .auto-components .site-card, .auto-finding { padding: 24px; }
+  .auto-pipeline li { grid-template-columns: 34px 1fr; gap: 14px; padding: 22px 0; }
+  .auto-pipeline p, .auto-finding p { font-size: 14px; }
+  .auto-prose { font-size: 15px; }
+}

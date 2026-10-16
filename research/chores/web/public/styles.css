@@ -234,6 +234,74 @@ section {
   gap: 14px;
 }
 
+.research-adaptation {
+  padding: 28px;
+  border: 1px solid rgb(102 217 212 / 30%);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgb(102 217 212 / 5%), var(--panel));
+  scroll-margin-top: 80px;
+}
+
+.research-adaptation .section-heading {
+  flex-wrap: wrap;
+}
+
+.research-intro {
+  max-width: 950px;
+  color: #bdcbc4;
+  line-height: 1.8;
+}
+
+.research-intro a {
+  color: var(--cyan);
+  text-underline-offset: 3px;
+}
+
+.research-path {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 28px;
+  padding: 0 0 24px;
+  margin: 24px 0;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+  counter-reset: research-step;
+}
+
+.research-path li {
+  counter-increment: research-step;
+  min-width: 0;
+}
+
+.research-path strong {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 14px;
+}
+
+.research-path strong::before {
+  content: counter(research-step, decimal-leading-zero) " · ";
+  color: var(--cyan);
+  font-family: var(--mono);
+}
+
+.research-path span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.research-scope {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 650px) {
+  .research-adaptation { padding: 20px; }
+  .research-path { grid-template-columns: 1fr; }
+}
+
 .metrics {
   display: grid;
   grid-template-columns: 2fr repeat(3, 1fr);
