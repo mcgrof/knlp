@@ -125,12 +125,14 @@ def freeze(args):
             {"format": "fp16", "linear_modules": 144, "embedding_modules": 2}
             if args.format == "fp16"
             else {
-                "method": "AWQLinearMethod",
-                "kernel": "NoneType",
+                "method": "AutoAWQMarlinLinearMethod",
+                "kernel": "MacheteLinearKernel",
                 "weight_bits": 4,
-                "dispatch_marker": "gemm_forward_4bit_cuda",
+                "dispatch_marker": "machete_mm",
             }
         )
+        if args.format == "awq":
+            engine["quantization"] = "awq"
         write(
             target / "protocol.json",
             {
