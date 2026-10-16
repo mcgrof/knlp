@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Ridge Point — KV Cache Streaming Attention</title>
+<title>Rooflines and the ridge point — GPU performance | knlp</title>
+<meta name="description" content="An interactive guide to arithmetic intensity, GPU bandwidth, compute ceilings, and the ridge point for KV-cache attention.">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
@@ -295,20 +296,24 @@ input[type=range]::-webkit-slider-thumb {
 .page-title h1 em { color: var(--accent); }
 .page-title p { font-size: 14px; color: var(--t2); max-width: 580px; line-height: 1.7; }
 </style>
+  <link rel="stylesheet" href="assets/knlp.css">
 </head>
-<body>
-<div class="page">
+<body class="concept-page">
+<a class="site-skip" href="#main">Skip to content</a>
+<nav class="site-nav" aria-label="Main navigation">
+  <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+  <div class="site-nav-links"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a></div>
+</nav>
 
 <!-- ── PAGE TITLE ── -->
-<div class="page-title">
-  <div class="pt-badge">
-    <span class="accent-pill">KV CACHE</span>
-    <span style="font-family:var(--mono);font-size:10px;color:var(--t3)">performance analysis</span>
-  </div>
-  <h1>Ridge Point Implications for <em>KV Cache Streaming Attention</em></h1>
-  <p>A GPU has two fundamental limits: how fast it can move bytes, and how fast it can compute. Where those limits intersect is the <em>ridge point</em>. For KV cache streaming attention during decode, the ratio of compute to memory traffic — <strong>arithmetic intensity</strong>, measured in FLOPs per byte — stays near 1 F/B regardless of context length or model size. The workload is strongly bandwidth-limited, and understanding why requires looking at what the hardware is actually doing. These are <em>theoretical spec-sheet rooflines</em>; sustained measured performance is lower and kernel-dependent.</p>
+<div class="concept-hero">
+  <p class="site-eyebrow">Concepts · 02 · GPU performance</p>
+  <h1>Find the <em>ridge point.</em></h1>
+  <p>A GPU has two ceilings: how fast it moves bytes and how fast it computes. Arithmetic intensity connects them. Explore why decode attention can sit far below the compute ceiling, and how a theoretical roofline differs from sustained performance.</p>
+  <nav class="site-reading-path" aria-label="Concept guides"><a href="ar_decode_bottleneck.html">Decode</a><a href="ridge_point.html" aria-current="page">Rooflines</a><a href="kv_bandwidth.html">Scaling</a><a href="spearman_rho.html">Statistics</a></nav>
 </div>
 
+<main id="main" class="page">
 <!-- ════════════════════════════════════════════════════════════
      SECTION 1: What a GPU actually does
      ════════════════════════════════════════════════════════════ -->
@@ -654,7 +659,7 @@ input[type=range]::-webkit-slider-thumb {
       You can't change arithmetic intensity by flipping a switch. It requires <em>redesigning the kernel</em>.
       There are three real levers:
     </p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
       <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--accent)">
         <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">① OPERATOR FUSION</div>
         <div style="font-size:12px;color:var(--t2);line-height:1.7">
@@ -701,7 +706,7 @@ input[type=range]::-webkit-slider-thumb {
         dense BF16/FP16 theoretical · spec-sheet peaks · sustained measured rooflines are lower
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
       <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
         <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">H100</div>
         <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:#00c853">989 ÷ 3.35 = <span style="color:var(--accent)">295</span></div>
@@ -860,7 +865,7 @@ input[type=range]::-webkit-slider-thumb {
       This model counts only the dominant K/V read traffic and the two matmuls — ignoring query loads, output writes,
       scale factors, and other bookkeeping that become significant at short context lengths.
     </p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
       <div style="background:var(--bg3);border-radius:6px;padding:14px">
         <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">BYTES LOADED FROM HBM</div>
         <div style="font-family:var(--mono);font-size:13px;color:#ff5252;line-height:2.2">
@@ -909,7 +914,7 @@ input[type=range]::-webkit-slider-thumb {
       </div>
     </div>
     <!-- dtype table -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
       <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center;border-top:2px solid #ff5252">
         <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">FP32</div>
         <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:#ff5252">0.5 F/B</div>
@@ -946,31 +951,31 @@ input[type=range]::-webkit-slider-thumb {
     <h3>Streaming Decode Attention Calculator — per decode step</h3>
     <p>KV format controls bytes-per-element in the <em>stored KV cache</em>, not necessarily the active compute precision of the attention kernel — quantized KV is often dequantized to a higher precision before the matmul. The H100 reference roofline (295 F/B) is always the dense BF16/FP16 tensor-core theoretical ceiling regardless of KV format selected.</p>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
       <div>
         <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">MODEL PARAMETERS</div>
         <div style="display:flex;flex-direction:column;gap:10px">
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Context len</label>
+            <label for="kv-ctx" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Context len</label>
             <input type="range" id="kv-ctx" min="0" max="7" value="3" style="flex:1"/>
             <span id="kv-ctx-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">4K</span>
           </div>
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Layers</label>
+            <label for="kv-layers" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Layers</label>
             <input type="range" id="kv-layers" min="0" max="3" value="1" style="flex:1"/>
             <span id="kv-layers-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">32</span>
           </div>
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">KV heads</label>
+            <label for="kv-heads" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">KV heads</label>
             <input type="range" id="kv-heads" min="0" max="3" value="1" style="flex:1"/>
             <span id="kv-heads-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">8</span>
           </div>
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Head dim</label>
+            <label for="kv-headdim" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Head dim</label>
             <input type="range" id="kv-headdim" min="0" max="2" value="1" style="flex:1"/>
             <span id="kv-headdim-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">128</span>
           </div>
@@ -982,13 +987,13 @@ input[type=range]::-webkit-slider-thumb {
         <div style="display:flex;flex-direction:column;gap:10px">
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Batch size</label>
+            <label for="kv-batch" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Batch size</label>
             <input type="range" id="kv-batch" min="1" max="64" value="1" step="1" style="flex:1"/>
             <span id="kv-batch-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">1</span>
           </div>
 
           <div style="display:flex;align-items:center;gap:10px">
-            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Prefix shared</label>
+            <label for="kv-prefix" style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Prefix shared</label>
             <input type="range" id="kv-prefix" min="0" max="100" value="0" step="1" style="flex:1"/>
             <span id="kv-prefix-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">0%</span>
           </div>
@@ -1007,7 +1012,7 @@ input[type=range]::-webkit-slider-thumb {
     </div>
 
     <!-- Results grid -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
       <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
         <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">AI (SINGLE HEAD)</div>
         <div id="kv-ai-val" style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--amber)">1.0 F/B</div>
@@ -1037,7 +1042,7 @@ input[type=range]::-webkit-slider-thumb {
   <!-- Batching: GEMM vs KV comparison -->
   <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:20px">
     <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:14px">BATCHING — WHY IT HELPS GEMM BUT NOT KV CACHE</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
 
       <!-- GEMM batching -->
       <div style="background:var(--bg3);border-radius:6px;padding:16px;border-left:3px solid var(--accent)">
@@ -1092,7 +1097,7 @@ input[type=range]::-webkit-slider-thumb {
       can be computed once and the blocks reused.
       This affects three different quantities in different ways, and confusing them leads to bad offloading analysis later:
     </p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;font-size:12px;color:var(--t2)">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;font-size:12px;color:var(--t2)">
       <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--accent)">
         <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">RESIDENT KV FOOTPRINT</div>
         Shared prefix blocks are stored once. Reduces how much HBM capacity the KV cache occupies.
@@ -1129,7 +1134,7 @@ input[type=range]::-webkit-slider-thumb {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-family:var(--mono);font-size:11px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-family:var(--mono);font-size:11px">
       <div style="background:var(--bg3);border-radius:6px;padding:12px">
         <div style="font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">HBM FOOTPRINT — NO SHARING</div>
         <div style="color:#ff5252;font-weight:700">N × full KV blocks</div>
@@ -1163,7 +1168,7 @@ input[type=range]::-webkit-slider-thumb {
       Understanding KV cache at the roofline level maps directly onto offloading analysis.
       There are three distinct quantities — confusing them produces bad trade-off reasoning:
     </p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;font-size:12px;color:var(--t2)">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;font-size:12px;color:var(--t2)">
       <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--accent)">
         <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">RESIDENT KV FOOTPRINT</div>
         How much KV data must exist <em>somewhere</em> — HBM, DRAM, SSD, or a remote tier.
@@ -1186,7 +1191,7 @@ input[type=range]::-webkit-slider-thumb {
   <!-- The real levers -->
   <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px 24px">
     <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:14px">THE REAL LEVERS — WHAT ACTUALLY HELPS</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+    <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
 
       <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--blue)">
         <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:8px">① KV QUANTIZATION</div>
@@ -1259,7 +1264,7 @@ input[type=range]::-webkit-slider-thumb {
   </div>
 
   <!-- Before / After comparison -->
-  <div style="display:grid;grid-template-columns:1fr 40px 1fr;gap:0;align-items:stretch;margin-bottom:20px">
+  <div class="concept-grid" style="display:grid;grid-template-columns:1fr 40px 1fr;gap:0;align-items:stretch;margin-bottom:20px">
 
     <!-- NAIVE -->
     <div style="background:#0d1421;border:1px solid #2a1a1a;border-top:2px solid #ff5252;border-radius:8px;padding:18px 20px">
@@ -1301,7 +1306,7 @@ input[type=range]::-webkit-slider-thumb {
     </div>
 
     <!-- Arrow -->
-    <div style="display:flex;align-items:center;justify-content:center;font-size:22px;color:#3a5a40">→</div>
+    <div class="comparison-arrow" style="display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--t3)">→</div>
 
     <!-- FLASH -->
     <div style="background:#0d1421;border:1px solid #1a2a1a;border-top:2px solid #00ff88;border-radius:8px;padding:18px 20px">
@@ -1390,7 +1395,7 @@ input[type=range]::-webkit-slider-thumb {
   </div>
 
   <!-- Two separate tables: intermediates vs essential I/O -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+  <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
 
     <!-- Table A: temporary materialized scores -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px">
@@ -1537,7 +1542,7 @@ input[type=range]::-webkit-slider-thumb {
      ════════════════════════════════════════════════════════════ -->
 <div class="section" style="padding-bottom:32px">
   <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:16px">SOURCES</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;font-family:var(--mono);font-size:10px;line-height:1.7">
+  <div class="concept-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;font-family:var(--mono);font-size:10px;line-height:1.7">
 
     <a href="https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf"
        target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
@@ -1614,7 +1619,7 @@ input[type=range]::-webkit-slider-thumb {
   </div>
 </div>
 
-</div><!-- /page -->
+</main>
 
 <!-- Tooltip -->
 <div id="tooltip"></div>
@@ -2268,5 +2273,6 @@ drawBatchCompareBars();
 drawPrefixLayout(1, 0);
 updateKVCalc();
 </script>
+<nav class="concept-footer" aria-label="Continue reading"><a href="concepts.html">← All concepts</a><a href="kv_bandwidth.html">Next: Scaling →</a></nav>
 </body>
 </html>

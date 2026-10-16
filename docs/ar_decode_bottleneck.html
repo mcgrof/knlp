@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Autoregressive Decode Bottleneck — Structural Inevitability</title>
+<title>Autoregressive decode — KV-cache read pressure | knlp</title>
+<meta name="description" content="Follow the attention-side decode loop and explore how context, generation length and KV-cache layout change memory traffic.">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
@@ -399,26 +400,26 @@
     header { padding: 16px; }
   }
 </style>
+  <link rel="stylesheet" href="assets/knlp.css">
 </head>
-<body>
+<body class="concept-page">
 
 <div id="tooltip"></div>
 
-<header>
-  <div class="header-badge">ATTENTION DECODE</div>
-  <div>
-    <h1>Attention-Side Decode Bottleneck</h1>
-    <p>Per-step KV reread pressure in dense causal attention. End-to-end dominance still depends on workload and serving architecture.</p>
-    <div class="tag-row">
-      <span class="tag tag-red">memory-bandwidth-bound</span>
-      <span class="tag tag-teal">KV cache rereads</span>
-      <span class="tag tag-orange">Total reads = G·C₀ + G(G−1)/2</span>
-      <span class="tag tag-purple">MHA · GQA · MLA</span>
-    </div>
-  </div>
-</header>
+<a class="site-skip" href="#main">Skip to content</a>
+<nav class="site-nav" aria-label="Main navigation">
+  <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+  <div class="site-nav-links"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a></div>
+</nav>
+<div class="concept-hero">
+  <p class="site-eyebrow">Concepts · 01 · Autoregressive inference</p>
+  <h1>Why decode <em>rereads state.</em></h1>
+  <p>Each decode step reads prior keys and values to form the next token. Follow the attention-side traffic as the history and generation grow; whole-model latency also depends on weights and the serving system.</p>
+  <nav class="site-reading-path" aria-label="Concept guides"><a href="ar_decode_bottleneck.html" aria-current="page">Decode</a><a href="ridge_point.html">Rooflines</a><a href="kv_bandwidth.html">Scaling</a><a href="spearman_rho.html">Statistics</a></nav>
+</div>
 
-<main>
+<main id="main">
+<div class="tag-row" style="margin-bottom:24px"><span class="tag tag-teal">KV cache rereads</span><span class="tag tag-orange">Total reads = G·C₀ + G(G−1)/2</span><span class="tag tag-purple">MHA · GQA · MLA</span></div>
 
   <div class="key-message">
     <div class="icon">⚡</div>
@@ -435,19 +436,19 @@
   <!-- ── CONTROLS ─────────────────────────────────────── -->
   <div class="controls">
     <div class="ctrl-group">
-      <label>History tokens (H): <span class="val" id="lbl-H">4096</span></label>
+      <label for="sl-H">History tokens (H): <span class="val" id="lbl-H">4096</span></label>
       <input type="range" id="sl-H" min="128" max="32768" step="128" value="4096">
     </div>
     <div class="ctrl-group">
-      <label>Append tokens (A): <span class="val" id="lbl-A">256</span></label>
+      <label for="sl-A">Append tokens (A): <span class="val" id="lbl-A">256</span></label>
       <input type="range" id="sl-A" min="0" max="2048" step="64" value="256">
     </div>
     <div class="ctrl-group">
-      <label>Generated tokens (G): <span class="val" id="lbl-G">128</span></label>
+      <label for="sl-G">Generated tokens (G): <span class="val" id="lbl-G">128</span></label>
       <input type="range" id="sl-G" min="1" max="512" step="1" value="128">
     </div>
     <div class="ctrl-group">
-      <label>Highlight step (P1 & P2): <span class="val" id="lbl-step">0</span> <span style="color:var(--muted);font-size:10px">(click P1 to auto-play)</span></label>
+      <label for="sl-step">Highlight step (P1 & P2): <span class="val" id="lbl-step">0</span> <span style="color:var(--muted);font-size:10px">(click P1 to auto-play)</span></label>
       <input type="range" id="sl-step" min="0" max="8" step="1" value="0">
     </div>
     <div class="ctrl-group" style="grid-column:span 2;background:rgba(0,212,170,0.05);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;">
@@ -513,11 +514,11 @@
       <div class="panel-title"><span class="pnum">P3</span>HBM Bandwidth Demand vs Active Context (Attention-Side)</div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
         <div class="ctrl-group" style="min-width:180px">
-          <label style="font-family:var(--mono);font-size:10px;color:var(--muted);">KV bytes/token: <span class="val" id="lbl-kvbytes">128</span></label>
+          <label for="sl-kvbytes" style="font-family:var(--mono);font-size:10px;color:var(--muted);">KV bytes/token: <span class="val" id="lbl-kvbytes">128</span></label>
           <input type="range" id="sl-kvbytes" min="32" max="512" step="32" value="128">
         </div>
         <div class="ctrl-group" style="min-width:180px">
-          <label style="font-family:var(--mono);font-size:10px;color:var(--muted);">Target decode rate (tok/s): <span class="val" id="lbl-tokrate">50</span></label>
+          <label for="sl-tokrate" style="font-family:var(--mono);font-size:10px;color:var(--muted);">Target decode rate (tok/s): <span class="val" id="lbl-tokrate">50</span></label>
           <input type="range" id="sl-tokrate" min="10" max="500" step="10" value="50">
         </div>
         <label style="font-family:var(--mono);font-size:10px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -554,7 +555,7 @@
       <!-- main 2-D heatmap — X=step, Y=token -->
       <canvas id="heatmap-canvas"></canvas>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;">
+      <div class="concept-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;">
         <!-- companion: rereads per token position -->
         <div>
           <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:.07em;">
@@ -1831,5 +1832,6 @@ document.getElementById('p1').addEventListener('click', () => {
 document.getElementById('p1').title = 'Click to animate';
 document.getElementById('p1').style.cursor = 'pointer';
 </script>
+<nav class="concept-footer" aria-label="Continue reading"><a href="concepts.html">← All concepts</a><a href="ridge_point.html">Next: Rooflines →</a></nav>
 </body>
 </html>
