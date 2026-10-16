@@ -33,6 +33,7 @@
   .warn { color: #fbbf24; font-weight: 600; }
   .bad  { color: #fb7185; font-weight: 600; }
   .info { color: #7dd3fc; font-weight: 600; }
+  .bad, .info { overflow-wrap: anywhere; }
   .path-list li { font-family: var(--mono); font-size: 13px; word-break: break-all; }
   .mini-note { border-left: 3px solid var(--green); background: rgba(34, 197, 94, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
   .mini-note-warn { border-left: 3px solid var(--amber); background: rgba(245, 158, 11, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
@@ -556,6 +557,32 @@
           ring state. This row reports the CPU contract result; it does not
           reproduce the paper's quality or accelerator-throughput measurements.
         </p>
+        <div id="chores-paper-queue" class="mini-note mt-5" style="scroll-margin-top: 2rem;">
+          <h3 class="text-lg font-semibold text-green-300 mb-3">Chores: paper discovery to a cheap CPU test</h3>
+          <p class="text-slate-300 leading-7 text-sm mb-3">
+            A positive R&amp;D use case for <a href="https://chores.knlp.io/" class="section-link">Chores</a>
+            is proactive research assistance: use the
+            <a href="https://podcast.do-not-panic.com/" class="section-link">AI Post Transformers</a>
+            <a href="https://podcast.do-not-panic.com/queue.html" class="section-link">paper queue</a>
+            to identify adaptive KV-cache compression candidates, inspect the primary paper,
+            and run a bounded PIA contract test. Two paper-led evaluations produced useful findings:
+          </p>
+          <ul class="list-disc pl-5 text-slate-300 leading-7 text-sm space-y-2 mb-3">
+            <li><strong>SnapStream:</strong> query-dependent selection makes prefix-only identity unsafe.
+              Adding the query to the key resolves that collision; the compact per-head layout,
+              logical positions, padding and mutable ring still require a method-aware connector.</li>
+            <li><strong>HiSparse:</strong> the complete backing prefix passes the modeled contract.
+              Selected reads are request-time routing. Saving only those reads under a prefix-only
+              key fails the misuse control; that failure is not a defect in HiSparse&rsquo;s complete-history design.</li>
+          </ul>
+          <p class="text-slate-400 leading-7 text-sm">
+            The low-cost screen uses Cartridge geometry and a block manifest as a deterministic
+            prefix fixture on a CPU. These evaluations load no model or KV tensors and need no GPU.
+            They test cache identity, selection and layout contracts; model quality and serving performance
+            remain separate measurements. The positive result here is a useful research workflow with
+            explicit scope and human review.
+          </p>
+        </div>
         <div class="mini-note-warn mt-4">
           <p class="text-slate-300 leading-7 text-sm">
             <strong>LMCache case study.</strong> LMCache's token-dropping SDK can
