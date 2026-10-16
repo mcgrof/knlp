@@ -72,7 +72,32 @@ is an ordinary status event. [`EXTENSIONS.md`](EXTENSIONS.md) compares the
 mappings and explains how to adapt the synthetic [`examples/`](examples/)
 templates without exposing private goals or maintainer activity.
 
-## Current scope
+## Research adaptation: the paper queue and PIA
+
+Our adaptation of Chores has now supported two CPU Prefix Integrity Analysis
+(PIA) case studies. The [AI Post Transformers paper queue](https://podcast.do-not-panic.com/queue.html)
+provides candidate research. A scoped evaluation reads the primary paper,
+defines its saved-cache contract, runs a small deterministic CPU model and
+records the result for human review.
+
+SnapStream exposes unsafe cross-query reuse under a prefix-only cache key.
+Adding query identity resolves that collision, while its compact layout still
+needs a method-aware connector and request-local ring state. HiSparse's
+complete backing history passes the modeled contract; saving only its selected
+reads under a prefix-only key fails the misuse control. These are distinct
+findings, rather than two defects in the original implementations.
+
+The tests use Cartridge geometry and block manifests, without loading model or
+KV tensors. CPU-first checks allow broader screening before allocating a GPU
+to model quality or serving questions. See the
+[AI Auto Research pipeline](https://knlp.io/auto-research.html) and the
+[PIA analysis](https://knlp.io/prefix-integrity-analysis.html#chores-paper-queue)
+for sources, public adapters and limits.
+
+This is a use case of the adapted workflow. The public reference dashboard in
+this directory keeps its own implementation boundary, described below.
+
+## Current public reference scope
 
 The code in this directory begins with a status projection, not a security
 monitor or maintenance runner. It publishes which parts of Chores are

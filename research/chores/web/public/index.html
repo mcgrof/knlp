@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Chores · Agent workflows, OKRs, and maintainer briefings</title>
+  <title>Chores · Scoped agent work, research, and maintainer briefings</title>
+  <meta name="description" content="Chores organizes bounded, evidence-producing agent tasks. Our research adaptation connects a public paper queue to CPU Prefix Integrity Analysis, with SnapStream and HiSparse case studies.">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -23,7 +24,7 @@
   </nav>
 
   <header class="shell">
-    <p class="eyebrow">Agent security · OKRs · open-source and kernel maintenance</p>
+    <p class="eyebrow">Agent security · research · OKRs · maintenance</p>
     <h1>Chores</h1>
     <p class="lede">
       Proactive security hygiene for people using AI agents. Routine checks can
@@ -31,6 +32,8 @@
       activity directly to the human owner. The same evidence-linked status
       model can track personal Objectives and Key Results (OKRs) and scoped
       maintainer assistance, including private Linux kernel morning briefings.
+      Our adaptation also supports research tasks, with two completed CPU
+      Prefix Integrity Analysis case studies.
     </p>
     <div class="scope">
       <strong>Current boundary</strong>
@@ -114,6 +117,61 @@
           </div>
         </article>
       </div>
+    </section>
+
+    <section id="research-adaptation" class="research-adaptation" aria-labelledby="research-title">
+      <div class="section-heading">
+        <div>
+          <p class="label">A working adaptation</p>
+          <h2 id="research-title">From a paper queue to tested cache contracts</h2>
+        </div>
+        <p>A research use case within a broader task framework.</p>
+      </div>
+      <p class="research-intro">
+        We have successfully used an adaptation of Chores for
+        <a href="https://knlp.io/prefix-integrity-analysis.html">Prefix Integrity Analysis (PIA)</a>:
+        checking whether a transformed KV-cache object remains safe to restore and share.
+        The <a href="https://podcast.do-not-panic.com/">AI Post Transformers</a>
+        <a href="https://podcast.do-not-panic.com/queue.html">paper queue</a>
+        supplies candidate research. Scoped Chores tasks turn relevant papers into
+        primary-source reviews and small, reproducible CPU experiments.
+      </p>
+      <ol class="research-path" aria-label="Paper evaluation workflow">
+        <li><strong>Discover</strong><span>Match a queued paper to an active question and retain its source revision.</span></li>
+        <li><strong>Inspect</strong><span>Read the mechanism, define the saved object and check prior evidence.</span></li>
+        <li><strong>Test on CPU</strong><span>Use Cartridge geometry and a block manifest to check identity, selection and layout.</span></li>
+        <li><strong>Review</strong><span>Keep inputs and verdicts; identify any model or serving question that remains.</span></li>
+      </ol>
+      <div class="use-cases">
+        <article class="use-case">
+          <p class="label">Finding · prefix identity</p>
+          <h3>SnapStream</h3>
+          <p>Query-dependent selection makes a prefix-only cache key unsafe for cross-query reuse.
+            Adding query identity resolves the collision; compact layout, logical positions,
+            padding and mutable ring state still require a method-aware connector.</p>
+          <a href="https://knlp.io/auto-research.html#findings">Read the finding and sources →</a>
+        </article>
+        <article class="use-case">
+          <p class="label">Finding · backing history versus selected reads</p>
+          <h3>HiSparse</h3>
+          <p>The complete backing prefix passes the CPU contract model. Selected reads are
+            request-time routing; saving only them under a prefix-only key fails the misuse
+            control. That is a reuse mistake, not a defect in the complete-history design.</p>
+          <a href="https://knlp.io/auto-research.html#findings">Read the finding and sources →</a>
+        </article>
+      </div>
+      <p class="research-intro">
+        CPU-first testing makes it practical to screen more candidates without waiting for a GPU
+        or loading a model. These two tests use metadata-only Cartridge fixtures; they establish
+        the modeled contract. Quality and serving-performance claims require separate model work.
+        The broader pipeline is documented in
+        <a href="https://knlp.io/auto-research.html">AI Auto Research</a>.
+      </p>
+      <p class="research-scope">
+        This is a case study of our adapted workflow. The public dashboard below remains a
+        status view and reference implementation; its implementation boundary is reported separately.
+        Research tasks keep explicit scope, evidence and human review.
+      </p>
     </section>
 
     <section class="metrics" aria-label="Project summary" aria-live="polite">

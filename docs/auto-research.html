@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Auto Research — from paper queue to useful evidence | knlp</title>
+  <meta name="description" content="How knlp connects the AI Post Transformers paper queue, scoped Chores assistance and CPU-first experiments. The first use case: Prefix Integrity Analysis of SnapStream and HiSparse.">
+  <link rel="canonical" href="https://knlp.io/auto-research.html">
+  <link rel="stylesheet" href="assets/knlp.css">
+  <link rel="stylesheet" href="assets/auto-research.css">
+</head>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav">
+    <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+    <nav class="site-nav-links" aria-label="Main navigation"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a><a href="https://github.com/mcgrof/knlp">GitHub ↗</a></nav>
+  </header>
+  <main id="main" class="site-wrap auto-research">
+    <section class="site-hero" aria-labelledby="intro-title">
+      <p class="site-eyebrow">AI R&amp;D · research automation</p>
+      <h1 id="intro-title">From paper queue<br><span class="site-gradient">to useful evidence.</span></h1>
+      <p class="site-lead">AI Auto Research connects a stream of new papers with scoped agent work and reproducible experiments. The goal is to turn relevant ideas into testable questions, then spend compute on the questions that remain.</p>
+      <p class="auto-intro">Our current adaptation combines automated paper discovery, explicitly scoped evaluation and human review. It has already supported two CPU Prefix Integrity Analysis case studies. Chores and AI Post Transformers are components of this pipeline.</p>
+      <div class="site-actions"><a class="site-button primary" href="#pipeline">Follow the pipeline ↓</a><a class="site-button" href="#findings">Read the findings ↗</a></div>
+    </section>
+
+    <section id="components" class="site-section research" aria-labelledby="components-title">
+      <div class="site-section-head"><div><span class="site-section-label">Two components, distinct roles</span><h2 id="components-title">A research stream.<br>A way to organize the work.</h2></div><p>The paper queue supplies candidates. Chores gives each evaluation a bounded task, evidence and a review path.</p></div>
+      <div class="auto-components">
+        <article class="site-card">
+          <div class="site-card-kicker">Discovery · primary sources</div>
+          <h3><a href="https://podcast.do-not-panic.com/">AI Post Transformers</a></h3>
+          <p>The podcast&rsquo;s public paper queue collects candidates for future episodes. We reuse that research stream to find papers relevant to active knlp questions, including adaptive KV-cache compression and sparse attention.</p>
+          <p>A queue match starts an investigation. The evaluator reads the primary paper, identifies the mechanism and checks it against existing results.</p>
+          <div class="site-card-links"><a href="https://podcast.do-not-panic.com/queue.html">Browse the paper queue</a><a href="https://podcast.do-not-panic.com/queue.xml">Queue feed</a><a href="https://podcast.do-not-panic.com/">Podcast</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Scoped assistance · review</div>
+          <h3><a href="https://chores.knlp.io/">Chores</a></h3>
+          <p>Chores is a broader framework for small, evidence-producing tasks across security, reliability, research and maintainer work. Our adaptation uses that discipline to organize paper evaluation.</p>
+          <p>Each research task has named inputs, a specific question, an expected result and human review. The result includes the evidence and its limits, so the next person can assess or repeat it.</p>
+          <div class="site-card-links"><a href="https://chores.knlp.io/">Chores design</a><a href="https://chores.knlp.io/#research-adaptation">The PIA adaptation</a></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="pipeline" class="site-section research" aria-labelledby="pipeline-title">
+      <div class="site-section-head"><div><span class="site-section-label">The workflow we use</span><h2 id="pipeline-title">Make the question executable.</h2></div><p>The first application asks whether a transformed KV-cache object remains safe to restore and share across requests.</p></div>
+      <ol class="auto-pipeline">
+        <li><div><h3>Find a relevant paper</h3><p>Use the public queue to identify a candidate against an active research question. Keep the paper link, revision and reason for the match.</p></div></li>
+        <li><div><h3>Read the mechanism</h3><p>Inspect the primary paper and prior evidence. For cache methods, identify what is saved, whether selection depends on the query, and which positions and mutable state must survive restoration.</p></div></li>
+        <li><div><h3>Run the cheapest useful test</h3><p>Model the contract with a deterministic Cartridge-based fixture on a CPU. Hold the prefix fixed, vary the query, repeat the transformation, and check cache identity, block geometry and layout requirements.</p></div></li>
+        <li><div><h3>Review and preserve the result</h3><p>Retain source revisions, inputs, outputs and the verdict. Review a passing contract, a failing contract and a misuse control on their own terms. A useful result can rule out a suspected problem.</p></div></li>
+        <li><div><h3>Escalate the unresolved question</h3><p>Use real KV tensors, a model or a serving stack when the question requires them. Quality, restoration correctness and throughput each need their own matched baseline and measurements.</p></div></li>
+      </ol>
+    </section>
+
+    <section id="findings" class="site-section research" aria-labelledby="findings-title">
+      <div class="site-section-head"><div><span class="site-section-label">The first application</span><h2 id="findings-title">Two PIA case studies.</h2></div><p>Prefix Integrity Analysis (PIA) checks whether a saved cache object keeps the identity and geometry needed for safe reuse. These findings come from CPU contract models.</p></div>
+      <div class="auto-findings">
+        <article class="auto-finding">
+          <p class="auto-verdict risk">Prefix-only identity fails</p>
+          <h3>SnapStream</h3>
+          <p>Query-dependent selection changes the saved object even when the source prefix is the same. A prefix-only cache key therefore permits unsafe cross-query reuse.</p>
+          <p>Adding the query to the key resolves that collision. The compact per-head layout, logical positions, padding and mutable ring still need a method-aware connector and request-local state.</p>
+          <div class="auto-links"><a href="https://arxiv.org/abs/2511.03092">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/ce32cd86777681b1d22a678dbe008f59c182cbfd">Modeled adapter &amp; checks ↗</a></div>
+        </article>
+        <article class="auto-finding">
+          <p class="auto-verdict pass">Complete backing history passes</p>
+          <h3>HiSparse</h3>
+          <p>The complete host-memory backing prefix passes the modeled contract. The records selected for a particular attention step are request-time reads.</p>
+          <p>Saving only those query-dependent reads under a prefix-only key fails the misuse control. That exposes a reuse mistake; it is not a defect in HiSparse&rsquo;s complete-history design.</p>
+          <div class="auto-links"><a href="https://arxiv.org/html/2608.07009v1#S3">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/00070dbc5a6aef004d2c6c18ab194d9283c32a9b">Modeled adapters &amp; checks ↗</a></div>
+        </article>
+      </div>
+      <p class="auto-note">These are two useful integrity findings, with different verdicts. The screens use Cartridge geometry and block manifests; they load no model or KV tensors. They establish the modeled contract, while model quality and accelerator performance remain separate measurements.</p>
+      <div class="site-actions"><a class="site-button" href="prefix-integrity-analysis.html#chores-paper-queue">Full PIA analysis ↗</a><a class="site-button" href="https://github.com/mcgrof/knlp/blob/main/routing/prefix_integrity/README.md">Use the public harness ↗</a></div>
+    </section>
+
+    <section id="cpu-scaling" class="site-section research" aria-labelledby="cpu-title">
+      <div class="site-section-head"><div><span class="site-section-label">Why CPU-first matters</span><h2 id="cpu-title">Scale the screening.<br>Reserve GPUs for model questions.</h2></div><p>More candidate papers should not automatically mean more GPU jobs.</p></div>
+      <div class="auto-prose">
+        <p>Many early failures concern identity and bookkeeping: two queries produce different objects under one key, positions are lost, or a compact layout cannot be restored by an ordinary connector. Small CPU fixtures can expose those problems without loading a model or rerunning prefill.</p>
+        <p>That makes broader screening practical. Each candidate can use small frozen inputs, repeatable checks and a bounded output. The approach can expand across papers, parameters and query cases on ordinary CPU resources while preserving GPU time for questions about actual tensors, logits and serving behavior.</p>
+        <p>The two case studies demonstrate the workflow. They do not measure a large-scale autonomous research system. Our goal is to increase the number of ideas we can examine carefully, with evidence and review at each step.</p>
+      </div>
+    </section>
+
+    <section class="site-resources" aria-labelledby="resources-title"><h2 id="resources-title">Explore the components</h2><nav aria-label="Research components"><a href="https://chores.knlp.io/">Chores ↗</a><a href="https://podcast.do-not-panic.com/">AI Post Transformers ↗</a><a href="https://podcast.do-not-panic.com/queue.html">Paper queue ↗</a><a href="prefix-integrity-analysis.html">PIA ↗</a></nav></section>
+    <footer class="site-footer"><p><a href="index.html#research">← AI R&amp;D</a></p><p>knlp · Kernel-Style Machine Learning</p></footer>
+  </main>
+</body>
+</html>
