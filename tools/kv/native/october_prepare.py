@@ -106,6 +106,7 @@ def freeze(args):
             "block_size": 16,
             "kv_cache_memory_bytes": args.cache_bytes,
             "enforce_eager": False,
+            "disable_log_stats": False,
             "enable_chunked_prefill": False,
             "calculate_kv_scales": False,
             "attention_config": {

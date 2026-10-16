@@ -79,7 +79,7 @@ def test_forced_lengths_account_for_all_outputs(tmp_path, length):
             return [output]
 
     engine = Engine()
-    engine.llm_engine = SimpleNamespace(step=lambda: Engine.values)
+    engine.llm_engine = SimpleNamespace(step=lambda: Engine.values, log_stats=True)
     namespace = dict(
         __package__="tools.kv.native",
         SamplingParams=lambda **kwargs: SimpleNamespace(**kwargs),
@@ -103,6 +103,19 @@ def test_forced_lengths_account_for_all_outputs(tmp_path, length):
         compile(ast.Module(body=[function], type_ignores=[]), "timing", "exec"),
         namespace,
     )
+    engine.llm_engine.log_stats = False
+    with pytest.raises(RuntimeError, match="before warmup"):
+        namespace["timing_record"](
+            engine,
+            [{"prompt_token_ids": [1, 2]}],
+            1,
+            "test",
+            tmp_path / "disabled.json",
+            {},
+            output_tokens=length,
+        )
+    assert calls == []
+    engine.llm_engine.log_stats = True
     row = namespace["timing_record"](
         engine,
         [{"prompt_token_ids": [1, 2]}],

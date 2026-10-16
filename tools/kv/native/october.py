@@ -55,6 +55,11 @@ def check_protocol(protocol, variant, environment):
     return definition
 
 
+def check_timing_protocol(protocol):
+    if protocol["engine"].get("disable_log_stats") is not False:
+        raise ValueError("timing requires explicit disable_log_stats=False")
+
+
 def check_qualification(path, protocol_path, *, length, batch):
     value = json.loads(Path(path).read_text())
     if value.get("passed") is not True or digest(protocol_path) not in value.get(
@@ -178,6 +183,7 @@ def main():
     if protocol["engine"].get("kv_cache_memory_bytes") != args.cache_bytes:
         raise ValueError("cache pool differs from the frozen protocol")
     if args.stage == "timing":
+        check_timing_protocol(protocol)
         if args.qualification is None:
             raise ValueError("timing requires --qualification")
         check_qualification(

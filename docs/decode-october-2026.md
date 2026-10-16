@@ -144,6 +144,10 @@ python -m tools.kv.native.october timing --variant compact --inputs inputs/compa
 ```
 
 Timing excludes one fixed warmup and synchronizes CUDA at both boundaries.
+Freeze `engine.disable_log_stats=false` in both arm protocols. vLLM's offline
+default disables request metrics; the timing entrypoint rejects that setting
+before warmup because TTFT and request latency require those clocks. Apply the
+same statistics setting to both arms and keep its protocol hash with the run.
 It measures 128 forced output tokens,
 complete-request output tokens/s, completion-linked full-active decode,
 TTFT and preemption. The cohort decode span runs from the first

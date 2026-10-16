@@ -570,9 +570,14 @@ def run_gsm(args, manifest, scales):
 
 def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128):
     import numpy as np
+    from .completion import request_metrics
 
     if not isinstance(output_tokens, int) or output_tokens < 2:
         raise ValueError("timing requires at least two output tokens")
+    if getattr(llm.llm_engine, "log_stats", False) is not True:
+        raise RuntimeError(
+            "timing requires frozen disable_log_stats=False before warmup"
+        )
     params = SamplingParams(temperature=0, max_tokens=output_tokens, ignore_eos=True)
     # Prefix caching is disabled. All requests are enqueued before stepping
     # by the in-process engine; the observer still verifies actual concurrency.
@@ -610,7 +615,7 @@ def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128
         completion = output.outputs[0]
         if len(completion.token_ids) != output_tokens or output.num_cached_tokens:
             raise RuntimeError("synthetic timing output/cache coverage mismatch")
-        m = dict(vars(output.metrics))
+        m = request_metrics(output.metrics)
         m["request_id"] = output.request_id
         m["internal_request_id"] = schedule.internal_ids([output.request_id])[0]
         m["observed_frontend_completion_wall_time"] = completion_wall[output.request_id]

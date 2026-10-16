@@ -4,6 +4,16 @@
 import re
 
 
+def request_metrics(metrics):
+    """Read the v1 request clocks, including metrics objects without __dict__."""
+    fields = ("arrival_time", "first_token_ts", "last_token_ts", "first_token_latency")
+    if metrics is None or any(not hasattr(metrics, name) for name in fields):
+        raise RuntimeError(
+            "request timing requires vLLM statistics; freeze disable_log_stats=False"
+        )
+    return {name: getattr(metrics, name) for name in fields}
+
+
 def final_text(text, final_marker=None):
     """Apply a frozen final-channel delimiter, then exact text normalization."""
     if final_marker is not None:
