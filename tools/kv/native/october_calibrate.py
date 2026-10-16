@@ -42,6 +42,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     llm = LLM(
         model=manifest["model"],
+        quantization=("awq" if manifest["model"] == "Qwen/Qwen3-8B-AWQ" else None),
         revision=manifest["model_revision"],
         tokenizer_revision=manifest["tokenizer_revision"],
         dtype="float16",
