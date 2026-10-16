@@ -1,0 +1,92 @@
+{
+  "title": "October 2026: optimized asymmetric KV serving",
+  "date": "2026-10-16",
+  "measurements": {
+    "awq_compact_native_ratio": 1.02284585,
+    "fp16_compact_native_ratio": 1.02486566,
+    "bf16_compact_native_ratio": 1.006177719,
+    "awq_compact_mixed_improvement_percent": 6.19,
+    "equal_slot_persistent_payload_ratio": 0.75,
+    "compact_constant_GPU_MiB": 296.140625,
+    "shared_payload_MiB": 256,
+    "pinned_CPU_MiB": 8,
+    "automatic_pool_resident_endpoints": {
+      "compact": 58,
+      "mixed": 59,
+      "native": 44
+    },
+    "existing_awq_B32_compact_native_ratio": 0.985629
+  },
+  "scope": "H100 SXM80, TP1, 8192 input, B8, 128 output; APC/chunking off; fixed timing pools48 GiB AWQ/32 GiB dense; seven fresh three-arm blocks per headline",
+  "evidence_identifiers": [
+    "113e6802d999ef759f88de669f8241c6e59326ec",
+    "c2d215633d206e5e9504bcb882b96f483433a65d",
+    "adafb770b764df5804ac9475a789215979d9d1dc"
+  ],
+  "slides": [
+    {
+      "title": "Smaller KV. Two qualified B8 gains.",
+      "points": [
+        "Qwen3-8B-AWQ: +2.28% complete-request throughput",
+        "Dense Qwen3-8B FP16: +2.49%",
+        "K16/V8: 25% less persistent KV payload at equal slots"
+      ],
+      "narration": "This October 2026 update reports two qualified batch eight serving gains. Packed AWQ Qwen 3 eight B improves complete request throughput by 2.28 percent over native FP 16 KV. Dense Qwen 3 eight B, executing in FP 16, improves by 2.49 percent. K 16 V 8 uses 25 percent less persistent KV payload at equal token slots. That saving is not total GPU memory."
+    },
+    {
+      "title": "The workload defines the result",
+      "points": [
+        "One H100 SXM80 \u00b7 TP1 \u00b7 FP16 execution",
+        "8,192 input tokens \u00b7 B8 \u00b7 128 generated tokens",
+        "Seven fresh three-arm process blocks; median paired ratios"
+      ],
+      "narration": "The workload is one H 100 SXM 80, tensor parallelism one,8192 input tokens, batch eight, and 128 generated tokens. Prefix caching and chunked prefill are off. Each headline is a median paired ratio from seven fresh three arm process blocks, separate from its pilot. Each experiment keeps the same weight checkpoint across cache arms. AWQ weights remain packed. These are workload specific results."
+    },
+    {
+      "title": "Remove enough prefill overhead",
+      "points": [
+        "Earlier writer + scale fusion + captured decode",
+        "Compact prefill gathers stored K16/V8 into shared FP16 scratch",
+        "AWQ: +6.19% over preceding mixed; +2.28% over native"
+      ],
+      "narration": "Earlier writer, scale, and graph work improved decode, but long prompt prefill held back complete requests. Compact gathers stored keys and already quantized values into one bounded shared FP 16 workspace, then uses native FA 3 prefill. Casting does not recover lost precision. There is no full value shadow per layer. Decode still reads compressed values. AWQ compact is 6.19 percent faster than the preceding mixed stack."
+    },
+    {
+      "title": "Count persistent and temporary memory",
+      "points": [
+        "Persistent K16/V8 payload: 0.75 \u00d7 native",
+        "296.14 MiB constant GPU scratch, including 256 MiB shared payload",
+        "Variable metadata + 8 MiB pinned CPU; count aliases once"
+      ],
+      "narration": "Persistent KV and temporary workspace are separate. Compact owns about 296.14 mebibytes of constant GPU workspace, including 256 mebibytes of shared payload, plus variable metadata and 8 mebibytes of pinned CPU storage. Count aliases once. Fixed timing pools are 48 gibibytes for AWQ and 32 for dense FP 16. More token slots need not reduce reserved memory."
+    },
+    {
+      "title": "Capacity is a separate measurement",
+      "points": [
+        "Automatic-pool AWQ endpoints: compact58 \u00b7 mixed59 \u00b7 native44",
+        "Compact admits 31.82% more than native after scratch costs",
+        "Resident capacity does not measure throughput or queueing"
+      ],
+      "narration": "A separate automatic pool test confirms 58 resident requests for compact,59 for preceding mixed, and 44 for native. Compact admits 31.82 percent more than native after workspace costs. This measures capacity, not throughput or queueing. Do not multiply the capacity increase by the batch eight speed ratio."
+    },
+    {
+      "title": "Keep the boundaries visible",
+      "points": [
+        "Existing AWQ 8K/B32: 0.985629 \u00d7 native, about1.44% slower",
+        "BF16 transfer: +0.62% throughput; GSM preservation fails",
+        "Separate symmetric AWQ recipe fails quality; no timing claim"
+      ],
+      "narration": "The existing AWQ eight K, batch 32 result is about 1.44 percent slower than native, with mixed prefill and decode fallback. The BF 16 transfer has a small speed gain, but fails frozen GSM gross loss preservation despite a higher net score. It remains experimental. A separate symmetric AWQ recipe fails quality and has no comparative timing."
+    },
+    {
+      "title": "Next question: matched batch32",
+      "points": [
+        "Publish exact source, then freeze the eight-model matrix",
+        "Check quality, actual concurrency and complete-request timing",
+        "Report gains, regressions, unsupported routes and missing cells"
+      ],
+      "narration": "Next, the matched batch 32 study will keep all eight historical models visible. It will recover old workload details where possible and otherwise label a new standardized comparison. It will separate complete requests, completed decode, prefill overhead, and capacity pressure. Positive claims require quality and timing gates. Regressions, unsupported routes, and missing cells will be reported. Source and reproduction settings are linked on the decode page."
+    }
+  ],
+  "video_playback_rate": 1.2
+}
