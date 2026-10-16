@@ -136,9 +136,14 @@ python -m tools.kv.native.october timing --variant compact --inputs inputs/compa
   --cache-bytes 34359738368 --qualification qualification.json
 ```
 
-Timing excludes one fixed warmup. It measures 128 forced output tokens,
+Timing excludes one fixed warmup and synchronizes CUDA at both boundaries.
+It measures 128 forced output tokens,
 complete-request output tokens/s, completion-linked full-active decode,
-TTFT and preemption. APC and chunking are off, capture is
+TTFT and preemption. The cohort decode span runs from the first
+prefill-produced token to the last request's final decode token; it can
+include staggered admission and mixed prefill/decode. The separate
+completion-linked metric includes only sustained full-active intervals.
+APC and chunking are off, capture is
 `FULL_DECODE_ONLY`, capture sizes are 1/8/32/44/45/59/60/96, and the token
 budget is 65,536. Every process reinstalls frozen scales before capture.
 Use seven fresh three-arm process blocks, frozen counterbalanced orders,
