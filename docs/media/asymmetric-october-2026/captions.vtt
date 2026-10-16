@@ -1,0 +1,109 @@
+WEBVTT
+
+00:00:00.083 --> 00:00:04.968
+This October 2026 update reports two qualified batch eight serving gains.
+
+00:00:04.927 --> 00:00:12.062
+Packed AWQ Qwen 3 eight B improves complete request throughput by 2.28 percent over native FP 16 KV.
+
+00:00:12.062 --> 00:00:17.771
+Dense Qwen 3 eight B, executing in FP 16, improves by 2.49 percent.
+
+00:00:17.771 --> 00:00:23.375
+K 16 V 8 uses 25 percent less persistent KV payload at equal token slots.
+
+00:00:23.375 --> 00:00:26.198
+That saving is not total GPU memory.
+
+00:00:26.323 --> 00:00:35.823
+The workload is one H 100 SXM 80, tensor parallelism one,8192 input tokens, batch eight, and 128 generated tokens.
+
+00:00:35.782 --> 00:00:38.646
+Prefix caching and chunked prefill are off.
+
+00:00:38.646 --> 00:00:44.521
+Each headline is a median paired ratio from seven fresh three arm process blocks, separate from its pilot.
+
+00:00:44.521 --> 00:00:48.354
+Each experiment keeps the same weight checkpoint across cache arms.
+
+00:00:48.354 --> 00:00:50.844
+AWQ weights remain packed.
+
+00:00:50.844 --> 00:00:53.333
+These are workload specific results.
+
+00:00:53.463 --> 00:00:59.692
+Earlier writer, scale, and graph work improved decode, but long prompt prefill held back complete requests.
+
+00:00:59.651 --> 00:01:07.776
+Compact gathers stored keys and already quantized values into one bounded shared FP 16 workspace, then uses native FA 3 prefill.
+
+00:01:07.776 --> 00:01:10.432
+Casting does not recover lost precision.
+
+00:01:10.432 --> 00:01:13.026
+There is no full value shadow per layer.
+
+00:01:13.026 --> 00:01:15.661
+Decode still reads compressed values.
+
+00:01:15.661 --> 00:01:20.797
+AWQ compact is 6.19 percent faster than the preceding mixed stack.
+
+00:01:20.923 --> 00:01:24.288
+Persistent KV and temporary workspace are separate.
+
+00:01:24.246 --> 00:01:36.278
+Compact owns about 296.14 mebibytes of constant GPU workspace, including 256 mebibytes of shared payload, plus variable metadata and 8 mebibytes of pinned CPU storage.
+
+00:01:36.278 --> 00:01:38.173
+Count aliases once.
+
+00:01:38.173 --> 00:01:43.715
+Fixed timing pools are 48 gibibytes for AWQ and 32 for dense FP 16.
+
+00:01:43.715 --> 00:01:46.923
+More token slots need not reduce reserved memory.
+
+00:01:47.063 --> 00:01:54.761
+A separate automatic pool test confirms 58 resident requests for compact,59 for preceding mixed, and 44 for native.
+
+00:01:54.719 --> 00:01:59.438
+Compact admits 31.82 percent more than native after workspace costs.
+
+00:01:59.438 --> 00:02:02.594
+This measures capacity, not throughput or queueing.
+
+00:02:02.594 --> 00:02:06.584
+Do not multiply the capacity increase by the batch eight speed ratio.
+
+00:02:06.723 --> 00:02:15.348
+The existing AWQ eight K, batch 32 result is about 1.44 percent slower than native, with mixed prefill and decode fallback.
+
+00:02:15.307 --> 00:02:22.442
+The BF 16 transfer has a small speed gain, but fails frozen GSM gross loss preservation despite a higher net score.
+
+00:02:22.442 --> 00:02:24.473
+It remains experimental.
+
+00:02:24.473 --> 00:02:29.462
+A separate symmetric AWQ recipe fails quality and has no comparative timing.
+
+00:02:29.603 --> 00:02:34.291
+Next, the matched batch 32 study will keep all eight historical models visible.
+
+00:02:34.249 --> 00:02:39.780
+It will recover old workload details where possible and otherwise label a new standardized comparison.
+
+00:02:39.780 --> 00:02:45.312
+It will separate complete requests, completed decode, prefill overhead, and capacity pressure.
+
+00:02:45.312 --> 00:02:48.582
+Positive claims require quality and timing gates.
+
+00:02:48.582 --> 00:02:52.624
+Regressions, unsupported routes, and missing cells will be reported.
+
+00:02:52.624 --> 00:02:56.145
+Source and reproduction settings are linked on the decode page.
