@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <meta content="A durable KV handoff needs more than a successful read: publication, reader ownership, exact continuation and a safe acknowledgement boundary." name="description"/>
+  <title>
+   Prefill / decode through storage — knlp
+  </title>
+  <style>
+   :root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.tool{display:flex;flex-direction:column}.tool .link{margin-top:auto;padding-top:12px;font:700 12px var(--mono)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+
+/* Storage guide additions to the shared knlp page style. */
+section { scroll-margin-top: 90px; }
+p { max-width: 1030px; }
+h3 { margin-top: 28px; }
+.grid2, .grid3 { margin: 24px 0; }
+.grid2 > *, .grid3 > * { min-width: 0; }
+.label { font: 700 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--green); }
+.toc { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 28px 0; font: 12px var(--mono); }
+td { vertical-align: top; font-size: 14px; }
+code { overflow-wrap: anywhere; }
+pre { background: var(--card2); border: 1px solid var(--line); border-radius: 9px; padding: 22px; overflow: auto; line-height: 1.7; }
+pre code { white-space: pre; color: var(--text); }
+li { margin: .65em 0; }
+details { padding: 18px 0; border-top: 1px solid var(--line); }
+summary { cursor: pointer; font-weight: 650; }
+.flow { margin: 24px 0; }
+.flow .node { text-align: left; font-size: 14px; color: var(--muted); }
+.flow .node strong { display: block; margin-bottom: 7px; color: var(--green); }
+svg { display: block; width: 100%; height: auto; }
+.sub { margin-top: 14px; font-size: 14px; }
+.history { list-style: none; margin: 28px 0; padding: 0; }
+.history li { display: grid; grid-template-columns: 155px minmax(0, 1fr); gap: 24px; margin: 0; padding: 22px 0; border-top: 1px solid var(--line); }
+.history-meta { font: 12px/1.8 var(--mono); color: var(--dim); }
+.history-meta a { display: block; }
+.history h3 { font-size: 18px; margin: 0 0 8px; }
+.history p { color: var(--muted); margin: 0; }
+.source-list { color: var(--muted); }
+footer { margin-top: 30px; padding-left: 0; padding-right: 0; }
+@media (max-width: 600px) {
+  main { padding: 38px 18px 60px; }
+  nav { padding: 12px 18px; gap: 12px; }
+  .hero { padding-bottom: 30px; }
+  section { padding: 36px 0; scroll-margin-top: 120px; }
+  h2 { font-size: 26px; }
+  .lead { font-size: 18px; }
+  .history li { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .history-meta a { display: inline; margin-left: 12px; }
+  .card { padding: 18px; }
+  th, td { padding: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.flow { grid-template-columns: repeat(var(--flow-columns, 4), minmax(0, 1fr)); }
+.flow.two-way > div:not(:last-child)::after { content: "⇄"; }
+@media (max-width: 900px) {
+  .flow { grid-template-columns: 1fr; }
+  .flow.two-way > div:not(:last-child)::after { content: "⇅"; }
+}
+  </style>
+ </head>
+ <body>
+  <header>
+   <nav aria-label="Main navigation">
+    <a class="logo" href="https://knlp.io/">
+     KNLP
+    </a>
+    <span class="spacer">
+    </span>
+    <a href="io-uring-dmabuf.html">
+     io_uring + DMA-BUF
+    </a>
+    <a href="#ordering">
+     protocol
+    </a>
+    <a href="#test-targets">
+     test targets
+    </a>
+    <a href="#evidence">
+     evidence
+    </a>
+   </nav>
+  </header>
+  <main>
+   <div class="hero">
+    <span class="eyebrow">
+     EXPERIMENTAL · 16 OCTOBER 2026
+    </span>
+    <h1>
+     Prefill / decode through storage
+    </h1>
+    <p class="lead">
+     A durable KV handoff needs more than a successful read: publication, reader ownership, exact continuation and a safe acknowledgement boundary.
+    </p>
+    <div class="toc">
+     <a href="#ordering">
+      Protocol
+     </a>
+     <a href="#ownership">
+      Why LMCache
+     </a>
+     <a href="#migration">
+      NIXL transition
+     </a>
+     <a href="#evidence">
+      What was tested
+     </a>
+     <a href="#validation-fixes">
+      Validation fixes
+     </a>
+     <a href="#source">
+      Source
+     </a>
+     <a href="#test-targets">
+      Test targets
+     </a>
+    </div>
+    <div class="grid3">
+     <div class="card">
+      <div class="label">
+       Prefill
+      </div>
+      <h3>
+       Produce reusable KV state
+      </h3>
+      <p>
+       The producer computes the prompt, stores its KV and returns the first output token. Storage publication is a separate barrier.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       Transport
+      </div>
+      <h3>
+       Use storage as the handoff
+      </h3>
+      <p>
+       A decoder reads an advertised storage generation. This is different from copying KV directly over NVLink, RDMA or TCP.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       Decode
+      </div>
+      <h3>
+       Continue the same request
+      </h3>
+      <p>
+       The decoder receives the producer's first token, validates/restores the promised prefix and releases its extent lease only after completion.
+      </p>
+     </div>
+    </div>
+   </div>
+   <section id="ordering">
+    <h2>
+     The handoff is an ownership protocol
+    </h2>
+    <div class="scroll">
+     <div aria-label="Prepare and prefill, publish READY, claim and adopt, restore and decode, acknowledge before extent reuse" class="flow" role="img" style="--flow-columns:5">
+      <div class="node">
+       <strong>
+        Prepare + prefill
+       </strong>
+       Protect request keys
+       <br/>
+       Fence GPU gather
+      </div>
+      <div class="node">
+       <strong>
+        Publish READY
+       </strong>
+       Completed payload writes
+       <br/>
+       Flush + checkpoint barrier
+      </div>
+      <div class="node">
+       <strong>
+        Claim + adopt
+       </strong>
+       Bind reader/session
+       <br/>
+       Validate manifest + layout
+      </div>
+      <div class="node">
+       <strong>
+        Restore + decode
+       </strong>
+       Complete reads
+       <br/>
+       Fence GPU consumption
+      </div>
+      <div class="node">
+       <strong>
+        ACK
+       </strong>
+       Exact publication identity
+       <br/>
+       Permit extent reuse
+      </div>
+     </div>
+    </div>
+    <p>
+     A prefill HTTP response alone does not prove storage is ready. A successful decoder response alone does not prove restoration: an ordinary cache miss may silently recompute. Native completions, cold-reader evidence, exact continuation and a deliberately failed-load control are required.
+    </p>
+    <p>
+     A failed or uncertain claimed read retains its lease. Lease expiry, client cancellation and a waiting-thread timeout do not prove that a device or reader stopped. Unclaimed publications have a distinct exact unread-release operation.
+    </p>
+   </section>
+   <section id="ownership">
+    <h2>
+     Why put the storage support in LMCache?
+    </h2>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Layer
+        </th>
+        <th>
+         Responsibility
+        </th>
+        <th>
+         Why it stays there
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         vLLM
+        </td>
+        <td>
+         Schedule prefill/decode, own engine KV blocks, expose connector lifecycle and report failed restores.
+        </td>
+        <td>
+         The engine must decide which tokens are computed and whether a request can continue.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         LMCache
+        </td>
+        <td>
+         Key/layout identity, cache tiers, allocator and serde ownership, storage registration, publication, checkpoint adoption and extent leases.
+        </td>
+        <td>
+         The cache owner knows when storage bytes are durable and reusable. Offload and P/D reuse the same storage implementation.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         NIXL, when selected
+        </td>
+        <td>
+         Move registered byte ranges through a selected transport/backend.
+        </td>
+        <td>
+         A byte-transfer library need not own model token keys or LMCache's eviction policy.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Dispatcher
+        </td>
+        <td>
+         Route requests, pass the first token and receipts, order MP controls and ACK completed handoffs.
+        </td>
+        <td>
+         The current MP API is callable plumbing; no automatic storage-P/D router is supplied.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     This is a division of responsibility, not a claim that vLLM should have no P/D support. LMCache integrates through vLLM's connector interface. The separate NIXL storage connector legitimately lives in vLLM because it supplies a direct NIXL path without LMCache. Its GPU qualification remains separate.
+    </p>
+    <p>
+     See
+     <a href="https://docs.vllm.ai/en/latest/features/disagg_prefill/">
+      vLLM's connector architecture
+     </a>
+     and
+     <a href="https://docs.lmcache.ai/getting_started/quickstart/disaggregated_prefill.html">
+      LMCache's P/D documentation
+     </a>
+     . The latter legacy page redirects readers toward MP deployment; do not assume the two integration modes have identical controls.
+    </p>
+   </section>
+   <section id="modes">
+    <h2>
+     Two LMCache integration modes
+    </h2>
+    <details open="">
+     <summary>
+      In-process storage P/D
+     </summary>
+     <p>
+      The experimental
+      <code>
+       enable_pd=true
+      </code>
+      ,
+      <code>
+       pd_data_path=raw_block
+      </code>
+      path extends LMCache's in-process P/D control, publication tracker, proxy and
+      <code>
+       LMCacheConnectorV1
+      </code>
+      integration. It is independently qualified in a pinned local CUDA/XFS profile. That configuration is not the MP launcher.
+     </p>
+    </details>
+    <details open="">
+     <summary>
+      Multiprocess shared-storage controls
+     </summary>
+     <p>
+      Independent MP writer and read-only reader servers open the same initialized target, geometry and namespace derivation. The HTTP API supplies prepare, publish, claim, adopt, ACK, cancel and unread release. A dispatcher calls them around prefill/decode. Use
+      <code>
+       LMCacheMPConnector
+      </code>
+      ; full attention, group zero and TP=PP=1 are the initial token-addressed profile.
+     </p>
+     <pre><code>1. writer POST /storage-pd/prepare   # before model stores
+2. run prefill; retain the first output token
+3. writer POST /storage-pd/publish   # receive completed READY receipt
+4. writer POST /storage-pd/claim     # exact reader/session identity
+5. reader POST /storage-pd/adopt     # namespace, epoch, manifest, layout
+6. run decode with producer token appended
+7. writer POST /storage-pd/ack       # after successful restore/consumption</code></pre>
+     <p>
+      Both servers configure
+      <code>
+       pd_derivation
+      </code>
+      from the actual
+      <code>
+       TokenHasher(chunk_size, "blake3")
+      </code>
+      . Equal tensor byte counts are insufficient: shape, dtype and logical size must match. Failed restoration must not ACK the original lease.
+     </p>
+    </details>
+    <p class="note">
+     For a strict MP consumer, set
+     <code>
+      lmcache.mp.strict_prefix=true
+     </code>
+     ,
+     <code>
+      kv_role=kv_consumer
+     </code>
+     and
+     <code>
+      kv_load_failure_policy=fail
+     </code>
+     . The fail policy alone is insufficient when prefetch fails before an external prefix is advertised. Strict mode requires all complete prompt chunks before the last prompt token and routes a miss through vLLM's real load-error path.
+    </p>
+   </section>
+   <section id="migration">
+    <h2>
+     Move from a working NIXL deployment in stages
+    </h2>
+    <ol>
+     <li>
+      Preserve the current connector, backend and model-output baseline. Distinguish stock
+      <code>
+       NixlConnector
+      </code>
+      network P/D from LMCache using NIXL and from the separate experimental NIXL storage connector.
+     </li>
+     <li>
+      Choose which ownership layer you want. Existing NIXL applications can evaluate the new IO_URING plugin; LMCache applications can evaluate its direct backend. Neither choice requires deleting the existing baseline.
+     </li>
+     <li>
+      Use a private initialized scratch target and staged host I/O first. Verify independent payload readback and checkpoint/manifest identity; do not share LMCache/NIXL metadata formats.
+     </li>
+     <li>
+      Add classic registration, then DMA-BUF with a qualified kernel/exporter. A GPU payload route must demonstrate native DMA-BUF operations without a hidden host fallback.
+     </li>
+     <li>
+      Run a no-cache model oracle, monolithic/split controls, fresh cold restoration, exact continuation and chosen-token likelihood checks with identical inputs and decode settings.
+     </li>
+     <li>
+      Inject failed reads or corrupt owned test data and require strict rejection. Test mismatched receipts, duplicate ACK, unread release, pressure and cancellation before considering rollout.
+     </li>
+     <li>
+      Qualify the actual deployment topology. Same-GPU success is useful contract evidence; it is not two-GPU, cross-host shared-NVMe or crash-recovery qualification.
+     </li>
+    </ol>
+    <p>
+     For compatible native NIXL users, the parameter sequence is host → fixed → DMA-BUF. For LMCache users, changing
+     <code>
+      transfer_channel
+     </code>
+     alone does not supply the MP dispatcher or convert a network transfer into durable publication.
+    </p>
+   </section>
+   <section id="evidence">
+    <h2>
+     Did we test NIXL P/D?
+    </h2>
+    <p>
+     <strong>
+      Yes. Native IO_URING now passes a same-GPU host-staged P/D profile with the CUDA staging fix below. Historical two-GPU results remain separate.
+     </strong>
+     Results must follow the exact backend and connector revisions below.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Source / profile
+        </th>
+        <th>
+         What ran
+        </th>
+        <th>
+         What it establishes
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Historical XNVME_NVM
+         <code>
+          7761470b
+         </code>
+         + vLLM
+         <code>
+          8bca084d4b
+         </code>
+         ; September 28
+        </td>
+        <td>
+         Two GPUs, host-staged and CUDA DMA-BUF. Per mode: 3 sequential fresh-reader, 3 concurrent 1P1D and 13 chunked/pressure comparisons matched token IDs after the partial-restore fix.
+        </td>
+        <td>
+         Historical two-GPU P/D evidence. Native source identity is reconstructed from deployed file hashes; that deployed NIXL tree lacked Git metadata. The pressure arm reuses resident prefix blocks and restores tails, so it is not 13 fully cold restores.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Native IO_URING
+         <code>
+          1604a0c3
+         </code>
+         + vLLM CUDA staging follow-up
+         <code>
+          2697fd5ead
+         </code>
+        </td>
+        <td>
+         Ordinary host, fixed host and host DMA-BUF staging: 19 exact model continuations per mode, comprising 3 fresh-reader, 3 concurrent-engine and 13 chunked/concurrency cases. Native payload/copy ordering and publication/ACK ledgers were independently checked.
+        </td>
+        <td>
+         One RTX 4090, two engines, initialized XFS file, BF16 and VLLM_BATCH_INVARIANT=1. This is host staging, not a GPU DMA-BUF exporter or independent-GPU result. Adapter suites pass 52 cases with four named device gates. The original be9c66a5 tip lacks the staging fix.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         LMCache MP; recorded published-source tests
+         <code>
+          10a941b54
+         </code>
+        </td>
+        <td>
+         CUDA GPU direct on XFS/ext4, CUDA staged and HIP staged: 52 continuations; 108 × 8 MiB reads; 9 evictions per arm; cold L1; overlapping work. Strict corruption controls reject with no tokens, then the same engines restore a valid handoff.
+        </td>
+        <td>
+         Local same-GPU shared-file contracts on the published Python source, with verified reuse of unchanged native builds. All 32 MP GPU matrix profiles also pass independent value, native-path and terminal-ownership checks.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     The native NIXL qualification uses the
+     <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-validation-fixes">vLLM validation follow-up</a>
+     with the matching native NIXL branch. This qualification uses Llama-3.2-1B-Instruct, seed 1234, greedy output budgets 48/32/24 for the three case groups and concurrency 1/4/8 in the pressure group. All 57 continuations match; the staging correction and its regression are described below.
+    </p>
+    <p>
+     Final LMCache model profile: Llama-3.2-1B-Instruct
+     <code>
+      9213176726f574b556790deb65791e0c5aa438b6
+     </code>
+     , BF16, eager, seed 123, batches 1/4/8; five-token copy continuation. The 52 token sequences match; maximum chosen-token logprob delta is 0.004954 at the unchanged 0.02 tolerance. An earlier staged recall case failed at 0.026329; its cause remains unresolved. This is not a broad model-quality result.
+    </p>
+    <p>
+     These LMCache measurements were recorded on 15 October 2026 (PDT) using the published candidate. A separate deterministic in-process profile passes 27 cases each for its no-cache oracle, cold restore and warm repeat, along with stop handling, cancellation, receipt and causal timeline checks at the unchanged 0.02 bound. The earlier no-cache repeatability failure without batch invariance remains recorded. CPU guest tests separately cover host exporters on emulated NVMe with ext4, XFS and raw targets; they do not qualify GPU raw-device I/O or SSD performance.
+    </p>
+   </section>
+   <section id="validation-fixes">
+    <h2>
+     Corrections found during validation
+    </h2>
+    <div class="grid2">
+     <div class="card">
+      <h3>
+       LMCache receiver close ·
+       <a href="https://github.com/mcgrof/LMCache/commit/b8845f7c2205e98ca5efaf541a59855d1535f354">b8845f7c</a>
+      </h3>
+      <p>
+       Repeated backend close submitted cleanup to a stopped receiver event loop, causing a timeout and an unawaited-coroutine warning. Skip that submission after the loop stops; the first close still drains a running loop.
+      </p>
+      <p>
+       <strong>Verification:</strong>
+       The public-API regression fails on the base and passes with the fix. All 33 asynchronous backend tests pass. Concurrent close and RDMA hardware behavior are outside this regression's scope.
+      </p>
+     </div>
+     <div class="card">
+      <h3>
+       vLLM / NIXL staging ·
+       <a href="https://github.com/mcgrof/vllm/commit/2697fd5ead43221308e923672697888e6ccfd793">2697fd5ead</a>
+      </h3>
+      <p>
+       CUDA copies crossing separately registered host chunks failed with
+       <code>cudaErrorInvalidValue</code>.
+       Register the contiguous host arena once with CUDA and release that registration at close. NIXL storage registrations and DMA-BUF boundaries remain unchanged.
+      </p>
+      <p>
+       <strong>Verification:</strong>
+       The real CUDA round-trip regression fails on the base and passes for host and udmabuf staging after the fix. Adapter suites pass 52 cases with four explicit hardware gates. The three model modes above pass 57 exact continuations in total.
+      </p>
+     </div>
+    </div>
+    <p>
+     Both changes passed their configured source checks and review. The LMCache model and 32-profile MP measurements above use the published feature tip
+     <code>10a941b54</code>;
+     the close correction is separately regression-tested. The native NIXL model replays use the corrected vLLM tip
+     <code>2697fd5ead</code>.
+     Initial failures remain retained, and the original full and cumulative feature refs are unchanged.
+    </p>
+   </section>
+   <section id="limits">
+    <h2>
+     Open work before a broader deployment claim
+    </h2>
+    <p>
+     The latest MP profile is one writer, one reader, compatible BF16 full-attention layout and TP=PP=1. Automatic routing, independent multiwriter ownership, writer restart with live old readers, crash-safe leases, cross-host shared NVMe, GPU-direct raw-device qualification and performance are open. The AMD result is staged. Lossy FP8 model quality is not qualified by encoded-buffer ownership tests.
+    </p>
+    <p>
+     Storage removes a mandatory direct GPU-to-GPU KV transfer; it does not eliminate control messages or make arbitrary local disks a shared namespace. A network storage topology needs its own capability, visibility and durability proof.
+    </p>
+    <p>
+     Failure cleanup is case-specific. The missing-key rejection after a claim deliberately retains one writer extent rather than risk reusing bytes a consumer may still access. That control passes its fail-closed retention contract; it is not a normal zero-ownership result or automatic crash recovery.
+    </p>
+   </section>
+   <section id="test-targets">
+    <div class="eyebrow">
+     Reproduce the contracts
+    </div>
+    <h2>
+     Make targets for storage P/D
+    </h2>
+    <p>
+     The current test profile pins the public LMCache and vLLM candidates. It exposes CPU contracts separately from GPU transport and model-serving evidence. P/D means prefill/decode; MP means multiprocess.
+    </p>
+    <pre><code>make defconfig-pd-storage
+make pd-test-plan
+make dmabuf-fetch
+# Prepare each pinned application and its test environment first.
+make pd-lmcache-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-mp-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-vllm-test PYTHON=/path/to/vllm-venv/bin/python</code></pre>
+    <div class="grid3">
+     <div class="card">
+      <div class="label">
+       LMCache CPU
+      </div>
+      <h3>
+       Publication and restoration
+      </h3>
+      <p>
+       Check generation/manifest identity, publication barriers, acknowledgement (ACK), extent lifetime, restore coverage, launcher admission and causal-trace rules.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       LMCache MP
+      </div>
+      <h3>
+       Independent storage owners
+      </h3>
+      <p>
+       Run shared-file publication, adoption and exact ACK controls through the real storage adapter and HTTP API. No GPU or experimental kernel is required.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       vLLM / NIXL CPU
+      </div>
+      <h3>
+       Connector contracts
+      </h3>
+      <p>
+       Check the coordinator, descriptor planning and pack/scatter behavior. Transfer doubles replace NIXL I/O here; hardware cases are explicitly deselected.
+      </p>
+     </div>
+    </div>
+    <p>
+     <code>
+      pd-cpu-test
+     </code>
+     runs all three selections in order if one environment can import both pinned projects. Unexpected skips fail the target. Use separate targets and environments otherwise. The older
+     <code>
+      pd-run
+     </code>
+     runner remains a basic CPU/file smoke test; it does not implement the full acceptance ladder.
+    </p>
+    <pre><code># Check an existing single-host in-process serving receipt:
+make pd-timeline-check PD_TIMELINE=/path/to/serving.jsonl
+# For a trace that actually used host fixed buffers:
+make pd-timeline-check PD_TIMELINE=/path/to/serving.jsonl \
+    PD_REQUIRED_PATH=host_fixed</code></pre>
+    <p>
+     The timeline target defaults to requiring
+     <code>
+      dmabuf_fixed
+     </code>
+     payload provenance. It checks an existing in-process causal receipt; it does not launch models, check model quality or validate MP HTTP/cross-host traces. Full writer/reader serving, recompute-oracle, failed-load and pressure runs remain separate procedures. See the
+     <a href="io-uring-dmabuf.html#reproduce">
+      kernel and hardware test targets
+     </a>
+     and
+     <code>
+      tools/reproduce/dmabuf/README.md
+     </code>
+     for setup, dependencies and limits. No CPU-only result establishes GPU P/D.
+    </p>
+   </section>
+   <section id="source">
+    <h2>
+     Reviewable source
+    </h2>
+    <ul class="source-list">
+     <li>
+      <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-dmabuf-full">
+       LMCache full dated stack: 50 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/mp/l2_storage/raw_block.rst">
+       MP configuration and HTTP contract
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-dmabuf-full">
+       NIXL native IO_URING backend: 2 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/nixl/blob/2026-10-15-io-uring-dmabuf-full/src/plugins/io_uring/README.md">
+       Backend parameters and limits
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-full">
+       vLLM NIXL storage connector: 3 commits
+      </a>
+     </li>
+     <li>
+      <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=dmabuf-size-ceiling-v7.3-rc3">
+       Experimental kernel branch
+      </a>
+      , pin
+      <code>
+       856b6583ab2f4581e81670845eadb69de7a68b30
+      </code>
+     </li>
+    </ul>
+    <p>
+     Follow-up branches include their full feature stacks:
+     <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-validation-fixes">LMCache b8845f7c</a>,
+     <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-validation-fixes">NIXL 711dcb4d</a>
+     and
+     <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-validation-fixes">vLLM 2697fd5ead</a>.
+     NIXL's follow-up adds a GCC15 test-header fix and documents initialized read extents and locked-memory requirements; its production transfer code is unchanged.
+    </p>
+    <p>
+     Source branches are public snapshots and retain their pinned bases. These guides describe experimental support; no universal compatibility with current upstream versions is claimed.
+    </p>
+   </section>
+   <footer>
+    Experimental evaluation. Pinned source revisions, test profiles and open limits are stated above. No production or performance endorsement is implied.
+   </footer>
+  </main>
+ </body>
+</html>

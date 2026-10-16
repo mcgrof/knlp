@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <meta content="An early evaluation of a common Linux interface for GPU and host KV offload, with LMCache and NIXL integrations. Software enablement and platform qualification are separate parts of the work." name="description"/>
+  <title>
+   io_uring + DMA-BUF for KV storage — knlp
+  </title>
+  <style>
+   :root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.tool{display:flex;flex-direction:column}.tool .link{margin-top:auto;padding-top:12px;font:700 12px var(--mono)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+
+/* Storage guide additions to the shared knlp page style. */
+section { scroll-margin-top: 90px; }
+p { max-width: 1030px; }
+h3 { margin-top: 28px; }
+.grid2, .grid3 { margin: 24px 0; }
+.grid2 > *, .grid3 > * { min-width: 0; }
+.label { font: 700 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--green); }
+.toc { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 28px 0; font: 12px var(--mono); }
+td { vertical-align: top; font-size: 14px; }
+code { overflow-wrap: anywhere; }
+pre { background: var(--card2); border: 1px solid var(--line); border-radius: 9px; padding: 22px; overflow: auto; line-height: 1.7; }
+pre code { white-space: pre; color: var(--text); }
+li { margin: .65em 0; }
+details { padding: 18px 0; border-top: 1px solid var(--line); }
+summary { cursor: pointer; font-weight: 650; }
+.flow { margin: 24px 0; }
+.flow .node { text-align: left; font-size: 14px; color: var(--muted); }
+.flow .node strong { display: block; margin-bottom: 7px; color: var(--green); }
+svg { display: block; width: 100%; height: auto; }
+.sub { margin-top: 14px; font-size: 14px; }
+.history { list-style: none; margin: 28px 0; padding: 0; }
+.history li { display: grid; grid-template-columns: 155px minmax(0, 1fr); gap: 24px; margin: 0; padding: 22px 0; border-top: 1px solid var(--line); }
+.history-meta { font: 12px/1.8 var(--mono); color: var(--dim); }
+.history-meta a { display: block; }
+.history h3 { font-size: 18px; margin: 0 0 8px; }
+.history p { color: var(--muted); margin: 0; }
+.source-list { color: var(--muted); }
+footer { margin-top: 30px; padding-left: 0; padding-right: 0; }
+@media (max-width: 600px) {
+  main { padding: 38px 18px 60px; }
+  nav { padding: 12px 18px; gap: 12px; }
+  .hero { padding-bottom: 30px; }
+  section { padding: 36px 0; scroll-margin-top: 120px; }
+  h2 { font-size: 26px; }
+  .lead { font-size: 18px; }
+  .history li { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .history-meta a { display: inline; margin-left: 12px; }
+  .card { padding: 18px; }
+  th, td { padding: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.flow { grid-template-columns: repeat(var(--flow-columns, 4), minmax(0, 1fr)); }
+.flow.two-way > div:not(:last-child)::after { content: "⇄"; }
+@media (max-width: 900px) {
+  .flow { grid-template-columns: 1fr; }
+  .flow.two-way > div:not(:last-child)::after { content: "⇅"; }
+}
+  </style>
+ </head>
+ <body>
+  <header>
+   <nav aria-label="Main navigation">
+    <a class="logo" href="https://knlp.io/">
+     KNLP
+    </a>
+    <span class="spacer">
+    </span>
+    <a href="#platform">
+     platform qualification
+    </a>
+    <a href="#history">
+     Linux history
+    </a>
+    <a href="#reproduce">
+     reproduce
+    </a>
+    <a href="pd-disaggregation.html">
+     prefill / decode
+    </a>
+   </nav>
+  </header>
+  <main>
+   <div class="hero">
+    <span class="eyebrow">
+     EXPERIMENTAL · 16 OCTOBER 2026
+    </span>
+    <h1>
+     io_uring +
+     <span style="white-space:nowrap">
+      DMA-BUF.
+     </span>
+     <br/>
+     GPU memory to storage.
+    </h1>
+    <p class="lead">
+     <strong>
+      An early evaluation of GPU and host key/value (KV) cache offload.
+     </strong>
+     LMCache and NIXL independently use experimental io_uring DMA-BUF support for files and raw NVMe. Routing, memory export and application correctness each need their own qualification.
+    </p>
+    <div class="decision">
+     <b>
+      Early ecosystem evaluation
+     </b>
+     <span>
+      Register shared memory once. Qualify routing, placement and both transfer directions before claiming GPU-direct storage.
+     </span>
+    </div>
+    <div class="badges">
+     <span class="badge amber">
+      EARLY DEVELOPMENT
+     </span>
+     <span class="badge cyan">
+      FILESYSTEM + RAW NVME
+     </span>
+     <span class="badge green">
+      LMCACHE + NIXL
+     </span>
+    </div>
+    <div class="toc">
+     <a href="#kernel">
+      Linux interface
+     </a>
+     <a href="#path">
+      Data path
+     </a>
+     <a href="#platform">
+      Platform qualification
+     </a>
+     <a href="#nixl">
+      NIXL transition
+     </a>
+     <a href="#tests">
+      Evidence
+     </a>
+     <a href="#validation-fixes">
+      Validation fixes
+     </a>
+     <a href="#process">
+      Test process
+     </a>
+     <a href="#history">
+      Linux admission history
+     </a>
+     <a href="#reproduce">
+      Reproduce
+     </a>
+     <a href="#source">
+      Source
+     </a>
+    </div>
+    <div class="grid3">
+     <div class="card">
+      <div class="label">
+       Storage primitive
+      </div>
+      <h3>
+       Register a shared allocation
+      </h3>
+      <p>
+       DMA-BUF describes memory owned by one driver and imported by another. io_uring names a registered slot plus a byte offset.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       Application integration
+      </div>
+      <h3>
+       Choose LMCache or NIXL
+      </h3>
+      <p>
+       LMCache's Rust raw-block backend and NIXL's IO_URING plugin independently use the kernel path. LMCache direct offload does not require NIXL.
+      </p>
+     </div>
+     <div class="card">
+      <div class="label">
+       Qualification
+      </div>
+      <h3>
+       Check the whole path
+      </h3>
+      <p>
+       Platform routing, kernel admission, memory placement and application correctness each need evidence. Registration or a full-length completion is insufficient.
+      </p>
+     </div>
+    </div>
+   </div>
+   <section id="kernel">
+    <h2>
+     A common Linux storage interface
+    </h2>
+    <p>
+     The goal is shared upstream infrastructure beneath existing userspace APIs, reducing bespoke out-of-tree storage integration. DMA-BUF is established; the new work is
+     <a href="https://lists.openwall.net/linux-kernel/2026/09/28/1685">
+      DMA-BUF-backed io_uring read/write support
+     </a>
+     . Different GPU drivers can export allocations into the same storage interface while retaining their own export and peer-access rules. cuFile and hipFile could adopt this transport beneath existing APIs; this implementation uses io_uring directly and does not implement that library change.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Existing route
+        </th>
+        <th>
+         Linux representation and enablement
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         NVIDIA cuFile with traditional nvidia-fs
+        </td>
+        <td>
+         Host shadow pages carry request identity through filesystem/direct I/O and block submission; NVIDIA callbacks substitute GPU DMA addresses. GPU modules, nvidia-fs and compatible storage-driver hooks are required. Shadow pages do not themselves imply a host payload bounce.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         NVIDIA cuFile PCI P2PDMA
+        </td>
+        <td>
+         UVM exposes GPU BAR memory as Linux P2PDMA device pages. Supported direct-I/O/block/NVMe paths can consume them without nvidia-fs or the traditional custom NVMe hooks.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         AMD hipFile / Infinity Storage
+        </td>
+        <td>
+         The inspected KFD implementation describes BAR-backed VRAM with P2PDMA pages and buffer vectors, then uses VFS direct I/O and the block/NVMe path. It requires the corresponding AMD driver implementation and supported platform route.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     Sources:
+     <a href="https://github.com/NVIDIA/gds-nvidia-fs/blob/52f3e7eab633103478e22cc2c2ac1c6ec368eea3/src/nvfs-dma.c">
+      NVIDIA storage hooks
+     </a>
+     ,
+     <a href="https://docs.nvidia.com/gpudirect-storage/configuration-guide/index.html">
+      current GDS route configuration
+     </a>
+     , and
+     <a href="https://github.com/ROCm/amdgpu/blob/48f2f4486a8dc6122195fa8755b6a1a6ee2ad3e2/drivers/gpu/drm/amd/amdkfd/kfd_ais.c">
+      AMD's inspected implementation
+     </a>
+     . A successful cuFile call can also use host-staged compatibility I/O.
+    </p>
+    <p>
+     The experimental
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=dmabuf-size-ceiling-v7.3-rc3">
+      dmabuf-size-ceiling-v7.3-rc3 kernel branch
+     </a>
+     is pinned at
+     <code>
+      856b6583ab2f4581e81670845eadb69de7a68b30
+     </code>
+     . The cited upstream proposal covers NVMe block devices. This branch adds iomap, ext4 and XFS direct I/O, a separate DMA-BUF request ceiling, an optional DMA-optimal clamp lift and a 32 MiB driver cap. Ordinary I/O still traverses filesystem extent handling where applicable, the block layer and NVMe PCI driver.
+    </p>
+    <p>
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/dmabuf-block-io.c?h=dmabuf-size-ceiling-v7.3-rc3">
+      Byte-verifying read/write selftests
+     </a>
+     exercise larger requests. Actual command sizes remain bounded by controller Maximum Data Transfer Size (MDTS), mapping segments, queue limits and filesystem extents. Registration creates a context; first use may construct the reusable device mapping. A large io_uring operation does not guarantee one NVMe command. Initialized aligned XFS/ext4 files and raw NVMe are distinct test targets, not support for every inode, block driver or exporter.
+    </p>
+   </section>
+   <section id="path">
+    <h2>
+     What changes in the I/O path?
+    </h2>
+    <p>
+     A conventional GPU offload path may copy KV into host DRAM before storage. The direct profile gathers engine KV into an exported GPU staging arena, then lets the storage driver DMA that payload. Host code still submits I/O and handles metadata; GPU gather/scatter copies remain.
+    </p>
+    <div class="scroll">
+     <div aria-label="GPU KV gathered into GPU staging; registered io_uring transfers payload through the kernel to an NVMe file or block target" class="flow two-way" role="img">
+      <div class="node">
+       <strong>
+        Engine GPU KV
+       </strong>
+       Gather / scatter
+       <br/>
+       GPU completion fence
+      </div>
+      <div class="node">
+       <strong>
+        Exported GPU arena
+       </strong>
+       DMA-BUF FD
+       <br/>
+       Allocation owner retained
+      </div>
+      <div class="node">
+       <strong>
+        io_uring fixed slot
+       </strong>
+       Offset into DMA-BUF
+       <br/>
+       Native completion
+      </div>
+      <div class="node">
+       <strong>
+        NVMe target
+       </strong>
+       Initialized filesystem file
+       <br/>
+       or separately qualified block range
+      </div>
+     </div>
+    </div>
+    <p>
+     The first I/O may construct the device mapping. Later requests reuse it while valid; invalidation still matters. “Map once” does not mean a mapping can never change.
+    </p>
+    <p>
+     The LMCache and NIXL profiles described here use ordinary fixed-buffer reads and writes. The pinned experimental kernel also enables registered DMA-BUF buffers for NVMe
+     <code>
+      io_uring_cmd
+     </code>
+     passthrough through its
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/commit/?id=fac23af99b4d8398ad528a57572d8a0d497506ac">
+      fixed-buffer import change
+     </a>
+     and
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/commit/?id=a8512c20994199877204d54b1052043a2d1d71f2">
+      block-request mapping change
+     </a>
+     . Host-exporter tests in an emulated NVMe guest validate that kernel path. GPU exporters and application-level passthrough still require separate qualification. A filesystem also needs a capable underlying importer; putting ext4 on a virtio disk does not supply NVMe DMA-BUF support.
+    </p>
+   </section>
+   <section id="platform">
+    <h2>
+     A common interface still needs a working platform route
+    </h2>
+    <p>
+     DMA-BUF/io_uring can unify the storage interface across GPU exporters. It cannot create a missing PCIe peer route. Qualification has to establish platform routing, kernel admission, memory representation and application correctness separately.
+    </p>
+    <div class="grid2">
+     <div class="card">
+      <h3>
+       Devices below one switch
+      </h3>
+      <svg aria-label="A GPU and NVMe controller share one PCIe switch below one Root Port. Their peer traffic can remain below the Root Complex." role="img" viewbox="0 0 420 270">
+       <g fill="#101914" stroke="#7898ae" stroke-width="2">
+        <rect height="42" rx="6" width="220" x="100" y="8">
+        </rect>
+        <rect height="42" rx="6" width="170" x="125" y="76">
+        </rect>
+        <rect height="42" rx="6" width="170" x="125" y="144">
+        </rect>
+        <rect height="42" rx="6" width="130" x="30" y="218">
+        </rect>
+        <rect height="42" rx="6" width="130" x="260" y="218">
+        </rect>
+       </g>
+       <g fill="none" stroke="#2ae6a3" stroke-width="3">
+        <path d="M210 50V76M210 118V144M165 186L95 218M255 186L325 218">
+        </path>
+       </g>
+       <g fill="#e2ece5" font-size="18" text-anchor="middle">
+        <text x="210" y="35">
+         Root Complex
+        </text>
+        <text x="210" y="103">
+         Root Port
+        </text>
+        <text x="210" y="171">
+         PCIe switch
+        </text>
+        <text x="95" y="245">
+         GPU
+        </text>
+        <text x="325" y="245">
+         NVMe
+        </text>
+       </g>
+      </svg>
+      <p class="sub">
+       Useful endpoint control. A passing switch-local route does not qualify routing through the Root Complex.
+      </p>
+     </div>
+     <div class="card">
+      <h3>
+       Devices below separate Root Ports
+      </h3>
+      <svg aria-label="A GPU and NVMe controller are below different Root Ports. Their peer route needs Root Complex forwarding or acceptance and reissue." role="img" viewbox="0 0 420 270">
+       <g fill="#101914" stroke="#7898ae" stroke-width="2">
+        <rect height="42" rx="6" width="220" x="100" y="8">
+        </rect>
+        <rect height="42" rx="6" width="170" x="15" y="109">
+        </rect>
+        <rect height="42" rx="6" width="170" x="235" y="109">
+        </rect>
+        <rect height="42" rx="6" width="130" x="35" y="218">
+        </rect>
+        <rect height="42" rx="6" width="130" x="255" y="218">
+        </rect>
+       </g>
+       <g fill="none" stroke="#ce8c23" stroke-width="3">
+        <path d="M165 50L100 109M255 50L320 109M100 151V218M320 151V218">
+        </path>
+       </g>
+       <g fill="#e2ece5" font-size="18" text-anchor="middle">
+        <text x="210" y="35">
+         Root Complex
+        </text>
+        <text x="100" y="136">
+         Root Port A
+        </text>
+        <text x="320" y="136">
+         Root Port B
+        </text>
+        <text x="100" y="245">
+         GPU
+        </text>
+        <text x="320" y="245">
+         NVMe
+        </text>
+       </g>
+      </svg>
+      <p class="sub">
+       A separate platform contract. Sharing a PCI segment does not imply a shared Root Port. Crossing sockets or segments needs its own qualification.
+      </p>
+     </div>
+    </div>
+    <p>
+     <a href="https://pcisig.com/PCIExpress/Specs/Base/_4.0_1.0">
+      PCIe 4.0 §1.3.1, Root Complex
+     </a>
+     describes peer routing between Root Port hierarchies as optional and implementation dependent. It remains optional in the inspected revisions through
+     <a href="https://iccircle.com/static/upload/img20250622145127.pdf">
+      PCIe 7.0 §1.3.1
+     </a>
+     . A faster PCIe link does not supply that guarantee. A host-bridge route can forward PCIe traffic without copying payloads through host RAM.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Contract
+        </th>
+        <th>
+         What must be established
+        </th>
+        <th>
+         What alone is insufficient
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Platform routing
+        </td>
+        <td>
+         The exact port path supports the requested peer transactions.
+        </td>
+        <td>
+         A PCIe generation, segment label or same-switch pass.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Kernel admission
+        </td>
+        <td>
+         The running kernel and drivers admit and map the route under supported isolation settings.
+        </td>
+        <td>
+         An allowlist edit or a topology prediction.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Memory representation
+        </td>
+        <td>
+         The intended allocation exports and maps in GPU-local memory.
+        </td>
+        <td>
+         A GPU pointer, large BAR, DMA-BUF descriptor or aggregate memory counter.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Application correctness
+        </td>
+        <td>
+         Readiness, visibility, byte integrity and lifetime hold through checked completion and consumption.
+        </td>
+        <td>
+         Registration success or a full-length completion.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     <a href="https://docs.kernel.org/driver-api/pci/p2pdma.html">
+      Linux PCI P2PDMA
+     </a>
+     has topology and platform admission rules. The
+     <a href="#history">
+      admission history below
+     </a>
+     is distinct from the hardware route itself. A rejected policy is not a completed hardware test; removing that rejection does not make a route correct. Exporters can apply different policies. AMD can clear peer eligibility and migrate a shared allocation into host GTT; waiting for migration fixes backing readiness, not GPU-direct placement.
+    </p>
+    <h3>
+     Storage direction is not PCIe transaction direction
+    </h3>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Application operation
+        </th>
+        <th>
+         NVMe controller's GPU-facing transaction
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Read storage into GPU memory
+        </td>
+        <td>
+         PCIe Memory Writes into GPU memory.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Write GPU memory to storage
+        </td>
+        <td>
+         PCIe Memory Reads from GPU memory, followed by Completions.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p class="note">
+     <strong>
+      Recorded negative qualification:
+     </strong>
+     in one bounded cross-Root-Port test, an experimental admission change enabled VRAM resource mapping. The host-memory DMA-BUF control passed both ways. A guarded 4 KiB storage read into GPU memory passed, but the reverse storage write reported 4096 bytes completed while independent disk readback found all
+     <code>
+      0xff
+     </code>
+     payload bytes. That pair failed qualification. The run did not isolate physical forwarding from DMA-address/IOMMU behavior, and it does not establish results for other devices or routes.
+    </p>
+    <h3>
+     Qualify the claimed route and both directions
+    </h3>
+    <p>
+     Use changing payloads, poisoned destinations, surrounding guards and independent readback. Compare host-memory and switch-local controls where available. Record the port path, memory placement, mapping decisions, firmware, kernel/driver versions and actual completions. Repeat buffer reuse and mapping changes before testing concurrent pairs. Preserve supported DMA isolation; blanket ACS overrides are not a substitute for platform support. Keep application I/O size, actual NVMe command size and PCIe packet size separate.
+    </p>
+    <p>
+     The kernel branch includes
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/pci-peer-check.py?h=dmabuf-size-ceiling-v7.3-rc3">
+      <code>
+       pci-peer-check.py
+      </code>
+     </a>
+     and its
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/pci-peer-check.rst?h=dmabuf-size-ceiling-v7.3-rc3">
+      usage and limits
+     </a>
+     . Default mode predicts policy without storage transfers. Its source-pinned model does not automatically learn a modified kernel's admission table. The optional live-probe protocol needs a separately supplied reviewed helper. Follow with the
+     <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/kv_cache/storage_backends/raw_block_dmabuf.rst">
+      LMCache payload and ordering tests
+     </a>
+     ; a diagnostic pass is only the first gate.
+    </p>
+    <details>
+     <summary>
+      Exporter enablement is separate from platform routing
+     </summary>
+     <p>
+      The explicitly selected NVIDIA Vulkan/RM provider allocates device-local, non-host-visible memory, maps the same owned allocation into CUDA through OPAQUE_FD, and exports through the RM core DMA-BUF interface. It addresses native CUDA export refusal on the tested profile. It is version-coupled, does not convert arbitrary existing Torch allocations, and does not repair a peer route rejected by the platform or driver. See the
+      <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/design/v1/memory_allocators/vulkan-rm-staging.md">
+       provider design
+      </a>
+      .
+     </p>
+    </details>
+    <h3>
+     A template for future platform enablement
+    </h3>
+    <p>
+     <a href="https://documentation-service.arm.com/static/68c934bd8a337a2bc66460b3?token=">
+      Arm SBSA 8.0 §1.2.18 and Appendix C GPU_02/RGPU_02, printed page 60
+     </a>
+     provides a useful template: within its GPU-compute scope, it requires peer reads and writes across endpoint hierarchies, including different Root Ports. This is a conditional platform requirement, not a guarantee for every Arm processor.
+    </p>
+    <p>
+     Future ecosystem enablement can pair a common Linux interface with explicit platform routing guarantees, documented port coverage, supported isolation and runnable integrity tests in both directions. The Arm requirement illustrates what a platform contract can add beyond the base PCIe specification. Already qualified pairs can use the interface while broader coverage grows.
+    </p>
+   </section>
+   <section id="history">
+    <div class="eyebrow">
+     From optional hardware to explicit Linux policy
+    </div>
+    <h2>
+     Why Linux keeps a P2PDMA allowlist
+    </h2>
+    <p>
+     PCIe 4.0 §1.3.1 already makes forwarding between Root Port hierarchies optional; that remains true through the inspected PCIe 7.0 revision. Linux therefore cannot treat a Root Complex as a switch that always forwards peer traffic. It admits well-defined switch-local routes and uses platform knowledge for routes through a host bridge. The source calls the table
+     <code>
+      pci_p2pdma_whitelist
+     </code>
+     ; this guide calls it the allowlist.
+    </p>
+    <p>
+     The commits below trace the main admission rules in the pinned kernel. Dates are commit dates. Each link opens the full change in Torvalds’ tree, including its original rationale and exact entries.
+    </p>
+    <ol class="history">
+     <li>
+      <div class="history-meta">
+       2019-05-01
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=0f97da83102610db886e8b688b9029e080e6d511">
+        0f97da831026
+       </a>
+      </div>
+      <div>
+       <h3>
+        Known-working Root Complexes become explicit exceptions
+       </h3>
+       <p>
+        Adds the first AMD host-bridge exception when no common upstream bridge exists. The rationale cites PCIe 4.0 §1.3.1: cross-Root-Port forwarding is optional. The exception admits known support instead of assuming every Root Complex routes peers.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-06-19
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=6dbbd053e6aea827abde89ac9b9d6855dab1a66b">
+        6dbbd053e6ae
+       </a>
+      </div>
+      <div>
+       <h3>
+        Missing IOMMU mappings temporarily block the exception
+       </h3>
+       <p>
+        Rejects host-bridge exceptions while an IOMMU is present because the kernel could not yet map these peer addresses correctly. Hardware routing capability alone did not make the software mapping safe.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-08-16
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=494d63b0d5d0a481f6ac23bc61e94647ab9c4390">
+        494d63b0d5d0
+       </a>
+      </div>
+      <div>
+       <h3>
+        Tested Intel entries gain a same-host-bridge limit
+       </h3>
+       <p>
+        Introduces the table structure and REQ_SAME_HOST_BRIDGE for tested Intel bridges. Its rationale identifies poor performance across distinct host bridges via the CPU interconnect. The flag compares Linux pci_host_bridge objects; it does not require the two endpoints to share one Root Port.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-08-16
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=5daf40b039249ef98d49610d14293dca3464b91f">
+        5daf40b03924
+       </a>
+      </div>
+      <div>
+       <h3>
+        Correct DMA mappings remove the temporary IOMMU ban
+       </h3>
+       <p>
+        Removes the earlier iommu_present() restriction after the requests are mapped correctly. This is why the temporary 2019 guard is not advice to disable a current IOMMU. Supported translation and mapping still require qualification.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-12-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=bc123a515cb76c432293a6c4b4765b5ec0c813cf">
+        bc123a515cb7
+       </a>
+      </div>
+      <div>
+       <h3>
+        Another tested Intel platform enters the table
+       </h3>
+       <p>
+        Adds host-bridge entries after successful peer transactions spanning host and PCI bridges with the IOMMU enabled. These entries have no same-host-bridge flag. That is an explicit policy choice for those entries, not a rule for all Intel systems.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2020-03-18
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=7b94b53db34f78bb5e09f44e8827d45a8a88bf47">
+        7b94b53db34f
+       </a>
+      </div>
+      <div>
+       <h3>
+        Additional Root Ports receive tested coverage
+       </h3>
+       <p>
+        Adds three remaining Intel Root Port entries for the platform covered by the preceding change, after reported P2P tests. Enabling one port identifier did not automatically identify the other ports.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2020-07-30
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=dea286bb71baded7d2fb4f090e3b9fd2c1ccac58">
+        dea286bb71ba
+       </a>
+      </div>
+      <div>
+       <h3>
+        AMD admission becomes a CPU-family rule
+       </h3>
+       <p>
+        Replaces individual AMD bridge entries with an AMD CPU-family allowance. Linux can encode a documented family-level routing property instead of maintaining one bridge entry per product. Admission is therefore broader than an exact device-ID table on this path.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2022-02-25
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=feaea1fe8b36b2e5b12b2f9e6e050db28dfee789">
+        feaea1fe8b36
+       </a>
+      </div>
+      <div>
+       <h3>
+        A newer Intel server bridge is recognized
+       </h3>
+       <p>
+        Adds a bridge entry for another supported Intel server generation. It extends the recognized platform set; it does not infer capability from PCIe link generation or add a generic forwarding mechanism.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2022-04-11
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1af7c26c59ebcf241e865dd16dcc251e61472a37">
+        1af7c26c59eb
+       </a>
+      </div>
+      <div>
+       <h3>
+        Root Port discovery works beyond device zero
+       </h3>
+       <p>
+        Checks the first device on the root bus when it is either device/function zero or a PCIe Root Port. Previously, an allowed Root Port at a nonzero device/function could be missed. This repairs recognition of an existing allowance, not physical routing.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-04-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1a1f96e3e2a8dc1774c626bc6e15944c3e160393">
+        1a1f96e3e2a8
+       </a>
+      </div>
+      <div>
+       <h3>
+        The table can express vendor-wide platform support
+       </h3>
+       <p>
+        Adds wildcard device matching while retaining the vendor match and same-host-bridge constraint. This permits a platform-wide contract to be represented without adding every device identifier separately.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-04-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=70cf146a674c447753ceeb34246ad0afdd0064bb">
+        70cf146a674c
+       </a>
+      </div>
+      <div>
+       <h3>
+        Google SoCs use that wildcard mechanism
+       </h3>
+       <p>
+        Adds the vendor-wide SoC rule, with the commit stating that these SoCs support peer transactions between Root Ports. This records a vendor platform guarantee rather than making the PCIe base requirement universal.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-06-09
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=0ba76b19fd4c7256787eab0283c759b18eb76876">
+        0ba76b19fd4c
+       </a>
+      </div>
+      <div>
+       <h3>
+        Accelerator root buses gain their own recognition
+       </h3>
+       <p>
+        Adds Intel crypto, data-streaming and analytics accelerator entries because such an accelerator may be the first device on its own root bus. The commit discusses future ACPI HMAT capability reporting to avoid continual table growth; it does not implement that discovery mechanism.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-07-22
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=894a78088fc3ddf7e582c814294afa4311900ccc">
+        894a78088fc3
+       </a>
+      </div>
+      <div>
+       <h3>
+        NVIDIA CPU platforms gain explicit entries
+       </h3>
+       <p>
+        Adds NVIDIA CPU-platform identifiers for supported peer transactions. These are host-platform allowances, not a blanket approval of every NVIDIA GPU, exporter or GPU/NVMe pair.
+       </p>
+      </div>
+     </li>
+    </ol>
+    <div class="note">
+     <strong>
+      An absent entry is an unqualified route, not a completed negative hardware test.
+     </strong>
+     Adding an entry only changes Linux admission. It adds no forwarding hardware, fixes no exporter and proves no payload integrity. Require documented platform support and independently verified reads and writes before proposing broader enablement.
+    </div>
+    <p>
+     See
+     <a href="https://docs.kernel.org/driver-api/pci/p2pdma.html">
+      Linux’s P2PDMA documentation
+     </a>
+     for topology and lifetime rules. Table entries, CPU-family rules and exporter-specific decisions must be checked against the running kernel; a policy prediction is not a transfer result.
+    </p>
+   </section>
+   <section id="implementations">
+    <h2>
+     Two independent ways to adopt it
+    </h2>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Path
+        </th>
+        <th>
+         Owns application state
+        </th>
+        <th>
+         Owns byte transfer
+        </th>
+        <th>
+         Migration impact
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         LMCache direct
+        </td>
+        <td>
+         LMCache owns keys, L1/serde buffers, checkpoints and storage lifetime.
+        </td>
+        <td>
+         Rust raw-block core → io_uring → kernel DMA-BUF importer.
+        </td>
+        <td>
+         Use LMCache's existing vLLM connector. NIXL is optional.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         NIXL storage lane
+        </td>
+        <td>
+         The separate vLLM storage connector coordinates manifests, staging and handoff.
+        </td>
+        <td>
+         NIXL
+         <code>
+          IO_URING
+         </code>
+         plugin addresses byte ranges as
+         <code>
+          BLK_SEG
+         </code>
+         .
+        </td>
+        <td>
+         Retain NIXL's transfer API; qualify this new storage plugin and consumer together.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     The older
+     <code>
+      XNVME_NVM
+     </code>
+     plugin is retained as a historical reproduction branch. It is distinct from the newer standalone
+     <code>
+      IO_URING
+     </code>
+     plugin and from the older NVMe key-value
+     <code>
+      XNVME_KV
+     </code>
+     work. The standalone plugin uses liburing directly; no new xNVMe port is included.
+    </p>
+   </section>
+   <section id="nixl">
+    <h2>
+     A transition plan for existing NIXL users
+    </h2>
+    <ol>
+     <li>
+      <strong>
+       Keep your current baseline.
+      </strong>
+      Record backend, model weights, layouts, chunk/block geometry, token IDs, chosen-token logprobs and transfer counters. Preserve the current network or GDS configuration for rollback.
+     </li>
+     <li>
+      <strong>
+       Qualify ordinary storage first.
+      </strong>
+      Use the dated plugin and matching API-v2 Python binding. The historical
+      <code>
+       nixl==1.5.0
+      </code>
+      API-v1 wheel is incompatible with this pinned plugin. Begin with
+      <code>
+       buffer_mode=host
+      </code>
+      on a fresh, initialized scratch file. Verify independent readback before serving.
+     </li>
+     <li>
+      <strong>
+       Measure classic registration separately.
+      </strong>
+      Select
+      <code>
+       buffer_mode=fixed
+      </code>
+      . Keep prompts, target, lengths and concurrency unchanged. Confirm the fixed path actually ran.
+     </li>
+     <li>
+      <strong>
+       Introduce DMA-BUF deliberately.
+      </strong>
+      Boot the experimental kernel, verify exporter/importer support, then select
+      <code>
+       buffer_mode=dmabuf
+      </code>
+      and register an owned export using
+      <code>
+       metaInfo="dmabuf:&lt;fd&gt;"
+      </code>
+      . This mode requires every memory registration on that engine to carry a DMA-BUF. Use separate engines if ordinary host buffers are also needed.
+     </li>
+     <li>
+      <strong>
+       Choose the higher layer.
+      </strong>
+      Stay with the separate vLLM/NIXL connector for a NIXL storage experiment, or use the direct LMCache backend for LMCache cache management. This is not a switch that turns stock
+      <code>
+       NixlConnector
+      </code>
+      network transfers into storage P/D.
+     </li>
+     <li>
+      <strong>
+       Roll back without sharing formats.
+      </strong>
+      Restore the original connector/backend configuration. LMCache and NIXL storage metadata are not interchangeable; use isolated targets and migrate/recompute cache contents explicitly.
+     </li>
+    </ol>
+    <details>
+     <summary>
+      Smallest native-NIXL configuration sketch
+     </summary>
+     <pre><code>backend = "IO_URING"
+params = {"device_name": "/mnt/scratch/kv.bin",
+          "buffer_mode": "host", "direct": "true"}
+# Then fixed; only then dmabuf after exporter/kernel qualification.
+# BLK_SEG describes offsets and lengths on this already initialized target.
+# A DMA-BUF memory registration adds metaInfo="dmabuf:&lt;fd&gt;".</code></pre>
+     <p>
+      This is a parameter sketch for the pinned plugin, not a complete serving launcher. Use the linked README for the actual agent API. Do not point it at a live filesystem device.
+     </p>
+    </details>
+   </section>
+   <section id="tests">
+    <h2>
+     What has been tested?
+    </h2>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Profile
+        </th>
+        <th>
+         Evidence
+        </th>
+        <th>
+         Limit
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Latest LMCache MP, CUDA GPU direct GPU DMA-BUF
+        </td>
+        <td>
+         Per filesystem: 13 model continuations; 27 complete 8 MiB reads; cold L1; 9 capacity evictions.
+        </td>
+        <td>
+         One GPU, two live engines, two storage owners, same initialized XFS or ext4 file. Explicit Vulkan/RM exporter.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Latest LMCache staged baselines, CUDA GPU and HIP GPU
+        </td>
+        <td>
+         13 continuations and 27 reads each. HIP GPU uses engine-driven staging, shared host L1 and classic fixed buffers.
+        </td>
+        <td>
+         HIP GPU is a host-staged result, not AMD GPU-direct storage.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Native NIXL IO_URING, current dated source
+        </td>
+        <td>
+         Native backend units and physical XFS/ext4 host transfers pass. With the vLLM CUDA staging follow-up, ordinary host, fixed host and host DMA-BUF modes each pass 19 model continuations across fresh-reader, concurrent and pressure cases.
+        </td>
+        <td>
+         Model qualification uses two engines on one RTX 4090, an initialized XFS file and VLLM_BATCH_INVARIANT=1. Host DMA-BUF staging does not establish GPU DMA-BUF export or cross-host operation. Use the vLLM staging fix linked in the P/D guide; the original be9c66a5 tip lacks it.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Historical NIXL XNVME_NVM + vLLM
+        </td>
+        <td>
+         Two-GPU host-staged and GPU-direct serving passed historical sequential, concurrent and pressure cases.
+        </td>
+        <td>
+         Different source revisions and backend; see the
+         <a href="pd-disaggregation.html#evidence">
+          P/D evidence table
+         </a>
+         .
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     For the latest LMCache cohorts: Llama-3.2-1B-Instruct revision
+     <code>
+      9213176726f574b556790deb65791e0c5aa438b6
+     </code>
+     , BF16, eager, greedy seed 123, batches 1/4/8, 257/513/769-token prompts and a bounded five-token copying task. Runs recorded on 15 October 2026 (PDT) using published LMCache 10a941b54 produce 52 matching continuations across direct XFS/ext4 and the CUDA/HIP staged profiles. Maximum chosen-token logprob delta is 0.004954 against the unchanged 0.02 bound. The MP GPU matrix passes all 32 profiles with independent values, native I/O receipts and zero terminal ownership. Filesystem GPU component suites also pass on ext4 and XFS. These checks do not qualify GPU raw-device I/O or model quality under lossy FP8.
+    </p>
+    <p class="note">
+     An earlier staged phrase-recall run matched token IDs but exceeded the unchanged likelihood bound: 0.026329 &gt; 0.02. Its cause is unresolved. The passing copy fixture does not establish broad numerical equivalence or a throughput advantage.
+    </p>
+   </section>
+   <section id="validation-fixes">
+    <h2>
+     Corrections found during validation
+    </h2>
+    <p>
+     Local tests found two runtime bugs. LMCache
+     <a href="https://github.com/mcgrof/LMCache/commit/b8845f7c2205e98ca5efaf541a59855d1535f354">b8845f7c</a>
+     prevents repeated close from submitting cleanup to a stopped receiver event loop. The regression reproduces the timeout and coroutine warning on the base; all 33 asynchronous backend tests pass with the fix.
+    </p>
+    <p>
+     In the separate NIXL lane, vLLM
+     <a href="https://github.com/mcgrof/vllm/commit/2697fd5ead43221308e923672697888e6ccfd793">2697fd5ead</a>
+     registers the whole contiguous host staging arena once with CUDA. Copies crossing separately registered chunks previously failed with
+     <code>cudaErrorInvalidValue</code>.
+     Storage registrations retain their DMA-BUF boundaries. The CUDA regression, 52 adapter tests and 57 same-GPU model continuations pass; four adapter hardware gates remain explicit.
+    </p>
+    <p>
+     Use the follow-up branches linked below when reproducing these results. The original feature refs are unchanged. The
+     <a href="pd-disaggregation.html#validation-fixes">P/D correction details</a>
+     distinguish regression checks from model measurements; neither fix extends the hardware qualification above.
+    </p>
+   </section>
+   <section id="process">
+    <h2>
+     A test ladder that avoids false positives
+    </h2>
+    <ol>
+     <li>
+      Prove target identity, initialized extents, alignment and kernel capability. Test a harmless owned file before a dedicated block target.
+     </li>
+     <li>
+      Write known payloads and independently read/hash them with a fresh reader. Check registration mode and actual native operation path.
+     </li>
+     <li>
+      Test finite submission pressure, short reads, partial submissions, cancellation and shutdown. A timeout is not proof DMA stopped.
+     </li>
+     <li>
+      Run the same no-connector model oracle and split/recompute control before comparing offload restoration. Cold L1 and payload-read counts must establish a real restore.
+     </li>
+     <li>
+      For P/D, verify READY/claim/adopt/restore/ACK ordering, eviction protection and strict failed-load rejection. Add warm prefixes, concurrency and reader/writer failure as separate cases.
+     </li>
+     <li>
+      Only then measure latency, throughput or host-memory savings against your existing NIXL baseline. Report device command traces separately from logical I/O counts.
+     </li>
+    </ol>
+    <p>
+     A GDS-labelled arm must also establish that GPU-direct storage engaged. A cuFile POSIX compatibility fallback is a useful staged baseline, not a measurement of GPUDirect.
+    </p>
+   </section>
+   <section id="reproduce">
+    <h2>
+     Build and test the pinned enablement stack
+    </h2>
+    <p>
+     The reproduction profile includes
+     <code>
+      defconfigs/io-uring-dmabuf
+     </code>
+     and
+     <code>
+      tools/reproduce/dmabuf/README.md
+     </code>
+     . The profile pins the kernel, LMCache, NIXL and vLLM revisions used by this review. Plain
+     <code>
+      make
+     </code>
+     prints the plan; fetching, builds, kernel installation and hardware tests are explicit stages.
+    </p>
+    <pre><code>make defconfig-io-uring-dmabuf
+make
+make dmabuf-fetch
+make dmabuf-kernel-config
+make dmabuf-kernel-build
+# Check drivers and signing.
+make dmabuf-kernel-install
+# Reboot into the test kernel.
+make dmabuf-doctor</code></pre>
+    <p>
+     The kernel configuration starts from the running machine's config, preserving its platform drivers. It adds the required I/O features and uses a distinct release suffix. The runner issues no reboot or boot-selection commands and does not alter peer policy or ACS/IOMMU settings. Distribution install hooks can update the boot menu; verify its default and keep the known-good kernel available.
+    </p>
+    <p>
+     Set
+     <code>
+      CONFIG_KNLP_DMABUF_SCRATCH
+     </code>
+     to an existing owned directory on NVMe-backed XFS/ext4. In a dedicated environment with matching Torch, compiler and GPU SDK dependencies, build LMCache and its Rust extension with
+     <code>
+      make dmabuf-lmcache-install
+     </code>
+     . Use the explicit targets below after coordinating GPU ownership where needed.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Target
+        </th>
+        <th>
+         Scope
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         <code>
+          dmabuf-cpu-test
+         </code>
+        </td>
+        <td>
+         MP publication/adoption/ACK and HTTP contracts on host-file storage. No GPU or custom kernel required.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-selftest-build
+         </code>
+         ,
+         <code>
+          dmabuf-storage-test
+         </code>
+        </td>
+        <td>
+         Kernel host-memory DMA-BUF read/write checks at 4 KiB and 8 MiB on new scratch files.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-mp-host-test
+         </code>
+        </td>
+        <td>
+         Opt-in registered host-memory MP I/O and ownership tests.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-peer-check
+         </code>
+        </td>
+        <td>
+         Source-pinned topology-policy diagnostic for explicitly configured PCI addresses. No payload qualification.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-gpu-test
+         </code>
+        </td>
+        <td>
+         Real connector, exporter, file I/O and V2/V3 ordering/padding checks. Explicit native or Vulkan/RM provider; no silent host fallback.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-lmcache-test
+         </code>
+        </td>
+        <td>
+         In-process publication, generation, ACK, restore coverage and causal-trace contracts. CPU only.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-mp-test
+         </code>
+        </td>
+        <td>
+         Shared-file MP publication/adoption and HTTP controls. CPU only; same selection as dmabuf-cpu-test.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-vllm-test
+         </code>
+        </td>
+        <td>
+         NIXL storage connector CPU coordinator, planning and pack/scatter contracts. Transfer doubles; hardware cases explicitly deselected.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-timeline-check
+         </code>
+        </td>
+        <td>
+         Validate an existing single-host in-process serving JSONL receipt; require the selected payload path. Does not launch serving.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     Logs and JUnit reports remain in the configured work directory; skipped tests are not counted as qualification. These stages do not automate full model-serving MP P/D, cross-host shared storage or performance qualification. NIXL and vLLM sources are pinned and fetched; their builds and serving orchestration follow the linked upstream/source guides. Keep your current NIXL baseline separate.
+    </p>
+    <h3>
+     Run the P/D contracts separately from hardware qualification
+    </h3>
+    <pre><code>make defconfig-pd-storage
+make pd-test-plan
+make pd-lmcache-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-mp-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-vllm-test PYTHON=/path/to/vllm-venv/bin/python
+make pd-timeline-check PD_TIMELINE=/path/to/serving.jsonl</code></pre>
+    <p>
+     Fetch the pinned sources and prepare each application environment first.
+     <code>
+      pd-cpu-test
+     </code>
+     runs the three CPU selections in order when one environment can import both pinned projects. Unexpected skips fail qualification. The timeline target checks an existing in-process trace, with
+     <code>
+      dmabuf_fixed
+     </code>
+     required by default; it does not validate MP HTTP traces or launch model-serving P/D. See
+     <code>
+      tools/reproduce/dmabuf/README.md
+     </code>
+     for dependencies and scope.
+    </p>
+   </section>
+   <section id="source">
+    <h2>
+     Source and interfaces
+    </h2>
+    <ul class="source-list">
+     <li>
+      <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-dmabuf-full">
+       LMCache full dated stack: 50 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/mp/l2_storage/raw_block.rst">
+       MP configuration and HTTP contract
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-dmabuf-full">
+       NIXL native IO_URING backend: 2 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/nixl/blob/2026-10-15-io-uring-dmabuf-full/src/plugins/io_uring/README.md">
+       Backend parameters and limits
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-full">
+       vLLM NIXL storage connector: 3 commits
+      </a>
+     </li>
+     <li>
+      <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=dmabuf-size-ceiling-v7.3-rc3">
+       Experimental kernel branch
+      </a>
+      , pin
+      <code>
+       856b6583ab2f4581e81670845eadb69de7a68b30
+      </code>
+     </li>
+    </ul>
+    <p>
+     Follow-up branches include their full feature stacks:
+     <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-validation-fixes">LMCache b8845f7c</a>,
+     <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-validation-fixes">NIXL 711dcb4d</a>
+     and
+     <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-validation-fixes">vLLM 2697fd5ead</a>.
+     NIXL adds a GCC15 test-header fix and documents initialized read extents and locked-memory requirements; it makes no production transfer change.
+    </p>
+    <p>
+     Kernel DMA-BUF
+     <a href="https://docs.kernel.org/driver-api/dma-buf.html">
+      sharing and synchronization documentation
+     </a>
+     describes the ownership interface; it does not establish that this experimental storage ABI is upstream. The dated userspace branches retain their original upstream bases.
+    </p>
+   </section>
+   <footer>
+    Experimental evaluation. Pinned source revisions, test profiles and open limits are stated above. No production or performance endorsement is implied.
+   </footer>
+  </main>
+ </body>
+</html>
