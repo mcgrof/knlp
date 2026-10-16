@@ -63,6 +63,14 @@
           <div class="site-card-links"><a href="https://github.com/LMCache/LMCache/issues/5816">LMCache RFC #5816</a><a href="pd-disaggregation.html">PD disaggregation</a><a href="io-uring-dmabuf.html#reproduce">Reproduce</a></div>
         </article>
         <article class="site-card">
+          <div class="site-card-kicker">LMCache · vLLM · storage</div>
+          <h3><a href="spf.html">Speculative prefetching</a></h3>
+          <div class="site-stage"><span class="site-stage-badge evaluation">Re-evaluating</span><span>GPU ↔ NVMe · prefetch policy</span></div>
+          <p>DMA-BUF + io_uring lets the experimental LMCache GPU-direct path disable the CPU cache tier. That changes the case for prefetching KV state from NVMe into GPU memory.</p>
+          <p class="site-card-progress"><strong>Why revisit</strong>The earlier retention study did not clear its gate. The direct-storage path creates a new evaluation question; a prefetch benefit is not yet measured.</p>
+          <div class="site-card-links"><a href="spf.html#gpu-direct">Re-evaluation</a><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a><a href="spf.html#original-results">Earlier findings</a></div>
+        </article>
+        <article class="site-card">
           <div class="site-card-kicker">Storage · reproducibility</div>
           <h3><a href="kvtide.html">KVTide</a></h3>
           <div class="site-stage"><span class="site-stage-badge tooling">Benchmark tooling</span><span>Storage paths · comparison</span></div>
@@ -76,13 +84,6 @@
           <p>Sharing keyed inference state across agentic and test-time-scaled workloads. Explore the cache identity, reuse and serving architecture.</p>
           <div class="site-card-links"><a href="kmesh.html">Architecture</a><a href="prefix-integrity-analysis.html">Reuse contracts</a></div>
         </article>
-        <article class="site-card">
-          <div class="site-card-kicker">vLLM · cache policy</div>
-          <h3><a href="spf.html">Speculative prefetching</a></h3>
-          <div class="site-stage"><span class="site-stage-badge parked">Parked</span><span>KV access · prefetch policy</span></div>
-          <p>Can a scheduler fetch the next useful KV blocks before they are needed? The experiment and its unmet survival gate remain available.</p>
-          <div class="site-card-links"><a href="spf.html">Design &amp; findings</a></div>
-        </article>
       </div>
     </section>
 
@@ -92,6 +93,38 @@
         <p>Mechanisms, measured results and open questions. Each study keeps its controls, limits and negative findings in view.</p>
       </div>
       <div class="site-grid">
+        <article class="site-card featured">
+          <div class="site-card-kicker">Quantization · failure mechanisms</div>
+          <h3><a href="fp8-kv-failure-atlas.html">FP8 KV-Cache Failure Atlas</a></h3>
+          <div class="site-stage"><span class="site-stage-badge tooling">R&amp;D complete</span><span>Why symmetric FP8 can fail</span></div>
+          <p>Why does symmetric KV quantization catastrophically break some models? The atlas traces FP8 key failures to learned key bias and incompatible subspace distributions, with controls across model families.</p>
+          <p class="site-card-progress"><strong>Finding</strong>Key and value precision need separate qualification. Retaining BF16 keys is the conservative fallback for fragile models; robust models can still use symmetric FP8.</p>
+          <div class="site-card-links"><a href="fp8-kv-failure-atlas.html">Mechanisms &amp; evidence</a><a href="bias-aware-kv-quantization.html">Deployment policy</a></div>
+        </article>
+        <article class="site-card featured">
+          <div class="site-card-kicker">Learned prefixes · asymmetric precision</div>
+          <h3><a href="cartridge-asymmetric-quantization.html">Asymmetric Cartridge KV</a></h3>
+          <div class="site-stage"><span class="site-stage-badge tooling">R&amp;D complete</span><span>Positive finding · shared cartridges</span></div>
+          <p>Keep trained cartridge keys in BF16 and compress values to FP8. On the tested Qwen3-8B cartridges, K16/V8 cuts raw KV bytes by 25% with about 0.03% higher paired evaluation loss.</p>
+          <p class="site-card-progress"><strong>Serving result</strong>The fused shared-cartridge path records modest throughput and latency gains over BF16 injection in the controlled runs. Broader deployment qualification remains open.</p>
+          <div class="site-card-links"><a href="cartridge-asymmetric-quantization.html">Quality &amp; serving results</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Decode · exact selection</div>
+          <h3><a href="lm_head_decode.html">Certified LM-head decode</a></h3>
+          <div class="site-stage"><span class="site-stage-badge tooling">R&amp;D complete</span><span>Implementation available · not upstreamed</span></div>
+          <p>Use upper bounds to skip vocabulary blocks that cannot win. The research implementation reduces output-head reads and latency for the measured low-batch workloads.</p>
+          <p class="site-card-progress"><strong>Available to use</strong>Public Triton kernels and artifact-generation tools. Serving-engine integration needs its own numerical and end-to-end qualification.</p>
+          <div class="site-card-links"><a href="lm_head_decode.html#availability">Use the implementation</a><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Storage · workload evidence</div>
+          <h3><a href="small-random-reads-ai.html">Small random reads in AI</a></h3>
+          <div class="site-stage"><span class="site-stage-badge evaluation">Ongoing R&amp;D hub</span><span>Small reads · I/O paths · replay</span></div>
+          <p>A central tracker for AI workloads that issue small random reads. Follow request sizes, read amplification, direct and buffered I/O, and the role of the page cache.</p>
+          <p class="site-card-progress"><strong>Ongoing work</strong>Connect measured workload evidence with reproducible storage experiments and candidate paths for further analysis.</p>
+          <div class="site-card-links"><a href="small-random-reads-ai.html">Workloads &amp; research notes</a><a href="small-random-reads-ai.html#reproduce">Reproduce</a></div>
+        </article>
         <article class="site-card">
           <div class="site-card-kicker">Architectures · bounded memory</div>
           <h3><a href="linear_attention.html">Linear attention</a></h3>
@@ -111,22 +144,12 @@
           <div class="site-card-links"><a href="https://chores.knlp.io/">Design &amp; prototype</a></div>
         </article>
         <article class="site-card">
-          <div class="site-card-kicker">Fault finding · evidence</div>
-          <h3><a href="code_reason.html">Code reasoning</a></h3>
-          <p>Do structured certificates improve static reasoning? Reproduce the model-dependent result, then specialize the evidence and trace to kernel code.</p>
-          <div class="site-card-links"><a href="code_reason.html">Certificates &amp; controls</a></div>
-        </article>
-        <article class="site-card">
           <div class="site-card-kicker">Fisher information · compression</div>
           <h3><a href="fim-guided-research.html">FIM-guided R&amp;D</a></h3>
-          <p>Use gradient statistics to study pruning, weight precision and memory placement. Follow the common signal through the individual experiments.</p>
-          <div class="site-card-links"><a href="fim-guided-research.html">Research collection</a><a href="fisher_adam.html">Interactive introduction</a></div>
-        </article>
-        <article class="site-card">
-          <div class="site-card-kicker">Decode · exact selection</div>
-          <h3><a href="lm_head_decode.html">Certified LM-head decode</a></h3>
-          <p>Use upper bounds to skip vocabulary blocks that cannot win. Explore the proof of exact argmax and the measured byte and latency reductions.</p>
-          <div class="site-card-links"><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
+          <div class="site-stage"><span class="site-stage-badge parked">Bounded findings</span><span>Research roots · quantization</span></div>
+          <p>This work led into KV quantization and asymmetric K/V precision. The tested Fisher signals did not significantly predict per-layer KV quantization damage, so direct sensitivity measurements became central.</p>
+          <p class="site-card-progress"><strong>Scale matters</strong>Some small-model gains did not carry into larger comparisons; other scale-ups remain untested. The collection separates those outcomes.</p>
+          <div class="site-card-links"><a href="fim-guided-research.html#quantization-legacy">Path to quantization</a><a href="fim-guided-research.html">Studies &amp; limits</a></div>
         </article>
         <article class="site-card">
           <div class="site-card-kicker">Cache contracts · correctness</div>
@@ -150,13 +173,11 @@
       <details class="site-archive">
         <summary>More studies &amp; experiments</summary>
         <div class="site-link-list">
-          <a href="fp8-kv-failure-atlas.html">FP8 KV-Cache Failure Atlas ↗</a>
+          <a href="code_reason.html">Code reasoning: certificates &amp; controls ↗</a>
           <a href="paper_memory_decode.html">Memory-traffic saturation in decode ↗</a>
-          <a href="cartridge-asymmetric-quantization.html">Asymmetric Cartridge KV ↗</a>
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">Fused KV kernel documentation ↗</a>
           <a href="subliminal-learning-mnist.html">Subliminal transfer on MNIST ↗</a>
           <a href="layerrope-mhc-quantization.html">LayerRoPE, mHC &amp; weight quantization ↗</a>
-          <a href="small-random-reads-ai.html">Small random reads in AI ↗</a>
           <a href="muvera.html">muvera-small retrieval benchmark ↗</a>
           <a href="marin.html">Marin fit assessment ↗</a>
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md">BPA research documentation ↗</a>

@@ -1,5 +1,11 @@
 # Certified-decode LM-head kernel
 
+Research complete; implementation available for reuse; not upstreamed into a
+serving engine. This targets greedy argmax selection, not a full sampling
+distribution. The reported speedups measure the output head only. Qualify the
+dense numerical reference, near ties, fallback and batch policy before serving.
+See the [availability and limits](../../docs/lm_head_decode.html#availability).
+
 A Triton realisation of the shadow-bound certified decode for the LM head. It
 replaces the dense LM-head GEMV (a hidden state against a ~150k-row unembedding,
 run for every generated token) with a two-stage decode that reads ~25% of the
