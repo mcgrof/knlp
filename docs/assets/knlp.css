@@ -21,7 +21,7 @@
 .site-wrap { width: min(1180px, calc(100% - 64px)); margin-inline: auto; }
 .site-nav { width: min(1180px, calc(100% - 64px)); margin: 0 auto; padding: 25px 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; font: 14px/1.5 var(--site-font); border-bottom: 1px solid var(--site-border); }
 .site-brand { display: inline-flex; align-items: center; gap: 10px; font-size: 25px; font-weight: 780; letter-spacing: -1.3px; color: #f8fafc !important; }
-.site-brand::before { content: ""; width: 16px; height: 20px; border: 2px solid #fbbf24; border-radius: 3px; box-shadow: 5px 4px 0 -1px #0f172a, 5px 4px 0 1px #ef4444; margin-right: 5px; transform: rotate(-8deg); }
+.site-brand::before { content: ""; width: 32px; height: 32px; flex-shrink: 0; margin-right: 5px; border-radius: 7px; background: url("../images/knlp-logo.png") center / contain no-repeat; }
 .site-nav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 25px; }
 .site-nav-links a { color: var(--site-muted); transition: color .18s; }
 .site-nav-links a:hover, .site-nav-links a[aria-current] { color: #fbbf24; }
@@ -38,7 +38,7 @@
 .site-button:hover { background: #334155; border-color: #94a3b8; }
 .site-button.primary:hover { background: #fcd34d; border-color: #fcd34d; }
 .site-art { position: relative; margin: 0 -20px 0 0; }
-.site-art img { display: block; width: 100%; height: auto; opacity: .85; border-radius: 30px; mask-image: radial-gradient(ellipse 62% 66% at 50% 50%, #000 40%, transparent 80%); }
+.site-art img { display: block; width: 100%; height: auto; border-radius: 30px; }
 .site-section { padding: 48px 0 60px; border-top: 1px solid var(--site-border); scroll-margin-top: 20px; }
 .site-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 32px; margin-bottom: 28px; }
 .site-section-head h2 { margin: 0; font-size: clamp(27px, 3.4vw, 36px); line-height: 1.2; letter-spacing: -.035em; }
