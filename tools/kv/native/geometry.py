@@ -10,7 +10,7 @@ import torch
 from .instrument import save, tensor_inventory
 
 
-def qualify(inputs, output, *, dtype=torch.float16):
+def qualify(inputs, output, *, dtype=torch.float16, geometry=None):
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
     from vllm.v1.kv_cache_interface import FullAttentionSpec
     import flashinfer
@@ -19,6 +19,18 @@ def qualify(inputs, output, *, dtype=torch.float16):
         raise ValueError("unsupported native geometry dtype")
     bf16 = dtype == torch.bfloat16
     heads, query_heads, layers = (4, 28, 28) if bf16 else (8, 32, 36)
+    dim = 128
+    if geometry is not None:
+        layers = geometry["layers"]
+        query_heads = geometry["query_heads"]
+        heads = geometry["kv_heads"]
+        dim = geometry["head_dim"]
+        if (
+            min(layers, query_heads, heads) <= 0
+            or query_heads % heads
+            or dim not in (64, 128)
+        ):
+            raise ValueError("unsupported qualification geometry")
     tests = Path(inputs) / "vllm/tests/v1/worker/test_asym_kv_cache_allocation.py"
     spec = importlib.util.spec_from_file_location("candidate_allocation_test", tests)
     helpers = importlib.util.module_from_spec(spec)
@@ -31,7 +43,7 @@ def qualify(inputs, output, *, dtype=torch.float16):
     helper_spec = FullAttentionSpec(
         block_size=16,
         num_kv_heads=heads,
-        head_size=128,
+        head_size=dim,
         dtype=dtype,
         v_dtype=torch.float8_e4m3fn,
     )
@@ -44,8 +56,8 @@ def qualify(inputs, output, *, dtype=torch.float16):
         dtype=torch.int64,
         device="cuda",
     )
-    values = torch.arange(33 * heads * 128, device="cuda", dtype=torch.float32).reshape(
-        33, heads, 128
+    values = torch.arange(33 * heads * dim, device="cuda", dtype=torch.float32).reshape(
+        33, heads, dim
     )
     key = torch.sin(values / 91).to(dtype)
     value = (torch.cos(values / 79) / 4).to(dtype)
@@ -100,7 +112,7 @@ def qualify(inputs, output, *, dtype=torch.float16):
         torch.tensor([1], dtype=torch.int32, device="cuda"),
         query_heads,
         heads,
-        128,
+        dim,
         16,
         q_data_type=dtype,
         k_data_type=dtype,
@@ -108,15 +120,15 @@ def qualify(inputs, output, *, dtype=torch.float16):
     )
     q = (
         torch.sin(
-            torch.arange(query_heads * 128, device="cuda", dtype=torch.float32) / 23
+            torch.arange(query_heads * dim, device="cuda", dtype=torch.float32) / 23
         )
-        .reshape(1, query_heads, 128)
+        .reshape(1, query_heads, dim)
         .to(dtype)
     )
     result = wrapper.run(q, cache, k_scale=1.0, v_scale=1 / 64)
     keys = key.float().repeat_interleave(query_heads // heads, dim=1)
     vals = (expected_v / 64).repeat_interleave(query_heads // heads, dim=1)
-    weights = torch.einsum("bhd,thd->bht", q.float(), keys) / (128**0.5)
+    weights = torch.einsum("bhd,thd->bht", q.float(), keys) / (dim**0.5)
     reference = torch.einsum("bht,thd->bhd", weights.softmax(-1), vals)
     error = (result.float() - reference).abs()
     if float(error.max()) > 0.005 or float(error.mean()) > 0.001:
@@ -131,7 +143,7 @@ def qualify(inputs, output, *, dtype=torch.float16):
         torch.tensor([1], dtype=torch.int32, device="cuda"),
         query_heads,
         heads,
-        128,
+        dim,
         16,
         causal=True,
         q_data_type=dtype,
@@ -140,13 +152,13 @@ def qualify(inputs, output, *, dtype=torch.float16):
     )
     queries = (
         torch.sin(
-            torch.arange(3 * query_heads * 128, device="cuda", dtype=torch.float32) / 23
+            torch.arange(3 * query_heads * dim, device="cuda", dtype=torch.float32) / 23
         )
-        .reshape(3, query_heads, 128)
+        .reshape(3, query_heads, dim)
         .to(dtype)
     )
     pref_result = prefill.run(queries, cache, k_scale=1.0, v_scale=1 / 64)
-    logits = torch.einsum("qhd,thd->hqt", queries.float(), keys) / (128**0.5)
+    logits = torch.einsum("qhd,thd->hqt", queries.float(), keys) / (dim**0.5)
     allowed = (
         torch.arange(33, device="cuda")[None, :]
         <= torch.arange(30, 33, device="cuda")[:, None]
@@ -167,7 +179,7 @@ def qualify(inputs, output, *, dtype=torch.float16):
                 "layers": layers,
                 "query_heads": query_heads,
                 "kv_heads": heads,
-                "head_dim": 128,
+                "head_dim": dim,
                 "block_size": 16,
             },
             "storage": info,
