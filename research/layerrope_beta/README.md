@@ -6,9 +6,14 @@ uses only input gains and initializes its magnitude slope at zero. The
 language-model implementation already has both input and output gains at
 the attention and MLP sites. These are distinct starting points.
 
-The operators and synthetic workflow have CPU qualification. The full
-matrix is an experiment definition; new scientific results require its
-completed checkpoint and report set, with GPU qualification recorded.
+The full matrix has completed GPU qualification, fourteen MNIST rows and
+twenty-four final language-model runs. The [curated results](https://knlp.io/layerrope-mhc-quantization.html#author-followup)
+keep these fresh cohorts separate from the earlier depth-code confirmation.
+The language-model comparison has three paired seeds and remains descriptive.
+All nine MNIST suppression comparisons fail; the mHC rows also fail the
+tracked routing-stability gate.
+Checkpoints, generated reports and raw measurements stay in the configured
+external directories.
 
 The [author's reference](https://www.cs.rochester.edu/u/ssrivas9/layer-rope/#code)
 shares a gain vector across depth at each site and transforms adjacent gain
