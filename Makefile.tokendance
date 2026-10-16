@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+TOKENDANCE_PY ?= $(PYTHON)
+TOKENDANCE_CONFIG ?= .config
+TOKENDANCE_DIR := tools/reproduce/tokendance
+
+.PHONY: tokendance tokendance-plan tokendance-cpu tokendance-contracts \
+	tokendance-codec tokendance-gpu tokendance-verify tokendance-report \
+	tokendance-test
+.NOTPARALLEL: tokendance tokendance-cpu tokendance-contracts \
+	tokendance-codec tokendance-gpu tokendance-verify
+
+tokendance:
+	@"$(TOKENDANCE_PY)" $(TOKENDANCE_DIR)/run.py --config "$(TOKENDANCE_CONFIG)" run
+
+tokendance-plan tokendance-cpu tokendance-contracts tokendance-codec tokendance-gpu tokendance-verify tokendance-report:
+	@"$(TOKENDANCE_PY)" $(TOKENDANCE_DIR)/run.py --config "$(TOKENDANCE_CONFIG)" $(patsubst tokendance-%,%,$@)
+
+tokendance-test:
+	@"$(TOKENDANCE_PY)" -m unittest discover -s tests/tokendance -v
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_TOKENDANCE),y)
+.DEFAULT_GOAL := tokendance
+endif

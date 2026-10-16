@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+menu "TokenDance-style shared-update baseline"
+
+config KNLP_REPRODUCE_TOKENDANCE
+	bool "Enable TokenDance-style recovery reproduction"
+	default n
+
+if KNLP_REPRODUCE_TOKENDANCE
+
+config KNLP_TOKENDANCE_MODE
+	string "Execution: cpu or gpu"
+	default "cpu"
+	help
+	  cpu validates the exact synthetic workload without a model or GPU.
+	  gpu runs all eight recovery/control cases in a pinned ROCm container.
+	  GPU execution requires a gpuq reservation and the component checkouts.
+
+config KNLP_TOKENDANCE_OUTPUT
+	string "Fresh output directory"
+	default "results/tokendance"
+
+config KNLP_TOKENDANCE_VLLM_SOURCE
+	string "Clean dated vLLM checkout"
+	default ""
+
+config KNLP_TOKENDANCE_LMCACHE_SOURCE
+	string "Clean dated LMCache checkout"
+	default ""
+
+config KNLP_TOKENDANCE_RUNTIME_VOLUME
+	string "Docker volume containing the pinned Python environment"
+	default ""
+
+config KNLP_TOKENDANCE_MODEL_DIR
+	string "Local pinned model snapshot directory"
+	default ""
+
+config KNLP_TOKENDANCE_DOCKER
+	string "Container command prefix"
+	default "docker"
+
+endif
+endmenu

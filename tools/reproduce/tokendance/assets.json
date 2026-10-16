@@ -1,0 +1,17 @@
+{
+  "contract.py": "181b6a0f957821bc9fbf4f00b3790f8b2b79549d5990c9b4b4b8fe4510a67fe6",
+  "harness/bootstrap.py": "b03d8206091c4d0eb5a91a41961d90870e4e90099fa7e5f7c11da56aa391e419",
+  "harness/collective_gate_common.py": "fbc4b610219c767ab36707bf3722bf8980407b4763901d6023d82980f604ef75",
+  "harness/generate_all_gather_trace.py": "3a9fc675b4cb384da581aeb438004117a796c595c0f070a8c04fef1aad832d3e",
+  "harness/measure_family.py": "2601e02ea9d4b2ea7dc252983d4ced4fee3a0d1e6c8ae58a80e6783c6273a86d",
+  "harness/numerical_instrumentation.py": "8956c91b5ad77994ce0dde161f4229ed0a67e671dd6836df0374d3d12e5eef04",
+  "harness/preflight_resolved_profile.py": "a3eb2a9cbcaf95f50e86b570c24648d2dae6740d06defa83700cc263df3f95d7",
+  "harness/run_online_collective_lockstep_gate.py": "630b43a3b9c57f87132756960ad3358384c82f61d75858d52cc09ac04cd16661",
+  "harness/run_online_serial_pic_gate.py": "479418c4bb46b64735eff07e58f37c145052113864f158f535f79cfe7205eb6b",
+  "harness/verify_numerical_warmup_contract.py": "6199aa061b869da683b0f983ef53a2cb4f13fcc0d3980ede14f27774d0459839",
+  "harness/verify_online_collective_lockstep_gate.py": "0c4c95c161bbaea7957b426ec0eaf32353832ab66f452ec284aff34953fe0f80",
+  "lmcache.yaml": "8e7c5d0b0ad1f1e9f69b1e258dca4c6f8539c00312518dfd977a3f51266b77fb",
+  "profile.json": "6d1730df2eef9943f284042678552587f76bb4dd8261e7ba9b19adaee809e1cc",
+  "provenance.json": "52290b44da2a08c2ce4798624c408a6328fc1e5f41971056ab9b47fd50c00d22",
+  "run.py": "23869e9638d0c979555713c733de7d1ab85c356dac916b869390c6fb2948dc37"
+}

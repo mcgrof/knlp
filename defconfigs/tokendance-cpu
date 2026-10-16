@@ -1,0 +1,5 @@
+# Validate the frozen synthetic shared-update trace on CPU.
+# This profile does not execute model inference or KV recovery.
+CONFIG_KNLP_REPRODUCE_TOKENDANCE=y
+CONFIG_KNLP_TOKENDANCE_MODE="cpu"
+CONFIG_KNLP_TOKENDANCE_OUTPUT="results/tokendance-cpu"
