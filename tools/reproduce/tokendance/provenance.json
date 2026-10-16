@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "origin": "retained correctness experiment drivers",
+  "files": [
+    {
+      "file": "run_online_serial_pic_gate.py",
+      "original_sha256": "271940b690dade9f5d57e9109b807828d3ce42f5485b8bdb5f1cb0d3a1ee115d"
+    },
+    {
+      "file": "collective_gate_common.py",
+      "original_sha256": "57e738cb04910789fc1e82cceb917277e7819eda8fc138785d2a23d0ee23f014"
+    },
+    {
+      "file": "numerical_instrumentation.py",
+      "original_sha256": "0a5425545eb66560ba8ee17184876253f16f0175722dfad9840495c482140de5"
+    },
+    {
+      "file": "preflight_resolved_profile.py",
+      "original_sha256": "a3e1eb2adf8d36d3838c7bee984e5fdeb33ad244e4d9e1208a7d54bbaaa48a55"
+    },
+    {
+      "file": "run_online_collective_lockstep_gate.py",
+      "original_sha256": "32de0c69dc3547e8b3a3b237b3eea43e5372692dd2da0c045e5d5ac2f199276f"
+    },
+    {
+      "file": "verify_online_collective_lockstep_gate.py",
+      "original_sha256": "294fcede3abea010331146514a198d58d36f777bbd22612f25b6541433edfdef"
+    },
+    {
+      "file": "verify_numerical_warmup_contract.py",
+      "original_sha256": "3e46150354b6ed1f35780a14d01c9e248f3fef4b5856c229900795b181fd56db"
+    },
+    {
+      "file": "generate_all_gather_trace.py",
+      "original_sha256": "3a9fc675b4cb384da581aeb438004117a796c595c0f070a8c04fef1aad832d3e",
+      "source_commit": "18f90213f45783bad6b7acd7bc43cbba957a69f8"
+    }
+  ]
+}
