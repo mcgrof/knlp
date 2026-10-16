@@ -1,0 +1,159 @@
+# Exact-prefix reasoning fork accounting
+
+This experiment asks whether a tree-aware memory manager could reduce the
+number of KV-cache blocks needed by reasoning branches beyond vLLM's automatic
+prefix caching. A child contains its parent's exact token sequence followed by
+an independent tail. For example, five children extend a 4,096-token ancestor
+with 512 tokens each. These are synthetic causal-prefix forks, rather than
+matching text placed after different private histories.
+
+The benchmark drives the real `KVCacheManager` from the pinned vLLM branch.
+It allocates metadata and treats admission as completed prefill, following
+vLLM's prefix-cache unit-test convention. No model, scheduler, tensor storage,
+GPU or LMCache backend executes. This is the allocator experiment following
+the [TokenDance-style recovery baseline](../tokendance/README.md); the original
+serving replay and later attention/storage experiments remain separate steps.
+
+[Run](#run-the-allocator-matrix) · [Runtime](#prepare-the-pinned-runtime) ·
+[Results](#read-the-results) · [Verification](#verify-and-test)
+
+## Run the allocator matrix
+
+From knlp's root, with Python 3.10 or newer and GNU make:
+
+```sh
+make defconfig-kmesh-fork-accounting
+make kmesh-fork-plan
+make kmesh-fork-test
+
+git clone --single-branch --branch 2026-10-16-feature-kmesh-fork-accounting \
+  https://github.com/mcgrof/vllm.git ../vllm-kmesh-forks
+git -C ../vllm-kmesh-forks checkout --detach 5ccaa1456af6d2c08fbb39e6c7bc4480df445d07
+
+export KMESH_FORK_VLLM_SOURCE="$(cd ../vllm-kmesh-forks && pwd)"
+export KMESH_FORK_RUNTIME_VOLUME=prepared-runtime-volume
+export KMESH_FORK_DOCKER=docker
+export KMESH_FORK_OUTPUT="$PWD/results/forks-run"
+make
+```
+
+The source must be clean and match both commit and tree in
+[profile.json](profile.json). The source branch extends the published TokenDance
+vLLM branch without changing the allocator or updating its upstream base.
+LMCache stays at the published TokenDance pin; this experiment does not need a
+new LMCache branch. The benchmark retains seed `20260805`, which defines the
+original input tokens. New commit dates do not change that seed.
+
+Default `make` executes the complete real allocator matrix and independently
+verifies its result. It does not silently fall back to formula-only simulation.
+`kmesh-fork-plan` shows the inputs without requiring the native environment;
+`kmesh-fork-test` checks the portable verifier against the published capture
+and deliberately corrupted evidence.
+
+Every execution needs a fresh output directory. The runner refuses existing
+directories, preserving successful and failed attempts. Outputs include
+`manifest.json`, the exact container command, `native.log`, `results.json` and
+`verified.json`. The manifest records source identity, runtime profile and
+execution time. A failed command or missing verification report is not a pass.
+Absolute source paths in local manifests belong in private experiment records.
+
+## Prepare the pinned runtime
+
+The automated native run uses the same prepared runtime as the TokenDance
+baseline. Docker and a populated runtime volume are prerequisites; `make` does
+not build or install packages. The volume must contain
+`/opt/kmesh-target/bin/python`, Python 3.12.13, PyTorch
+`2.11.0+gitd0c8b1f`, and the compiled vLLM wheel based on
+`454ea5b52611c933e00581723e2db56f0144cea7`. Its import version is
+`0.26.1rc1.dev221+g454ea5b52`; the distribution build has the `.rocm723` suffix.
+The immutable image is recorded in [profile.json](profile.json). See the
+[baseline's runtime prerequisites](../tokendance/README.md#pin-the-component-checkouts-and-native-environment)
+for the complete prepared environment.
+
+The launcher mounts the source and runtime read-only, disables network access,
+hides all GPUs, and mounts no GPU devices. It verifies runtime versions and
+that `KVCacheManager` actually imports from the pinned source. The two OpenMP
+threads are an execution setting, not a performance measurement. No model
+weights, GPU reservation, storage offload, DMA-BUF path or hardware-specific
+kernel is required. The ROCm runtime is reused for CPU imports only.
+
+A different runtime needs separate qualification. Building or distributing a
+fresh native environment is not automated by this profile. If Docker requires
+an administrator-approved prefix, set `KMESH_FORK_DOCKER='sudo -n docker'`.
+
+## Read the results
+
+The complete [CPU capture](../../../docs/data/kmesh-fork-accounting.json) was
+repeated on 2026-10-16. Its counters match the archived experiment across five
+trees, five admission/cache scenarios per tree and six eviction points. Block
+size is 16 tokens. The primary tree has a 4,096-token root and five 512-token
+tails. The fork oracle counts 256 ancestor blocks plus five sets of 32 tail
+blocks: **416**. An uncached root and five independent full child sequences
+require 256 + 5 × 288 = **1,696** simulated writes over the tree lifetime.
+
+| Primary tree | Written blocks | Peak pool usage | Failed admissions |
+| --- | ---: | ---: | ---: |
+| Concurrent siblings, cached | 416 | 417 | 0 |
+| Concurrent siblings, uncached | 1,696 | 1,441 | 0 |
+| 520-block pool, cached | 416 | 417 | 0 |
+| 520-block pool, uncached | 544 | 289 | 4 |
+
+Written blocks accumulate simulated prefill work; peak usage counts allocated
+pool metadata at one instant and includes the reserved null block. The parent
+is freed before admitting its children. Therefore 1,696 cumulative uncached
+writes must not be described as 1,696 simultaneously resident blocks. The
+pressure control writes fewer blocks because four children fail admission.
+
+Every cached tree reaches its fork oracle while ancestors remain available,
+including depth-two and non-aligned forks. A 4,101-token ancestor with five
+509-token tails writes 422 blocks and recomputes five boundary tokens per
+child, 25 total. Stock caching recomputes that partial boundary where an
+explicit fork could clone it; the tested block count is the same.
+
+After unrelated requests churn a 1,024-block pool, the child hit counts are:
+
+| Churn / pool | Child prefix hits in tokens |
+| --- | --- |
+| 0, 0.25 or 0.50 | 4,096 for all five children |
+| 0.75 | 4,080, then 4,096 for four children |
+| 1.00 or 1.50 | 0, then 4,096 for four children |
+
+In these sequential metadata admissions, the first child's simulated prefill
+repopulates lost ancestor blocks for later siblings. This does not establish a
+universal bound under scheduler concurrency, repeated interleaved eviction or
+preemption. The actual serving replay is a separate experiment.
+
+The result narrows the proposed memory-manager change: full-ancestor block
+duplication is not a capacity gap for these exact forks with prefix caching.
+Boundary recomputation and ancestor eviction remain observable costs. Sharing
+storage capacity also does not prove fewer attention reads: each branch can
+still read the same shared KV blocks independently. Cascade attention, future
+use policies, external caching and DMA-BUF are outside this measurement.
+
+The byte fields are geometry projections only: K and V × 24 layers × 2 KV
+heads × 64 features × 2 BF16 bytes = 12,288 bytes per token, or 196,608 per
+16-token block. The metadata test allocates no corresponding KV tensors and
+establishes no quality, latency, throughput or end-to-end capacity result.
+
+## Verify and test
+
+The portable verifier compares the entire saved counter matrix, hit vectors
+and eviction sweep. It also checks observed block tables for ancestor aliasing
+and sibling-private tails; optimistic summary counts alone cannot pass.
+
+```sh
+python3 tools/reproduce/kmesh_forks/verify.py \
+  results/forks-run/results.json --output results/forks-run/rechecked.json
+```
+
+Run the real vLLM prefix-cache unit suite in a separate fresh output directory:
+
+```sh
+KMESH_FORK_OUTPUT="$PWD/results/forks-contracts" make kmesh-fork-contracts
+```
+
+The suite exercises the real allocator, including non-aligned fork boundaries,
+shared references surviving a sibling's release, and the negative control of
+matching suffix tokens after different causal prefixes. The portable tests
+reject missing controls, missing eviction points, optimistic uncached counts,
+aliased writable tails, inconsistent counters and changed runtime versions.
