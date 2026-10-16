@@ -35,4 +35,5 @@ residual-plan: residual-conflicts
 
 residual-test:
 	$(PYTHON) -m pytest -q research/subliminal_learning/tests \
-		research/supervised_depth/tests research/reproduction/tests
+		research/supervised_depth/tests research/reproduction/tests \
+		research/layerrope_beta/tests research/tinystories_depth/tests

@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta"
 	default "mnist"
 
 config RESIDUAL_SMOKE
@@ -65,7 +65,7 @@ config RESIDUAL_CACHE_DEPTH_RUN
 	default ""
 	help
 	  The top-level external run directory containing depth-screen/ and
-	  data/. Used only by the cache-only preset; no training is repeated.
+	  data/. Used by the cache-only and GSM8K presets; no training repeats.
 
 config RESIDUAL_CACHE_CONFIRMATION_RUN
 	string "Saved confirmation reproduction run for cache-only evaluation"

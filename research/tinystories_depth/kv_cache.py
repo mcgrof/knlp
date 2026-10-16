@@ -25,6 +25,12 @@ def fakequant(x, bits, method="symmetric"):
         return x
     if bits not in (2, 3, 4, 8):
         raise ValueError(bits)
+    if method in ("fp4_e2m1", "fp8_e4m3fn"):
+        from .float_quant import scaled_float
+
+        if bits != (4 if method == "fp4_e2m1" else 8):
+            raise ValueError("Floating cache format and bit width disagree")
+        return scaled_float(x, bits)
     w = x.float()
     if method == "symmetric":
         qmax = 2 ** (bits - 1) - 1
@@ -130,7 +136,7 @@ def bytes_per_token(case, depth=32, heads=2, head_dim=64):
             (
                 0
                 if case[side + "_bits"] == 16
-                else 4 if case["method"] == "symmetric" else 8
+                else 8 if case["method"] == "affine" else 4
             )
             for side in ("k", "v")
         )

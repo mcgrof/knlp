@@ -30,6 +30,9 @@ and reporting order. A failed qualification prevents measured training.
 | `layerrope-mhc-tinystories-smoke` | CPU operators, exact resume checks, two updates for seven rows, and cache checks on synthetic tokens |
 | `layerrope-mhc-tinystories-kv-cache` | Cache-only evaluation of one or both saved cohorts; no training |
 | `layerrope-mhc-tinystories-kv-cache-smoke` | Bounded CPU cache-operator, checkpoint and reporting path on synthetic tokens |
+| `layerrope-mhc-tinystories-gsm8k` | First 16 GSM8K questions on saved clean 32-layer residual/mHC/M-O checkpoints; feasibility only |
+| `layerrope-mhc-beta` | Full input/output gains with three beta initializations; paired MNIST and 32-layer TinyStories comparisons |
+| `layerrope-mhc-beta-smoke` | Synthetic CPU training, checkpoint, observer and FP4/FP8 evaluation checks |
 
 For example:
 
@@ -127,6 +130,24 @@ against the original checksum and model-state hash.
 
 The cache-only route requires no H100 or second GPU; select `cuda` or explicitly
 select `cpu`. Full confirmation *training* retains its two-H100 qualification.
+
+The clean math sanity check also reuses that saved depth directory:
+
+```sh
+make defconfig-layerrope-mhc-tinystories-gsm8k
+make CONFIG_RESIDUAL_CACHE_DEPTH_RUN=/path/to/depth-run
+```
+
+It evaluates the first 16 official GSM8K test questions using the unchanged
+32-layer residual, mHC and M-O checkpoints for seed 75211. It pins the official
+dataset revision and content hash and reuses the pinned GPT-2 tokenizer.
+Zero-shot `Question: ...\nAnswer:` prompts, greedy decoding, EOS stopping and
+at most 128 new tokens define this feasibility check. Prompts are never
+truncated; the shared generation budget must leave at least 64 tokens within
+the 256-token context. Reports preserve prompts, generated tokens, strict
+`####` and permissive last-number scores. This is not the full GSM8K benchmark
+or a quantization comparison. A zero clean score cannot establish robustness.
+
 The depth cohort contains ordinary residual and mHC at depths 4/16/32, plus
 M-O at depth 32: three paired seeds, 2,000 updates, learning rate 0.003 and
 the original final array. Initial common weights, data orders and optimizer

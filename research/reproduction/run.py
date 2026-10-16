@@ -23,6 +23,8 @@ STUDIES = (
     "depth",
     "confirmation",
     "cache",
+    "gsm8k",
+    "beta",
 )
 
 
@@ -76,6 +78,10 @@ def configuration(path, overrides=()):
         raise ValueError("Unknown study or device")
     if result["max_seconds"] < 0 or not 1 <= result["cpu_threads"] <= 64:
         raise ValueError("Invalid resource limit")
+    if result["study"] == "beta" and result["max_seconds"] == 0:
+        raise ValueError(
+            "The full-gain beta study requires a finite elapsed-time limit"
+        )
     if result["seeds"] and result["study"] not in ("null", "layerrope"):
         raise ValueError("Aggregate and confirmation seed sets cannot be replaced")
     return result
@@ -88,7 +94,19 @@ def plan(config):
     return {
         "effective_config": config,
         "scope": "smoke" if config["smoke"] else "scientific reproduction",
-        "scientific_confirmation_allowed": not config["smoke"],
+        "scientific_confirmation_allowed": not config["smoke"]
+        and config["study"] != "beta",
+        "full_gain_beta": {
+            "beta_initializations": [-1.0, -0.5, 0.0],
+            "language_depth": 32,
+            "language_pilots": 32,
+            "language_finals": 24,
+            "mnist_rows": 14,
+            "mnist_paired_seeds": 10,
+            "checkpointed": True,
+            "gpu_count": 2,
+            "metrics": "Own-clean cross-entropy, incremental cache damage, residual distributions, separate FP4/FP8 scopes and MNIST transfer/utility",
+        },
         "mnist": {
             "reference_models": 100,
             "historical_cohort_seeds": list(range(2101, 2121)),
@@ -106,7 +124,7 @@ def plan(config):
         "tinystories": {
             "kv_cache": {
                 "enabled": config["kv_cache"],
-                "cases_per_checkpoint": 13,
+                "cases_per_checkpoint": 49,
                 "depth_cohort": "21 saved endpoints, three seeds, 2000 updates; R/M depths 4/16/32 plus M-O at 32",
                 "confirmation_cohort": "56 saved endpoints, eight seeds, 4000 updates; seven mHC-derived rows",
                 "pass_rule": "Every seed adds <=0.1 nats over its own clean CE",
@@ -320,6 +338,60 @@ class Runner:
             if self.config[field]:
                 self.cache(cohort, Path(self.config[field]).expanduser().resolve())
 
+    def beta(self):
+        if self.config["smoke"]:
+            self.command(
+                "research.layerrope_beta.smoke",
+                "--root",
+                self.root / "beta-smoke",
+                "--device",
+                self.config["device"],
+            )
+            return
+        root = self.root / "beta"
+        checkpoints = (
+            Path(self.config["checkpoint_dir"]).expanduser() / self.root.name
+            if self.config["checkpoint_dir"]
+            else root / "checkpoints"
+        )
+        self.command(
+            "research.layerrope_beta.run",
+            "prepare",
+            "--root",
+            root,
+            "--data-cache",
+            self.config["data_dir"],
+            "--checkpoints",
+            checkpoints,
+            cpu=True,
+        )
+        self.command(
+            "research.layerrope_beta.run",
+            "run",
+            "--root",
+            root,
+            "--checkpoints",
+            checkpoints,
+            "--max-seconds",
+            max(1, self.config["max_seconds"] - int(time.monotonic() - self.started)),
+        )
+        self.command("research.layerrope_beta.analyze", "--root", root, cpu=True)
+
+    def gsm8k(self):
+        if self.config["smoke"]:
+            raise ValueError("Use residual-test for bounded CPU generation checks")
+        self.command(
+            "research.reproduction.gsm8k",
+            "--root",
+            self.root / "gsm8k",
+            "--source-run",
+            self.config["cache_depth_run"],
+            "--cache",
+            self.config["data_dir"],
+            "--device",
+            self.config["device"],
+        )
+
     def confirmation(self):
         from research.mo_variants.stage_c_common import read, sha
 
@@ -416,6 +488,8 @@ class Runner:
 def execute(config):
     import torch
 
+    if config["study"] == "gsm8k" and not config["cache_depth_run"]:
+        raise ValueError("Set CACHE_DEPTH_RUN to a saved depth reproduction run")
     if (
         config["study"] == "cache"
         and not config["smoke"]
@@ -453,12 +527,16 @@ def execute(config):
             runner.mnist()
         elif config["study"] == "cache":
             runner.saved_cache()
+        elif config["study"] == "gsm8k":
+            runner.gsm8k()
+        elif config["study"] == "beta":
+            runner.beta()
         else:
             runner.tinystories()
         report["status"] = "complete"
-        report["scientific_confirmation_allowed"] = (
-            not config["smoke"] and config["study"] != "cache"
-        )
+        report["scientific_confirmation_allowed"] = not config["smoke"] and config[
+            "study"
+        ] not in ("cache", "gsm8k", "beta")
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise
