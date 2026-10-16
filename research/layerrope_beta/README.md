@@ -1,15 +1,16 @@
-# Full input/output gains and beta initialization
+# Depth-dependent gains and beta initialization
 
-This study asks whether full LayerRoPE gains change learning, residual
-distributions or tolerance to quantization. The historical MNIST adaptation
-uses only input gains and initializes its magnitude slope at zero. The
-language-model implementation already has both input and output gains at
-the attention and MLP sites. These are distinct starting points.
+This study asks whether LayerRoPE gains change learning, residual
+distributions or tolerance to quantization. Magnitude and rotation apply
+at the input and output of each language-model attention and MLP block.
+The MNIST adaptation also has independent input/output gains and retains
+LayerNorm centering and bias.
 
 The full matrix has completed GPU qualification, fourteen MNIST rows and
-twenty-four final language-model runs. The [curated results](https://knlp.io/layerrope-mhc-quantization.html#author-followup)
-keep these fresh cohorts separate from the earlier depth-code confirmation.
-The language-model comparison has three paired seeds and remains descriptive.
+twenty-four final language-model runs. The [curated results](https://knlp.io/layerrope-mhc-quantization.html#learning)
+compare fresh training at equal tokens and subsequent quantization.
+The language-model comparison has three paired seeds and remains descriptive;
+equal-time training is an unrun next experiment.
 All nine MNIST suppression comparisons fail; the mHC rows also fail the
 tracked routing-stability gate.
 Checkpoints, generated reports and raw measurements stay in the configured
