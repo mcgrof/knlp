@@ -9,8 +9,40 @@ from tools.kv.native.october import (
     VARIANTS,
     check_protocol,
     check_qualification,
+    check_timing_protocol,
     digest,
 )
+from tools.kv.native.completion import request_metrics
+
+
+@pytest.mark.parametrize("flag", [None, True, 0])
+def test_timing_requires_explicit_statistics(flag):
+    value = protocol("native")
+    if flag is not None:
+        value["engine"]["disable_log_stats"] = flag
+    with pytest.raises(ValueError, match="explicit disable_log_stats=False"):
+        check_timing_protocol(value)
+    value["engine"]["disable_log_stats"] = False
+    check_timing_protocol(value)
+
+
+def test_request_clocks_support_slots_and_reject_disabled_metrics():
+    class Metrics:
+        __slots__ = (
+            "arrival_time",
+            "first_token_ts",
+            "last_token_ts",
+            "first_token_latency",
+        )
+
+    metrics = Metrics()
+    for i, name in enumerate(Metrics.__slots__):
+        setattr(metrics, name, float(i))
+    assert request_metrics(metrics) == {
+        name: float(i) for i, name in enumerate(Metrics.__slots__)
+    }
+    with pytest.raises(RuntimeError, match="disable_log_stats=False"):
+        request_metrics(None)
 
 
 def protocol(variant):
