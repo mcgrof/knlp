@@ -58,6 +58,16 @@
 .site-card h3 a:hover { color: #fcd34d; }
 .site-card h3 a::after { content: " ↗"; color: #718299; font-size: 15px; white-space: nowrap; }
 .site-card p { margin: 0 0 22px; font-size: 14px; line-height: 1.75; color: #aebcd0; }
+.site-stage { display: flex; align-items: flex-start; flex-direction: column; gap: 8px; margin: 2px 0 18px; color: #a6b4c8; font-size: 11px; }
+.site-stage-badge { padding: 3px 9px; border: 1px solid #475569; border-radius: 999px; font-size: 11px; font-weight: 650; line-height: 1.5; }
+.site-stage-badge.upstream { color: #fcd34d; border-color: #92400e; background: #78350f33; }
+.site-stage-badge.design { color: #67e8f9; border-color: #155e75; background: #164e6333; }
+.site-stage-badge.rfc { color: #fdba74; border-color: #9a3412; background: #7c2d1233; }
+.site-stage-badge.tooling { color: #6ee7b7; border-color: #065f46; background: #064e3b33; }
+.site-stage-badge.evaluation { color: #c4b5fd; border-color: #5b21b6; background: #4c1d9533; }
+.site-stage-badge.parked { color: #cbd5e1; background: #33415555; }
+.site-card .site-card-progress { margin-top: auto; padding: 0 0 0 12px; border-left: 2px solid #475569; font-size: 13px; }
+.site-card-progress strong { display: block; margin-bottom: 4px; color: #e2e8f0; font-size: 12px; font-weight: 600; }
 .site-card-links { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: auto; padding-top: 16px; border-top: 1px solid #334155; font-size: 12px; }
 .site-card-links a { color: #cbd5e1; }
 .site-card-links a:hover { color: #fbbf24; text-decoration: underline; text-underline-offset: 4px; }

@@ -35,44 +35,53 @@
     <section id="ecosystem" class="site-section" aria-labelledby="ecosystem-title">
       <div class="site-section-head">
         <div><span class="site-section-label">Build · integrate · reproduce</span><h2 id="ecosystem-title">AI Ecosystem</h2></div>
-        <p>LMCache, vLLM and the Linux storage stack. Integration work, experimental enablement, and the tools to test it.</p>
+        <p>Follow each topic from research to ecosystem integration: its current stage, the next work, and the upstream dependencies.</p>
       </div>
       <div class="site-grid">
         <article class="site-card">
           <div class="site-card-kicker">LMCache · vLLM · FlashInfer</div>
           <h3><a href="bias-aware-kv-quantization.html">Asymmetric quantization</a></h3>
+          <div class="site-stage"><span class="site-stage-badge upstream">Upstreaming</span><span>KV precision · serving &amp; storage</span></div>
           <p>Separate key and value precision across serving and cache storage. Protect sensitive keys, compress values, and qualify each model.</p>
-          <div class="site-card-links"><a href="cartridge-asymmetric-quantization.html">Cartridge KV</a><a href="paper_memory_decode.html">Decode study</a><a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">Fused kernels</a></div>
+          <p class="site-card-progress"><strong>Current focus</strong>Stabilization and kernel optimization. The vLLM integration is staged, waiting for FlashInfer ecosystem integration.</p>
+          <div class="site-card-links"><a href="https://github.com/LMCache/LMCache/issues/3710">LMCache issue #3710</a><a href="https://github.com/LMCache/LMCache/pull/5502">LMCache fixes PR #5502</a><a href="https://github.com/flashinfer-ai/flashinfer/pull/3812">FlashInfer PR #3812</a><a href="https://github.com/mcgrof/vllm/tree/20260706-k16fp8-asym-prefill">vLLM staged branch</a></div>
         </article>
         <article class="site-card">
           <div class="site-card-kicker">LMCache · vLLM</div>
           <h3><a href="learned_prefix_caches.html">Learned Prefix Caches</a></h3>
+          <div class="site-stage"><span class="site-stage-badge design">Upper-layer design</span><span>Prefix reuse · orchestration</span></div>
           <p>Reusable learned state for documents, reasoning and skills. One architecture connects Cartridges, ReasonCACHE and prefix induction.</p>
+          <p class="site-card-progress"><strong>Next evaluations</strong>Explore upper-layer prefix-cache handling with LangChain, KVCR and vLLM Semantic Router.</p>
           <div class="site-card-links"><a href="cartridges.html">Cartridges</a><a href="reasoncache.html">ReasonCACHE</a></div>
         </article>
         <article class="site-card featured">
           <div class="site-card-kicker">Linux · LMCache · NIXL</div>
           <h3><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a></h3>
+          <div class="site-stage"><span class="site-stage-badge rfc">Early RFC</span><span>GPU storage · disaggregation</span></div>
           <p>Evaluate GPU memory to NVMe through a common Linux interface. Filesystem and raw-device paths lead into storage-mediated prefill/decode.</p>
-          <div class="site-card-links"><a href="pd-disaggregation.html">PD disaggregation</a><a href="io-uring-dmabuf.html#reproduce">Reproduce</a><span class="site-status">Early enablement</span></div>
-        </article>
-        <article class="site-card">
-          <div class="site-card-kicker">vLLM · cache policy</div>
-          <h3><a href="spf.html">Speculative prefetching</a></h3>
-          <p>Can a scheduler fetch the next useful KV blocks before they are needed? The experiment and its unmet survival gate remain available.</p>
-          <div class="site-card-links"><a href="spf.html">Design &amp; findings</a><span class="site-status">Parked</span></div>
+          <p class="site-card-progress"><strong>Relationship</strong>Linux I/O enablement underpins LMCache and NIXL storage paths; direct LMCache prefill/decode makes NIXL optional.</p>
+          <div class="site-card-links"><a href="https://github.com/LMCache/LMCache/issues/5816">LMCache RFC #5816</a><a href="pd-disaggregation.html">PD disaggregation</a><a href="io-uring-dmabuf.html#reproduce">Reproduce</a></div>
         </article>
         <article class="site-card">
           <div class="site-card-kicker">Storage · reproducibility</div>
           <h3><a href="kvtide.html">KVTide</a></h3>
+          <div class="site-stage"><span class="site-stage-badge tooling">Benchmark tooling</span><span>Storage paths · comparison</span></div>
           <p>A reproducible storage I/O harness for tiered KV caches. Compare software NVMe-KV, physical storage and GPU transfer paths.</p>
           <div class="site-card-links"><a href="kvtide.html">Bench harness</a><a href="kdevops.html">Run with kdevops</a></div>
         </article>
         <article class="site-card">
           <div class="site-card-kicker">Shared inference state</div>
           <h3><a href="kmesh.html">KMesh</a></h3>
+          <div class="site-stage"><span class="site-stage-badge evaluation">Prototype evaluation</span><span>Keyed state · collective reuse</span></div>
           <p>Sharing keyed inference state across agentic and test-time-scaled workloads. Explore the cache identity, reuse and serving architecture.</p>
           <div class="site-card-links"><a href="kmesh.html">Architecture</a><a href="prefix-integrity-analysis.html">Reuse contracts</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">vLLM · cache policy</div>
+          <h3><a href="spf.html">Speculative prefetching</a></h3>
+          <div class="site-stage"><span class="site-stage-badge parked">Parked</span><span>KV access · prefetch policy</span></div>
+          <p>Can a scheduler fetch the next useful KV blocks before they are needed? The experiment and its unmet survival gate remain available.</p>
+          <div class="site-card-links"><a href="spf.html">Design &amp; findings</a></div>
         </article>
       </div>
     </section>
@@ -143,6 +152,8 @@
         <div class="site-link-list">
           <a href="fp8-kv-failure-atlas.html">FP8 KV-Cache Failure Atlas ↗</a>
           <a href="paper_memory_decode.html">Memory-traffic saturation in decode ↗</a>
+          <a href="cartridge-asymmetric-quantization.html">Asymmetric Cartridge KV ↗</a>
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">Fused KV kernel documentation ↗</a>
           <a href="subliminal-learning-mnist.html">Subliminal transfer on MNIST ↗</a>
           <a href="layerrope-mhc-quantization.html">LayerRoPE, mHC &amp; weight quantization ↗</a>
           <a href="small-random-reads-ai.html">Small random reads in AI ↗</a>
