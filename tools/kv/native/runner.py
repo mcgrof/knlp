@@ -583,6 +583,7 @@ def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128
     warm_memory = llm.collective_rpc(callbacks.reset_warm_peak)
     schedule._completed.clear()
     schedule.label(label)
+    torch.cuda.synchronize()
     started = time.monotonic()
     completion_wall = {}
     original_step = llm.llm_engine.step
@@ -601,6 +602,7 @@ def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128
         outputs = llm.generate(prompts, params, use_tqdm=False)
     finally:
         llm.llm_engine.step = original_step
+    torch.cuda.synchronize()
     ended = time.monotonic()
     schedule.label(None)
     if len(outputs) != batch:
@@ -694,6 +696,10 @@ def timing_record(llm, prompts, batch, label, out, provenance, output_tokens=128
         "output_tokens_per_request": output_tokens,
         "ignore_eos": True,
         "warmup_excluded": True,
+        "CUDA_synchronized_at_timing_boundaries": True,
+        "cohort_decode_seconds": max(m["last_token_ts"] for m in metrics)
+        - min(m["first_token_ts"] for m in metrics),
+        "cohort_decode_endpoint": "first prefill-produced token through final request's last decode token; includes staggered admission and mixed prefill/decode; not isolated full-batch decode",
         "end_to_end_output_tokens_per_second": batch
         * output_tokens
         / (ended - started),
