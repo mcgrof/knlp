@@ -295,6 +295,7 @@ def prepare_samples(
             [{"role": "user", "content": prompt}],
             add_generation_prompt=True,
             tokenize=True,
+            return_dict=False,
             **options,
         )
         samples.append(

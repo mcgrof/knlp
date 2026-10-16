@@ -213,11 +213,19 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
     weight_format = (packed_expectation or {}).get("format", "awq")
     dense = weight_format in ("fp16", "bf16")
     bf16 = weight_format == "bf16"
+    expected_layers = (packed_expectation or {}).get(
+        "attention_layers", 28 if bf16 else 36
+    )
+    expected_linears = (packed_expectation or {}).get(
+        "linear_modules", 4 * expected_layers
+    )
+    expected_embeddings = (packed_expectation or {}).get("embedding_modules", 2)
     weights = None
     if dense:
         from .weights import inspect_bf16_weights, inspect_fp16_weights
 
-        weights = inspect_bf16_weights(model) if bf16 else inspect_fp16_weights(model)
+        inspect = inspect_bf16_weights if bf16 else inspect_fp16_weights
+        weights = inspect(model, expected_linears, expected_embeddings)
     for name, module in model.named_modules():
         if hasattr(module, "qweight"):
             if module.qweight.dtype != torch.int32:
@@ -274,7 +282,9 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
                     ),
                 }
             )
-    if len(selected) != (28 if bf16 else 36) or (not dense and len(packed) != 144):
+    if len(selected) != expected_layers or (
+        not dense and len(packed) != expected_linears
+    ):
         raise RuntimeError("native packed attention inventory is incomplete")
     expected = packed_expectation or {
         "method": "AWQLinearMethod",

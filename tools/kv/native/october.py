@@ -135,8 +135,10 @@ def build_engine(inputs, output, variant, arm, cache_bytes, stage):
                         "gpu": float(module._v_scale),
                     }
                 )
-        if len(actual) != 36:
-            raise RuntimeError("this entrypoint qualifies Qwen3's 36-layer recipe only")
+        if len(actual) != protocol.get("geometry", {}).get("layers", 36):
+            raise RuntimeError(
+                "capture attention inventory differs from frozen geometry"
+            )
         instrument.save(output / "capture-time-scales.json", actual)
 
     restore = install_capture_hooks(
@@ -191,11 +193,13 @@ def main():
     if args.stage == "geometry":
         from .geometry import qualify
 
-        qualify(inputs, output)
+        qualify(inputs, output, geometry=protocol.get("geometry"))
         return
     engine, manifest, scales = build_engine(
         inputs, output, args.variant, arm, args.cache_bytes, args.stage
     )
+    if args.stage in ("nll", "retrieval"):
+        engine.apply_model(instrument.require_finite)
     instrument.save(output / "provenance.json", engine._study_provenance)
     if args.stage == "gsm8k":
         from types import SimpleNamespace

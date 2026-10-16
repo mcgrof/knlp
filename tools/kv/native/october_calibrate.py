@@ -64,8 +64,9 @@ def main():
         for n, m in runner.get_model().named_modules()
         if hasattr(m, "_v_scale") and hasattr(m, "kv_cache")
     }
-    if len(modules) != 36:
-        raise ValueError("this calibration entrypoint supports the Qwen3 recipe only")
+    expected_layers = manifest.get("geometry", {}).get("layers", 36)
+    if len(modules) != expected_layers:
+        raise ValueError("calibration inventory differs from frozen geometry")
     maxima = defaultdict(float)
     old = FlashInferImpl.do_kv_cache_update
     case_id = None
@@ -100,7 +101,7 @@ def main():
             )
     finally:
         FlashInferImpl.do_kv_cache_update = old
-    if len(maxima) != 72:
+    if len(maxima) != 2 * expected_layers:
         raise RuntimeError("calibration layer coverage incomplete")
     save(
         args.output / "scales.json",
