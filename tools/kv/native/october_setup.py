@@ -167,12 +167,13 @@ def main():
     run(
         "git", "-C", root / "flashinfer", "submodule", "update", "--init", "--recursive"
     )
+    # FlashInfer's metadata bootstrap invokes uv itself. pip avoids holding
+    # uv's environment lock during that nested dependency installation.
     run(
-        "uv",
+        python,
+        "-m",
         "pip",
         "install",
-        "--python",
-        python,
         "-e",
         root / "flashinfer",
         "--no-deps",
