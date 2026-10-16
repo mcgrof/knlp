@@ -30,6 +30,7 @@ export CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST=9.0
 export MAX_JOBS=8 NVCC_THREADS=2 TOKENIZERS_PARALLELISM=false
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0
 export VLLM_WORKER_MULTIPROC_METHOD=spawn VLLM_KV_CACHE_LAYOUT=NHD
+export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 export FLASHINFER_ASYM_FP8_PV=0 KNLP_NATIVE_OBSERVER=off
 export OMP_NUM_THREADS=22 MKL_NUM_THREADS=22
 ```
@@ -46,11 +47,17 @@ install alone is not serving qualification.
 
 ## Prepare and calibrate a new replication
 
-The entrypoints are limited to the measured 36-layer Qwen3 geometry.
-They generate public, disjoint Wikipedia calibration/evaluation documents
+The commands below prepare the measured 36-layer Qwen3 recipes. The
+engine and qualification probe also accept explicitly frozen layer/head
+inventories; this does not extend the backend's compact-prefill guards.
+The preparation commands generate disjoint Wikipedia calibration/evaluation documents
 and the full 1,319-question GSM8K split. This creates a new replication;
 it does not distribute private campaign payloads or promise identical
 confirmation timing. Keep input hashes, chat template and parser fixed.
+For a new template that opens a reasoning channel, freeze
+`retrieval_final_marker` and `retrieval_max_output_tokens` in the manifest
+before any scoring. A declared final delimiter is required; a missing
+delimiter scores wrong. The default retains the original text parser.
 Install `datasets` in a separate CPU preparation environment with
 `transformers==5.5.3`; record that environment's resolved lock.
 

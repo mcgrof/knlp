@@ -255,14 +255,20 @@ def main():
             batch = samples[start : start + args.batch]
             values = engine.generate(
                 [{"prompt_token_ids": s["token_ids"]} for s in batch],
-                SamplingParams(temperature=0, max_tokens=128),
+                SamplingParams(
+                    temperature=0,
+                    max_tokens=manifest.get("retrieval_max_output_tokens", 128),
+                ),
                 use_tqdm=False,
             )
             rows = []
             for sample, value in zip(batch, values):
                 completion = value.outputs[0]
                 correct = (
-                    core.parse_native(completion.text) == sample["answer"]
+                    core.parse_native(
+                        completion.text, manifest.get("retrieval_final_marker")
+                    )
+                    == sample["answer"]
                     and completion.finish_reason != "length"
                 )
                 rows.append(

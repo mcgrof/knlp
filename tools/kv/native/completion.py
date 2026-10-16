@@ -1,6 +1,19 @@
 # SPDX-License-Identifier: MIT
 """Read completion-linked intervals without mistaking scheduling for execution."""
 
+import re
+
+
+def final_text(text, final_marker=None):
+    """Apply a frozen final-channel delimiter, then exact text normalization."""
+    if final_marker is not None:
+        if final_marker not in text:
+            return ""
+        text = text.rsplit(final_marker, 1)[1]
+    text = re.split(r"<\|(?:im_end|end)\|>", text)[0]
+    text = re.sub(r"<\|[^>]+\|>", "", text).strip()
+    return text.strip(" \n\t.\"'`")
+
 
 def decode_intervals(rows, request_ids):
     """Exclude prefill, new admissions, preemption and a draining batch tail.
