@@ -188,3 +188,28 @@ requires unpacked FP16 parameters, 144 unquantized linear modules and two
 unquantized embedding modules. It verifies matrix-multiply dispatch separately
 from cache precision and rejects packed weight kernels. This loader check does
 not by itself qualify a new checkpoint's cache scales or model quality.
+
+
+The accepted compact-prefill serving configuration uses an SM90 GPU, one
+worker and stream, FP16 compute, NHD layout, 16-token pages, 32 query heads,
+eight K/V heads and head dimension 128. Persistent K is FP16 and V is E4M3FN.
+Freeze cache scales before graph capture. Keep `VLLM_COMPACT_PREFILL=1` an
+explicit opt-in; the existing mixed-cache implementation remains the default
+and fallback.
+
+Use compilation mode 0 with `FULL_DECODE_ONLY` graphs and capture sizes
+`[1, 8, 32, 44, 45, 59, 60, 96]`, at most 96 sequences and 65,536 batched tokens,
+with prefix caching and chunked prefill disabled. Eligible calls contain
+complete whole prompts of at most 8,192 tokens and at most 4,096 referenced
+page occurrences. Mixed decode/prefill, partial context, unsupported geometry
+and excess pages take the fallback. This recipe does not qualify BF16,
+parallel workers, other graph modes, sliding attention or attention sinks.
+
+The implementation has no general graph-mode rejection guard. An enabled
+unsupported model can also allocate its workspace before falling back. Use
+only the accepted configuration; metadata eligibility tests alone do not
+qualify broader deployment. The workspace retains 296.140625 MiB of unique
+constant GPU storage, including its 256 MiB K/V backing, and a separate 8 MiB
+pinned CPU buffer. Per-plan metadata and allocator overhead are additional.
+Automatic pool sizing accounts for the initial workspace allocation delta;
+an explicit cache-byte pool bypasses that sizing path.
