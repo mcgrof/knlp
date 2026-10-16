@@ -149,6 +149,7 @@ def validate_gather_fixture(fixture_path, destination):
     )
     from vllm.v1.attention.backends.compact_prefill_metadata import (
         plan_whole_prompt,
+        select_geometry,
     )
 
     fixture_path, destination = Path(fixture_path), Path(destination)
@@ -158,7 +159,14 @@ def validate_gather_fixture(fixture_path, destination):
     assert (
         hashlib.sha256(fixture_path.read_bytes()).hexdigest() == meta["sha256"]
     )
-    workspace = CompactPrefillWorkspace("cuda")
+    geometry = select_geometry(
+        str(data["k"].dtype).removeprefix("torch."),
+        data["q"].shape[-2],
+        data["k"].shape[-2],
+        data["k"].shape[-1],
+    )
+    dtype = data["k"].dtype
+    workspace = CompactPrefillWorkspace("cuda", geometry)
     mixed = BatchPrefillWithPagedKVCacheWrapper(
         torch.empty(32 * 2**20, dtype=torch.uint8, device="cuda"),
         "NHD",
@@ -167,7 +175,9 @@ def validate_gather_fixture(fixture_path, destination):
     # Both planes share one storage, with guards around regions and matching
     # padded page strides. The page map includes zero and high nonzero IDs.
     page_count, padded_tokens = 2053, 18
-    plane_elements = page_count * padded_tokens * 8 * 128
+    plane_elements = (
+        page_count * padded_tokens * geometry.kv_heads * geometry.head_dim
+    )
     guard = 4096
     raw = torch.full(
         (plane_elements * 3 + guard * 3,),
@@ -178,11 +188,11 @@ def validate_gather_fixture(fixture_path, destination):
     k_bytes = raw[guard : guard + 2 * plane_elements]
     v_start = 2 * guard + 2 * plane_elements
     v_bytes = raw[v_start : v_start + plane_elements]
-    k = k_bytes.view(torch.float16).view(page_count, padded_tokens, 8, 128)[
-        :, :16
-    ]
+    k = k_bytes.view(dtype).view(
+        page_count, padded_tokens, geometry.kv_heads, geometry.head_dim
+    )[:, :16]
     v = v_bytes.view(torch.float8_e4m3fn).view(
-        page_count, padded_tokens, 8, 128
+        page_count, padded_tokens, geometry.kv_heads, geometry.head_dim
     )[:, :16]
     ids = list(range(1, page_count))
     random.Random(20261015).shuffle(ids)
@@ -223,16 +233,16 @@ def validate_gather_fixture(fixture_path, destination):
             paged_kv_indptr=ptr,
             paged_kv_indices=source,
             paged_kv_last_page_len=tails,
-            num_qo_heads=32,
-            num_kv_heads=8,
-            head_dim_qk=128,
+            num_qo_heads=geometry.query_heads,
+            num_kv_heads=geometry.kv_heads,
+            head_dim_qk=geometry.head_dim,
             page_size=16,
             causal=True,
-            q_data_type=torch.float16,
-            kv_data_type=torch.float16,
-            k_data_type=torch.float16,
+            q_data_type=dtype,
+            kv_data_type=dtype,
+            k_data_type=dtype,
             v_data_type=torch.float8_e4m3fn,
-            o_data_type=torch.float16,
+            o_data_type=dtype,
             **kwargs,
         )
         actual, lse = workspace.run(
@@ -243,7 +253,7 @@ def validate_gather_fixture(fixture_path, destination):
         )
         index = source.long()
         expected_k = select_pages(k, index)
-        expected_v = select_pages(v, index).to(torch.float16)
+        expected_v = select_pages(v, index).to(dtype)
         k_exact = torch.equal(
             workspace.k[: plan.pages].view(torch.uint8),
             expected_k.view(torch.uint8),

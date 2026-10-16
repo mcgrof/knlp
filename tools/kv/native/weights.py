@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""Verify unpacked FP16 model weights independently of cache precision."""
+"""Verify unpacked 16-bit model weights independently of cache precision."""
 
 import torch
 
 from .instrument import tensor_inventory
 
 
-def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
+def _inspect_weights(model, dtype, expected_modules, expected_embeddings):
     """Reject quantized methods, packed storage, and unexpected compute weights."""
     linears = []
     embeddings = []
@@ -14,21 +14,21 @@ def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
     seen = set()
     for name, module in model.named_modules():
         if hasattr(module, "qweight") or hasattr(module, "qzeros"):
-            raise RuntimeError("FP16 execution contains packed weights")
+            raise RuntimeError("unquantized execution contains packed weights")
         method = getattr(module, "quant_method", None)
         if method is None:
             continue
         if type(method).__name__ == "UnquantizedEmbeddingMethod":
             embeddings.append(name)
-            if module.weight.dtype != torch.float16:
-                raise RuntimeError("FP16 embedding weight has another dtype")
+            if module.weight.dtype != dtype:
+                raise RuntimeError("unquantized embedding weight has another dtype")
             continue
         if type(method).__name__ != "UnquantizedLinearMethod":
-            raise RuntimeError("FP16 execution contains a quantized method")
+            raise RuntimeError("unquantized execution contains a quantized method")
         if not isinstance(getattr(module, "weight", None), torch.Tensor):
-            raise RuntimeError("FP16 linear weight is missing")
-        if module.weight.dtype != torch.float16:
-            raise RuntimeError("FP16 linear weight has another dtype")
+            raise RuntimeError("unquantized linear weight is missing")
+        if module.weight.dtype != dtype:
+            raise RuntimeError("unquantized linear weight has another dtype")
         linears.append(
             dict(
                 name=name,
@@ -37,8 +37,8 @@ def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
             )
         )
     for name, parameter in model.named_parameters():
-        if parameter.dtype != torch.float16:
-            raise RuntimeError("FP16 parameter has another dtype: " + name)
+        if parameter.dtype != dtype:
+            raise RuntimeError("unquantized parameter has another dtype: " + name)
         storage = parameter.untyped_storage()
         key = (str(parameter.device), storage.data_ptr())
         unique = key not in seen
@@ -56,9 +56,9 @@ def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
         or len(embeddings) != expected_embeddings
         or not parameters
     ):
-        raise RuntimeError("FP16 weight inventory is incomplete")
+        raise RuntimeError("unquantized weight inventory is incomplete")
     return dict(
-        format="fp16",
+        format="bf16" if dtype == torch.bfloat16 else "fp16",
         linear_modules=linears,
         embedding_modules=embeddings,
         parameters=parameters,
@@ -67,19 +67,29 @@ def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
     )
 
 
-def fp16_dispatch_from_trace(trace, minimum_calls=144):
+def inspect_fp16_weights(model, expected_modules=144, expected_embeddings=2):
+    return _inspect_weights(model, torch.float16, expected_modules, expected_embeddings)
+
+
+def inspect_bf16_weights(model, expected_modules=112, expected_embeddings=2):
+    return _inspect_weights(
+        model, torch.bfloat16, expected_modules, expected_embeddings
+    )
+
+
+def _dense_dispatch_from_trace(trace, minimum_calls, operators):
     """Join dense matrix calls to actual CUDA work without naming kernels."""
     events = trace["traceEvents"]
     calls = [
         event
         for event in events
-        if event.get("cat") == "cpu_op" and event.get("name") == "aten::mm"
+        if event.get("cat") == "cpu_op" and event.get("name") in operators
     ]
     if len(calls) < minimum_calls:
-        raise RuntimeError("FP16 profile omits expected dense matrix calls")
+        raise RuntimeError("unquantized profile omits expected dense matrix calls")
     identifiers = {event["args"]["External id"] for event in calls}
     if len(identifiers) != len(calls):
-        raise RuntimeError("FP16 matrix call identifiers are not unique")
+        raise RuntimeError("unquantized matrix call identifiers are not unique")
     kernels = [
         event
         for event in events
@@ -89,19 +99,29 @@ def fp16_dispatch_from_trace(trace, minimum_calls=144):
     ]
     covered = {event["args"]["External id"] for event in kernels}
     if covered != identifiers:
-        raise RuntimeError("FP16 matrix calls do not all join CUDA kernels")
+        raise RuntimeError("unquantized matrix calls do not all join CUDA kernels")
     names = sorted({event["name"] for event in kernels})
     if any("machete" in name.lower() or "4bit" in name.lower() for name in names):
-        raise RuntimeError("FP16 matrix trace contains packed weight kernels")
+        raise RuntimeError("unquantized matrix trace contains packed weight kernels")
     devices = sorted({event["args"]["device"] for event in kernels})
     if len(devices) != 1:
-        raise RuntimeError("FP16 matrix trace requires one CUDA device")
+        raise RuntimeError("unquantized matrix trace requires one CUDA device")
     return dict(
         cpu_mm_calls=len(calls),
         covered_cpu_mm_calls=len(covered),
         cuda_kernels=len(kernels),
         kernel_names=names,
         devices=devices,
-        matching="CPU aten::mm and positive-duration CUDA kernels by External id",
+        matching="CPU dense calls and positive-duration CUDA kernels by External id",
+        cpu_operators=sorted(operators),
         passed=True,
     )
+
+
+def fp16_dispatch_from_trace(trace, minimum_calls=144):
+    return _dense_dispatch_from_trace(trace, minimum_calls, {"aten::mm"})
+
+
+def bf16_dispatch_from_trace(trace, minimum_calls=112):
+    # QKV projections include bias and therefore use addmm.
+    return _dense_dispatch_from_trace(trace, minimum_calls, {"aten::mm", "aten::addmm"})
