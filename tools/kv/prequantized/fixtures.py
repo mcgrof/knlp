@@ -146,7 +146,14 @@ def retrieval(tokenizer, model, length, number, seed, dev=False):
     position = max(boundary for boundary in boundaries if boundary <= desired)
     newline = tokenizer.encode("\n", add_special_tokens=False)
     if len(newline) != 1:
-        raise ValueError("exact-depth padding requires a single newline token")
+        # SentencePiece can prepend a whitespace marker when encoding a
+        # newline alone. Select only an ID that independently decodes to it.
+        newline = next(
+            ([token] for token in newline if tokenizer.decode([token]) == "\n"),
+            None,
+        )
+        if newline is None:
+            raise ValueError("exact-depth padding requires a single newline token")
     padding = newline * (desired - position)
     ids = (
         prefix
@@ -161,7 +168,7 @@ def retrieval(tokenizer, model, length, number, seed, dev=False):
     text = tokenizer.decode(ids)
     if text.count(answer) != 1 or text.count(target_key) != 2:
         raise ValueError("retrieval answer leaked or target key not unique")
-    following = text.split(record.strip(), 1)[1].lstrip("\n")
+    following = text.split(record.strip(), 1)[1].lstrip()
     if not following.startswith("Record "):
         raise ValueError("target record is followed by a broken distractor")
     return {
