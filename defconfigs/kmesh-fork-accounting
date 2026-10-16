@@ -1,0 +1,3 @@
+# Real vLLM allocator metadata on CPU; no model or GPU execution.
+CONFIG_KNLP_REPRODUCE_KMESH_FORK=y
+CONFIG_KNLP_KMESH_FORK_OUTPUT="results/kmesh-forks"

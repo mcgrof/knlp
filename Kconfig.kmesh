@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+menu "Exact-prefix reasoning fork accounting"
+
+config KNLP_REPRODUCE_KMESH_FORK
+	bool "Enable the real vLLM CPU allocator experiment"
+	default n
+	help
+	  Compare cached and uncached exact-prefix reasoning trees using
+	  KVCacheManager metadata. This does not execute a model or GPU.
+
+if KNLP_REPRODUCE_KMESH_FORK
+
+config KNLP_KMESH_FORK_OUTPUT
+	string "Fresh output directory"
+	default "results/kmesh-forks"
+
+config KNLP_KMESH_FORK_VLLM_SOURCE
+	string "Clean pinned fork-accounting vLLM checkout"
+	default ""
+
+config KNLP_KMESH_FORK_RUNTIME_VOLUME
+	string "Docker volume containing the pinned Python runtime"
+	default ""
+
+config KNLP_KMESH_FORK_DOCKER
+	string "Container command prefix"
+	default "docker"
+
+endif
+endmenu
