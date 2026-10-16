@@ -187,6 +187,8 @@ def native_memory_state(worker):
         "allocated": torch.cuda.memory_allocated(),
         "reserved": torch.cuda.memory_reserved(),
         "peak_allocated_since_engine_start": torch.cuda.max_memory_allocated(),
+        "peak_allocated_since_reset": torch.cuda.max_memory_allocated(),
+        "peak_reserved_since_reset": torch.cuda.max_memory_reserved(),
         "cuda_device_used_bytes": total_bytes - free_bytes,
         "cuda_device_total_bytes": total_bytes,
         "metadata_tensors": metadata,
@@ -442,5 +444,11 @@ def profile_end(model):
 
 
 def reset_warm_peak(worker):
+    previous = {
+        "allocated": torch.cuda.max_memory_allocated(),
+        "reserved": torch.cuda.max_memory_reserved(),
+    }
     torch.cuda.reset_peak_memory_stats()
-    return native_memory_state(worker)
+    state = native_memory_state(worker)
+    state["prior_peaks_before_measurement_reset"] = previous
+    return state
