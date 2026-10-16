@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Depth codes, weights and KV-cache quantization | knlp</title><meta name="description" content="TinyStories tests of LayerRoPE, mHC, and depth-code variants: negative confirmation findings, quantization coverage, and scalar precision."><style>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LayerRoPE, mHC and quantization | knlp</title><meta name="description" content="Full LayerRoPE beta tests with mHC: TinyStories convergence, FP4/FP8 rounding, asymmetric KV-cache damage, and paired MNIST transfer results."><style>
 :root{
   --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
   --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
@@ -35,7 +35,7 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;
 footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
 @media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
 
-:root{--dim:#91a197}body{font-size:16px}p{max-width:1000px}h3{line-height:1.3}section,#asymmetric-kv{scroll-margin-top:96px}
+:root{--dim:#91a197}body{font-size:16px}p{max-width:1000px}h3{line-height:1.3}section,h3[id],#asymmetric-kv,#incremental-kv-damage,#gsm8k-sanity{scroll-margin-top:96px}
 .skip{position:absolute;left:-9999px}.skip:focus{left:10px;top:10px;background:var(--bg);padding:10px;z-index:20}
 a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--cyan);outline-offset:4px}
 .draft{color:var(--amber)}.byline{font:12px/1.7 var(--mono);color:var(--muted)}
@@ -48,12 +48,12 @@ pre{padding:18px;overflow:auto;background:var(--bg);border:1px solid var(--line)
 .formula{font:15px/1.9 var(--mono);padding:18px;border-left:3px solid var(--violet);background:var(--card);overflow:auto}
 .refs li{padding:5px 0;overflow-wrap:anywhere}.small{font-size:14px;color:var(--muted)}.release{border-left-color:var(--cyan);background:rgba(98,220,229,.05)}
 .result{font:700 12px var(--mono);color:var(--amber)}.legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px}
-@media(max-width:600px){main{padding:38px 18px 60px}nav{padding:12px 18px;gap:12px}h1{font-size:44px}section{padding:36px 0}th,td{padding:10px}figure{padding:5px}.lead{font-size:18px}header{position:static}section,#asymmetric-kv{scroll-margin-top:15px}}
+@media(max-width:600px){main{padding:38px 18px 60px}nav{padding:12px 18px;gap:12px}h1{font-size:44px}section{padding:36px 0}th,td{padding:10px}figure{padding:5px}.lead{font-size:18px}header{position:static}section,h3[id],#asymmetric-kv,#incremental-kv-damage,#gsm8k-sanity{scroll-margin-top:15px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{body{background:white;color:#17281f;font-size:10pt}header,.controls,.no-print{display:none}main{padding:0;max-width:none}h1{font-size:36pt}.lead,td,.sub,p,.small,.byline,.fine{color:#293e32}.card,table,details,figure,.decision,.note{background:#f2f6f3;color:#17281f;break-inside:avoid}h2,h3{break-after:avoid}a{color:#135f66}section{padding:24px 0}.grid3{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:repeat(2,1fr)}th{color:#263c30}footer{color:#293e32}}
 </style></head>
-<body><a class="skip" href="#main">Skip to content</a><header><nav><a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span><a href="#hypothesis">hypothesis</a><a href="#confirmation">confirmation</a><a href="#coverage">weights</a><a href="#kv-cache">KV cache</a><a href="#interpretation">conclusion</a><a href="#reproduce">reproduce</a><a href="subliminal-learning-mnist.html">MNIST</a></nav></header>
-<main id="main"><div class="hero"><div class="eyebrow">TinyStories · Training, weights &amp; KV-cache quantization</div><h1>Depth codes did not<br>produce a robust winner.</h1><p class="lead"><strong>Early gains did not survive the frozen confirmation rules.</strong> Full LayerRoPE, mHC, and depth-code variants supplied useful tests, but no confirmed architecture improvement justified the next depth-scaling stage.</p><p class="lead">The strongest compression result was about <strong>which weights were quantized</strong>: all 56 confirmation checkpoints tolerated INT3 on block linears, while none tolerated INT4 across all eligible matrices. The smaller quantized fraction comes with a large storage cost.</p><div class="decision"><b>Conclusion</b><span>No tested depth-code variant met the confirmation criteria. Quantization coverage had a large effect on loss; rounding the schedule scalars through BF16 had very little effect. Unequal K/V precision improves some allocation choices, while mHC and M-O do not lower the minimum passing cache bytes in these comparisons.</span></div><div class="badges"><span class="badge cyan">56 CONFIRMATION RUNS</span><span class="badge amber">0 OF 6 CLAIMS QUALIFIED</span><span class="badge green">BLOCK-ONLY INT3: 56 / 56 PASS</span></div></div><section id="hypothesis"><h2>The hypothesis worth testing</h2><p>The hypothesis is that LayerRoPE’s depth-dependent gains could improve tolerance to weight quantization, either alone or combined with mHC. This study tests that possibility; it is not a result established by the LayerRoPE paper.</p><p>One possible mechanism is that a depth-conditioned gain schedule changes weight ranges or redistributes sensitivity to rounding. Multiple residual streams and constrained routing might also distribute perturbations. They might instead increase storage or move sensitivity elsewhere. Neither intuition establishes a gain; the test must compare clean loss, damaged loss, bytes, and compute.</p><div class="grid3"><div class="card"><div class="kicker">Training</div><div class="metric">Clean CE</div><p>Lower cross-entropy at equal tokens, plus elapsed time. A lower final loss alone does not establish faster convergence.</p></div><div class="card"><div class="kicker">Quantization</div><div class="metric">ΔCE</div><p>Quantized CE minus that checkpoint’s own clean CE, on identical final inputs. Also report absolute quantized CE.</p></div><div class="card"><div class="kicker">Compression</div><div class="metric">Bytes</div><p>Count packed weights, scale storage, and unquantized parameters. A tolerant submodule is not automatically a smaller whole model.</p></div></div><p class="note"><strong>Weight screens.</strong> These post-training weight-rounding experiments are evaluated after dequantization. The <a href="#kv-cache">separate cache tests</a> keep weights unchanged. Neither path measures packed inference kernels, latency or real packed-memory allocation; the weight screens also do not test integer activations or quantization-aware training.</p></section><section id="operators"><h2>Three ideas that must remain distinct</h2><div class="scroll"><table><thead><tr><th scope="col">Idea</th><th scope="col">What it changes</th><th scope="col">What this study can ask</th></tr></thead><tbody><tr><th scope="row">Full LayerRoPE</th><td>Depth-conditioned input/output normalization gains in the language-model implementation.</td><td>Does the paper-style model improve training or weight-rounding tolerance in the initial depth screen?</td></tr><tr><th scope="row">mHC</th><td>Multiple residual streams, learned read/write maps, and a carry map normalized toward a doubly stochastic matrix.</td><td>Does constrained routing improve learning or change rounding sensitivity? The portable implementation uses 20 finite Sinkhorn iterations.</td></tr><tr><th scope="row">M-O and later depth codes</th><td>A periodic depth code inserted into mHC write coefficients or carry logits; full LayerRoPE normalization is absent.</td><td>Does ordered depth information help beyond shuffled or constant channel preferences? These are inspired variants, not a validation or refutation of full LayerRoPE.</td></tr></tbody></table></div><p>The mechanisms are composable. Their gains need not add. A depth code changes the update rule at a layer; it does not attach an immutable layer identity to each contribution after streams have been mixed.</p><details><summary>The write code and carry code, precisely</summary><p>For four streams, use a balanced phase code:</p><div class="formula">c(φ) = [cos φ, sin φ, −cos φ, −sin φ]<br>s = minᵢ(βᵢ, 2 − βᵢ)<br>β′ = β + 0.5 s c(φ(ℓ))</div><p>Here β is the original vector of write coefficients in [0, 2]. The bounded correction preserves that range. M-O (V01) uses the ordered layer schedule. V02 applies a fixed shuffled layer lookup. V03 uses the middle-depth phase everywhere. The schedule has four learned scalars across the attention and MLP paths.</p><p>V30 instead adds <code>0.5 × c cᵀ / 2</code> to the carry logits before Sinkhorn normalization; its write coefficients stay unchanged. V30-S shuffles the phase lookup before forming the outer product. V30-C uses the middle-depth phase. The outer product has rank one and is invariant to a π phase shift, so its depth code has different symmetries from the write code.</p><p>The <a href="https://arxiv.org/pdf/2610.06653v1">Birkhoff-geometry interpretation of mHC</a> (<a href="https://podcast.do-not-panic.com/episodes/birkhoff-geometry-of-manifold-constrained-hyper-connections-width-fades-with-dep/">Audio Summary</a>) can help reason about mean and difference modes of an exactly doubly stochastic carry map. It does not make finite-iteration routing exact, guarantee quantization robustness, or turn a mixed residual stream into a record of each layer’s contribution.</p></details></section><section id="initial"><h2>The first depth screen supplied a lead, not a winner</h2><p>The initial TinyStories experiment used the paper’s LLaMA backbone at width 128, two heads, FFN width 352, and depths 4, 16, and 32. Three paired seeds ran for 2,000 steps (4.096 million predicted tokens). The study included 64 learning-rate pilots and 48 final trajectories, on an RTX 4090. The five families were residual (R), LayerRoPE (L), mHC (M), full combination (ML), and depth-code-only mHC (M-O; tested at depth 32).</p><div class="scroll"><table><caption>Initial screen: primary CE means over three seeds at equal training tokens. Width is fixed; parameter counts grow with depth. This is not a fixed-parameter or fixed-time scaling comparison.</caption><thead><tr><th scope="col">Depth</th><th scope="col">Residual R</th><th scope="col">LayerRoPE L</th><th scope="col">mHC M</th><th scope="col">Full combination ML</th></tr></thead><tbody><tr><th scope="row">4</th><td>2.7683</td><td>2.7423</td><td>2.7648</td><td>2.7685</td></tr><tr><th scope="row">16</th><td>2.6883</td><td>2.6869</td><td>2.6425</td><td>2.6663</td></tr><tr><th scope="row">32</th><td>2.6816</td><td>2.6560</td><td>2.6172</td><td>2.6462</td></tr></tbody></table></div><p>At depth 32, mHC had lower primary CE than residuals, 2.61722 versus 2.68161. It reached the selected loss target in 700 rather than 800 steps: 12.5% fewer tokens, but about 3.19× the elapsed time in this portable implementation. Full mHC + LayerRoPE had primary CE 0.02902 higher than mHC, worse in all three seeds.</p><div class="scroll"><table><caption>Initial three-seed screen only. Decimal MB. Each row passed the +0.1-nat INT4 rule in every seed.</caption><thead><tr><th scope="col">Depth-32 family</th><th scope="col">Mean absolute INT4 CE</th><th scope="col">Mean INT4 damage</th><th scope="col">Ideal storage at INT4</th></tr></thead><tbody><tr><th scope="row">R</th><td>2.821270</td><td>0.061785</td><td>10.252 MB</td></tr><tr><th scope="row">L</th><td>2.764229</td><td>0.052836</td><td>10.221 MB</td></tr><tr><th scope="row">M</th><td>2.756124</td><td>0.059221</td><td>13.535 MB</td></tr><tr><th scope="row">ML</th><td>2.764159</td><td>0.055317</td><td>13.505 MB</td></tr><tr><th scope="row">M-O</th><td>2.732994</td><td>0.043315</td><td>13.535 MB</td></tr></tbody></table></div><p>M-O had the lowest average quantized loss and smallest average INT4 damage in this screen. The training advantage varied across seeds. At depths 4 and 16, residual and mHC passed INT4; full LayerRoPE and the full combination needed INT8 among the tested widths. No tested depth-32 family passed INT3 across seeds. Bit widths 5–7 were not tested.</p><p class="small">Residual, mHC, and M-O used a selected learning rate of 0.003; LayerRoPE and the full combination used 0.01, the top of the pilot grid. Parameter counts, controls, and clean losses differ. These are model-level comparisons, not isolated causal estimates of a normalization operator.</p></section><section id="selection"><h2>Discovery and confirmation were kept separate</h2><p>A 32-variant screen varied code amplitude, placement, phase, basis, read/write/carry insertion, and learned frequency. Stage A screened at 1,000 steps; Stage B continued the selected rows to 2,000 steps, using three discovery seeds on a W7900.</p><p>V20, a learned-frequency write variant, was the <strong>raw Stage B leader</strong> for training and quantization: primary CE 2.610010 and INT4 CE 2.528025, versus 2.617378 and 2.551336 for mHC. An unresolved historical numerical miss prevented qualification. It was not silently replaced in the discovery ranking, and it was not independently confirmed.</p><p>The frozen confirmation nominees were <strong>V30 for training</strong> and <strong>V02 for quantization</strong>. Their ordered, shuffled, and constant controls formed seven rows. Stage C used eight fresh paired seeds, 4,000 steps, and reserved document-disjoint evaluation arrays. All 56 trajectories completed on the frozen H100 runtime. Stage D, the proposed deeper-model test, stayed disabled because no nominee passed.</p><details><summary>Frozen confirmation recipe and acceptance rules</summary><p>Depth 32, width 128, sequence length 256, 2,048 predicted tokens per update, 8.192 million tokens per run; seeds 76411–76418. Learning rate 0.003 for every row, AdamW (0.9, 0.95), epsilon 10<sup>−8</sup>, zero weight decay, no clipping, 100-step warm-up then constant rate. BF16 activations with FP32 routing; 20 Sinkhorn iterations, epsilon 10<sup>−6</sup>. The frozen H100 runtime used torch 2.9.1+cu128 with TF32 and compilation disabled.</p><p>Primary training CE is the mean at steps 2000, 2100, …, 4000 on the 32,768-token curve array. Final clean and quantized CE use the separate 131,072-token final array. Quantization damage uses the CPU clean endpoint from the same checkpoint; it must not be calculated by subtracting the GPU curve metric.</p><ul><li>Training: win all eight primary pairs, improve mean CE by at least 0.005, improve mean final CE, and have no final seed regression above 0.01.</li><li>Quantization: improve absolute INT4 CE in all eight seeds; reduce mean damage by at least 0.01 versus mHC or 0.005 versus M-O; reduce damage in at least seven seeds; no clean endpoint regret above 0.01.</li><li>Ordered carry mechanism: beat both shuffled and constant carry in all eight primary pairs, by at least 0.005 on average.</li><li>Retain the separate numerical qualification. Performance alone cannot waive a numerical miss.</li></ul></details></section><section id="confirmation"><h2>No predeclared claim qualified</h2><div class="scroll"><table><caption>Eight-seed means. Lower is better. “Numerical scope” includes retained historical samples and confirmation samples, not merely the final checkpoint.</caption><thead><tr><th scope="col">Row / role</th><th scope="col">Primary CE</th><th scope="col">Final GPU CE</th><th scope="col">INT4 CE</th><th scope="col">INT4 damage</th><th scope="col">Numerical scope passes</th></tr></thead><tbody><tr><th scope="row">V00 · mHC</th><td>2.761864</td><td>2.576255</td><td>2.949163</td><td>0.372939</td><td>Yes</td></tr><tr><th scope="row">V01 · Ordered write (M-O)</th><td>2.758575</td><td>2.571025</td><td>2.912040</td><td>0.341016</td><td>No</td></tr><tr><th scope="row">V02 · Shuffled write</th><td>2.757145</td><td>2.570709</td><td>2.897851</td><td>0.327157</td><td>No</td></tr><tr><th scope="row">V03 · Constant write</th><td>2.760017</td><td>2.572562</td><td>2.922108</td><td>0.349556</td><td>No</td></tr><tr><th scope="row">V30 · Ordered carry</th><td>2.770912</td><td>2.584220</td><td>2.919986</td><td>0.335799</td><td>No</td></tr><tr><th scope="row">V30-S · Shuffled carry</th><td>2.767458</td><td>2.579255</td><td>2.914884</td><td>0.335638</td><td>Yes</td></tr><tr><th scope="row">V30-C · Constant carry</th><td>2.765253</td><td>2.577876</td><td>2.863143</td><td>0.285253</td><td>Yes</td></tr></tbody></table></div><figure><svg role="img" aria-labelledby="confirmation-paired-seed-differences-title" xmlns:xlink="http://www.w3.org/1999/xlink" width="784.58625pt" height="307.834375pt" viewBox="0 0 784.58625 307.834375" xmlns="http://www.w3.org/2000/svg" version="1.1"><title id="confirmation-paired-seed-differences-title">confirmation paired seed differences</title>
+<body><a class="skip" href="#main">Skip to content</a><header><nav><a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span><a href="#hypothesis">hypothesis</a><a href="#confirmation">confirmation</a><a href="#coverage">weights</a><a href="#kv-cache">KV cache</a><a href="#interpretation">conclusion</a><a href="#author-followup">full gains</a><a href="#reproduce">reproduce</a><a href="subliminal-learning-mnist.html">MNIST</a></nav></header>
+<main id="main"><div class="hero"><div class="eyebrow">TinyStories · Training, weights &amp; KV-cache quantization</div><h1>LayerRoPE, mHC<br>and rounding sensitivity.</h1><p class="lead"><strong>The full-gain follow-up found a learning benefit at β=0, but no new KV-cache byte floor.</strong> In three paired TinyStories seeds, mHC + full LayerRoPE at β=0 improved learning loss over mHC. Adding mHC increased the K3/V3 → K3/V2 loss increment at every tested beta on average. No full-gain MNIST row met the subliminal-transfer suppression rule.</p><p class="lead">In the earlier depth-code confirmation, the strongest compression result concerned <strong>which weights were quantized</strong>: all 56 checkpoints tolerated INT3 on block linears, while none tolerated INT4 across all eligible matrices. The smaller quantized fraction comes with a large storage cost.</p><div class="decision"><b>Full-gain conclusion</b><span>Better clean quality and lower rounding damage are separate results. The new β sweep reaches the same 3,072 ideal cache bytes/token in every row. The β=0 combination has the lowest mean learning loss, while negative beta initializations do not win this small screen. Three language-model seeds remain descriptive; the earlier depth-code confirmation remains negative.</span></div><div class="badges"><span class="badge cyan">56 CONFIRMATION RUNS</span><span class="badge amber">ORIGINAL: 0 OF 6 CLAIMS QUALIFIED</span><span class="badge cyan">24 FULL-GAIN LM RUNS</span><span class="badge cyan">14 MNIST ROWS</span><span class="badge green">BLOCK-ONLY INT3: 56 / 56 PASS</span></div></div><section id="hypothesis"><h2>The hypothesis worth testing</h2><p>The hypothesis is that LayerRoPE’s depth-dependent gains could improve tolerance to weight quantization, either alone or combined with mHC. This study tests that possibility; it is not a result established by the LayerRoPE paper.</p><p>One possible mechanism is that a depth-conditioned gain schedule changes weight ranges or redistributes sensitivity to rounding. Multiple residual streams and constrained routing might also distribute perturbations. They might instead increase storage or move sensitivity elsewhere. Neither intuition establishes a gain; the test must compare clean loss, damaged loss, bytes, and compute.</p><div class="grid3"><div class="card"><div class="kicker">Training</div><div class="metric">Clean CE</div><p>Lower cross-entropy at equal tokens, plus elapsed time. A lower final loss alone does not establish faster convergence.</p></div><div class="card"><div class="kicker">Quantization</div><div class="metric">ΔCE</div><p>Quantized CE minus that checkpoint’s own clean CE, on identical final inputs. Also report absolute quantized CE.</p></div><div class="card"><div class="kicker">Compression</div><div class="metric">Bytes</div><p>Count packed weights, scale storage, and unquantized parameters. A tolerant submodule is not automatically a smaller whole model.</p></div></div><p class="note"><strong>Weight screens.</strong> These post-training weight-rounding experiments are evaluated after dequantization. The <a href="#kv-cache">separate cache tests</a> keep weights unchanged. Neither path measures packed inference kernels, latency or real packed-memory allocation; the weight screens also do not test integer activations or quantization-aware training.</p></section><section id="operators"><h2>Three ideas that must remain distinct</h2><div class="scroll"><table><thead><tr><th scope="col">Idea</th><th scope="col">What it changes</th><th scope="col">What this study can ask</th></tr></thead><tbody><tr><th scope="row">Full LayerRoPE</th><td>Depth-conditioned input normalization gains and direct branch-output gains in the language-model implementation.</td><td>Does the paper-style model improve training or weight-rounding tolerance in the initial depth screen?</td></tr><tr><th scope="row">mHC</th><td>Multiple residual streams, learned read/write maps, and a carry map normalized toward a doubly stochastic matrix.</td><td>Does constrained routing improve learning or change rounding sensitivity? The portable implementation uses 20 finite Sinkhorn iterations.</td></tr><tr><th scope="row">M-O and later depth codes</th><td>A periodic depth code inserted into mHC write coefficients or carry logits; full LayerRoPE normalization is absent.</td><td>Does ordered depth information help beyond shuffled or constant channel preferences? These are inspired variants, not a validation or refutation of full LayerRoPE.</td></tr></tbody></table></div><p>The mechanisms are composable. Their gains need not add. A depth code changes the update rule at a layer; it does not attach an immutable layer identity to each contribution after streams have been mixed.</p><details><summary>The write code and carry code, precisely</summary><p>For four streams, use a balanced phase code:</p><div class="formula">c(φ) = [cos φ, sin φ, −cos φ, −sin φ]<br>s = minᵢ(βᵢ, 2 − βᵢ)<br>β′ = β + 0.5 s c(φ(ℓ))</div><p>Here β is the original vector of write coefficients in [0, 2]. The bounded correction preserves that range. M-O (V01) uses the ordered layer schedule. V02 applies a fixed shuffled layer lookup. V03 uses the middle-depth phase everywhere. The schedule has four learned scalars across the attention and MLP paths.</p><p>V30 instead adds <code>0.5 × c cᵀ / 2</code> to the carry logits before Sinkhorn normalization; its write coefficients stay unchanged. V30-S shuffles the phase lookup before forming the outer product. V30-C uses the middle-depth phase. The outer product has rank one and is invariant to a π phase shift, so its depth code has different symmetries from the write code.</p><p>The <a href="https://arxiv.org/pdf/2610.06653v1">Birkhoff-geometry interpretation of mHC</a> (<a href="https://podcast.do-not-panic.com/episodes/birkhoff-geometry-of-manifold-constrained-hyper-connections-width-fades-with-dep/">Audio Summary</a>) can help reason about mean and difference modes of an exactly doubly stochastic carry map. It does not make finite-iteration routing exact, guarantee quantization robustness, or turn a mixed residual stream into a record of each layer’s contribution.</p></details></section><section id="initial"><h2>The first depth screen supplied a lead, not a winner</h2><p>The initial TinyStories experiment used the paper’s LLaMA backbone at width 128, two heads, FFN width 352, and depths 4, 16, and 32. Three paired seeds ran for 2,000 steps (4.096 million predicted tokens). The study included 64 learning-rate pilots and 48 final trajectories, on an RTX 4090. The five families were residual (R), LayerRoPE (L), mHC (M), full combination (ML), and depth-code-only mHC (M-O; tested at depth 32).</p><div class="scroll"><table><caption>Initial screen: primary CE means over three seeds at equal training tokens. Width is fixed; parameter counts grow with depth. This is not a fixed-parameter or fixed-time scaling comparison.</caption><thead><tr><th scope="col">Depth</th><th scope="col">Residual R</th><th scope="col">LayerRoPE L</th><th scope="col">mHC M</th><th scope="col">Full combination ML</th></tr></thead><tbody><tr><th scope="row">4</th><td>2.7683</td><td>2.7423</td><td>2.7648</td><td>2.7685</td></tr><tr><th scope="row">16</th><td>2.6883</td><td>2.6869</td><td>2.6425</td><td>2.6663</td></tr><tr><th scope="row">32</th><td>2.6816</td><td>2.6560</td><td>2.6172</td><td>2.6462</td></tr></tbody></table></div><p>At depth 32, mHC had lower primary CE than residuals, 2.61722 versus 2.68161. It reached the selected loss target in 700 rather than 800 steps: 12.5% fewer tokens, but about 3.19× the elapsed time in this portable implementation. Full mHC + LayerRoPE had primary CE 0.02902 higher than mHC, worse in all three seeds.</p><div class="scroll"><table><caption>Initial three-seed screen only. Decimal MB. Each row passed the +0.1-nat INT4 rule in every seed.</caption><thead><tr><th scope="col">Depth-32 family</th><th scope="col">Mean absolute INT4 CE</th><th scope="col">Mean INT4 damage</th><th scope="col">Ideal storage at INT4</th></tr></thead><tbody><tr><th scope="row">R</th><td>2.821270</td><td>0.061785</td><td>10.252 MB</td></tr><tr><th scope="row">L</th><td>2.764229</td><td>0.052836</td><td>10.221 MB</td></tr><tr><th scope="row">M</th><td>2.756124</td><td>0.059221</td><td>13.535 MB</td></tr><tr><th scope="row">ML</th><td>2.764159</td><td>0.055317</td><td>13.505 MB</td></tr><tr><th scope="row">M-O</th><td>2.732994</td><td>0.043315</td><td>13.535 MB</td></tr></tbody></table></div><p>M-O had the lowest average quantized loss and smallest average INT4 damage in this screen. The training advantage varied across seeds. At depths 4 and 16, residual and mHC passed INT4; full LayerRoPE and the full combination needed INT8 among the tested widths. No tested depth-32 family passed INT3 across seeds. Bit widths 5–7 were not tested.</p><p class="small">Residual, mHC, and M-O used a selected learning rate of 0.003; LayerRoPE and the full combination used 0.01, the top of the pilot grid. Parameter counts, controls, and clean losses differ. These are model-level comparisons, not isolated causal estimates of a normalization operator.</p></section><section id="selection"><h2>Discovery and confirmation were kept separate</h2><p>A 32-variant screen varied code amplitude, placement, phase, basis, read/write/carry insertion, and learned frequency. Stage A screened at 1,000 steps; Stage B continued the selected rows to 2,000 steps, using three discovery seeds on a W7900.</p><p>V20, a learned-frequency write variant, was the <strong>raw Stage B leader</strong> for training and quantization: primary CE 2.610010 and INT4 CE 2.528025, versus 2.617378 and 2.551336 for mHC. An unresolved historical numerical miss prevented qualification. It was not silently replaced in the discovery ranking, and it was not independently confirmed.</p><p>The frozen confirmation nominees were <strong>V30 for training</strong> and <strong>V02 for quantization</strong>. Their ordered, shuffled, and constant controls formed seven rows. Stage C used eight fresh paired seeds, 4,000 steps, and reserved document-disjoint evaluation arrays. All 56 trajectories completed on the frozen H100 runtime. Stage D, the proposed deeper-model test, stayed disabled because no nominee passed.</p><details><summary>Frozen confirmation recipe and acceptance rules</summary><p>Depth 32, width 128, sequence length 256, 2,048 predicted tokens per update, 8.192 million tokens per run; seeds 76411–76418. Learning rate 0.003 for every row, AdamW (0.9, 0.95), epsilon 10<sup>−8</sup>, zero weight decay, no clipping, 100-step warm-up then constant rate. BF16 activations with FP32 routing; 20 Sinkhorn iterations, epsilon 10<sup>−6</sup>. The frozen H100 runtime used torch 2.9.1+cu128 with TF32 and compilation disabled.</p><p>Primary training CE is the mean at steps 2000, 2100, …, 4000 on the 32,768-token curve array. Final clean and quantized CE use the separate 131,072-token final array. Quantization damage uses the CPU clean endpoint from the same checkpoint; it must not be calculated by subtracting the GPU curve metric.</p><ul><li>Training: win all eight primary pairs, improve mean CE by at least 0.005, improve mean final CE, and have no final seed regression above 0.01.</li><li>Quantization: improve absolute INT4 CE in all eight seeds; reduce mean damage by at least 0.01 versus mHC or 0.005 versus M-O; reduce damage in at least seven seeds; no clean endpoint regret above 0.01.</li><li>Ordered carry mechanism: beat both shuffled and constant carry in all eight primary pairs, by at least 0.005 on average.</li><li>Retain the separate numerical qualification. Performance alone cannot waive a numerical miss.</li></ul></details></section><section id="confirmation"><h2>No predeclared claim qualified</h2><div class="scroll"><table><caption>Eight-seed means. Lower is better. “Numerical scope” includes retained historical samples and confirmation samples, not merely the final checkpoint.</caption><thead><tr><th scope="col">Row / role</th><th scope="col">Primary CE</th><th scope="col">Final GPU CE</th><th scope="col">INT4 CE</th><th scope="col">INT4 damage</th><th scope="col">Numerical scope passes</th></tr></thead><tbody><tr><th scope="row">V00 · mHC</th><td>2.761864</td><td>2.576255</td><td>2.949163</td><td>0.372939</td><td>Yes</td></tr><tr><th scope="row">V01 · Ordered write (M-O)</th><td>2.758575</td><td>2.571025</td><td>2.912040</td><td>0.341016</td><td>No</td></tr><tr><th scope="row">V02 · Shuffled write</th><td>2.757145</td><td>2.570709</td><td>2.897851</td><td>0.327157</td><td>No</td></tr><tr><th scope="row">V03 · Constant write</th><td>2.760017</td><td>2.572562</td><td>2.922108</td><td>0.349556</td><td>No</td></tr><tr><th scope="row">V30 · Ordered carry</th><td>2.770912</td><td>2.584220</td><td>2.919986</td><td>0.335799</td><td>No</td></tr><tr><th scope="row">V30-S · Shuffled carry</th><td>2.767458</td><td>2.579255</td><td>2.914884</td><td>0.335638</td><td>Yes</td></tr><tr><th scope="row">V30-C · Constant carry</th><td>2.765253</td><td>2.577876</td><td>2.863143</td><td>0.285253</td><td>Yes</td></tr></tbody></table></div><figure><svg role="img" aria-labelledby="confirmation-paired-seed-differences-title" xmlns:xlink="http://www.w3.org/1999/xlink" width="784.58625pt" height="307.834375pt" viewBox="0 0 784.58625 307.834375" xmlns="http://www.w3.org/2000/svg" version="1.1"><title id="confirmation-paired-seed-differences-title">confirmation paired seed differences</title>
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
@@ -1155,6 +1155,30 @@ z
 </tbody></table></div><p>In the eight-seed grid, signed K3/V2 passes all 56 checkpoints and K2/V3 fails all 56. M-O has mean K3/V2 damage 0.058392 versus 0.057730 for plain mHC, improving only 3/8 paired seeds. Its mean paired damage difference is +0.000662 nats, with descriptive 95% interval [-0.006364, +0.007687]. This exploratory comparison gives no consistent M-O gain.</p>
 <p>Better clean models can still be useful at the same cache cost. In the three-seed 32-layer cohort, signed K3/V2 gives mean absolute CE 2.797556 for residual, 2.740602 for mHC and 2.733918 for M-O. mHC and M-O retain their cleaner starting quality without unlocking a smaller passing cache.</p>
 <p>Giving keys more precision is useful for the signed quantizer in this experiment, but it is not a universal rule for all codebooks. At the same 3,072-byte cost, signed K3/V2 has slightly lower mean damage than affine K2/V2 for the 32-layer residual control (0.038022 versus 0.040384), while mHC reverses that ranking (0.043655 versus 0.042010). Compare total bytes, own-clean damage and absolute CE together.</p>
+<h3 id="incremental-kv-damage">Does mHC help when V drops from three bits to two?</h3>
+<p><strong>At 16 and 32 layers, mHC adds more loss than ordinary residuals for this change.</strong> Compare each checkpoint with its own K3/V3 result, then compare that increment across architectures at the same depth. A smaller increment means better tolerance to reducing value precision. This asks a different question from comparing final loss or minimum passing bytes.</p>
+<div class="formula">Increment = CE(K3/V2) − CE(K3/V3)<br>mHC contrast = Increment(mHC) − Increment(residual)</div>
+<div class="scroll"><table><caption>Mean incremental cross-entropy, in nats, over three paired seeds at 2,000 updates. Both settings use the same zero-centered signed quantizer. Negative values in the last column favor mHC.</caption><thead><tr><th scope="col">Layers</th><th scope="col">Residual increment</th><th scope="col">mHC increment</th><th scope="col">M-O increment</th><th scope="col">mHC minus residual</th></tr></thead><tbody>
+<tr><th scope="row">4</th><td class="num">+0.073636</td><td class="num">+0.066827</td><td class="num">Not tested</td><td class="num">-0.006809</td></tr>
+<tr><th scope="row">16</th><td class="num">+0.037098</td><td class="num">+0.043003</td><td class="num">Not tested</td><td class="num">+0.005905</td></tr>
+<tr><th scope="row">32</th><td class="num">+0.024901</td><td class="num">+0.030802</td><td class="num">+0.030199</td><td class="num">+0.005901</td></tr>
+</tbody></table></div>
+<p>At four layers, mHC has a smaller increment in two of three seed pairs. At 16 and 32 layers, its increment is larger in all three pairs. M-O also has a larger increment than residuals in all three 32-layer pairs. These exploratory results give no consistent architecture benefit for this precision change. Three pairs do not establish a general negative result.</p>
+<p>The later eight-seed cohort contains no ordinary-residual arm. Its mean K3/V3 → K3/V2 increments are 0.040657 for mHC and 0.041368 for M-O. That cohort cannot independently confirm the residual-versus-mHC comparison.</p>
+<p><strong>The 14.3% byte saving has a quality cost.</strong> At 16 layers, K3/V3 uses 1,792 ideal bytes/token and K3/V2 uses 1,536. At 32 layers, the corresponding costs are 3,584 and 3,072. Passing the +0.1-nat own-clean tolerance does not mean unchanged quality, either relative to BF16 or to K3/V3.</p>
+<details><summary>The quality metric, model and quantizer names</summary>
+<p>Cross-entropy (CE) is the mean negative natural logarithm of the probability assigned to the actual next GPT-2 token in held-out TinyStories text. Evaluation supplies the true preceding tokens. It makes 131,072 predictions in 512 adjacent 256-token windows, resetting context at each window. It does not grade generated answers.</p>
+<div class="formula">PPL = exp(CE)<br>PPL(K3/V2) / PPL(K3/V3) = exp(Increment)</div>
+<p>Lower perplexity (PPL) means better next-token prediction on this story distribution. An extra 0.03 nats corresponds to about 3% higher perplexity. A lower starting loss can leave mHC better in absolute prediction quality even when its incremental quantization penalty is larger.</p>
+<p>These are custom LLaMA-style decoders trained from scratch on TinyStories, with width 128, FFN width 352, two attention heads, a 50,257-entry GPT-2 vocabulary, untied embedding/output weights and a 256-token context. The three-seed cohort trains on 4.096 million tokens; the separate eight-seed cohort uses 8.192 million.</p>
+<div class="scroll"><table><caption>Parameter counts for the three-seed architecture comparison. Depth changes the model size; equal width does not imply equal parameters.</caption><thead><tr><th scope="col">Layers</th><th scope="col">Residual</th><th scope="col">mHC</th><th scope="col">M-O</th></tr></thead><tbody><tr><th scope="row">4</th><td>13,669,760</td><td>13,772,376</td><td>Not tested</td></tr><tr><th scope="row">16</th><td>16,081,280</td><td>16,491,744</td><td>Not tested</td></tr><tr><th scope="row">32</th><td>19,296,640</td><td>20,117,568</td><td>20,117,572</td></tr></tbody></table></div>
+<p>“Symmetric” describes signed quantization levels centered on zero, not equal bit widths. K3/V2 uses unequal K/V precision with that codebook. The affine alternative shifts its levels using a floating minimum and a scale. At two bits, it uses four levels, while this signed quantizer uses three. The additional affine metadata explains why affine K2/V2 and signed K3/V2 can have equal total bytes.</p>
+</details>
+<h3 id="gsm8k-sanity">A clean math-accuracy sanity check</h3>
+<p><a href="https://github.com/openai/grade-school-math">GSM8K</a> grades numeric answers to math word problems. Before a quantized task-accuracy sweep, the unchanged 32-layer residual, mHC and M-O checkpoints for paired seed 75211 each answered the first 16 official test questions. All three scored <strong>0/16</strong>, using both strict final-answer extraction after <code>####</code> and a looser last-number matcher.</p>
+<p>This was a zero-shot feasibility pilot with greedy decoding, at most 128 new tokens, EOS stopping, no calculator and no fine-tuning. Prompts were 30–109 tokens and were not truncated; total length stayed within the 256-token context. Inspected completions continued children’s stories. This is not a full GSM8K score, a standard few-shot evaluation or a KV-quantization result.</p>
+<p>A zero clean baseline on this pilot provides no useful math-accuracy signal to preserve when quantizing. A meaningful GSM8K comparison needs matched residual/mHC models that first demonstrate clean math accuracy. The pilot does not establish zero accuracy under every prompt, seed or training recipe.</p>
+<p class="small">The sanity pilot used a W7900, PyTorch 2.9.1+rocm6.4, Transformers 5.3.0 and Python 3.12.11. Weights and routing were FP32, activation matrix operations BF16, compilation and TF32 disabled. Model-state hashes were unchanged. Its runtime is separate from the cache-loss sweeps above.</p>
 <p class="small">Cache reproduction source: <code>e5c8441a</code>. Evaluation uses an RTX 4090, PyTorch 2.10.0+cu128, four CPU threads, BF16 activations, FP32 weights/routing/norms/CE/quantization, and TF32 disabled. Each saved model predicts 131,072 tokens in 512 adjacent 256-token windows. These runtime details qualify the post-hoc cache results, rather than the earlier training timings.</p>
 <p class="note">The expanded grid is exploratory on previously used evaluation arrays. It does not turn a selected K/V pair into an independent confirmation. “Symmetric” here names the signed quantizer; unequal K/V bit widths are a separate choice. K and V share the chosen codebook family in each cell. Mixed codebook families, per-channel-key quantization, packed kernels and serving performance are outside this test.</p>
 <p class="note"><strong>Scope matters.</strong> Three seeds support a descriptive comparison, not a sign-test confirmation at p&lt;0.05. Both studies use small models and 256-token contexts, with reused evaluation arrays. Full LayerRoPE was not included in these cache sweeps. Earlier model numerical flags remain in force; passing the cache adapter’s tests does not clear them.</p>
@@ -1165,22 +1189,1221 @@ z
 <p>Qualification checks compare scalar quantization with an independent reference, verify token-local statistics, compare incremental cached attention with full-window and explicit-softmax references, require bit-exact noquant logits on each real checkpoint, and verify unchanged model-state hashes after the sweep.</p>
 </details></section>
 <section id="scalars"><h2>The four depth scalars were not precision-sensitive here</h2><p>The scalar test took the same INT4 checkpoint, rounded its depth-code parameters through BF16 storage, and converted them back to FP32 for computation. This tests storage rounding in the full model path, including the activations changed downstream. It does not test native BF16 routing arithmetic or integer scalar quantization.</p><div class="grid2"><div class="card"><div class="kicker">Four schedule scalars</div><div class="metric">≤0.000305</div><p>Largest absolute extra CE change across the 48 coded checkpoints. Four FP32 → BF16 scalars save only eight bytes.</p></div><div class="card"><div class="kicker">Eligible routing + code parameters</div><div class="metric">≤0.000668</div><p>Largest absolute extra CE change across all 56 checkpoints. For a coded row this saves about 1.576 MB of ideal parameter storage.</p></div></div><div class="scroll"><table><caption>Parameter-storage accounting includes quantizer scales and unquantized parameters; runtime buffers, optimizer state, activations, and packed-kernel overhead are outside this table.</caption><thead><tr><th scope="col">V01 storage case</th><th scope="col">Ideal packed bytes</th><th scope="col">Interpretation</th></tr></thead><tbody><tr><th scope="row">INT4 matrices, FP32 controls</th><td>13,539,352</td><td>Baseline for these storage-rounding comparisons.</td></tr><tr><th scope="row">INT4 matrices, four scalars stored BF16</th><td>13,539,344</td><td>Eight bytes saved; no meaningful whole-model compression.</td></tr><tr><th scope="row">INT4 matrices, eligible routing + code stored BF16</th><td>11,963,024</td><td>About 11.6% fewer bytes than the FP32-control case; loss changes remain small.</td></tr><tr><th scope="row">Block-only INT3, remaining parameters FP32</th><td>57,364,752</td><td>Preserves quality much better, but uses substantially more bytes.</td></tr></tbody></table></div><p>These controls show that FP32 storage of the four scalars was not necessary to preserve the measured INT4 result. Routing-rounding coverage excludes routing normalization weights. These controls do not rescue the large all-matrix INT4 penalty. They also do not establish that LayerRoPE is uniquely tolerant: the experiment concerns these depth-code variants, and small routing-rounding effects appear in plain mHC too.</p></section><section id="numerics"><h2>Numerical qualification remained a separate gate</h2><p>V01, V02, V03, and V30 retained numerical misses in the prescribed historical/confirmation scope. V00, V30-S, and V30-C passed that scope. A successful checkpoint resume or a good final loss cannot clear an earlier tolerance failure.</p><p>Some discrepancies were small in absolute terms. One retained V01 comparison missed by about 8.27×10<sup>−9</sup> against a 5.46×10<sup>−6</sup> reference, giving relative error 0.001514 above the 0.001 threshold. Agreement in FP64 for the same finite function points to sensitivity between FP32 evaluation graphs; it does not justify changing the frozen tolerance after seeing results.</p><p>Keep two questions separate: whether the implemented 20-step Sinkhorn function and its derivative agree with a same-function oracle, and whether that finite map approximates an ideal converged projection. Replacing the operator with a much longer solve changes the experiment.</p></section><section id="interpretation"><h2>Interpretation and conclusion</h2>
-<p><strong>The full K/V grid found useful unequal allocations, but no architecture-specific reduction in minimum passing bytes.</strong> Signed K3/V2 improves on signed K3/V3 at 16/32 layers, while matching the byte cost of affine K2/V2. Ordinary residual, mHC and M-O reach the same overall byte floor in their matched comparisons. The early training rankings also did not yield a confirmed winner.</p>
+<p><strong>The full K/V grid found useful unequal allocations, but no architecture-specific reduction in minimum passing bytes.</strong> Signed K3/V2 saves 14.3% of ideal bytes versus signed K3/V3 at 16/32 layers, with additional loss. It matches the byte cost of affine K2/V2. For the K3/V3 → K3/V2 change, mHC has a larger loss increment than residuals at both depths in every tested seed. Ordinary residual, mHC and M-O reach the same overall byte floor in their matched comparisons. The early training rankings also did not yield a confirmed winner.</p>
 <div class="grid3"><div class="card rule warn"><strong>CLEAN MODEL QUALITY</strong><p>mHC improved clean loss in the matched residual-control cohort, especially at 16 and 32 layers. Better absolute loss after quantization is useful, but it is not evidence of lower rounding sensitivity.</p></div><div class="card rule good"><strong>WEIGHT QUANTIZATION</strong><p>Which matrices were rounded had a much larger measured effect than storing the four depth scalars in BF16. Block-only INT3 preserved quality by leaving most parameters unquantized, with a substantial byte cost.</p></div><div class="card rule good"><strong>KV-CACHE QUANTIZATION</strong><p>Both the quantizer and the K/V bit allocation affect damage at a fixed byte cost. Unequal precision improves some within-quantizer choices, while adding mHC or M-O does not lower the measured overall byte floor.</p></div></div>
-<p>The practical conclusion is to compare clean quality, extra quantization damage and total bytes together. Do not treat block-only weight INT3 as a three-bit model, or cache fake quantization as a measured serving-memory or speed improvement. Full LayerRoPE cache behavior, longer contexts, and separate embedding/head sensitivity remain open questions. No depth-scaling or subliminal-learning defense follows from these language-model results.</p></section><section id="reproduce"><h2>Reproduce training, weight rounding and KV-cache tests</h2>
+<p>The practical conclusion is to compare clean quality, extra quantization damage and total bytes together. Do not treat block-only weight INT3 as a three-bit model, or cache fake quantization as a measured serving-memory or speed improvement. The fresh full-gain cache results appear below. Larger models, longer contexts, and separate embedding/head sensitivity remain open questions. No depth-scaling or subliminal-learning defense follows from these language-model results.</p></section><section id="author-followup"><h2>Author feedback: full gains and three beta initializations</h2>
+<p><strong>The fourteen-row MNIST screen and all twenty-four final language-model runs are complete.</strong> Shikhar Srivastava highlighted the need for both magnitude and rotation at the input and output sites. The <a href="https://www.cs.rochester.edu/u/ssrivas9/layer-rope/#code">author’s reference code</a> applies an output gain directly to the branch; it does not require an output normalization. The implementation audit found two distinct cases: the historical MNIST adaptation had only an input gain and a zero initial magnitude slope, while the TinyStories LayerRoPE models already had input/output magnitude and rotation gains at both attention and MLP sites. The language-model results above must not be described as an input-only implementation.</p>
+<p>The follow-up adds an independent MNIST output gain and tests equal initial magnitude and rotation slopes at <strong>−1, −0.5 and 0</strong>. These are initial values; the schedules remain trainable. MNIST retains LayerNorm centering and bias, so it is an adaptation rather than an exact copy of the reference language model.</p>
+<div class="scroll"><table><caption>Follow-up design. Both allocated GPUs passed the numerical operator checks; trained MNIST routing has the separate stability caveat below.</caption><thead><tr><th scope="col">Study</th><th scope="col">Controls and variants</th><th scope="col">Measures</th></tr></thead><tbody>
+<tr><th scope="row">MNIST transfer</th><td>Residual, HC and mHC, each with no LayerRoPE and all three full-gain beta initializations; two historical input-only bridge rows. Fourteen rows, ten fresh paired seeds; five teacher and 80 student epochs.</td><td>Transfer above each model’s own initialization, teacher and all-output accuracy, full learning curves, and time to the accuracy target. Active identical-target stationarity and unused-head checks precede training.</td></tr>
+<tr><th scope="row">TinyStories</th><td>Residual and mHC controls; full LayerRoPE and mHC + LayerRoPE at all three beta initializations. Eight depth-32 rows; equal four-rate pilot budgets and three fresh paired final seeds, 2,000 updates each.</td><td>Clean cross-entropy through training, elapsed time, and own-clean damage for the existing K/V grid plus FP4 and FP8. Preserve K3/V3 → K3/V2 increments and compare them across matched architectures.</td></tr>
+<tr><th scope="row">Distributions and floating formats</th><td>The same evaluation inputs across rows; separate block-only and all-matrix weight scopes, block-input activation screens, and language-model residual-state screens.</td><td>Residual and weight variance, RMS, extrema, tails, learned gains, relative rounding error, accuracy or loss damage, and ideal bytes with scales and untouched parameters. Keep each routed stream separate from its collapsed mean.</td></tr>
+</tbody></table></div>
+<p>FP4 means scaled E2M1 and FP8 means scaled E4M3FN here, each with a FP32 absmax scale per final tensor axis and dequantized computation. Matched INT4/INT8 weight screens provide comparators. This FP4 simulation is not NVIDIA’s block-scaled NVFP4 format. Higher residual variance is a hypothesis to inspect, not a compression result: absmax scaling can absorb a uniform magnitude change. A useful benefit must also appear in measured quantization damage and covered bytes.</p>
+<p>The source and synthetic workflow have CPU checks and both allocated GPUs passed the GPU operator checks. The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/README.md">full protocol and limits</a> define the confidence rules, retained checkpoints and numerical gates. The small language-model comparison remains descriptive and reuses the existing evaluation arrays.</p><h3 id="full-gain-mnist">Full gains did not meet the MNIST suppression rule</h3>
+<p>Measured source: <a href="https://github.com/mcgrof/knlp/tree/17035f8402a7775c3f96f8c16d7a29281398155d">knlp 17035f84</a>, Python 3.12.11 and PyTorch 2.9.1.</p>
+<p>The MNIST adaptation has width 256 and four MLP blocks, with four streams for HC/mHC. It uses FP32 and Adam at 0.0003. All digit metrics use the 10,000 test images; teacher and student learning receive five and 80 epochs respectively.</p>
+<p><strong>None of the nine full-gain comparisons meets the frozen suppression rule.</strong> Each architecture has ten fresh paired seeds. Auxiliary-only transfer means the student’s digit-accuracy gain above its own initialization after 80 epochs of training on auxiliary outputs. A candidate needs a mean reduction of at least five percentage points, a paired interval wholly below zero, preserved teacher and all-output utility, acceptable convergence and tracked routing stability. The observed mean changes range from −2.283 to +4.251 points. Several intervals are wide; this does not establish equivalence or rule out every useful effect.</p>
+<div class="scroll"><table><caption>New MNIST cohort: ten paired seeds per row; mean digit accuracy (%) and auxiliary-only transfer gain (pp). Epochs to 95% is the geometric mean across seeds for the all-output shared-initialization student.</caption><thead><tr><th scope="col">Row</th><th scope="col">Teacher accuracy (%)</th><th scope="col">Auxiliary-only gain (pp)</th><th scope="col">All-output accuracy (%)</th><th scope="col">Epochs to 95%</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>97.285</td><td>60.804</td><td>96.714</td><td>13.46</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=−1.0</th><td>97.014</td><td>61.745</td><td>96.635</td><td>11.03</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=−0.5</th><td>97.166</td><td>59.916</td><td>96.580</td><td>12.94</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=0.0</th><td>97.211</td><td>64.202</td><td>96.655</td><td>12.50</td></tr><tr><th scope="row">Residual + input-only bridge</th><td>97.263</td><td>61.186</td><td>96.727</td><td>11.51</td></tr><tr><th scope="row">HC</th><td>97.287</td><td>65.894</td><td>96.727</td><td>11.26</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−1.0</th><td>97.176</td><td>63.611</td><td>96.589</td><td>11.75</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−0.5</th><td>97.227</td><td>66.107</td><td>96.635</td><td>11.27</td></tr><tr><th scope="row">HC + full LayerRoPE, β=0.0</th><td>97.202</td><td>67.838</td><td>96.558</td><td>12.60</td></tr><tr><th scope="row">HC + input-only bridge</th><td>97.278</td><td>65.779</td><td>96.694</td><td>9.87</td></tr><tr><th scope="row">mHC</th><td>97.279</td><td>61.590</td><td>96.617</td><td>14.26</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−1.0</th><td>97.066</td><td>62.396</td><td>96.647</td><td>11.30</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−0.5</th><td>97.195</td><td>61.153</td><td>96.602</td><td>13.11</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=0.0</th><td>97.215</td><td>65.841</td><td>96.587</td><td>13.22</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>Full gains minus the same-architecture baseline. Paired bootstrap intervals use confidence 1−0.05/9 (99.44%), 100,000 resamples and all ten seeds. Negative transfer differences favor suppression. Each row fails the frozen suppression screen.</caption><thead><tr><th scope="col">Full-gain row</th><th scope="col">Transfer change (pp)</th><th scope="col">Interval (pp)</th><th scope="col">Failed gates</th></tr></thead><tbody><tr><th scope="row">Residual + full LayerRoPE, β=−1.0</th><td>+0.941</td><td>[-8.662, +9.089]</td><td>transfer, speed teacher</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=−0.5</th><td>-0.888</td><td>[-9.913, +6.018]</td><td>transfer, speed all output, speed teacher</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=0.0</th><td>+3.398</td><td>[+0.169, +6.189]</td><td>transfer, speed all output</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−1.0</th><td>-2.283</td><td>[-12.173, +5.608]</td><td>transfer, speed all output, speed teacher</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−0.5</th><td>+0.213</td><td>[-6.051, +5.854]</td><td>transfer, speed all output, speed teacher</td></tr><tr><th scope="row">HC + full LayerRoPE, β=0.0</th><td>+1.944</td><td>[-3.125, +6.210]</td><td>transfer, speed all output</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−1.0</th><td>+0.806</td><td>[-9.159, +9.437]</td><td>transfer, speed teacher, stability</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−0.5</th><td>-0.437</td><td>[-8.519, +5.868]</td><td>transfer, speed all output, speed teacher, stability</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=0.0</th><td>+4.251</td><td>[+0.962, +7.380]</td><td>transfer, speed all output, stability</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>MNIST all-output shared student at epoch 80. FP4 all-matrix rounding includes stem and head weights; FP8 and W4A4 columns show accuracy loss from that row’s own clean checkpoint. Ideal bytes include FP32 scales and untouched parameters; routing weights are outside the rounded MLinear scope. Mean over ten seeds. Positive damage means worse quality; no significance or new precision-floor claim is made.</caption><thead><tr><th scope="col">Row</th><th scope="col">Clean accuracy (%)</th><th scope="col">All-weight FP4 accuracy (%)</th><th scope="col">All-weight FP4 extra CE (nats)</th><th scope="col">FP4 ideal total weight bytes</th><th scope="col">All-weight FP8 loss (pp)</th><th scope="col">Block W4A4 loss (pp)</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>96.714</td><td>96.226</td><td>+0.01829</td><td>392,936</td><td>+0.032</td><td>+0.441</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=−1.0</th><td>96.635</td><td>96.353</td><td>+0.01170</td><td>390,920</td><td>+0.007</td><td>+0.291</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=−0.5</th><td>96.580</td><td>96.189</td><td>+0.01651</td><td>390,920</td><td>+0.027</td><td>+0.336</td></tr><tr><th scope="row">Residual + full LayerRoPE, β=0.0</th><td>96.655</td><td>96.367</td><td>+0.01357</td><td>390,920</td><td>+0.015</td><td>+0.449</td></tr><tr><th scope="row">Residual + input-only bridge</th><td>96.727</td><td>96.371</td><td>+0.01409</td><td>389,880</td><td>+0.025</td><td>+0.357</td></tr><tr><th scope="row">HC</th><td>96.727</td><td>96.367</td><td>+0.01384</td><td>426,120</td><td>+0.038</td><td>+0.464</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−1.0</th><td>96.589</td><td>96.293</td><td>+0.01101</td><td>424,104</td><td>-0.008</td><td>+0.338</td></tr><tr><th scope="row">HC + full LayerRoPE, β=−0.5</th><td>96.635</td><td>96.319</td><td>+0.01195</td><td>424,104</td><td>+0.045</td><td>+0.494</td></tr><tr><th scope="row">HC + full LayerRoPE, β=0.0</th><td>96.558</td><td>96.052</td><td>+0.01833</td><td>424,104</td><td>+0.022</td><td>+0.711</td></tr><tr><th scope="row">HC + input-only bridge</th><td>96.694</td><td>96.268</td><td>+0.01646</td><td>423,064</td><td>+0.033</td><td>+0.511</td></tr><tr><th scope="row">mHC</th><td>96.617</td><td>96.224</td><td>+0.01552</td><td>802,968</td><td>+0.004</td><td>+0.421</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−1.0</th><td>96.647</td><td>96.363</td><td>+0.01228</td><td>800,952</td><td>+0.011</td><td>+0.233</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=−0.5</th><td>96.602</td><td>96.330</td><td>+0.01163</td><td>800,952</td><td>+0.025</td><td>+0.380</td></tr><tr><th scope="row">mHC + full LayerRoPE, β=0.0</th><td>96.587</td><td>96.147</td><td>+0.01590</td><td>800,952</td><td>+0.006</td><td>+0.528</td></tr></tbody></table></div>
+
+<p>The active pre-training controls, complete epoch coverage, paired initialization/noise hashes, frozen teacher and unused-head invariants pass. <strong>The mHC stability gate fails in the baseline and all three full-gain rows.</strong> Its largest tracked column-sum error approaches one in the all-output independent-initialization control; teacher and all-output shared trajectories also exceed 10<sup>−4</sup>. The auxiliary-only shared trajectories remain below that limit. The frozen gate covers every tracked forward, so the mHC results remain observations of the finite twenty-step implementation, without a claim that the trained mixer satisfies the ideal constraint.</p>
+<p>Convergence does not give a uniform win. At β=−1, the residual and mHC all-output students reach 95% in fewer epochs than their own controls, with geometric ratios 0.820 and 0.793. Their teachers take more epochs, with ratio 1.328, so neither passes both speed gates. These are epoch counts; the packed ten-model row is not ten independent wall-clock timing repeats.</p>
+<p>FP4/FP8 results are numerical screens on each retained checkpoint, with no calibration or retraining. FP4 uses E2M1 and FP8 uses E4M3FN with one FP32 absmax scale per final tensor axis. Block W4A4 combines block weights with inputs to block linear operations; stem/head activations, routing, normalization and residual-state rounding are outside that MNIST activation screen. The reproduction also evaluates teacher and auxiliary-only endpoints and matched INT4/INT8 comparisons.</p>
+<p>There are small descriptive FP4 improvements, with different clean quality. For example, residual β=−1 has 96.635% clean and 96.353% all-weight FP4 accuracy, versus 96.714% clean and 96.226% FP4 without LayerRoPE. This does not establish a new minimum precision level. At the all-output endpoint, the mean final residual variance on the same 256 images decreases under β=−1: residual 2.364 → 1.045, HC 1.267 → 0.037 and mHC 2.765 → 1.260. These are pre-normalization states after stream averaging where applicable. Unaveraged stream distributions are retained separately. Larger residual variance is therefore not the measured explanation for this small vision adaptation. Magnitude-only, rotation-only and isolated output-gain ablations were not run.</p>
+<h3 id="full-gain-language">Full gains changed learning and rounding sensitivity</h3>
+<p><strong>The β=0 combination improved learning loss, but none of the eight rows lowered the tested cache-byte floor.</strong> This is a new three-seed screen, with residual and mHC controls at the same depth and training-token budget. It is separate from the earlier eight-seed depth-code confirmation: the checkpoints, training length, learning-rate policy, evaluation arrays and numerical evaluation path differ. The earlier confirmation’s 0/56 all-matrix INT4 result must not be compared directly with this cohort’s FP4/INT4 results as an effect of adding full gains.</p>
+<p>Each model has 32 layers, width 128, two attention heads, FFN width 352 and a 256-token context. Each row receives four 500-update learning-rate pilots; three fresh paired final seeds, 77311–77313, then run 2,000 updates. Magnitude and rotation slopes start at the same stated beta at all four input/output sites and remain trainable. Weights, optimizer state, norms, gains, routing and cross-entropy use FP32; language matrix operations use BF16, with TF32 and compilation disabled. Both workers use four CPU threads. The runtime is Python 3.12.11 and PyTorch 2.9.1 on two matched 80GB GPUs.</p>
+<p>Cross-entropy (CE) predicts actual next story tokens with the GPT-2 vocabulary; perplexity (PPL) is its exponential. Final evaluation uses 512 windows of 256 predicted tokens, 131,072 tokens per checkpoint. These are small scratch-trained story models, not general-purpose reasoning models. The inherited evaluation arrays make this exploratory evidence rather than an independent confirmation or a math-accuracy result.</p>
+<div class="scroll"><table><caption>New TinyStories cohort: three paired final seeds, 2,000 updates and 4.096 million predicted training tokens per model. Primary CE is the frozen mean of curve measurements at updates 1000–2000. Clean final CE uses the separate 131,072-token final array. PPL is exp(mean clean CE). Training seconds sum the optimizer steps and exclude curve evaluation, statistics, checkpoint I/O and quantization.</caption><thead><tr><th scope="col">Row</th><th scope="col">Selected LR</th><th scope="col">Parameters (M)</th><th scope="col">Primary curve CE</th><th scope="col">Final clean CE</th><th scope="col">PPL</th><th scope="col">Training seconds</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>0.003</td><td>19.297</td><td>2.690108</td><td>2.765036</td><td>15.880</td><td>121.1</td></tr><tr><th scope="row">mHC</th><td>0.003</td><td>20.118</td><td>2.619591</td><td>2.692526</td><td>14.769</td><td>615.0</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>0.01</td><td>19.289</td><td>2.709233</td><td>2.772207</td><td>15.994</td><td>231.8</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>0.01</td><td>19.289</td><td>2.667277</td><td>2.729193</td><td>15.321</td><td>250.4</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>0.01</td><td>19.289</td><td>2.651701</td><td>2.727627</td><td>15.297</td><td>254.4</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>0.003</td><td>20.110</td><td>2.766845</td><td>2.829792</td><td>16.942</td><td>826.4</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>0.01</td><td>20.110</td><td>2.654810</td><td>2.715576</td><td>15.113</td><td>786.7</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>0.01</td><td>20.110</td><td>2.602404</td><td>2.676804</td><td>14.539</td><td>786.8</td></tr></tbody></table></div>
+<figure><div class="grid2"><div><svg role="img" aria-labelledby="full-gain-L-curve-title" xmlns:xlink="http://www.w3.org/1999/xlink" width="460.8pt" height="324pt" viewBox="0 0 460.8 324" xmlns="http://www.w3.org/2000/svg" version="1.1"><title id="full-gain-L-curve-title">Residual and full LayerRoPE: mean validation cross-entropy and the three-seed range</title>
+
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="fullgain-L-figure_1">
+  <g id="fullgain-L-patch_1">
+   <path d="M 0 324
+L 460.8 324
+L 460.8 0
+L 0 0
+z
+" style="fill: #080e0b"/>
+  </g>
+  <g id="fullgain-L-axes_1">
+   <g id="fullgain-L-patch_2">
+    <path d="M 47.674303 283.998744
+L 441.25726 283.998744
+L 441.25726 20.853802
+L 47.674303 20.853802
+z
+" style="fill: #080e0b"/>
+   </g>
+   <g id="fullgain-L-patch_3">
+    <path d="M 234.108335 283.998744
+L 441.25726 283.998744
+L 441.25726 20.853802
+L 234.108335 20.853802
+z
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: #dce7df; opacity: 0.035; stroke: #dce7df; stroke-linejoin: miter"/>
+   </g>
+   <g id="fullgain-L-FillBetweenPolyCollection_1">
+    <defs>
+     <path id="fullgain-L-m7899f446fe" d="M 47.674303 -248.785279
+L 47.674303 -207.992316
+L 68.389195 -145.669407
+L 89.104087 -124.783088
+L 109.81898 -112.353093
+L 130.533873 -103.165057
+L 151.248765 -95.207371
+L 171.963658 -90.668441
+L 192.67855 -85.99428
+L 213.393442 -82.810344
+L 234.108335 -77.575496
+L 254.823227 -74.25639
+L 275.53812 -71.972708
+L 296.253012 -69.104793
+L 316.967905 -66.233353
+L 337.682797 -64.272272
+L 358.39769 -62.994572
+L 379.112582 -60.491365
+L 399.827475 -58.163236
+L 420.542367 -56.275753
+L 441.25726 -55.170513
+L 441.25726 -56.258544
+L 441.25726 -56.258544
+L 420.542367 -58.454087
+L 399.827475 -61.141721
+L 379.112582 -61.716627
+L 358.39769 -64.122912
+L 337.682797 -65.490636
+L 316.967905 -68.830091
+L 296.253012 -71.408416
+L 275.53812 -73.665818
+L 254.823227 -76.011663
+L 234.108335 -79.195021
+L 213.393442 -83.873774
+L 192.67855 -87.268709
+L 171.963658 -91.376011
+L 151.248765 -99.580347
+L 130.533873 -105.961352
+L 109.81898 -117.043987
+L 89.104087 -133.669743
+L 68.389195 -160.913907
+L 47.674303 -248.785279
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-L-pc15323834b)">
+     <use xlink:href="#fullgain-L-m7899f446fe" x="0" y="324" style="fill: #dce7df; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-L-FillBetweenPolyCollection_2">
+    <defs>
+     <path id="fullgain-L-m80768d6487" d="M 47.674303 -204.852593
+L 47.674303 -203.193742
+L 68.389195 -154.735854
+L 89.104087 -130.90134
+L 109.81898 -117.511193
+L 130.533873 -106.601882
+L 151.248765 -97.422267
+L 171.963658 -92.728089
+L 192.67855 -88.023833
+L 213.393442 -83.677719
+L 234.108335 -80.550615
+L 254.823227 -76.049372
+L 275.53812 -73.221671
+L 296.253012 -69.946012
+L 316.967905 -67.771241
+L 337.682797 -65.143649
+L 358.39769 -63.392136
+L 379.112582 -61.709095
+L 399.827475 -60.385367
+L 420.542367 -58.04553
+L 441.25726 -56.378772
+L 441.25726 -57.692969
+L 441.25726 -57.692969
+L 420.542367 -59.406549
+L 399.827475 -61.370524
+L 379.112582 -62.976097
+L 358.39769 -65.662433
+L 337.682797 -67.296499
+L 316.967905 -70.560849
+L 296.253012 -72.933127
+L 275.53812 -74.943964
+L 254.823227 -77.864188
+L 234.108335 -82.286336
+L 213.393442 -87.517213
+L 192.67855 -90.84954
+L 171.963658 -95.003485
+L 151.248765 -102.360496
+L 130.533873 -109.196212
+L 109.81898 -119.362674
+L 89.104087 -137.839366
+L 68.389195 -156.916729
+L 47.674303 -204.852593
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-L-pc15323834b)">
+     <use xlink:href="#fullgain-L-m80768d6487" x="0" y="324" style="fill: #be92ff; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-L-FillBetweenPolyCollection_3">
+    <defs>
+     <path id="fullgain-L-m835559d151" d="M 47.674303 -212.690801
+L 47.674303 -197.999773
+L 68.389195 -151.727552
+L 89.104087 -127.838674
+L 109.81898 -114.408332
+L 130.533873 -103.43322
+L 151.248765 -94.229934
+L 171.963658 -91.10213
+L 192.67855 -85.472298
+L 213.393442 -80.914029
+L 234.108335 -77.34657
+L 254.823227 -71.954078
+L 275.53812 -68.793805
+L 296.253012 -67.136527
+L 316.967905 -64.224023
+L 337.682797 -61.764091
+L 358.39769 -60.066726
+L 379.112582 -58.811546
+L 399.827475 -55.85312
+L 420.542367 -53.751318
+L 441.25726 -52.785509
+L 441.25726 -53.87625
+L 441.25726 -53.87625
+L 420.542367 -57.207657
+L 399.827475 -58.753224
+L 379.112582 -59.081561
+L 358.39769 -62.209319
+L 337.682797 -64.766298
+L 316.967905 -66.73043
+L 296.253012 -69.822738
+L 275.53812 -71.815036
+L 254.823227 -75.514829
+L 234.108335 -78.741933
+L 213.393442 -84.337002
+L 192.67855 -88.709856
+L 171.963658 -93.663615
+L 151.248765 -101.814634
+L 130.533873 -108.7074
+L 109.81898 -121.797406
+L 89.104087 -140.425469
+L 68.389195 -162.670338
+L 47.674303 -212.690801
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-L-pc15323834b)">
+     <use xlink:href="#fullgain-L-m835559d151" x="0" y="324" style="fill: #71c6ff; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-L-FillBetweenPolyCollection_4">
+    <defs>
+     <path id="fullgain-L-maaa8cf048b" d="M 47.674303 -294.699548
+L 47.674303 -203.047645
+L 68.389195 -144.919066
+L 89.104087 -123.828507
+L 109.81898 -108.056668
+L 130.533873 -98.560584
+L 151.248765 -92.644659
+L 171.963658 -85.735809
+L 192.67855 -80.577909
+L 213.393442 -77.757267
+L 234.108335 -72.165475
+L 254.823227 -69.156872
+L 275.53812 -66.58168
+L 296.253012 -64.094772
+L 316.967905 -61.667837
+L 337.682797 -59.721802
+L 358.39769 -58.66684
+L 379.112582 -54.75576
+L 399.827475 -53.625191
+L 420.542367 -52.463588
+L 441.25726 -50.463442
+L 441.25726 -56.235521
+L 441.25726 -56.235521
+L 420.542367 -57.363196
+L 399.827475 -59.938678
+L 379.112582 -61.846376
+L 358.39769 -63.252855
+L 337.682797 -65.12583
+L 316.967905 -67.544748
+L 296.253012 -69.487616
+L 275.53812 -73.077899
+L 254.823227 -76.799673
+L 234.108335 -82.266207
+L 213.393442 -85.257456
+L 192.67855 -88.789077
+L 171.963658 -96.5374
+L 151.248765 -100.924403
+L 130.533873 -113.746436
+L 109.81898 -127.289512
+L 89.104087 -146.411813
+L 68.389195 -190.328176
+L 47.674303 -294.699548
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-L-pc15323834b)">
+     <use xlink:href="#fullgain-L-maaa8cf048b" x="0" y="324" style="fill: #18efb0; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-L-matplotlib.axis_1">
+    <g id="fullgain-L-xtick_1">
+     <g id="fullgain-L-line2d_1">
+      <path d="M 47.674303 283.998744
+L 47.674303 20.853802
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_2">
+      <defs>
+       <path id="fullgain-L-m214061ba42" d="M 0 0
+L 0 3.5
+" style="stroke: #aebfb4; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#fullgain-L-m214061ba42" x="47.674303" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_1">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="47.674303" y="300.875698" transform="rotate(-0 47.674303 300.875698)">100</text>
+     </g>
+    </g>
+    <g id="fullgain-L-xtick_2">
+     <g id="fullgain-L-line2d_3">
+      <path d="M 130.533873 283.998744
+L 130.533873 20.853802
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_4">
+      <g>
+       <use xlink:href="#fullgain-L-m214061ba42" x="130.533873" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_2">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="130.533873" y="300.875698" transform="rotate(-0 130.533873 300.875698)">500</text>
+     </g>
+    </g>
+    <g id="fullgain-L-xtick_3">
+     <g id="fullgain-L-line2d_5">
+      <path d="M 234.108335 283.998744
+L 234.108335 20.853802
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_6">
+      <g>
+       <use xlink:href="#fullgain-L-m214061ba42" x="234.108335" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_3">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="234.108335" y="300.875698" transform="rotate(-0 234.108335 300.875698)">1000</text>
+     </g>
+    </g>
+    <g id="fullgain-L-xtick_4">
+     <g id="fullgain-L-line2d_7">
+      <path d="M 337.682797 283.998744
+L 337.682797 20.853802
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_8">
+      <g>
+       <use xlink:href="#fullgain-L-m214061ba42" x="337.682797" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_4">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="337.682797" y="300.875698" transform="rotate(-0 337.682797 300.875698)">1500</text>
+     </g>
+    </g>
+    <g id="fullgain-L-xtick_5">
+     <g id="fullgain-L-line2d_9">
+      <path d="M 441.25726 283.998744
+L 441.25726 20.853802
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_10">
+      <g>
+       <use xlink:href="#fullgain-L-m214061ba42" x="441.25726" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_5">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="441.25726" y="300.875698" transform="rotate(-0 441.25726 300.875698)">2000</text>
+     </g>
+    </g>
+    <g id="fullgain-L-text_6">
+     <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="244.465781" y="317.876713" transform="rotate(-0 244.465781 317.876713)">Optimizer updates</text>
+    </g>
+   </g>
+   <g id="fullgain-L-matplotlib.axis_2">
+    <g id="fullgain-L-ytick_1">
+     <g id="fullgain-L-line2d_11">
+      <path d="M 47.674303 274.020086
+L 441.25726 274.020086
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_12">
+      <defs>
+       <path id="fullgain-L-mcdf5ca09d6" d="M 0 0
+L -3.5 0
+" style="stroke: #aebfb4; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="274.020086" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_7">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="278.958562" transform="rotate(-0 40.674303 278.958562)">2.5</text>
+     </g>
+    </g>
+    <g id="fullgain-L-ytick_2">
+     <g id="fullgain-L-line2d_13">
+      <path d="M 47.674303 231.78684
+L 441.25726 231.78684
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_14">
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="231.78684" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_8">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="236.725317" transform="rotate(-0 40.674303 236.725317)">3.0</text>
+     </g>
+    </g>
+    <g id="fullgain-L-ytick_3">
+     <g id="fullgain-L-line2d_15">
+      <path d="M 47.674303 189.553595
+L 441.25726 189.553595
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_16">
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="189.553595" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_9">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="194.492071" transform="rotate(-0 40.674303 194.492071)">3.5</text>
+     </g>
+    </g>
+    <g id="fullgain-L-ytick_4">
+     <g id="fullgain-L-line2d_17">
+      <path d="M 47.674303 147.320349
+L 441.25726 147.320349
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_18">
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="147.320349" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_10">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="152.258825" transform="rotate(-0 40.674303 152.258825)">4.0</text>
+     </g>
+    </g>
+    <g id="fullgain-L-ytick_5">
+     <g id="fullgain-L-line2d_19">
+      <path d="M 47.674303 105.087103
+L 441.25726 105.087103
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_20">
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="105.087103" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_11">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="110.02558" transform="rotate(-0 40.674303 110.02558)">4.5</text>
+     </g>
+    </g>
+    <g id="fullgain-L-ytick_6">
+     <g id="fullgain-L-line2d_21">
+      <path d="M 47.674303 62.853858
+L 441.25726 62.853858
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-L-line2d_22">
+      <g>
+       <use xlink:href="#fullgain-L-mcdf5ca09d6" x="47.674303" y="62.853858" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-L-text_12">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="67.792334" transform="rotate(-0 40.674303 67.792334)">5.0</text>
+     </g>
+    </g>
+    <g id="fullgain-L-text_13">
+     <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="12.877193" y="152.426273" transform="rotate(-90 12.877193 152.426273)">Curve cross-entropy (nats)</text>
+    </g>
+   </g>
+   <g id="fullgain-L-line2d_23">
+    <path d="M 47.674303 100.998077
+L 68.389195 171.484334
+L 89.104087 195.581123
+L 109.81898 209.645126
+L 130.533873 219.69532
+L 151.248765 226.933203
+L 171.963658 233.031816
+L 192.67855 237.53852
+L 213.393442 240.810814
+L 234.108335 245.356286
+L 254.823227 249.030021
+L 275.53812 251.379617
+L 296.253012 253.731205
+L 316.967905 256.52556
+L 337.682797 259.100854
+L 358.39769 260.615307
+L 379.112582 262.860653
+L 399.827475 264.099035
+L 420.542367 266.77769
+L 441.25726 268.109666
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #dce7df; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-line2d_24">
+    <path d="M 47.674303 120.113154
+L 68.389195 168.104972
+L 89.104087 189.976874
+L 109.81898 205.290676
+L 130.533873 216.037817
+L 151.248765 223.903224
+L 171.963658 229.998793
+L 192.67855 234.379802
+L 213.393442 238.369775
+L 234.108335 242.430509
+L 254.823227 246.925548
+L 275.53812 249.680195
+L 296.253012 252.150238
+L 316.967905 254.771877
+L 337.682797 257.52172
+L 358.39769 259.351689
+L 379.112582 261.778635
+L 399.827475 263.03634
+L 420.542367 265.098557
+L 441.25726 267.070556
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #be92ff; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-line2d_25">
+    <path d="M 47.674303 119.383793
+L 68.389195 167.85355
+L 89.104087 190.934526
+L 109.81898 206.125382
+L 130.533873 218.159724
+L 151.248765 226.004279
+L 171.963658 231.891757
+L 192.67855 237.046742
+L 213.393442 241.538595
+L 234.108335 246.005438
+L 254.823227 250.06953
+L 275.53812 253.468606
+L 296.253012 255.162661
+L 316.967905 258.831343
+L 337.682797 260.972895
+L 358.39769 262.835891
+L 379.112582 265.063029
+L 399.827475 266.80312
+L 420.542367 268.918974
+L 441.25726 270.667007
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #71c6ff; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-line2d_26">
+    <path d="M 47.674303 88.154486
+L 68.389195 161.270057
+L 89.104087 191.219488
+L 109.81898 207.668365
+L 130.533873 219.72363
+L 151.248765 228.177382
+L 171.963658 234.228398
+L 192.67855 239.933099
+L 213.393442 243.455853
+L 234.108335 247.532161
+L 254.823227 251.808695
+L 275.53812 254.89946
+L 296.253012 257.522618
+L 316.967905 260.1813
+L 337.682797 262.22635
+L 358.39769 263.726812
+L 379.112582 266.352439
+L 399.827475 268.076209
+L 420.542367 269.812692
+L 441.25726 271.132131
+" clip-path="url(#fullgain-L-pc15323834b)" style="fill: none; stroke: #18efb0; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-patch_4">
+    <path d="M 47.674303 283.998744
+L 47.674303 20.853803
+" style="fill: none; stroke: #405448; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-patch_5">
+    <path d="M 47.674303 283.998744
+L 441.25726 283.998744
+" style="fill: none; stroke: #405448; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-L-text_14">
+    <text style="font-size: 15.6px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="244.465781" y="14.853802" transform="rotate(-0 244.465781 14.853802)">Residual and full LayerRoPE</text>
+   </g>
+   <g id="fullgain-L-legend_1">
+    <g id="fullgain-L-line2d_27">
+     <path d="M 258.353041 35.330834
+L 269.353041 35.330834
+L 280.353041 35.330834
+" style="fill: none; stroke: #dce7df; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-L-text_15">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #dce7df" x="289.153041" y="39.180834" transform="rotate(-0 289.153041 39.180834)">Residual</text>
+    </g>
+    <g id="fullgain-L-line2d_28">
+     <path d="M 258.353041 51.900443
+L 269.353041 51.900443
+L 280.353041 51.900443
+" style="fill: none; stroke: #be92ff; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-L-text_16">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #be92ff" x="289.153041" y="55.750443" transform="rotate(-0 289.153041 55.750443)">β=−1.0</text>
+    </g>
+    <g id="fullgain-L-line2d_29">
+     <path d="M 357.609135 35.330834
+L 368.609135 35.330834
+L 379.609135 35.330834
+" style="fill: none; stroke: #71c6ff; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-L-text_17">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #71c6ff" x="388.409135" y="39.180834" transform="rotate(-0 388.409135 39.180834)">β=−0.5</text>
+    </g>
+    <g id="fullgain-L-line2d_30">
+     <path d="M 357.609135 51.900443
+L 368.609135 51.900443
+L 379.609135 51.900443
+" style="fill: none; stroke: #18efb0; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-L-text_18">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #18efb0" x="388.409135" y="55.750443" transform="rotate(-0 388.409135 55.750443)">β=0.0</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="fullgain-L-pc15323834b">
+   <rect x="47.674303" y="20.853802" width="393.582957" height="263.144942"/>
+  </clipPath>
+ </defs>
+</svg>
+</div><div><svg role="img" aria-labelledby="full-gain-ML-curve-title" xmlns:xlink="http://www.w3.org/1999/xlink" width="460.8pt" height="324pt" viewBox="0 0 460.8 324" xmlns="http://www.w3.org/2000/svg" version="1.1"><title id="full-gain-ML-curve-title">mHC and full LayerRoPE: mean validation cross-entropy and the three-seed range</title>
+
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="fullgain-ML-figure_1">
+  <g id="fullgain-ML-patch_1">
+   <path d="M 0 324
+L 460.8 324
+L 460.8 0
+L 0 0
+z
+" style="fill: #080e0b"/>
+  </g>
+  <g id="fullgain-ML-axes_1">
+   <g id="fullgain-ML-patch_2">
+    <path d="M 47.674303 283.998744
+L 441.25726 283.998744
+L 441.25726 20.853802
+L 47.674303 20.853802
+z
+" style="fill: #080e0b"/>
+   </g>
+   <g id="fullgain-ML-patch_3">
+    <path d="M 234.108335 283.998744
+L 441.25726 283.998744
+L 441.25726 20.853802
+L 234.108335 20.853802
+z
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: #dce7df; opacity: 0.035; stroke: #dce7df; stroke-linejoin: miter"/>
+   </g>
+   <g id="fullgain-ML-FillBetweenPolyCollection_1">
+    <defs>
+     <path id="fullgain-ML-m13bf419a84" d="M 47.674303 -228.484567
+L 47.674303 -206.616945
+L 68.389195 -146.362282
+L 89.104087 -121.572329
+L 109.81898 -107.115675
+L 130.533873 -97.478242
+L 151.248765 -88.372013
+L 171.963658 -83.692787
+L 192.67855 -78.648125
+L 213.393442 -75.449936
+L 234.108335 -72.187923
+L 254.823227 -67.81625
+L 275.53812 -65.328733
+L 296.253012 -63.44289
+L 316.967905 -60.53906
+L 337.682797 -59.03646
+L 358.39769 -57.449965
+L 379.112582 -54.839744
+L 399.827475 -52.498698
+L 420.542367 -51.062937
+L 441.25726 -50.233357
+L 441.25726 -50.918253
+L 441.25726 -50.918253
+L 420.542367 -53.045653
+L 399.827475 -54.311458
+L 379.112582 -56.052219
+L 358.39769 -58.365306
+L 337.682797 -59.814295
+L 316.967905 -62.155062
+L 296.253012 -64.486508
+L 275.53812 -66.364479
+L 254.823227 -68.358489
+L 234.108335 -72.526545
+L 213.393442 -77.150638
+L 192.67855 -79.930866
+L 171.963658 -84.234056
+L 151.248765 -90.786037
+L 130.533873 -97.997507
+L 109.81898 -108.423932
+L 89.104087 -125.181997
+L 68.389195 -149.739772
+L 47.674303 -228.484567
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-ML-pc15323834b)">
+     <use xlink:href="#fullgain-ML-m13bf419a84" x="0" y="324" style="fill: #dce7df; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-ML-FillBetweenPolyCollection_2">
+    <defs>
+     <path id="fullgain-ML-m1930878e08" d="M 47.674303 -244.40871
+L 47.674303 -238.725017
+L 68.389195 -165.991045
+L 89.104087 -138.879986
+L 109.81898 -123.8531
+L 130.533873 -113.925561
+L 151.248765 -104.192217
+L 171.963658 -99.009154
+L 192.67855 -93.940562
+L 213.393442 -89.795725
+L 234.108335 -84.968725
+L 254.823227 -81.107898
+L 275.53812 -78.123268
+L 296.253012 -76.118077
+L 316.967905 -73.044852
+L 337.682797 -71.003598
+L 358.39769 -68.736019
+L 379.112582 -66.743473
+L 399.827475 -63.829189
+L 420.542367 -63.057092
+L 441.25726 -61.274236
+L 441.25726 -62.605225
+L 441.25726 -62.605225
+L 420.542367 -64.260696
+L 399.827475 -66.743078
+L 379.112582 -68.542824
+L 358.39769 -70.164777
+L 337.682797 -72.289516
+L 316.967905 -74.867254
+L 296.253012 -77.978473
+L 275.53812 -80.667705
+L 254.823227 -82.981888
+L 234.108335 -87.491742
+L 213.393442 -92.452598
+L 192.67855 -95.876459
+L 171.963658 -101.255331
+L 151.248765 -109.960971
+L 130.533873 -117.607789
+L 109.81898 -129.612367
+L 89.104087 -146.570706
+L 68.389195 -169.153901
+L 47.674303 -244.40871
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-ML-pc15323834b)">
+     <use xlink:href="#fullgain-ML-m1930878e08" x="0" y="324" style="fill: #be92ff; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-ML-FillBetweenPolyCollection_3">
+    <defs>
+     <path id="fullgain-ML-mee2c384ad9" d="M 47.674303 -203.968948
+L 47.674303 -199.31735
+L 68.389195 -151.009062
+L 89.104087 -126.580267
+L 109.81898 -112.171252
+L 130.533873 -102.200362
+L 151.248765 -92.12529
+L 171.963658 -89.143775
+L 192.67855 -82.880978
+L 213.393442 -79.096635
+L 234.108335 -75.498358
+L 254.823227 -70.762237
+L 275.53812 -67.816783
+L 296.253012 -65.273663
+L 316.967905 -63.378381
+L 337.682797 -60.956268
+L 358.39769 -58.636474
+L 379.112582 -57.021148
+L 399.827475 -55.429145
+L 420.542367 -52.845318
+L 441.25726 -51.275888
+L 441.25726 -52.974976
+L 441.25726 -52.974976
+L 420.542367 -55.113938
+L 399.827475 -55.947027
+L 379.112582 -58.857751
+L 358.39769 -61.748598
+L 337.682797 -62.566823
+L 316.967905 -65.783353
+L 296.253012 -68.719329
+L 275.53812 -70.649443
+L 254.823227 -73.901594
+L 234.108335 -78.520526
+L 213.393442 -83.075996
+L 192.67855 -86.897757
+L 171.963658 -92.297596
+L 151.248765 -97.979711
+L 130.533873 -105.963993
+L 109.81898 -117.909717
+L 89.104087 -133.289496
+L 68.389195 -154.635597
+L 47.674303 -203.968948
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-ML-pc15323834b)">
+     <use xlink:href="#fullgain-ML-mee2c384ad9" x="0" y="324" style="fill: #71c6ff; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-ML-FillBetweenPolyCollection_4">
+    <defs>
+     <path id="fullgain-ML-mdd0a31dacc" d="M 47.674303 -203.052452
+L 47.674303 -195.020369
+L 68.389195 -139.425955
+L 89.104087 -115.961046
+L 109.81898 -104.129459
+L 130.533873 -94.30747
+L 151.248765 -85.945467
+L 171.963658 -81.949543
+L 192.67855 -77.716534
+L 213.393442 -74.471422
+L 234.108335 -70.204335
+L 254.823227 -66.41003
+L 275.53812 -64.44034
+L 296.253012 -61.857108
+L 316.967905 -59.143914
+L 337.682797 -57.205366
+L 358.39769 -56.209124
+L 379.112582 -52.547798
+L 399.827475 -50.916955
+L 420.542367 -49.700369
+L 441.25726 -48.447905
+L 441.25726 -49.504465
+L 441.25726 -49.504465
+L 420.542367 -51.478448
+L 399.827475 -53.296457
+L 379.112582 -54.821609
+L 358.39769 -56.476864
+L 337.682797 -58.055868
+L 316.967905 -60.627469
+L 296.253012 -63.212928
+L 275.53812 -64.718048
+L 254.823227 -67.000963
+L 234.108335 -72.951163
+L 213.393442 -76.0642
+L 192.67855 -78.238937
+L 171.963658 -82.677499
+L 151.248765 -89.511314
+L 130.533873 -95.303353
+L 109.81898 -105.423291
+L 89.104087 -121.724297
+L 68.389195 -146.941144
+L 47.674303 -203.052452
+z
+"/>
+    </defs>
+    <g clip-path="url(#fullgain-ML-pc15323834b)">
+     <use xlink:href="#fullgain-ML-mdd0a31dacc" x="0" y="324" style="fill: #18efb0; fill-opacity: 0.12"/>
+    </g>
+   </g>
+   <g id="fullgain-ML-matplotlib.axis_1">
+    <g id="fullgain-ML-xtick_1">
+     <g id="fullgain-ML-line2d_1">
+      <path d="M 47.674303 283.998744
+L 47.674303 20.853802
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_2">
+      <defs>
+       <path id="fullgain-ML-m214061ba42" d="M 0 0
+L 0 3.5
+" style="stroke: #aebfb4; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#fullgain-ML-m214061ba42" x="47.674303" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_1">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="47.674303" y="300.875698" transform="rotate(-0 47.674303 300.875698)">100</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-xtick_2">
+     <g id="fullgain-ML-line2d_3">
+      <path d="M 130.533873 283.998744
+L 130.533873 20.853802
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_4">
+      <g>
+       <use xlink:href="#fullgain-ML-m214061ba42" x="130.533873" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_2">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="130.533873" y="300.875698" transform="rotate(-0 130.533873 300.875698)">500</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-xtick_3">
+     <g id="fullgain-ML-line2d_5">
+      <path d="M 234.108335 283.998744
+L 234.108335 20.853802
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_6">
+      <g>
+       <use xlink:href="#fullgain-ML-m214061ba42" x="234.108335" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_3">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="234.108335" y="300.875698" transform="rotate(-0 234.108335 300.875698)">1000</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-xtick_4">
+     <g id="fullgain-ML-line2d_7">
+      <path d="M 337.682797 283.998744
+L 337.682797 20.853802
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_8">
+      <g>
+       <use xlink:href="#fullgain-ML-m214061ba42" x="337.682797" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_4">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="337.682797" y="300.875698" transform="rotate(-0 337.682797 300.875698)">1500</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-xtick_5">
+     <g id="fullgain-ML-line2d_9">
+      <path d="M 441.25726 283.998744
+L 441.25726 20.853802
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_10">
+      <g>
+       <use xlink:href="#fullgain-ML-m214061ba42" x="441.25726" y="283.998744" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_5">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #aebfb4" x="441.25726" y="300.875698" transform="rotate(-0 441.25726 300.875698)">2000</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-text_6">
+     <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="244.465781" y="317.876713" transform="rotate(-0 244.465781 317.876713)">Optimizer updates</text>
+    </g>
+   </g>
+   <g id="fullgain-ML-matplotlib.axis_2">
+    <g id="fullgain-ML-ytick_1">
+     <g id="fullgain-ML-line2d_11">
+      <path d="M 47.674303 274.020086
+L 441.25726 274.020086
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_12">
+      <defs>
+       <path id="fullgain-ML-mcdf5ca09d6" d="M 0 0
+L -3.5 0
+" style="stroke: #aebfb4; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="274.020086" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_7">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="278.958562" transform="rotate(-0 40.674303 278.958562)">2.5</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-ytick_2">
+     <g id="fullgain-ML-line2d_13">
+      <path d="M 47.674303 231.78684
+L 441.25726 231.78684
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_14">
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="231.78684" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_8">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="236.725317" transform="rotate(-0 40.674303 236.725317)">3.0</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-ytick_3">
+     <g id="fullgain-ML-line2d_15">
+      <path d="M 47.674303 189.553595
+L 441.25726 189.553595
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_16">
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="189.553595" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_9">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="194.492071" transform="rotate(-0 40.674303 194.492071)">3.5</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-ytick_4">
+     <g id="fullgain-ML-line2d_17">
+      <path d="M 47.674303 147.320349
+L 441.25726 147.320349
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_18">
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="147.320349" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_10">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="152.258825" transform="rotate(-0 40.674303 152.258825)">4.0</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-ytick_5">
+     <g id="fullgain-ML-line2d_19">
+      <path d="M 47.674303 105.087103
+L 441.25726 105.087103
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_20">
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="105.087103" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_11">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="110.02558" transform="rotate(-0 40.674303 110.02558)">4.5</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-ytick_6">
+     <g id="fullgain-ML-line2d_21">
+      <path d="M 47.674303 62.853858
+L 441.25726 62.853858
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #91a197; stroke-opacity: 0.12; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="fullgain-ML-line2d_22">
+      <g>
+       <use xlink:href="#fullgain-ML-mcdf5ca09d6" x="47.674303" y="62.853858" style="fill: #aebfb4; stroke: #aebfb4; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="fullgain-ML-text_12">
+      <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end; fill: #aebfb4" x="40.674303" y="67.792334" transform="rotate(-0 40.674303 67.792334)">5.0</text>
+     </g>
+    </g>
+    <g id="fullgain-ML-text_13">
+     <text style="font-size: 13px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="12.877193" y="152.426273" transform="rotate(-90 12.877193 152.426273)">Curve cross-entropy (nats)</text>
+    </g>
+   </g>
+   <g id="fullgain-ML-line2d_23">
+    <path d="M 47.674303 109.277367
+L 68.389195 176.237556
+L 89.104087 201.02578
+L 109.81898 216.271011
+L 130.533873 226.219306
+L 151.248765 234.026717
+L 171.963658 240.06022
+L 192.67855 244.632058
+L 213.393442 247.481319
+L 234.108335 251.592552
+L 254.823227 255.837947
+L 275.53812 258.046614
+L 296.253012 259.890776
+L 316.967905 262.863205
+L 337.682797 264.665543
+L 358.39769 266.030232
+L 379.112582 268.488633
+L 399.827475 270.332925
+L 420.542367 271.830395
+L 441.25726 273.52677
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #dce7df; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-line2d_24">
+    <path d="M 47.674303 81.966751
+L 68.389195 156.577371
+L 89.104087 181.454601
+L 109.81898 196.948455
+L 130.533873 207.955845
+L 151.248765 217.013132
+L 171.963658 223.851582
+L 192.67855 229.069789
+L 213.393442 233.283263
+L 234.108335 237.784739
+L 254.823227 241.897088
+L 275.53812 244.772736
+L 296.253012 247.153108
+L 316.967905 250.16128
+L 337.682797 252.262693
+L 358.39769 254.387517
+L 379.112582 256.641194
+L 399.827475 258.626416
+L 420.542367 260.371979
+L 441.25726 262.228103
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #be92ff; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-line2d_25">
+    <path d="M 47.674303 122.283018
+L 68.389195 170.646131
+L 89.104087 193.600268
+L 109.81898 208.903886
+L 130.533873 219.976308
+L 151.248765 227.979625
+L 171.963658 233.312511
+L 192.67855 238.922423
+L 213.393442 242.274556
+L 234.108335 246.724188
+L 254.823227 251.202653
+L 275.53812 254.350015
+L 296.253012 256.665848
+L 316.967905 259.520333
+L 337.682797 261.975818
+L 358.39769 263.615239
+L 379.112582 266.253741
+L 399.827475 268.292572
+L 420.542367 269.922555
+L 441.25726 271.859209
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #71c6ff; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-line2d_26">
+    <path d="M 47.674303 125.485931
+L 68.389195 181.34052
+L 89.104087 205.337499
+L 109.81898 219.012427
+L 130.533873 229.219965
+L 151.248765 236.132972
+L 171.963658 241.766421
+L 192.67855 245.977335
+L 213.393442 248.841223
+L 234.108335 252.599217
+L 254.823227 257.210946
+L 275.53812 259.434324
+L 296.253012 261.286079
+L 316.967905 264.059612
+L 337.682797 266.260853
+L 358.39769 267.65148
+L 379.112582 270.296251
+L 399.827475 271.890892
+L 420.542367 273.393157
+L 441.25726 274.9916
+" clip-path="url(#fullgain-ML-pc15323834b)" style="fill: none; stroke: #18efb0; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-patch_4">
+    <path d="M 47.674303 283.998744
+L 47.674303 20.853803
+" style="fill: none; stroke: #405448; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-patch_5">
+    <path d="M 47.674303 283.998744
+L 441.25726 283.998744
+" style="fill: none; stroke: #405448; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="fullgain-ML-text_14">
+    <text style="font-size: 15.6px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle; fill: #dce7df" x="244.465781" y="14.853802" transform="rotate(-0 244.465781 14.853802)">mHC and full LayerRoPE</text>
+   </g>
+   <g id="fullgain-ML-legend_1">
+    <g id="fullgain-ML-line2d_27">
+     <path d="M 261.86101 35.330834
+L 272.86101 35.330834
+L 283.86101 35.330834
+" style="fill: none; stroke: #dce7df; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-ML-text_15">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #dce7df" x="292.66101" y="39.180834" transform="rotate(-0 292.66101 39.180834)">mHC</text>
+    </g>
+    <g id="fullgain-ML-line2d_28">
+     <path d="M 261.86101 51.900443
+L 272.86101 51.900443
+L 283.86101 51.900443
+" style="fill: none; stroke: #be92ff; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-ML-text_16">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #be92ff" x="292.66101" y="55.750443" transform="rotate(-0 292.66101 55.750443)">β=−1.0</text>
+    </g>
+    <g id="fullgain-ML-line2d_29">
+     <path d="M 357.609135 35.330834
+L 368.609135 35.330834
+L 379.609135 35.330834
+" style="fill: none; stroke: #71c6ff; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-ML-text_17">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #71c6ff" x="388.409135" y="39.180834" transform="rotate(-0 388.409135 39.180834)">β=−0.5</text>
+    </g>
+    <g id="fullgain-ML-line2d_30">
+     <path d="M 357.609135 51.900443
+L 368.609135 51.900443
+L 379.609135 51.900443
+" style="fill: none; stroke: #18efb0; stroke-width: 2; stroke-linecap: square"/>
+    </g>
+    <g id="fullgain-ML-text_18">
+     <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start; fill: #18efb0" x="388.409135" y="55.750443" transform="rotate(-0 388.409135 55.750443)">β=0.0</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="fullgain-ML-pc15323834b">
+   <rect x="47.674303" y="20.853802" width="393.582957" height="263.144942"/>
+  </clipPath>
+ </defs>
+</svg>
+</div></div><figcaption>Mean curve cross-entropy over three fresh paired seeds. Bands show the seed minimum and maximum, not confidence intervals. Curves begin at update 100, after warm-up; shading marks the frozen primary window, updates 1000–2000. Each row uses its pilot-selected learning rate. These plots compare loss per update; training seconds are reported separately.</figcaption></figure>
+<p>The β=0 combination improves the frozen primary curve CE from 2.619591 for mHC to 2.602404, lower in all three pairs. Its final clean CE improves from 2.692526 to 2.676804, also in all three pairs. β=0 has the best primary mean among the tested initializations for both plain LayerRoPE and the combination. The β=−1 and β=−0.5 combinations are worse than plain mHC on that metric. These are reported initializations, not fixed final slopes or a confirmed universal beta choice.</p>
+<p><strong>Training time increased with mHC and full gains.</strong> Training 2,000 updates takes a mean 121.1 seconds for residuals, 615.0 for mHC and 786.8 for the β=0 combination, excluding validation, statistics, checkpoint writes and quantization. This portable reference implementation does not establish a wall-clock convergence advantage or the performance of optimized mHC kernels.</p>
+<h3 id="full-gain-asymmetric">Does mHC help unequal K/V precision?</h3>
+<p><strong>Adding mHC does not improve the K3/V3 → K3/V2 increment on average in this cohort.</strong> Plain mHC adds 0.035080 nats for that change versus 0.023511 for residuals, a +0.011568-nat difference, worse in all three pairs. Relative to plain LayerRoPE at the same beta, the combination adds +0.003901, +0.011470 and +0.010435 nats at β=−1, −0.5 and 0 respectively. The first is worse in two pairs; the other two are worse in all three. Three pairs remain descriptive.</p>
+<div class="scroll"><table><caption>All 32 attention layers use the stated cache quantizer. K3/V3 costs 3,584 ideal bytes/token; K3/V2 costs 3,072. The last columns give the smallest byte cost among all 51 cache cases with damage ≤0.1 nats from own clean in every seed. This engineering tolerance permits loss and does not mean unchanged quality.</caption><thead><tr><th scope="col">Row</th><th scope="col">Signed K3/V3 CE</th><th scope="col">Signed K3/V2 CE</th><th scope="col">Added CE: V3 → V2</th><th scope="col">Minimum passing bytes/token</th><th scope="col">Passing cases at that cost</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>2.777245</td><td>2.800756</td><td>+0.023511</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr><tr><th scope="row">mHC</th><td>2.704911</td><td>2.739991</td><td>+0.035080</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>2.803767</td><td>2.851465</td><td>+0.047699</td><td>3,072</td><td>Signed K3/V2</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>2.741834</td><td>2.766936</td><td>+0.025102</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>2.737756</td><td>2.760342</td><td>+0.022586</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>2.866413</td><td>2.918012</td><td>+0.051600</td><td>3,072</td><td>Signed K3/V2</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>2.733109</td><td>2.769681</td><td>+0.036572</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>2.687847</td><td>2.720868</td><td>+0.033021</td><td>3,072</td><td>Affine K2/V2, Signed K3/V2</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>Difference of the within-checkpoint K3/V3 → K3/V2 increments. Negative favors the candidate. Seed values are ordered 77311 / 77312 / 77313; three pairs are descriptive, without a confirmatory significance claim. Row-specific learning rates come from equal four-rate pilot budgets.</caption><thead><tr><th scope="col">Candidate minus baseline</th><th scope="col">Mean extra-damage difference</th><th scope="col">Paired differences (nats)</th><th scope="col">Lower-damage pairs</th></tr></thead><tbody><tr><th scope="row">mHC minus Residual</th><td>+0.011568</td><td>+0.011158 / +0.012547 / +0.010999</td><td>0/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0 minus LayerRoPE, β=−1.0</th><td>+0.003901</td><td>-0.003416 / +0.003844 / +0.011275</td><td>1/3</td></tr><tr><th scope="row">LayerRoPE, β=−1.0 minus Residual</th><td>+0.024187</td><td>+0.029909 / +0.024053 / +0.018601</td><td>0/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0 minus mHC</th><td>+0.016520</td><td>+0.015334 / +0.015349 / +0.018876</td><td>0/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5 minus LayerRoPE, β=−0.5</th><td>+0.011470</td><td>+0.004805 / +0.022659 / +0.006947</td><td>0/3</td></tr><tr><th scope="row">LayerRoPE, β=−0.5 minus Residual</th><td>+0.001590</td><td>+0.003253 / +0.002031 / -0.000513</td><td>1/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5 minus mHC</th><td>+0.001492</td><td>-0.003100 / +0.012142 / -0.004566</td><td>2/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0 minus LayerRoPE, β=0.0</th><td>+0.010435</td><td>+0.020322 / +0.005814 / +0.005169</td><td>0/3</td></tr><tr><th scope="row">LayerRoPE, β=0.0 minus Residual</th><td>-0.000926</td><td>-0.004202 / +0.002671 / -0.001247</td><td>2/3</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0 minus mHC</th><td>-0.002059</td><td>+0.004962 / -0.004062 / -0.007077</td><td>2/3</td></tr></tbody></table></div>
+<p>Absolute quantized quality can still be better: residual and mHC K3/V2 CE are 2.800756 and 2.739991 respectively, because mHC starts from lower clean CE. That does not reduce its extra damage from lowering values from three bits to two. Adding β=0 full gains to mHC slightly lowers that increment on average, 0.035080 → 0.033021, but it remains above plain β=0 LayerRoPE’s 0.022586. All eight rows reach 3,072 ideal bytes/token; neither mechanism enables a smaller tested allocation under the every-seed +0.1-nat rule. That rule permits up to about 10.5% higher perplexity, so it is not a no-quality-loss claim.</p>
+<div class="scroll"><table><caption>Floating cache formats: all-layer scaled E2M1 K4/V4 costs 4,608 ideal bytes/token; E4M3FN K8/V8 costs 8,704. Cells show mean own-clean CE damage and passing seeds at +0.1 nats. Both cost more than the measured 3,072-byte floor. Scale storage is included; tensors are dequantized to BF16 for computation.</caption><thead><tr><th scope="col">Row</th><th scope="col">FP4 K4/V4 damage</th><th scope="col">FP8 K8/V8 damage</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>+0.002329 (3/3)</td><td>+0.000116 (3/3)</td></tr><tr><th scope="row">mHC</th><td>+0.002380 (3/3)</td><td>+0.000098 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>+0.005847 (3/3)</td><td>+0.000215 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>+0.002305 (3/3)</td><td>+0.000057 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>+0.001851 (3/3)</td><td>-0.000004 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>+0.007276 (3/3)</td><td>+0.000355 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>+0.003190 (3/3)</td><td>+0.000196 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>+0.001831 (3/3)</td><td>+0.000151 (3/3)</td></tr></tbody></table></div>
+<h3 id="full-gain-floating">FP4 and FP8 depend on what is rounded</h3>
+<p>The β=0 combination reduces mean all-matrix FP4 damage relative to mHC, 0.068202 → 0.059087 nats, and block W4A4 damage, 0.030694 → 0.020300. mHC and the β=0 combination already pass the tested four-bit policy, so this does not establish a new precision level. FP4 is not uniformly better than matched INT4: both β=−1 full-gain rows pass all-matrix FP4 in only two seeds, while INT4 passes all three. All tested all-matrix FP8 rows pass the tolerance.</p>
+<div class="scroll"><table><caption>All seven 4-bit weight/input/residual policies. Each cell is mean own-clean CE damage in nats, followed by seeds within +0.1 nats. FP4 means scaled E2M1; INT uses the matched signed integer quantizer. Weight, input, residual and combined interventions run separately. These are dequantized simulations.</caption><thead><tr><th scope="col">Row</th><th scope="col">Block FP4 weights</th><th scope="col">All FP4 weights</th><th scope="col">Block inputs FP4</th><th scope="col">Residual states FP4</th><th scope="col">Block W4A4</th><th scope="col">Block INT4 weights</th><th scope="col">All INT4 weights</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>+0.00533 (3/3)</td><td>+0.06923 (3/3)</td><td>+0.03455 (3/3)</td><td>+1.07459 (0/3)</td><td>+0.04008 (3/3)</td><td>+0.00660 (3/3)</td><td>+0.06804 (3/3)</td></tr><tr><th scope="row">mHC</th><td>+0.00400 (3/3)</td><td>+0.06820 (3/3)</td><td>+0.02751 (3/3)</td><td>+0.18705 (0/3)</td><td>+0.03069 (3/3)</td><td>+0.00516 (3/3)</td><td>+0.06827 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>+0.00468 (3/3)</td><td>+0.09820 (2/3)</td><td>+0.02692 (3/3)</td><td>+0.55927 (0/3)</td><td>+0.03377 (3/3)</td><td>+0.00393 (3/3)</td><td>+0.07281 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>+0.00421 (3/3)</td><td>+0.07000 (3/3)</td><td>+0.02981 (3/3)</td><td>+1.89288 (0/3)</td><td>+0.03351 (3/3)</td><td>+0.00699 (3/3)</td><td>+0.07498 (2/3)</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>+0.00361 (3/3)</td><td>+0.05917 (3/3)</td><td>+0.03331 (3/3)</td><td>+2.56433 (0/3)</td><td>+0.03650 (3/3)</td><td>+0.00527 (3/3)</td><td>+0.09389 (2/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>+0.00615 (3/3)</td><td>+0.08144 (2/3)</td><td>+0.02801 (3/3)</td><td>+0.26177 (0/3)</td><td>+0.03593 (3/3)</td><td>+0.00655 (3/3)</td><td>+0.05245 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>+0.00457 (3/3)</td><td>+0.06176 (3/3)</td><td>+0.02940 (3/3)</td><td>+0.50631 (0/3)</td><td>+0.03407 (3/3)</td><td>+0.00600 (3/3)</td><td>+0.06970 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>+0.00340 (3/3)</td><td>+0.05909 (3/3)</td><td>+0.01624 (3/3)</td><td>+0.23462 (0/3)</td><td>+0.02030 (3/3)</td><td>+0.00326 (3/3)</td><td>+0.07576 (2/3)</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>All seven 8-bit weight/input/residual policies. Each cell is mean own-clean CE damage in nats, followed by seeds within +0.1 nats. FP8 means scaled E4M3FN; INT uses the matched signed integer quantizer. Weight, input, residual and combined interventions run separately. These are dequantized simulations.</caption><thead><tr><th scope="col">Row</th><th scope="col">Block FP8 weights</th><th scope="col">All FP8 weights</th><th scope="col">Block inputs FP8</th><th scope="col">Residual states FP8</th><th scope="col">Block W8A8</th><th scope="col">Block INT8 weights</th><th scope="col">All INT8 weights</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>+0.00049 (3/3)</td><td>+0.00329 (3/3)</td><td>+0.00095 (3/3)</td><td>+0.01463 (3/3)</td><td>+0.00134 (3/3)</td><td>-0.00012 (3/3)</td><td>+0.00008 (3/3)</td></tr><tr><th scope="row">mHC</th><td>+0.00019 (3/3)</td><td>+0.00274 (3/3)</td><td>+0.00061 (3/3)</td><td>+0.00511 (3/3)</td><td>+0.00104 (3/3)</td><td>-0.00003 (3/3)</td><td>+0.00019 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>+0.00007 (3/3)</td><td>+0.00275 (3/3)</td><td>+0.00059 (3/3)</td><td>+0.02300 (3/3)</td><td>+0.00078 (3/3)</td><td>-0.00005 (3/3)</td><td>+0.00004 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>+0.00010 (3/3)</td><td>+0.00234 (3/3)</td><td>+0.00065 (3/3)</td><td>+0.02735 (3/3)</td><td>+0.00062 (3/3)</td><td>-0.00002 (3/3)</td><td>+0.00019 (3/3)</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>-0.00031 (3/3)</td><td>+0.00208 (3/3)</td><td>+0.00067 (3/3)</td><td>+0.01870 (3/3)</td><td>+0.00044 (3/3)</td><td>+0.00000 (3/3)</td><td>+0.00022 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>+0.00016 (3/3)</td><td>+0.00209 (3/3)</td><td>+0.00065 (3/3)</td><td>+0.01757 (3/3)</td><td>+0.00077 (3/3)</td><td>+0.00004 (3/3)</td><td>+0.00011 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>+0.00014 (3/3)</td><td>+0.00329 (3/3)</td><td>+0.00065 (3/3)</td><td>+0.01304 (3/3)</td><td>+0.00073 (3/3)</td><td>+0.00007 (3/3)</td><td>+0.00049 (3/3)</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>+0.00011 (3/3)</td><td>+0.00172 (3/3)</td><td>+0.00039 (3/3)</td><td>+0.00429 (3/3)</td><td>+0.00056 (3/3)</td><td>+0.00005 (3/3)</td><td>-0.00011 (3/3)</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>Ideal whole-model parameter storage includes selected matrix payloads, one FP32 scale per final-axis vector and untouched FP32 parameters. All-matrix scope covers backbone embedding/linear weights; routing, norm and gain parameters remain outside the rounded scope. There is no physical packing or serving-memory measurement.</caption><thead><tr><th scope="col">Row</th><th scope="col">Block weight coverage</th><th scope="col">All-matrix weight coverage</th><th scope="col">Block FP4 total bytes</th><th scope="col">All FP4 total bytes</th><th scope="col">All FP8 total bytes</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>33.28%</td><td>99.96%</td><td>54,879,744</td><td>10,251,528</td><td>19,895,688</td></tr><tr><th scope="row">mHC</th><td>31.92%</td><td>95.88%</td><td>58,163,456</td><td>13,535,240</td><td>23,179,400</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>33.30%</td><td>100.00%</td><td>54,849,088</td><td>10,220,872</td><td>19,865,032</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>33.30%</td><td>100.00%</td><td>54,849,088</td><td>10,220,872</td><td>19,865,032</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>33.30%</td><td>100.00%</td><td>54,849,088</td><td>10,220,872</td><td>19,865,032</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>31.94%</td><td>95.91%</td><td>58,132,800</td><td>13,504,584</td><td>23,148,744</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>31.94%</td><td>95.91%</td><td>58,132,800</td><td>13,504,584</td><td>23,148,744</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>31.94%</td><td>95.91%</td><td>58,132,800</td><td>13,504,584</td><td>23,148,744</td></tr></tbody></table></div>
+<p>Repeated residual-state rounding is a separate intervention. No row passes residual FP4 at +0.1 nats in every seed; every row passes residual FP8. Plain mHC has less residual FP4 damage than residuals, 0.187054 versus 1.074587 nats, but still fails the tolerance. Adding full gains to mHC increases that damage at every tested initialization on average. Weight and block-input rounding therefore cannot stand in for residual-state or cache rounding.</p>
+<h3 id="full-gain-distributions">Magnitude changed; larger variance was not a general benefit</h3>
+<p>Negative beta initializations do not produce a consistent increase in final residual variance here. Plain LayerRoPE at β=−1 has final-layer variances near 5.2–5.6 versus roughly 2,336–2,695 for residuals. At β=0 the plain LayerRoPE seeds vary widely, so a single average would hide the spread. The β=0 combination has variances near 15–21, below mHC’s roughly 1,427–1,705. These measurements concern the fixed batch and final checkpoint, not all possible inputs.</p>
+<div class="scroll"><table><caption>Fixed eight-window batch (8×256 tokens), final layer after the MLP update, before final normalization. Variance values are the three individual seeds. Unaveraged mHC statistics pool all retained streams; collapsed means are separate. Relative MSE divides numerical rounding MSE by RMS². A single-site statistic is not the loss from repeatedly rounding the residual state throughout the network.</caption><thead><tr><th scope="col">Row</th><th scope="col">Unaveraged variance by seed</th><th scope="col">Collapsed-mean variance by seed</th><th scope="col">Mean relative FP4 MSE</th><th scope="col">Mean relative FP8 MSE</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>2459 / 2695 / 2336</td><td>single stream</td><td>0.01639</td><td>0.000592</td></tr><tr><th scope="row">mHC</th><td>1669 / 1705 / 1427</td><td>1668 / 1702 / 1426</td><td>0.01630</td><td>0.000591</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>5.583 / 5.191 / 5.359</td><td>single stream</td><td>0.02251</td><td>0.000515</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>32.07 / 32.39 / 259.1</td><td>single stream</td><td>0.02228</td><td>0.000524</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>1.587e+04 / 10.43 / 6.799</td><td>single stream</td><td>0.02297</td><td>0.000510</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>5.523 / 5.431 / 5.43</td><td>5.523 / 5.431 / 5.43</td><td>0.01686</td><td>0.000584</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>49.75 / 55.96 / 288.4</td><td>49.75 / 55.95 / 288.4</td><td>0.02361</td><td>0.000503</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>21.02 / 20.45 / 15.13</td><td>21.01 / 20.42 / 15.12</td><td>0.02038</td><td>0.000541</td></tr></tbody></table></div>
+<div class="scroll"><table><caption>Final block matrices: attention pools its 128 projection matrices and MLP pools its 96 matrices, weighted by element count within each seed; values shown are means over three seeds. Relative FP4 MSE uses total squared signal as denominator. Learned weight magnitude is not isolated from the row-specific learning rate.</caption><thead><tr><th scope="col">Row</th><th scope="col">Attention weight RMS</th><th scope="col">MLP weight RMS</th><th scope="col">Attention relative FP4 MSE</th><th scope="col">MLP relative FP4 MSE</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>0.10579</td><td>0.10793</td><td>0.01186</td><td>0.01232</td></tr><tr><th scope="row">mHC</th><td>0.11040</td><td>0.11901</td><td>0.01183</td><td>0.01216</td></tr><tr><th scope="row">LayerRoPE, β=−1.0</th><td>0.35733</td><td>0.35708</td><td>0.01192</td><td>0.01245</td></tr><tr><th scope="row">LayerRoPE, β=−0.5</th><td>0.41218</td><td>0.40907</td><td>0.01192</td><td>0.01234</td></tr><tr><th scope="row">LayerRoPE, β=0.0</th><td>0.38805</td><td>0.35035</td><td>0.01192</td><td>0.01250</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−1.0</th><td>0.12262</td><td>0.13236</td><td>0.01182</td><td>0.01220</td></tr><tr><th scope="row">mHC + LayerRoPE, β=−0.5</th><td>0.41572</td><td>0.40725</td><td>0.01188</td><td>0.01228</td></tr><tr><th scope="row">mHC + LayerRoPE, β=0.0</th><td>0.39519</td><td>0.39012</td><td>0.01189</td><td>0.01219</td></tr></tbody></table></div>
+<p>Attention and MLP weight magnitudes also change, but relative FP4 weight error stays close across rows. The selected learning rate is an alternative explanation for part of the weight-magnitude difference: most full-gain rows use 0.01 while the residual/mHC controls use 0.003. The comparison measures equally tuned model families, not a fixed-learning-rate causal estimate of LayerRoPE alone. Per-vector absmax scales absorb a uniform amplitude change, so larger variance by itself is not a compression benefit.</p>
+<p><strong>The effects depend on which tensor is rounded.</strong> Full gains at β=0 give a useful clean-learning signal in this small language-model screen. They do not lower the tested KV-cache byte floor, make adding mHC reduce the K3/V3 → K3/V2 increment on average, or produce a qualified MNIST suppression candidate. All beta rows and all floating/integer scopes are retained. Magnitude-only, rotation-only and isolated output-gain ablations, larger models, longer contexts, block-scaled NVFP4 and packed-kernel performance remain outside this test.</p>
+</section><section id="reproduce"><h2>Reproduce training, weight rounding and KV-cache tests</h2>
 <p>The existing aggregate route downloads pinned public TinyStories data, runs the initial depth screen and the fixed seven-row confirmation, then evaluates cache rounding on each cohort’s saved final checkpoints. The depth and confirmation presets also include their own cache follow-up. They retain separate evaluation arrays and reports.</p>
 <pre>make defconfig-layerrope-mhc-tinystories
 make</pre>
 <p>Run the bounded CPU cache smoke preset first. It checks the real quantizers, cached attention, checkpoint loading and report path on synthetic tokens; it cannot issue a scientific verdict.</p>
 <pre>make defconfig-layerrope-mhc-tinystories-kv-cache-smoke
 make</pre>
-<p>The existing presets now sweep the complete 49-setting K/V grid and report byte/damage frontiers. The existing presets now sweep the complete 49-setting K/V grid and report byte/damage frontiers. To reuse completed runs without training again, select the cache-only preset and set one or both saved top-level run directories in <code>make menuconfig</code>, or pass them to Make:</p>
+<p>The existing presets sweep the complete 49-setting K/V grid and report byte/damage frontiers. To reuse completed runs without training again, select the cache-only preset and set one or both saved top-level run directories in <code>make menuconfig</code>, or pass them to Make:</p>
 <pre>make defconfig-layerrope-mhc-tinystories-kv-cache
 make CONFIG_RESIDUAL_CACHE_DEPTH_RUN=/path/to/depth-run \
      CONFIG_RESIDUAL_CACHE_CONFIRMATION_RUN=/path/to/confirmation-run</pre>
 <p>Each saved directory must retain its data, checkpoint receipts and checkpoint paths. The script validates the fixed seed sets, update counts, paired depth-cohort initialization and recipes, dataset hashes and checkpoint hashes. Missing or changed inputs stop the run. The cache-only route needs one caller-selected device; the full confirmation training recipe still needs two H100 GPUs and its pinned runtime.</p>
+<p>The clean GSM8K sanity preset reuses the saved depth cohort without training. It downloads the pinned official test file and GPT-2 tokenizer, checks checkpoint identities, and records every prompt, generated continuation and answer score outside the checkout. It evaluates only the first 16 questions and one 32-layer seed.</p>
+<pre>make defconfig-layerrope-mhc-tinystories-gsm8k
+make CONFIG_RESIDUAL_CACHE_DEPTH_RUN=/path/to/depth-run</pre>
+<p>The new full-gain beta follow-up has a CPU synthetic smoke preset and a separate full preset for an existing two-H100 allocation. The latter runs GPU numerical checks and disposable timing probes before measured training; neither preset rents a server.</p>
+<pre>make defconfig-layerrope-mhc-beta-smoke
+make
+
+make defconfig-layerrope-mhc-beta
+make CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/runs \
+     CONFIG_RESIDUAL_CHECKPOINT_DIR=/path/to/checkpoints</pre>
 <p>Install dependencies and select your runtime using <a href="https://github.com/mcgrof/knlp/blob/main/research/reproduction/README.md">the reproduction guide</a>. Configure external data, checkpoint and output directories, the device, CPU interpreter and time limit with <code>make menuconfig</code>. Each run writes its effective configuration, per-seed results and incomplete status outside the source checkout. Generated JSON, checkpoints, logs and raw artifacts are local experiment output; they are not part of knlp or this page.</p>
-<p>Thirteen cache cases start from each unchanged checkpoint: clean, symmetric and affine K/V at 8/4/3/2 bits, and four K/V attribution controls. Report own-clean damage, absolute CE, per-seed pass counts and ideal cache bytes including metadata. The three-seed cohort is descriptive; the eight-seed primary comparisons retain the paired sign tests and Holm correction. The existing general TinyStories smoke also includes the new cache checks. Set <code>RESIDUAL_KV_CACHE=n</code> to run a training recipe without its cache follow-up.</p></section><section id="references"><h2>References</h2><ol class="refs"><li><a href="https://arxiv.org/pdf/2610.09179v1">Srivastava &amp; Kanan — LayerRoPE: Dynamic Depth-wise Magnitude &amp; Angular Superposition</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2512.24880v2">Xie et al. — mHC: Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/mhc-manifold-constrained-hyper-connections-stabilize-wider-residual-streams/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2409.19606v3">Zhu et al. — Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/hyper-connections-learning-residual-strengths-for-faster-transformer-training/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2610.06653v1">Li, Sha &amp; Yang — Birkhoff Geometry of Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/birkhoff-geometry-of-manifold-constrained-hyper-connections-width-fades-with-dep/">Audio Summary</a>).</li></ol></section></main><footer>knlp · Methods, results, and conclusions</footer><script>
+<p>Forty-nine cache cases start from each unchanged checkpoint: clean and the full K/V Cartesian grid at 16/8/4/3/2 bits for both signed and affine quantizers. Report own-clean damage, absolute CE, per-seed pass counts and ideal cache bytes including metadata. The three-seed cohort is descriptive; the eight-seed primary comparisons retain the paired sign tests and Holm correction. The existing general TinyStories smoke also includes the new cache checks. Set <code>RESIDUAL_KV_CACHE=n</code> to run a training recipe without its cache follow-up.</p></section><section id="references"><h2>References</h2><ol class="refs"><li><a href="https://arxiv.org/pdf/2610.09179v1">Srivastava &amp; Kanan — LayerRoPE: Dynamic Depth-wise Magnitude &amp; Angular Superposition</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2512.24880v2">Xie et al. — mHC: Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/mhc-manifold-constrained-hyper-connections-stabilize-wider-residual-streams/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2409.19606v3">Zhu et al. — Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/hyper-connections-learning-residual-strengths-for-faster-transformer-training/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2610.06653v1">Li, Sha &amp; Yang — Birkhoff Geometry of Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/birkhoff-geometry-of-manifold-constrained-hyper-connections-width-fades-with-dep/">Audio Summary</a>).</li></ol></section></main><footer>knlp · Methods, results, and conclusions</footer><script>
 'use strict';
 const selector=document.getElementById('quant-case');
 selector.addEventListener('change',()=>{

@@ -76,7 +76,7 @@ config SUBLIMINAL_ARCH
 
 config SUBLIMINAL_LAYERROPE
 	bool "Generate block pre-LayerNorm gains with LayerRoPE"
-	depends on SUBLIMINAL_ARCH_RESIDUAL_MLP || SUBLIMINAL_ARCH_HC || SUBLIMINAL_ARCH_HC_STATIC
+	depends on SUBLIMINAL_ARCH_RESIDUAL_MLP || SUBLIMINAL_ARCH_HC || SUBLIMINAL_ARCH_HC_STATIC || SUBLIMINAL_ARCH_MHC
 	default n
 	help
 	  Vision-model adaptation of arXiv:2610.09179: rotate and scale
@@ -87,6 +87,15 @@ config SUBLIMINAL_LAYERROPE
 config SUBLIMINAL_LAYERROPE_BASE
 	string "LayerRoPE frequency base"
 	default "100.0"
+
+config SUBLIMINAL_LAYERROPE_OUTPUT_GAIN
+	bool "Apply an independent LayerRoPE gain to the MLP output"
+	depends on SUBLIMINAL_LAYERROPE
+	default n
+	help
+	  Apply the write gain directly before the residual or routed update,
+	  without adding output normalization. Both gain sites retain their own
+	  shared vector and trainable magnitude/rotation schedule parameters.
 
 config SUBLIMINAL_LAYERROPE_MAG_SLOPE
 	string "Initial LayerRoPE log-magnitude depth slope"

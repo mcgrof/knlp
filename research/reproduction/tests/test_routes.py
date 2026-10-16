@@ -20,6 +20,9 @@ PRESETS = (
     "layerrope-mhc-tinystories-smoke",
     "layerrope-mhc-tinystories-kv-cache",
     "layerrope-mhc-tinystories-kv-cache-smoke",
+    "layerrope-mhc-tinystories-gsm8k",
+    "layerrope-mhc-beta",
+    "layerrope-mhc-beta-smoke",
 )
 
 
@@ -137,6 +140,7 @@ def test_make_overrides_are_in_the_effective_plan(tmp_path):
     result = subprocess.run(
         [
             "make",
+            "--no-print-directory",
             "residual-plan",
             "PYTHON=" + sys.executable,
             "CONFIG_RESIDUAL_OUTPUT_DIR=" + str(tmp_path / "output"),
