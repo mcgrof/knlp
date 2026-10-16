@@ -3,7 +3,7 @@
 **Rapid prototyping and automation for open source ML R&D**
 
 <p align="center">
-  <img src="images/knlp-logo.png" alt="knlp logo" width="400">
+  <img src="images/knlp-logo.png" alt="knlp logo: bridge, surfboard and waves" width="400" height="400">
 </p>
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
