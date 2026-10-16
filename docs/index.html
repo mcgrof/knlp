@@ -63,6 +63,14 @@
           <div class="site-card-links"><a href="https://github.com/LMCache/LMCache/issues/5816">LMCache RFC #5816</a><a href="pd-disaggregation.html">PD disaggregation</a><a href="io-uring-dmabuf.html#reproduce">Reproduce</a></div>
         </article>
         <article class="site-card">
+          <div class="site-card-kicker">Memory · storage · reproducibility</div>
+          <h3><a href="kvtide.html">KVTide</a></h3>
+          <div class="site-stage"><span class="site-stage-badge tooling">Benchmark tooling</span><span>Memory &amp; storage tiering · comparison</span></div>
+          <p>A reproducible I/O harness for tiered KV caches. Compare software NVMe-KV, physical storage and GPU transfer paths.</p>
+          <p class="site-card-progress"><strong>Direction</strong>Bring emerging memory and storage tiering ideas from SPDK, DMA-BUF and AISIO into a common framework for evaluation.</p>
+          <div class="site-card-links"><a href="kvtide.html">Bench harness</a><a href="https://spdk.io/">SPDK</a><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a><a href="https://xnvme.io/aisio/">AISIO upstream</a><a href="kdevops.html">Run with kdevops</a></div>
+        </article>
+        <article class="site-card">
           <div class="site-card-kicker">LMCache · vLLM · storage</div>
           <h3><a href="spf.html">Speculative prefetching</a></h3>
           <div class="site-stage"><span class="site-stage-badge evaluation">Re-evaluating</span><span>GPU ↔ NVMe · prefetch policy</span></div>
@@ -71,18 +79,12 @@
           <div class="site-card-links"><a href="spf.html#gpu-direct">Re-evaluation</a><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a><a href="spf.html#original-results">Earlier findings</a></div>
         </article>
         <article class="site-card">
-          <div class="site-card-kicker">Storage · reproducibility</div>
-          <h3><a href="kvtide.html">KVTide</a></h3>
-          <div class="site-stage"><span class="site-stage-badge tooling">Benchmark tooling</span><span>Storage paths · comparison</span></div>
-          <p>A reproducible storage I/O harness for tiered KV caches. Compare software NVMe-KV, physical storage and GPU transfer paths.</p>
-          <div class="site-card-links"><a href="kvtide.html">Bench harness</a><a href="kdevops.html">Run with kdevops</a></div>
-        </article>
-        <article class="site-card">
           <div class="site-card-kicker">Shared inference state</div>
           <h3><a href="kmesh.html">KMesh</a></h3>
           <div class="site-stage"><span class="site-stage-badge evaluation">Prototype evaluation</span><span>Keyed state · collective reuse</span></div>
-          <p>Sharing keyed inference state across agentic and test-time-scaled workloads. Explore the cache identity, reuse and serving architecture.</p>
-          <div class="site-card-links"><a href="kmesh.html">Architecture</a><a href="prefix-integrity-analysis.html">Reuse contracts</a></div>
+          <p>Builds on the speculative-prefetching work in vLLM. KMesh extends the reuse signal from learned prefix caches toward test-time scaling for agentic workflows and chain-of-thought reasoning.</p>
+          <p class="site-card-progress"><strong>Research direction</strong>Use known context and branch relationships to coordinate state reuse and prefetching across related requests.</p>
+          <div class="site-card-links"><a href="kmesh.html">Architecture</a><a href="spf.html">Speculative Prefetching</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="prefix-integrity-analysis.html">Reuse contracts</a></div>
         </article>
       </div>
     </section>
