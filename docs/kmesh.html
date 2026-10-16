@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh investigates explicit state relationships for sharing inference state, starting with a correctness-first TokenDance-style baseline in vLLM.">
+<meta name="description" content="KMesh investigates shared inference state: a TokenDance-style recovery baseline and reproducible exact-prefix reasoning fork accounting in vLLM.">
 <title>KMesh: Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</title>
 <style>
 :root {
@@ -91,13 +91,14 @@ footer a { color: var(--muted); }
     <a href="#milestone">first milestone</a>
     <a href="#reproduce">reproduce</a>
     <a href="#results">results</a>
+    <a href="#fork-accounting">reasoning forks</a>
     <a href="#papers">papers</a>
     <a href="io-uring-dmabuf.html">storage interface</a>
   </nav>
 </header>
 <main id="content">
 <div class="hero">
-  <span class="eyebrow">Inference systems · TokenDance-style baseline</span>
+  <span class="eyebrow">Inference systems · Recovery and exact-prefix forks</span>
   <h1>KMesh</h1>
   <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
   <p class="lead">Request-centric inference execution flattens round, segment, branch, and
@@ -129,7 +130,8 @@ footer a { color: var(--muted); }
   <a href="#baseline">6. The baseline we implement</a>
   <a href="#reproduce">7. Reproduce the baseline</a>
   <a href="#results">8. Results and limits</a>
-  <a href="#papers">9. Papers</a>
+  <a href="#fork-accounting">9. Do reasoning forks need a new memory manager?</a>
+  <a href="#papers">10. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -437,8 +439,88 @@ end-to-end storage-offload result is established. This small-model synthetic
 baseline is not the paper's larger-model, real-agent workload evaluation.</div>
 </section>
 
+<section id="fork-accounting">
+<h2>9. Do reasoning forks need a new memory manager?</h2>
+<p>The next question after the recovery baseline is simpler: could explicit
+tree ownership save KV-cache blocks during test-time scaling? Here a child is
+its parent's <em>exact</em> token sequence plus an independent tail. A common
+suffix after different private histories is a different causal context and
+cannot establish exact sharing.</p>
+<p><strong>Measured on 2026-10-16:</strong> stock vLLM automatic prefix caching
+already reaches the fork-oracle block count in the tested trees while the
+ancestor remains cached. The experiment drives the real
+<code>KVCacheManager</code> on CPU and records actual block IDs. It treats
+allocation as completed prefill, without a model, scheduler, KV tensors or GPU.
+The complete five-tree matrix and six eviction points match the archived
+experiment. This is the allocator check; serving replay comes separately.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Primary fork tree</th><th scope="col">Written blocks</th><th scope="col">Peak pool usage</th><th scope="col">Failed admissions</th></tr>
+<tr><td class="hi">Concurrent siblings, prefix cache on</td><td>416</td><td>417</td><td>0</td></tr>
+<tr><td class="hi">Concurrent siblings, prefix cache off</td><td>1,696</td><td>1,441</td><td>0</td></tr>
+<tr><td class="hi">520-block pool, prefix cache on</td><td>416</td><td>417</td><td>0</td></tr>
+<tr><td class="hi">520-block pool, prefix cache off</td><td>544</td><td>289</td><td>4</td></tr>
+</table>
+</div>
+<p>The primary tree has a 4,096-token ancestor and five 512-token tails, using
+16-token blocks. Sharing needs 256 ancestor blocks + 5 &times; 32 tail blocks
+= 416. Independent root-to-leaf copies write 256 + 5 &times; 288 = 1,696 blocks
+over the tree lifetime. Written blocks accumulate simulated prefill work;
+peak pool usage measures allocator metadata at one instant, including the
+reserved null block. The parent is freed before its children arrive. Four
+failed admissions explain the smaller write count in the uncached pressure
+control.</p>
+<p>Non-aligned forks also reach their block oracle. A 4,101-token ancestor
+with five 509-token tails writes 422 blocks but recomputes five ancestor
+boundary tokens per child, 25 total. An explicit fork could clone that partial
+block; the tested capacity is the same. Tests check that full ancestor block
+IDs alias while sibling writable tails remain private.</p>
+<p>Eviction exposes a separate cost. After unrelated traffic churns a
+1,024-block pool, churn fractions 0, 0.25 and 0.50 preserve all 4,096 ancestor
+tokens for all five children. At 0.75, the first child hits 4,080 tokens and
+the next four hit 4,096. At 1.00 and 1.50, the first child misses the ancestor
+entirely and the next four hit fully. In this metadata admission sequence,
+the first child's simulated prefill repopulates the lost blocks. This does
+not establish a universal bound under interleaved traffic or preemption.</p>
+
+<h3>Reproduce this allocator check</h3>
+<p>The
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md">fork-accounting README</a>
+documents the complete runtime prerequisites and verification. Its
+<a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-fork-accounting">dated vLLM branch</a>
+extends the published TokenDance source, retaining upstream base
+<code>454ea5b52611</code>. Only the benchmark, tests and usage documentation
+change. LMCache remains at its published baseline pin.</p>
+<pre><code>make defconfig-kmesh-fork-accounting
+make kmesh-fork-plan
+make kmesh-fork-test
+
+git clone --single-branch --branch 2026-10-16-feature-kmesh-fork-accounting \
+  https://github.com/mcgrof/vllm.git ../vllm-kmesh-forks
+git -C ../vllm-kmesh-forks checkout --detach 5ccaa1456af6d2c08fbb39e6c7bc4480df445d07
+
+KMESH_FORK_VLLM_SOURCE=/path/to/vllm-kmesh-forks \
+KMESH_FORK_RUNTIME_VOLUME=prepared-runtime-volume \
+KMESH_FORK_OUTPUT=/path/to/fresh-fork-results \
+make</code></pre>
+<p>The runner requires the pinned prepared native environment; it does not
+install dependencies. It authenticates clean source identity and runtime
+versions, disables network access, mounts no GPU devices, and independently
+verifies the complete output. Seed <code>20260805</code> preserves the original
+workload despite the new commit dates. Python 3.12.13, PyTorch
+<code>2.11.0+gitd0c8b1f</code> and two OpenMP threads were used. The
+<a href="data/kmesh-fork-accounting.json">full CPU counter capture</a> includes
+the observed block tables; the README links exact source and runtime pins.</p>
+<div class="note"><strong>Shared capacity does not imply shared attention reads.</strong>
+These counters narrow the case for replacing the allocator in exact-prefix
+forks. They do not measure model quality, serving speed, attention traffic,
+GPU memory allocation or storage offload. Byte fields project model geometry;
+no corresponding KV tensors are allocated. Cascade attention, proactive
+retention, external caching and DMA-BUF remain separate questions.</div>
+</section>
+
 <section id="papers">
-<h2>9. Papers</h2>
+<h2>10. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
