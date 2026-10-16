@@ -1,0 +1,11 @@
+# Run all eight GPU cases and the independent numerical/ownership verifier.
+# Supply the dated component checkouts, pinned runtime volume and model snapshot.
+# Run plain make on an available GPU to execute the experiment.
+CONFIG_KNLP_REPRODUCE_TOKENDANCE=y
+CONFIG_KNLP_TOKENDANCE_MODE="gpu"
+CONFIG_KNLP_TOKENDANCE_OUTPUT="results/tokendance-rocm"
+CONFIG_KNLP_TOKENDANCE_VLLM_SOURCE=""
+CONFIG_KNLP_TOKENDANCE_LMCACHE_SOURCE=""
+CONFIG_KNLP_TOKENDANCE_RUNTIME_VOLUME=""
+CONFIG_KNLP_TOKENDANCE_MODEL_DIR=""
+CONFIG_KNLP_TOKENDANCE_DOCKER="docker"
