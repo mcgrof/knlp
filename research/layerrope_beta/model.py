@@ -23,10 +23,12 @@ class Model(Backbone):
                     getattr(rope, site + "_beta_rot").fill_(beta)
         self.observer = None
         self.residual_bits = None
+        self.routing_observation = None
 
     def track(self, state, pre, post, carry):
-        # Distribution measurements run on fixed evaluation batches, off the training path.
-        return None
+        # Observe actual carry maps only when a caller supplies an observer.
+        if self.routing_observation is not None:
+            self.routing_observation.add(state, pre, post, carry)
 
     def tap(self, layer, site, state):
         if self.residual_bits is not None and site.startswith("post_"):
@@ -68,6 +70,7 @@ class Model(Backbone):
                 else:
                     with torch.autocast(device_type=h.device.type, enabled=False):
                         h = mhc.mhc_post_ref(branch, h, post, carry)
+                    self.track(h, pre, post, carry)
                 h = self.tap(layer, "post_" + site, h)
         if self.routes is not None:
             h = h.float().mean(-2).bfloat16()
