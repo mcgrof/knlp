@@ -1,5 +1,6 @@
 # Python cache
 .cache/google-muvera/
+.cache/io-uring-dmabuf/
 __pycache__/
 *.pyc
 *.pyo

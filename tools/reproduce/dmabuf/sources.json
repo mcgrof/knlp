@@ -1,0 +1,18 @@
+{
+  "linux": {
+    "url": "https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git",
+    "commit": "856b6583ab2f4581e81670845eadb69de7a68b30"
+  },
+  "lmcache": {
+    "url": "https://github.com/mcgrof/LMCache.git",
+    "commit": "b8845f7c2205e98ca5efaf541a59855d1535f354"
+  },
+  "nixl": {
+    "url": "https://github.com/mcgrof/nixl.git",
+    "commit": "711dcb4dacd70a09e4aaf13da6510208c71facc0"
+  },
+  "vllm": {
+    "url": "https://github.com/mcgrof/vllm.git",
+    "commit": "2697fd5ead43221308e923672697888e6ccfd793"
+  }
+}

@@ -1,0 +1,11 @@
+# Pinned io_uring DMA-BUF kernel and LMCache validation workflow.
+# Plain make prints the plan. Build, install and tests are explicit targets.
+CONFIG_KNLP_DMABUF=y
+CONFIG_KNLP_DMABUF_WORKDIR=".cache/io-uring-dmabuf"
+CONFIG_KNLP_DMABUF_BASE_CONFIG=""
+CONFIG_KNLP_DMABUF_JOBS=4
+CONFIG_KNLP_DMABUF_SCRATCH=""
+CONFIG_KNLP_DMABUF_EXPORTER="sysheap"
+CONFIG_KNLP_DMABUF_GPU_PROVIDER="native"
+CONFIG_KNLP_DMABUF_GPU=""
+CONFIG_KNLP_DMABUF_NVME=""

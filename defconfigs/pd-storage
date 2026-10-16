@@ -1,0 +1,4 @@
+# Current storage P/D contracts share the pinned DMA-BUF source workflow.
+# Plain make prints the plan. CPU tests and receipt checks are explicit.
+CONFIG_KNLP_DMABUF=y
+CONFIG_KNLP_DMABUF_WORKDIR=".cache/io-uring-dmabuf"
