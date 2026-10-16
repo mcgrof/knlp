@@ -182,3 +182,9 @@ Route observation joins qualification requests to the actual scheduler.
 These hooks run outside serving timing. The worker receipt reports allocated
 workspace capacity separately from its active page payload and retains
 storage pointers so cross-layer reuse can be checked.
+
+The weight observer also accepts an explicit `fp16` weight format. That path
+requires unpacked FP16 parameters, 144 unquantized linear modules and two
+unquantized embedding modules. It verifies matrix-multiply dispatch separately
+from cache precision and rejects packed weight kernels. This loader check does
+not by itself qualify a new checkpoint's cache scales or model quality.

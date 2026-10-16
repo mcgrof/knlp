@@ -196,6 +196,12 @@ def native_memory_state(worker):
 def configure(model, scales, arm, trace_dir, packed_expectation=None):
     selected = []
     packed = []
+    fp16 = (packed_expectation or {}).get("format") == "fp16"
+    weights = None
+    if fp16:
+        from .weights import inspect_fp16_weights
+
+        weights = inspect_fp16_weights(model)
     for name, module in model.named_modules():
         if hasattr(module, "qweight"):
             if module.qweight.dtype != torch.int32:
@@ -244,7 +250,7 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
                     ),
                 }
             )
-    if len(selected) != 36 or len(packed) != 144:
+    if len(selected) != 36 or (not fp16 and len(packed) != 144):
         raise RuntimeError("native packed attention inventory is incomplete")
     expected = packed_expectation or {
         "method": "AWQLinearMethod",
@@ -259,12 +265,16 @@ def configure(model, scales, arm, trace_dir, packed_expectation=None):
             raise RuntimeError(
                 "native packed AWQ implementation differs from frozen expectation"
             )
-    model._study_packed_dispatch_marker = expected["dispatch_marker"]
+    model._study_packed_dispatch_marker = (
+        weights["dispatch_marker"] if fp16 else expected["dispatch_marker"]
+    )
+    model._study_weight_format = "fp16" if fp16 else "awq"
     save(
         Path(trace_dir) / "installed.json",
         {
             "layers": selected,
             "packed": packed,
+            "weights": weights,
             "allocated": torch.cuda.memory_allocated(),
             "reserved": torch.cuda.memory_reserved(),
         },
@@ -335,9 +345,24 @@ def finish_profile(model, trace_dir):
         model._study_packed_dispatch_marker.lower() in name.lower() for name in events
     )
     if not matched:
-        raise RuntimeError("native model-specific packed AWQ kernel missing")
+        raise RuntimeError("native model-specific weight dispatch missing")
+    if model._study_weight_format == "fp16":
+        from .weights import fp16_dispatch_from_trace
+
+        trace_path = Path(trace_dir) / "weight-dispatch.trace.json"
+        model._study_profiler.export_chrome_trace(str(trace_path))
+        if any("machete" in x.lower() or "4bit" in x.lower() for x in events):
+            raise RuntimeError("FP16 profile contains packed weight dispatch")
+        receipt = fp16_dispatch_from_trace(json.loads(trace_path.read_text()))
+        save(Path(trace_dir) / "fp16-kernel-dispatch.json", receipt)
     model._study_profiler = None
-    return {"packed_awq_dispatch": matched}
+    return {
+        (
+            "fp16_dispatch"
+            if model._study_weight_format == "fp16"
+            else "packed_awq_dispatch"
+        ): matched
+    }
 
 
 def stage_teacher(model, study):
