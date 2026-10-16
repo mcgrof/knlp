@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIM-guided R&amp;D — gradient statistics as a research signal | knlp</title>
+  <meta name="description" content="The knlp collection of Fisher-information-guided pruning, weight quantization, KV compression, memory placement, and graph experiments.">
+  <link rel="stylesheet" href="assets/knlp.css">
+</head>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav"><a class="site-brand" href="index.html" aria-label="knlp home">knlp</a><nav class="site-nav-links" aria-label="Main navigation"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a><a href="https://github.com/mcgrof/knlp">GitHub ↗</a></nav></header>
+  <main id="main" class="site-wrap">
+    <section class="site-hero" aria-labelledby="intro-title">
+      <p class="site-eyebrow">AI R&amp;D · Fisher information</p>
+      <h1 id="intro-title">One signal.<br><span class="site-gradient">Several research questions.</span></h1>
+      <p class="site-lead">The diagonal Fisher Information Matrix (FIM) uses expected squared gradients as a sensitivity signal. These experiments explore how that signal can guide pruning, precision and placement, including estimates drawn from Adam’s second-moment state.</p>
+      <div class="site-actions"><a class="site-button primary" href="fisher_adam.html">Explore the signal ↗</a><a class="site-button" href="https://arxiv.org/abs/2507.18807">Squisher paper ↗</a></div>
+    </section>
+    <section class="site-section research" aria-labelledby="studies-title">
+      <div class="site-section-head"><div><span class="site-section-label">Experiments &amp; mechanisms</span><h2 id="studies-title">Follow the applications</h2></div><p>A shared statistic does not imply a shared outcome. Each study defines its own model, baseline and measured result.</p></div>
+      <div class="site-grid">
+        <article class="site-card"><div class="site-card-kicker">Pruning</div><h3><a href="fisher_adam.html">Adam state-based pruning</a></h3><p>Use weight magnitude and the optimizer’s second moment to rank parameters. Compare the bitter7 scoring rule with magnitude pruning.</p><div class="site-card-links"><a href="https://github.com/mcgrof/knlp/blob/main/docs/adamwprune_variants.md">Methods</a><a href="https://github.com/mcgrof/knlp/blob/main/docs/bitter7_math.md">Math</a></div></article>
+        <article class="site-card"><div class="site-card-kicker">Weight precision</div><h3><a href="fim_quantization.html">FIM-guided quantization</a></h3><p>Study which weights need more precision. The sensitivity of a weight projection and the sensitivity of its cached activations are separate questions.</p><div class="site-card-links"><a href="https://github.com/mcgrof/knlp/blob/main/docs/mobile-weight-packing.md">Weight-packing study</a></div></article>
+        <article class="site-card"><div class="site-card-kicker">Latent cache compression</div><h3><a href="kvsplice.html">KVSplice</a></h3><p>Explore Fisher-guided compression on top of Multi-head Latent Attention, with quality and compression evaluated together.</p><div class="site-card-links"><a href="https://github.com/mcgrof/knlp/blob/main/docs/kvsplice/README.md">Methods &amp; results</a></div></article>
+        <article class="site-card"><div class="site-card-kicker">Attention mechanisms</div><h3><a href="ra.html">Reciprocal attention</a></h3><p>Learn a mixture of forward and reciprocal attention. Small-scale gains did not survive the matched larger training comparisons; the closed study explains the mechanism.</p><div class="site-card-links"><a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md">Study &amp; closeout</a><span class="site-status">Closed</span></div></article>
+        <article class="site-card"><div class="site-card-kicker">Memory placement</div><h3><a href="tiering.html">Memory tiering</a></h3><p>Explore sensitivity-ranked parameter placement across GPU memory, CPU memory and storage.</p><div class="site-card-links"><a href="tiering.html">Interactive model</a></div></article>
+        <article class="site-card"><div class="site-card-kicker">Graph learning</div><h3><a href="gnn_fraud.html">GNN fraud detection</a></h3><p>Examine selective reciprocal attention, uncertainty and page-aware batching in the graph-neural-network experiments.</p><div class="site-card-links"><a href="https://github.com/mcgrof/knlp/blob/main/gnn/docs/gnn-fraud.md">Methods &amp; results</a></div></article>
+      </div>
+    </section>
+    <section class="site-resources" aria-labelledby="related-title"><h2 id="related-title">Related research</h2><nav aria-label="Related research"><a href="kri_ft.html">Routing-aware fine-tuning ↗</a><a href="muvera.html">Retrieval byte floors ↗</a><a href="marin.html">Marin fit assessment ↗</a><a href="https://github.com/mcgrof/knlp/blob/main/docs/FIM.md">FIM documentation ↗</a></nav></section>
+    <footer class="site-footer"><p><a href="index.html#research">← AI R&amp;D</a></p><p>knlp · Kernel-Style Machine Learning</p></footer>
+  </main>
+</body>
+</html>

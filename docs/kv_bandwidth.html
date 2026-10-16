@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Decode Is the Issue: KV-Memory Traffic Governs Transformer Decode</title>
+  <title>KV traffic and decode scaling | knlp</title>
+  <meta name="description" content="Explore batch, context, GPU and quantization views of decode scaling, with the memory-traffic model and its limits in view.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -46,9 +47,21 @@
       border: 1px solid #334155;
     }
   </style>
+  <link rel="stylesheet" href="assets/knlp.css">
 </head>
-<body class="min-h-screen text-gray-100">
-  <div id="root"></div>
+<body class="concept-page">
+<a class="site-skip" href="#main">Skip to content</a>
+<nav class="site-nav" aria-label="Main navigation">
+  <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+  <div class="site-nav-links"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a></div>
+</nav>
+<div class="concept-hero">
+  <p class="site-eyebrow">Concepts · 03 · Memory traffic</p>
+  <h1>Fewer bytes. <em>Different limits.</em></h1>
+  <p>Explore how batch size, context length, GPU bandwidth and KV-cache precision change decode behavior. The charts below connect traffic and kernel choices to the page’s decode-scaling data.</p>
+  <nav class="site-reading-path" aria-label="Concept guides"><a href="ar_decode_bottleneck.html">Decode</a><a href="ridge_point.html">Rooflines</a><a href="kv_bandwidth.html" aria-current="page">Scaling</a><a href="spearman_rho.html">Statistics</a></nav>
+</div>
+  <main id="main"><div id="root"></div></main>
 
   <script type="text/babel">
     const { useState, useEffect } = React;
@@ -320,17 +333,8 @@
       const tabs = ['Batch Scaling', 'Context Scaling', 'GPU Comparison', 'Extreme Context', 'Quantization'];
 
       return (
-        <div className="max-w-6xl mx-auto px-6 py-12">
-          <header className="text-center mb-12">
-            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
-            <h1 className="text-4xl font-bold mb-3">
-              <span className="gradient-text">Decode Is the Issue</span>
-            </h1>
-            <p className="text-gray-400 max-w-2xl mx-auto">
-              This is the current generic public explainer for the BPA story: autoregressive decode is dominated by KV-memory traffic.
-              The purpose of this page is to show the bottleneck clearly, not to serve as the final paper-shaped narrative.
-            </p>
-          </header>
+        <div className="concept-bandwidth mx-auto">
+
 
           {/* Key stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
@@ -416,5 +420,6 @@
 
     ReactDOM.render(<App />, document.getElementById('root'));
   </script>
+<nav class="concept-footer" aria-label="Continue reading"><a href="concepts.html">← All concepts</a><a href="spearman_rho.html">Next: Statistics →</a></nav>
 </body>
 </html>

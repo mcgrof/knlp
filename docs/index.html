@@ -3,714 +3,182 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>knlp: Kernel-Style Machine Learning</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { background: #0f172a; }
-    .card {
-      background: linear-gradient(145deg, #1e293b, #1a2332);
-      border: 1px solid #334155;
-      transition: all 0.3s ease;
-    }
-    .card:hover {
-      border-color: #3b82f6;
-      transform: translateY(-2px);
-      box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.3);
-    }
-    .highlight-card {
-      background: linear-gradient(145deg, #1e293b, #1a2332);
-      border-left: 4px solid;
-    }
-    .camp-header {
-      border-bottom: 1px solid #334155;
-      padding-bottom: 8px;
-      margin-bottom: 16px;
-    }
-  </style>
+  <title>knlp — Kernel-Style Machine Learning</title>
+  <meta name="description" content="Open-source AI systems and research: LMCache, KV-cache precision, GPU-direct storage, learned prefixes, and reproducible experiments. Explore the ecosystem, the research, and the concepts behind them.">
+  <link rel="stylesheet" href="assets/knlp.css">
 </head>
-<body class="min-h-screen text-gray-100">
-  <div class="max-w-6xl mx-auto px-6 py-12">
-
-    <!-- Header -->
-    <header class="text-center mb-16">
-      <img src="images/knlp-logo.png" alt="knlp logo" class="mx-auto mb-6" style="max-width: 520px;">
-      <p class="text-xl text-gray-400 mb-2">Kernel-Style Machine Learning</p>
-      <p class="text-gray-500 max-w-2xl mx-auto">
-        Rapid prototyping and automation for open source ML R&D using Linux kernel development methodologies
-      </p>
-      <div class="mt-6">
-        <a href="https://github.com/mcgrof/knlp"
-           class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
-          GitHub
-        </a>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav">
+    <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+    <nav class="site-nav-links" aria-label="Main navigation">
+      <a href="#ecosystem">AI Ecosystem</a>
+      <a href="#research">AI R&amp;D</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="https://github.com/mcgrof/knlp">GitHub ↗</a>
+    </nav>
+  </header>
+  <main id="main" class="site-wrap">
+    <section class="site-hero split" aria-labelledby="intro-title">
+      <div>
+        <p class="site-eyebrow">Kernel-Style Machine Learning</p>
+        <h1 id="intro-title">Open systems.<br><span class="site-gradient">Useful experiments.</span></h1>
+        <p class="site-lead">AI infrastructure, built in the open. We connect models, memory and storage, then test the ideas with the discipline of Linux kernel development.</p>
+        <div class="site-actions">
+          <a class="site-button primary" href="#ecosystem">Explore the ecosystem <span aria-hidden="true">↓</span></a>
+          <a class="site-button" href="#research">Follow the research <span aria-hidden="true">↗</span></a>
+        </div>
       </div>
-    </header>
+      <div class="site-art"><img src="images/knlp-logo.png" width="1536" height="1024" alt="knlp: a bridge between kernel development and machine learning"></div>
+    </section>
 
-    <section class="mb-14">
-      <h2 class="text-2xl font-bold mb-6 text-center">Residual-path research</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <a href="subliminal-learning-mnist.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-green-400">Subliminal transfer on MNIST</h3>
-          <p class="text-gray-500 text-sm mt-3">How residual connections change digit transfer through auxiliary outputs, with exact-null controls and a LayerRoPE gain comparison.</p>
-        </a>
-        <a href="layerrope-mhc-quantization.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-blue-400">LayerRoPE, mHC and weight quantization</h3>
-          <p class="text-gray-500 text-sm mt-3">TinyStories depth screens and an eight-seed confirmation of depth-code variants, including negative findings and quantization coverage.</p>
-        </a>
+    <section id="ecosystem" class="site-section" aria-labelledby="ecosystem-title">
+      <div class="site-section-head">
+        <div><span class="site-section-label">Build · integrate · reproduce</span><h2 id="ecosystem-title">AI Ecosystem</h2></div>
+        <p>LMCache, vLLM and the Linux storage stack. Integration work, experimental enablement, and the tools to test it.</p>
+      </div>
+      <div class="site-grid">
+        <article class="site-card">
+          <div class="site-card-kicker">LMCache · vLLM · FlashInfer</div>
+          <h3><a href="bias-aware-kv-quantization.html">Asymmetric quantization</a></h3>
+          <p>Separate key and value precision across serving and cache storage. Protect sensitive keys, compress values, and qualify each model.</p>
+          <div class="site-card-links"><a href="cartridge-asymmetric-quantization.html">Cartridge KV</a><a href="paper_memory_decode.html">Decode study</a><a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">Fused kernels</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">LMCache · vLLM</div>
+          <h3><a href="learned_prefix_caches.html">Learned Prefix Caches</a></h3>
+          <p>Reusable learned state for documents, reasoning and skills. One architecture connects Cartridges, ReasonCACHE and prefix induction.</p>
+          <div class="site-card-links"><a href="cartridges.html">Cartridges</a><a href="reasoncache.html">ReasonCACHE</a></div>
+        </article>
+        <article class="site-card featured">
+          <div class="site-card-kicker">Linux · LMCache · NIXL</div>
+          <h3><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a></h3>
+          <p>Evaluate GPU memory to NVMe through a common Linux interface. Filesystem and raw-device paths lead into storage-mediated prefill/decode.</p>
+          <div class="site-card-links"><a href="pd-disaggregation.html">PD disaggregation</a><a href="io-uring-dmabuf.html#reproduce">Reproduce</a><span class="site-status">Early enablement</span></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">vLLM · cache policy</div>
+          <h3><a href="spf.html">Speculative prefetching</a></h3>
+          <p>Can a scheduler fetch the next useful KV blocks before they are needed? The experiment and its unmet survival gate remain available.</p>
+          <div class="site-card-links"><a href="spf.html">Design &amp; findings</a><span class="site-status">Parked</span></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Storage · reproducibility</div>
+          <h3><a href="kvtide.html">KVTide</a></h3>
+          <p>A reproducible storage I/O harness for tiered KV caches. Compare software NVMe-KV, physical storage and GPU transfer paths.</p>
+          <div class="site-card-links"><a href="kvtide.html">Bench harness</a><a href="kdevops.html">Run with kdevops</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Shared inference state</div>
+          <h3><a href="kmesh.html">KMesh</a></h3>
+          <p>Sharing keyed inference state across agentic and test-time-scaled workloads. Explore the cache identity, reuse and serving architecture.</p>
+          <div class="site-card-links"><a href="kmesh.html">Architecture</a><a href="prefix-integrity-analysis.html">Reuse contracts</a></div>
+        </article>
       </div>
     </section>
 
-    <!-- ============================================================ -->
-    <!-- knlp Papers -->
-    <!-- ============================================================ -->
-    <section class="mb-14">
-      <h2 class="text-2xl font-bold mb-6 text-center">knlp Papers</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <a href="paper_memory_decode.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-green-400">Memory-Traffic Saturation in Autoregressive Transformer Decode</h3>
-            <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded ml-3 whitespace-nowrap">BPA</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            How much of extra KV-cache capacity becomes useful decode throughput?
-            Explore the empirical saturation model, measured K16/V8 serving results,
-            and the distinction between capacity, kernel speed, and offloading.
-            The 1.38&times; Qwen2.5-7B result includes capacity relief; other models
-            show smaller gains or regressions.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-green-400">interactive saturation explainer</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500"><a href="https://github.com/mcgrof/flashinfer" class="hover:text-gray-300">flashinfer fork</a></span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500"><a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing" class="hover:text-gray-300">vllm fork</a></span>
-          </div>
-        </a>
-        <div class="card rounded-lg p-5 opacity-60">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-blue-400">FIM-Guided Compression</h3>
-            <span class="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded ml-3 whitespace-nowrap">in progress</span>
-          </div>
-          <p class="text-gray-600 text-sm">
-            Fisher Information as a universal signal for pruning, quantization, and
-            layer allocation. Coming soon.
-          </p>
+    <section id="research" class="site-section research" aria-labelledby="research-title">
+      <div class="site-section-head">
+        <div><span class="site-section-label">Ask · measure · explain</span><h2 id="research-title">AI R&amp;D</h2></div>
+        <p>Mechanisms, measured results and open questions. Each study keeps its controls, limits and negative findings in view.</p>
+      </div>
+      <div class="site-grid">
+        <article class="site-card">
+          <div class="site-card-kicker">Architectures · bounded memory</div>
+          <h3><a href="linear_attention.html">Linear attention</a></h3>
+          <p>Dense attention, Trellis, DeltaNet and Gated DeltaNet in a matched harness. What fixed-size recurrent state changes, and what the tested scale can establish.</p>
+          <div class="site-card-links"><a href="linear_attention.html">Interactive study</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Translation · partial recompute</div>
+          <h3><a href="kv-cache-sharing.html">Cross-model KV sharing</a></h3>
+          <p>Can one model reuse another model’s cache? Compare cache translation with selective receiver recomputation and their separate evidence boundaries.</p>
+          <div class="site-card-links"><a href="kv-lingo.html">KV-Lingo</a><a href="droidspeak.html">DroidSpeak</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Agents · scoped assistance</div>
+          <h3><a href="https://chores.knlp.io/">Chores</a></h3>
+          <p>Security hygiene and bounded agent assistance for maintainers. A prototype for useful chores with explicit scope and human review.</p>
+          <div class="site-card-links"><a href="https://chores.knlp.io/">Design &amp; prototype</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Fault finding · evidence</div>
+          <h3><a href="code_reason.html">Code reasoning</a></h3>
+          <p>Do structured certificates improve static reasoning? Reproduce the model-dependent result, then specialize the evidence and trace to kernel code.</p>
+          <div class="site-card-links"><a href="code_reason.html">Certificates &amp; controls</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Fisher information · compression</div>
+          <h3><a href="fim-guided-research.html">FIM-guided R&amp;D</a></h3>
+          <p>Use gradient statistics to study pruning, weight precision and memory placement. Follow the common signal through the individual experiments.</p>
+          <div class="site-card-links"><a href="fim-guided-research.html">Research collection</a><a href="fisher_adam.html">Interactive introduction</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Decode · exact selection</div>
+          <h3><a href="lm_head_decode.html">Certified LM-head decode</a></h3>
+          <p>Use upper bounds to skip vocabulary blocks that cannot win. Explore the proof of exact argmax and the measured byte and latency reductions.</p>
+          <div class="site-card-links"><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Cache contracts · correctness</div>
+          <h3><a href="prefix-integrity-analysis.html">Prefix Integrity Analysis</a></h3>
+          <p>Two separate questions for a cache transform: can the saved prefix still be reused, and does the model still agree?</p>
+          <div class="site-card-links"><a href="prefix-integrity-analysis.html">Analysis &amp; experiments</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Training-free · routing priors</div>
+          <h3><a href="kri.html">KRI</a></h3>
+          <p>Per-block routing priors for selective KV access. Compare the algorithms and the workloads that support their measured results.</p>
+          <div class="site-card-links"><a href="kri.html">Prior algorithms</a><a href="kri_ft.html">Routing-aware fine-tuning</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">Attention · selective access</div>
+          <h3><a href="routing.html">KV-cache routing</a></h3>
+          <p>A pluggable substrate for choosing which KV blocks attention reads. Separate routing policy from the mechanism that gathers the selected state.</p>
+          <div class="site-card-links"><a href="routing.html">Substrate &amp; policies</a></div>
+        </article>
+      </div>
+      <details class="site-archive">
+        <summary>More studies &amp; experiments</summary>
+        <div class="site-link-list">
+          <a href="fp8-kv-failure-atlas.html">FP8 KV-Cache Failure Atlas ↗</a>
+          <a href="paper_memory_decode.html">Memory-traffic saturation in decode ↗</a>
+          <a href="subliminal-learning-mnist.html">Subliminal transfer on MNIST ↗</a>
+          <a href="layerrope-mhc-quantization.html">LayerRoPE, mHC &amp; weight quantization ↗</a>
+          <a href="small-random-reads-ai.html">Small random reads in AI ↗</a>
+          <a href="muvera.html">muvera-small retrieval benchmark ↗</a>
+          <a href="marin.html">Marin fit assessment ↗</a>
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md">BPA research documentation ↗</a>
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md">Decode research history ↗</a>
+        </div>
+      </details>
+    </section>
+
+    <section id="concepts" class="site-section" aria-labelledby="concepts-title">
+      <div class="site-concepts">
+        <div class="site-section-head">
+          <div><span class="site-section-label">The foundations</span><h2 id="concepts-title">A little context.<br>A clearer picture.</h2></div>
+          <div><p>Build intuition for the memory traffic, hardware limits and statistics behind the work.</p><div class="site-actions"><a class="site-button" href="concepts.html">Explore Concepts <span aria-hidden="true">↗</span></a></div></div>
+        </div>
+        <div class="site-concept-links">
+          <a href="ar_decode_bottleneck.html"><span>Autoregressive inference</span>Why decode rereads state ↗</a>
+          <a href="ridge_point.html"><span>Hardware limits</span>The roofline &amp; ridge point ↗</a>
+          <a href="kv_bandwidth.html"><span>Measured behavior</span>KV traffic &amp; decode scaling ↗</a>
+          <a href="spearman_rho.html"><span>Reading the evidence</span>Correlation, fit &amp; ranks ↗</a>
         </div>
       </div>
     </section>
-
-    <!-- ============================================================ -->
-    <!-- Serving and Systems -->
-    <!-- ============================================================ -->
-    <section class="mb-14">
-      <h2 class="text-2xl font-bold mb-6 text-center">Serving and Systems</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <a href="kv-cache-sharing.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-blue-400">Cross-Model KV-Cache Sharing</h3>
-            <span class="text-xs bg-blue-900 text-blue-300 px-2 py-1 rounded ml-3 whitespace-nowrap">comparison</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            A direct comparison of KV-Lingo cache translation and DroidSpeak
-            partial receiver recomputation, with the evidence boundary for
-            each method and a proposed hybrid.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-blue-400">two independent efforts</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">LMCache transport boundary</span>
-          </div>
-        </a>
-        <a href="droidspeak.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-teal-400">DroidSpeak Partial Recompute</h3>
-            <span class="text-xs bg-teal-900 text-teal-300 px-2 py-1 rounded ml-3 whitespace-nowrap">mechanism pass</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            A four-layer receiver interval preserved held-out quality for one
-            Mistral adapter pair. The page separates mechanism quality from
-            the distributed-system result that remains untested.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-teal-400">4 of 32 layers recomputed</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">50 held-out records</span>
-          </div>
-        </a>
-        <a href="kv-lingo.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-emerald-400">KV-Lingo Cache Translation</h3>
-            <span class="text-xs bg-amber-900 text-amber-300 px-2 py-1 rounded ml-3 whitespace-nowrap">closeout</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            An independent Qwen3-4B/8B cache-sharing study. The complete
-            16-comparison grid does not qualify arbitrary either-model-first
-            sharing; a restricted 8B-first schedule remains unconfirmed.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-emerald-400">code + aggregate results</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">0/4 full pairs pass</span>
-          </div>
-        </a>
-        <a href="learned_prefix_caches.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-emerald-400">Learned Prefix Caches</h3>
-            <span class="text-xs bg-emerald-900 text-emerald-300 px-2 py-1 rounded ml-3 whitespace-nowrap">umbrella</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            The shared architecture for Cartridges, ReasonCACHE, and skill
-            caches. The page defines LPC and Prefix Induction, then folds in
-            the H100 PI scale result, GSM8K sanity check, and A100
-            SCI/Active Reading retest.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-emerald-400">PI frontier</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">Cartridges + ReasonCACHE</span>
-          </div>
-        </a>
-        <a href="reasoncache.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-teal-400">ReasonCACHE</h3>
-            <span class="text-xs bg-teal-900 text-teal-300 px-2 py-1 rounded ml-3 whitespace-nowrap">vLLM</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            ReasonCACHE as a reusable reasoning interface: paper summary,
-            serving implications, and knlp vLLM support. It now records the
-            trace-induction runs, public-strata PI scale, GSM8K trace sanity,
-            and SCI/first-k/strided initializer split.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-teal-400">20/24 GSM8K sanity</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">LPC branch</span>
-          </div>
-        </a>
-        <a href="spf.html" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-sky-400">SPF — Speculative Prefetch</h3>
-            <span class="text-xs bg-rose-900 text-rose-300 px-2 py-1 rounded ml-3 whitespace-nowrap">parked</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            A scheduler-side speculative prefetch experiment for vLLM's KV cache.
-            Did not clear its survival gate on Llama-3.2-3B under cache pressure;
-            branch preserved so future scorers can be measured against the same bar.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-sky-400">feature overview</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">kv-cache policy</span>
-          </div>
-        </a>
-        <a href="https://chores.knlp.io" class="card rounded-lg p-5 block">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-lime-400">Chores</h3>
-            <span class="text-xs bg-lime-900 text-lime-300 px-2 py-1 rounded ml-3 whitespace-nowrap">prototype</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            Incident-motivated security hygiene, a personal OKR template, and
-            scoped agent assistance for open-source and Linux kernel
-            maintainers. A private kernel briefing ranks relevant patches,
-            syzbot reports, CVEs, and lore discussions for human review.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-lime-400">agent security</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">OKR template</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">maintainer assistance</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">kernel briefing</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">Perfetto trace</span>
-          </div>
-        </a>
-      </div>
+    <section class="site-resources" aria-labelledby="resources-title">
+      <h2 id="resources-title">Build with knlp</h2>
+      <nav aria-label="Documentation">
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/quickstart.md">Quick start ↗</a>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/architecture.md">Architecture ↗</a>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/FIM.md">Fisher information ↗</a>
+        <a href="kdevops.html">kdevops ↗</a>
+        <a href="https://github.com/mcgrof/knlp">Source code ↗</a>
+      </nav>
     </section>
-
-    <!-- ============================================================ -->
-    <!-- Code Reasoning -->
-    <!-- ============================================================ -->
-    <section class="mb-14">
-      <h2 class="text-2xl font-bold mb-6 text-center">Code Reasoning</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <a href="code_reason.html" class="card rounded-lg p-5 block md:col-span-2">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-cyan-400">Pluggable certificates for domain-specific fault finding</h3>
-            <span class="text-xs bg-cyan-900 text-cyan-300 px-2 py-1 rounded ml-3 whitespace-nowrap">R&amp;D</span>
-          </div>
-          <p class="text-gray-500 text-sm mb-3">
-            Whether a structured certificate — premises with cited evidence, a
-            trace, a formal conclusion — makes a model better at static code
-            reasoning, and how to make that structure pluggable and specialized
-            to a target domain: the Linux kernel. The baseline reproduces the
-            paper's model-dependence split (Opus-4.5 gains, Sonnet-4.5 regresses)
-            under verbosity, evidence-only, and memorization controls, on a
-            frozen bug set graded blind to the certificate.
-          </p>
-          <div class="flex gap-3 text-xs">
-            <span class="text-cyan-400">baseline reproduced</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">contamination-aware</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">Linux-kernel target</span>
-          </div>
-        </a>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- FIM-Guided Research -->
-    <!-- ============================================================ -->
-    <section class="mb-14">
-      <div class="camp-header">
-        <h2 class="text-2xl font-bold">FIM-Guided Research</h2>
-        <p class="text-gray-500 text-sm mt-1">
-          All built on the same signal: diagonal Fisher Information (E[g&sup2;] &asymp; Adam exp_avg_sq).
-          <a href="https://arxiv.org/abs/2507.18807" class="text-blue-400 hover:underline">Squisher (2025)</a>
-          proves the equivalence. Higher FIM trace = parameters doing more work.
-        </p>
-      </div>
-
-      <div class="grid gap-4">
-        <!-- Adam State-Based Pruning -->
-        <div class="highlight-card border-green-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-green-400 mb-2">Adam State-Based Pruning</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                bitter7 achieves <strong class="text-white">15.6% better perplexity</strong> than magnitude baseline
-                (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (&asymp; FIM diagonal) for importance scoring.
-              </p>
-              <code class="text-xs bg-gray-900 px-2 py-1 rounded text-gray-300">
-                importance = |w| &times; (exp_avg_sq + &epsilon;)^0.25
-              </code>
-            </div>
-            <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded">B200x4</span>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/adamwprune_variants.md" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/bitter7_math.md" class="text-blue-400 hover:underline">Math Foundations</a>
-            <a href="fisher_adam.html" class="text-green-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- FIM-Guided Quantization -->
-        <div class="highlight-card border-purple-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-purple-400 mb-2">FIM-Guided Weight Quantization</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                At decode, model weights are <strong class="text-white">~83% of the bytes</strong>, so weight quant is the
-                dominant lever. Diagonal Fisher says which weights need more bits: on a held-out cross-family eval
-                (Qwen2.5-7B + Llama-3.2-3B), <strong class="text-white">int8 is near-lossless</strong> for
-                <strong class="text-white">&minus;41%</strong> decode bytes. The surprise: the
-                <strong class="text-white"> W_v weights</strong> are the most Fisher-sensitive even though the V-cache is
-                FP8-robust &mdash; cache precision doesn't predict weight precision.
-              </p>
-            </div>
-            <span class="text-xs bg-purple-900 text-purple-300 px-2 py-1 rounded">decode</span>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/mobile-weight-packing.md" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="fim_quantization.html" class="text-purple-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- KVSplice -->
-        <div class="highlight-card border-orange-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-orange-400 mb-2">KVSplice</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                FIM-guided compression adds <strong class="text-white">~20% extra compression on top of MLA</strong> (7.2x vs 6x),
-                achieving <strong class="text-white">11% better perplexity</strong> (63 vs 71 PPL)
-                and <strong class="text-white">+1 HellaSwag</strong> vs MLA baseline.
-              </p>
-            </div>
-            <span class="text-xs bg-orange-900 text-orange-300 px-2 py-1 rounded">B200x4</span>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/kvsplice/README.md" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="kvsplice.html" class="text-orange-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- Reciprocal Attention -->
-        <div class="highlight-card border-cyan-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-cyan-400 mb-2">Reciprocal Attention</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                Learned Q@K.T &harr; K@Q.T mixing. A GPT-2 small-scale FineWebEdu comparison
-                measured <strong class="text-white">5% better perplexity</strong> (72.5 &rarr; 68.9) and
-                <strong class="text-white">+2 HellaSwag</strong>; matched 1B runs were neutral, and a
-                preregistered 3-seed matched training matrix found no RA variant beating
-                paired baselines. Line closed 2026-08 with a full mechanistic account
-                (sign-cancelling, high-rank reciprocal credit).
-              </p>
-            </div>
-            <span class="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded">closed</span>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="ra.html" class="text-cyan-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- Memory Tiering -->
-        <div class="highlight-card border-emerald-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-emerald-400 mb-2">Memory Tiering</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                FIM-ranked parameter placement across GPU, CPU, and storage tiers.
-                exp_avg_sq ranking determines which tensors stay in fast memory.
-              </p>
-            </div>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="tiering.html" class="text-emerald-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- GNN Fraud Detection -->
-        <div class="highlight-card border-rose-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-rose-400 mb-2">FIM-Guided GNN Fraud Detection</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                Reciprocal Attention transfers from transformers to GNNs. FIM-guided RA achieves
-                <strong class="text-white">+7% F1</strong> on DGraphFin by applying RA selectively to
-                uncertain nodes (bottom 33% by FIM trace). Page-aware batching provides
-                <strong class="text-white">4&times; better I/O locality</strong>.
-              </p>
-            </div>
-            <span class="text-xs bg-rose-900 text-rose-300 px-2 py-1 rounded">GNN</span>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/blob/main/gnn/docs/gnn-fraud.md" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="gnn_fraud.html" class="text-rose-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-        <!-- KRI-FT -->
-        <div class="highlight-card border-teal-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-teal-400 mb-2">KRI-FT</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                Fine-tuning a model under a KV-cache routing mask so it tolerates
-                aggressive cache pruning at inference. On GPT-2 small:
-                <strong class="text-white">8&times; fewer KV blocks</strong> for the same
-                quality and <strong class="text-white">3&ndash;6&times; lower KL</strong>
-                under every KRI router, across 3 seeds. The honest limit: the win
-                shrinks on modern small models that already tolerate routing.
-              </p>
-            </div>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/tree/main/gpt2-kri-ft" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="kri_ft.html" class="text-teal-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-        <!-- Small-read workload tracker -->
-        <div class="highlight-card border-emerald-500 rounded-lg p-5">
-          <h3 class="font-semibold text-lg text-emerald-400 mb-2">Small random reads in AI workflows</h3>
-          <p class="text-gray-400 text-sm mb-3">
-            Track embedding, vector-retrieval and graph-feature lookups below
-            4 KiB, their known I/O paths, and the experiments needed to compare
-            caching and storage layouts. Includes recording, replay and
-            reproduction commands.
-          </p>
-          <a href="small-random-reads-ai.html" class="text-emerald-400 hover:underline text-xs">Workload tracker and reproduction guide</a>
-        </div>
-        <!-- muvera-small -->
-        <div class="highlight-card border-cyan-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-cyan-400 mb-2">muvera-small</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                Reproducible byte-floor benchmark for retrieval vectors. Sub-4096-byte
-                records are fast when resident, but raw NVMe random reads pay a full
-                page per record &mdash; <strong class="text-white">up to 128&times; read
-                amplification</strong>. Pooled int8 (384 B) nearly matches a 120 KB
-                ColBERTv2 oracle. <code>make defconfig-muvera-small &amp;&amp; make muvera-small</code>.
-              </p>
-            </div>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="https://github.com/mcgrof/knlp/tree/main/benchmarks/muvera" class="text-blue-400 hover:underline">Documentation</a>
-            <a href="muvera.html" class="text-cyan-400 hover:underline">Interactive Demo</a>
-          </div>
-        </div>
-
-        <!-- Marin contribution assessment -->
-        <div class="highlight-card border-sky-500 rounded-lg p-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-semibold text-lg text-sky-400 mb-2">Contributing to Marin?</h3>
-              <p class="text-gray-400 text-sm mb-3">
-                An honest fit assessment of these methods against
-                <a href="https://marin.community" class="text-sky-400 hover:underline">Marin</a>,
-                Stanford's open LLM. FIM-guided pruning is the only clean port but is off Marin's
-                quality-per-FLOP axis; KVSplice is architecturally blocked (Marin isn't MLA); RA isn't
-                ready. An assessment, not a pitch.
-              </p>
-            </div>
-          </div>
-          <div class="mt-3 flex gap-3 text-xs">
-            <a href="marin.html" class="text-sky-400 hover:underline">Fit assessment</a>
-          </div>
-        </div>
-      </div>
-
-      <!-- Unified FIM table -->
-      <div class="card rounded-xl p-6 mt-6">
-        <h3 class="text-lg font-bold mb-4 text-center">Unified FIM Framework</h3>
-        <p class="text-gray-400 text-sm text-center mb-4 max-w-2xl mx-auto">
-          All applications leverage the same underlying signal: E[g&sup2;]
-        </p>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-gray-700">
-                <th class="text-left py-3 px-4 text-gray-400 font-medium">Application</th>
-                <th class="text-left py-3 px-4 text-gray-400 font-medium">FIM Signal</th>
-                <th class="text-left py-3 px-4 text-gray-400 font-medium">Result</th>
-              </tr>
-            </thead>
-            <tbody class="text-gray-300">
-              <tr class="border-b border-gray-800">
-                <td class="py-3 px-4"><a href="fisher_adam.html" class="text-blue-400 hover:underline">bitter7 pruning</a></td>
-                <td class="py-3 px-4 font-mono text-xs">exp_avg_sq^0.25</td>
-                <td class="py-3 px-4 text-green-400">15.6% better PPL</td>
-              </tr>
-              <tr class="border-b border-gray-800">
-                <td class="py-3 px-4"><a href="fim_quantization.html" class="text-purple-400 hover:underline">Weight quantization</a></td>
-                <td class="py-3 px-4 font-mono text-xs">E[g&sup2;] per layer</td>
-                <td class="py-3 px-4 text-green-400">int8 &minus;41% near-lossless</td>
-              </tr>
-              <tr class="border-b border-gray-800">
-                <td class="py-3 px-4"><a href="kvsplice.html" class="text-orange-400 hover:underline">KVSplice layers</a></td>
-                <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
-                <td class="py-3 px-4 text-green-400">11% better PPL</td>
-              </tr>
-              <tr class="border-b border-gray-800">
-                <td class="py-3 px-4"><a href="ra.html" class="text-cyan-400 hover:underline">Reciprocal Attention</a></td>
-                <td class="py-3 px-4 font-mono text-xs">FIM trace (exploratory)</td>
-                <td class="py-3 px-4 text-gray-400">GPT-2 small-scale signal; 1B neutral</td>
-              </tr>
-              <tr class="border-b border-gray-800">
-                <td class="py-3 px-4"><a href="tiering.html" class="text-emerald-400 hover:underline">Memory Tiering</a></td>
-                <td class="py-3 px-4 font-mono text-xs">exp_avg_sq rank</td>
-                <td class="py-3 px-4 text-green-400">Optimal placement</td>
-              </tr>
-              <tr>
-                <td class="py-3 px-4"><a href="gnn_fraud.html" class="text-rose-400 hover:underline">GNN Fraud Detection</a></td>
-                <td class="py-3 px-4 font-mono text-xs">FIM trace &rarr; nodes</td>
-                <td class="py-3 px-4 text-green-400">+7% F1</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- Decode & Bandwidth -->
-    <!-- ============================================================ -->
-    <section class="mb-14">
-      <div class="camp-header">
-        <h2 class="text-2xl font-bold">Decode &amp; Bandwidth</h2>
-        <p class="text-gray-500 text-sm mt-1">
-          Autoregressive decode is dominated by memory traffic. These explainers
-          establish the structural and empirical foundations behind the
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA</a>
-          line of work:
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md" class="text-blue-400 hover:underline">RGSA &rarr; BPA &rarr; fused KV quantization</a>.
-        </p>
-      </div>
-
-      <div class="grid md:grid-cols-2 gap-4">
-        <a href="fp8-kv-failure-atlas.html" class="card rounded-lg p-5 block md:col-span-2">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-red-400">FP8 KV-Cache Failure Atlas</h3>
-            <span class="text-xs bg-red-900 text-red-300 px-2 py-1 rounded ml-3 whitespace-nowrap">19 models</span>
-          </div>
-          <p class="text-gray-500 text-sm">
-            Why FP8 KV caches silently break some models and not others. Across 19 LLMs,
-            catastrophic collapse (up to <strong class="text-gray-300">12.4&times;</strong> PPL on
-            Qwen2.5-7B) tracks <strong class="text-gray-300">K-bias magnitude</strong>, not the
-            <code class="text-xs">attention_bias</code> flag. INT8-K rescues what FP8 destroys at the
-            same 8 bits (format beats bit-width); K16/V8 is the deployable fix; and a release-time
-            preflight flags fragile models with a <strong class="text-gray-300">0/5 false-safe</strong> rate.
-            13 interactive charts.
-          </p>
-          <div class="mt-3 flex gap-3 text-xs">
-            <span class="text-red-400">causal controls + recovery Pareto</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500"><code>make defconfig-quant-fp8-validate</code></span>
-          </div>
-        </a>
-        <a href="lm_head_decode.html" class="card rounded-lg p-5 block md:col-span-2">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-emerald-400">Certified LM-head decode</h3>
-            <span class="text-xs bg-emerald-900 text-emerald-300 px-2 py-1 rounded ml-3 whitespace-nowrap">lossless</span>
-          </div>
-          <p class="text-gray-500 text-sm">
-            The output head is a 150,000-row multiply rerun every token, and almost all of it is wasted.
-            A low-rank int8 <strong class="text-gray-300">shadow</strong> gives a provable upper bound on every
-            token's logit, so the decoder opens only the vocabulary blocks that could possibly win and
-            <strong class="text-gray-300">proves</strong> it found the exact dense argmax &mdash; reading
-            <strong class="text-gray-300">~20%</strong> of the head's bytes (5&times; less), at
-            <strong class="text-gray-300">1.97&times;</strong> batch-1 decode, the answer provably unchanged.
-          </p>
-          <div class="mt-3 flex gap-3 text-xs">
-            <span class="text-emerald-400">6 interactive panels</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">argmax match 1.0000</span>
-          </div>
-        </a>
-        <a href="linear_attention.html" class="card rounded-lg p-5 block md:col-span-2">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="font-semibold text-violet-400">Linear Attention &amp; Bounded Memory</h3>
-            <span class="text-xs bg-violet-900 text-violet-300 px-2 py-1 rounded ml-3 whitespace-nowrap">DeltaNet &middot; Trellis</span>
-          </div>
-          <p class="text-gray-500 text-sm">
-            A matched-harness study of the bounded-memory family &mdash; Trellis vs the fla reference DeltaNet and Gated
-            DeltaNet (arXiv:2512.23852)
-            &mdash; whose fixed-size recurrent state replaces a growing KV cache. A fused Triton kernel closes the
-            throughput gap <strong class="text-gray-300">6.4&times;</strong>, and a matched run puts our Trellis
-            cleanly between dense and its linear cousins. Line closed &mdash; Gated DeltaNet is the standout at the scale
-            we can train; the paper&rsquo;s 790M scale claim is parked, not disproven.
-          </p>
-          <div class="mt-3 flex gap-3 text-xs">
-            <span class="text-violet-400">9 interactive panels</span>
-            <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500"><code>make defconfig-trellis-tiny</code></span>
-          </div>
-        </a>
-        <a href="ar_decode_bottleneck.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-amber-400 mb-2">AR Decode Bottleneck</h3>
-          <p class="text-gray-500 text-sm">
-            Structural explanation of why autoregressive decode rereads KV state
-            every step and why this is an inherent memory-traffic problem.
-          </p>
-        </a>
-        <a href="kv_bandwidth.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-yellow-400 mb-2">Decode Scaling</h3>
-          <p class="text-gray-500 text-sm">
-            Empirical cross-GPU decode throughput, latency, and bandwidth
-            measurements across W7900, A100, H100, and B200.
-          </p>
-        </a>
-        <a href="ridge_point.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-indigo-400 mb-2">Ridge Point</h3>
-          <p class="text-gray-500 text-sm">
-            Interactive roofline model. Decode attention operates 18&ndash;148&times;
-            below the compute/memory ridge on H100 (&sim;295 FLOP/byte).
-          </p>
-        </a>
-        <a href="spearman_rho.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-pink-400 mb-2">Pearson r, R&sup2; &amp; Spearman &rho;</h3>
-          <p class="text-gray-500 text-sm">
-            Statistical methods used in the paper. Spearman rank correlation tests
-            whether architecture predicts KV sensitivity (&rho; &lt; 0.2, it does not).
-          </p>
-        </a>
-        <a href="cartridges.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-green-400 mb-2">Cartridges</h3>
-          <p class="text-gray-500 text-sm">
-            Document-focused learned prefix caches that skip prefill. The
-            Cartridges page gives the original document-cache results; the LPC
-            page shows how that mechanism connects to ReasonCACHE and ARCI.
-          </p>
-        </a>
-        <a href="cartridge-asymmetric-quantization.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-emerald-400 mb-2">Asymmetric Cartridge KV</h3>
-          <p class="text-gray-500 text-sm">
-            Quality, memory, and fused H100 serving results for a shared
-            BF16-key, FP8-value cartridge over BF16 or asymmetric live KV.
-          </p>
-        </a>
-        <a href="routing.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-cyan-400 mb-2">knlp routing</h3>
-          <p class="text-gray-500 text-sm">
-            Decode-time selective KV block access for existing transformer models.
-            Two-layer substrate, pluggable routing-prior interface, KRI variants
-            and policy selectors live on the vLLM routing branch.
-          </p>
-        </a>
-        <a href="kri.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-purple-400 mb-2">KRI</h3>
-          <p class="text-gray-500 text-sm">
-            Training-free family of per-block routing-prior algorithms.
-            KRI-D / KRI-D-kv-sum / KRI-A / KRI-G / KRI-Q / KRI-T / kmeans /
-            eigenvector centrality. Production leader on LongHealth K=16.
-          </p>
-        </a>
-        <a href="prefix-integrity-analysis.html" class="card rounded-lg p-5 block">
-          <h3 class="font-semibold text-rose-400 mb-2">Prefix Integrity Analysis</h3>
-          <p class="text-gray-500 text-sm">
-            A cache-contract preflight for KV-cache compression, routing, and
-            offload algorithms. Two axes &mdash; is the prefix still reusable,
-            and does the model still agree &mdash; validated on an A100 against
-            a real Qwen2.5-7B cartridge.
-          </p>
-        </a>
-      </div>
-
-      <div class="mt-4 flex flex-wrap gap-3 text-xs text-gray-500">
-        <span>See also:</span>
-        <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md" class="text-purple-400 hover:underline">Fused KV quantization doc</a>
-        <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA overview</a>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- Documentation -->
-    <!-- ============================================================ -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold mb-6 text-center">Documentation</h2>
-      <div class="grid md:grid-cols-3 gap-4">
-        <a href="https://github.com/mcgrof/knlp/blob/main/docs/quickstart.md" class="card rounded-lg p-4 block">
-          <h3 class="font-semibold text-blue-400 mb-2">Quick Start</h3>
-          <p class="text-gray-500 text-sm">Get up and running with knlp</p>
-        </a>
-        <a href="https://github.com/mcgrof/knlp/blob/main/docs/architecture.md" class="card rounded-lg p-4 block">
-          <h3 class="font-semibold text-blue-400 mb-2">Architecture</h3>
-          <p class="text-gray-500 text-sm">Kernel-inspired infrastructure</p>
-        </a>
-        <a href="https://github.com/mcgrof/knlp/blob/main/docs/FIM.md" class="card rounded-lg p-4 block">
-          <h3 class="font-semibold text-blue-400 mb-2">FIM Analysis</h3>
-          <p class="text-gray-500 text-sm">Fisher Information metrics</p>
-        </a>
-        <a href="kdevops.html" class="card rounded-lg p-4 block">
-          <h3 class="font-semibold text-cyan-400 mb-2">Run with kdevops</h3>
-          <p class="text-gray-500 text-sm">Provision a node and bring up knlp as a kdevops plugin</p>
-        </a>
-        <a href="kvtide.html" class="card rounded-lg p-4 block">
-          <h3 class="font-semibold text-sky-400 mb-2">KVTide</h3>
-          <p class="text-gray-500 text-sm">Compare software NVMe-KV and physical xNVMe, SPDK, Linux, CUDA, and premapped-buffer paths</p>
-        </a>
-      </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="text-center text-gray-600 text-sm border-t border-gray-800 pt-8">
-      <p class="mb-2">
-        <a href="https://github.com/mcgrof/knlp" class="hover:text-gray-400">GitHub</a>
-        <span class="mx-2">&middot;</span>
-        <a href="https://arxiv.org/abs/2507.18807" class="hover:text-gray-400">Squisher Paper</a>
-        <span class="mx-2">&middot;</span>
-        <a href="fisher_adam.html" class="hover:text-gray-400">FIM-Adam Demo</a>
-        <span class="mx-2">&middot;</span>
-        <a href="paper_memory_decode.html" class="hover:text-gray-400">Decode Paper</a>
-      </p>
-      <p>MIT License &middot; Luis Chamberlain and contributors</p>
-    </footer>
-
-  </div>
+    <footer class="site-footer"><p>knlp · Kernel-Style Machine Learning</p><p>MIT License · Luis Chamberlain and contributors</p></footer>
+  </main>
 </body>
 </html>

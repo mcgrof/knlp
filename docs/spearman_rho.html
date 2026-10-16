@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pearson r, R² & Spearman ρ</title>
+<title>Pearson r, R² &amp; Spearman ρ — correlation concepts | knlp</title>
+<meta name="description" content="Build Pearson correlation, R² and Spearman rank correlation from the data, then explore outliers, curves and changing point sets.">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Serif+Display:ital@0;1&display=swap');
 
@@ -190,17 +191,25 @@ canvas { width:100%; height:100%; display:block; }
 .r2-ex-desc { font-size:.62rem; color:var(--muted2); line-height:1.65; }
 .r2-ex-desc em { color:var(--muted); font-style:italic; }
 </style>
+  <link rel="stylesheet" href="assets/knlp.css">
 </head>
-<body>
+<body class="concept-page concept-correlation">
 <div class="grain"></div>
 
-<header>
-  <h1>Pearson <em>r</em>, R² &amp; Spearman <em>ρ</em></h1>
-  <div class="header-sub">three correlation concepts — built up from scratch</div>
-</header>
+<a class="site-skip" href="#main">Skip to content</a>
+<nav class="site-nav" aria-label="Main navigation">
+  <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+  <div class="site-nav-links"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html">Concepts</a></div>
+</nav>
+<div class="concept-hero">
+  <p class="site-eyebrow">Concepts · 04 · Statistical reasoning</p>
+  <h1>Correlation. Fit. <em>Order.</em></h1>
+  <p>Pearson r measures linear association. R² describes fit, and Spearman ρ compares ranks. Build each idea from the data, then change the points to see where their answers differ.</p>
+  <nav class="site-reading-path" aria-label="Concept guides"><a href="ar_decode_bottleneck.html">Decode</a><a href="ridge_point.html">Rooflines</a><a href="kv_bandwidth.html">Scaling</a><a href="spearman_rho.html" aria-current="page">Statistics</a></nav>
+</div>
 
 <!-- ══════════ SECTION 1: PEARSON ══════════ -->
-<div class="edu-section">
+<div class="edu-section" id="main">
   <div class="sec-tag"><span class="pill pill-pearson">Section 1</span> Pearson r — measuring linear correlation</div>
 
   <div class="prose">
@@ -875,5 +884,6 @@ function addNoise() {
 
 loadPreset('outlier', document.querySelector('[data-p="outlier"]'));
 </script>
+<nav class="concept-footer" aria-label="Continue reading"><a href="concepts.html">← All concepts</a><a href="ar_decode_bottleneck.html">Next: Decode →</a></nav>
 </body>
 </html>

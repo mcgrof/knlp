@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concepts — the foundations of AI systems | knlp</title>
+  <meta name="description" content="Interactive guides to autoregressive decode, KV-cache memory traffic, GPU rooflines, and correlation. Build the intuition behind knlp’s AI systems and research.">
+  <link rel="stylesheet" href="assets/knlp.css">
+</head>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav">
+    <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+    <nav class="site-nav-links" aria-label="Main navigation"><a href="index.html#ecosystem">AI Ecosystem</a><a href="index.html#research">AI R&amp;D</a><a href="concepts.html" aria-current="page">Concepts</a><a href="https://github.com/mcgrof/knlp">GitHub ↗</a></nav>
+  </header>
+  <main id="main" class="site-wrap">
+    <section class="site-hero" aria-labelledby="intro-title">
+      <p class="site-eyebrow">Concepts · interactive foundations</p>
+      <h1 id="intro-title">Understand the limits.<br><span class="site-gradient">Then change the system.</span></h1>
+      <p class="site-lead">Why does decode slow down? When do fewer bytes help? What does a correlation actually show? These guides connect the mechanics to the measurements.</p>
+      <nav class="site-reading-path" aria-label="Suggested reading order"><a href="ar_decode_bottleneck.html"><span>01</span> Decode</a><a href="ridge_point.html"><span>02</span> Rooflines</a><a href="kv_bandwidth.html"><span>03</span> Scaling</a><a href="spearman_rho.html"><span>04</span> Statistics</a></nav>
+    </section>
+    <section class="site-section" aria-labelledby="guides-title">
+      <div class="site-section-head"><div><span class="site-section-label">Build your intuition</span><h2 id="guides-title">Four ways into the work</h2></div><p>Read in order, or jump to the question you have. Each guide includes a model or an interactive view you can explore.</p></div>
+      <div class="site-grid site-topic-grid">
+        <article class="site-card">
+          <div class="site-card-kicker">01 · Autoregressive inference</div>
+          <h2><a href="ar_decode_bottleneck.html">The decode bottleneck ↗</a></h2>
+          <p class="site-question">Why does generating one more token mean reading so much old state?</p>
+          <p>Follow the causal decode loop, count the key/value reads, and vary history and generation length. This isolates attention-side traffic; whole-model latency also includes weights and other work.</p>
+          <div class="site-card-links"><a href="ar_decode_bottleneck.html">Explore the decode loop →</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">02 · GPU performance</div>
+          <h2><a href="ridge_point.html">Rooflines &amp; the ridge point ↗</a></h2>
+          <p class="site-question">Is the kernel waiting for bytes, or running out of compute?</p>
+          <p>Connect arithmetic intensity to memory bandwidth and compute throughput. Move between the two ceilings and see why a spec-sheet roofline differs from sustained performance.</p>
+          <div class="site-card-links"><a href="ridge_point.html">Explore the hardware limits →</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">03 · Memory traffic</div>
+          <h2><a href="kv_bandwidth.html">KV traffic &amp; decode scaling ↗</a></h2>
+          <p class="site-question">What changes when batch, context and cache precision change?</p>
+          <p>Compare the page’s decode-scaling data across GPUs and workloads. Use batch, context and quantization views to connect a traffic model to observed behavior.</p>
+          <div class="site-card-links"><a href="kv_bandwidth.html">Explore the scaling views →</a></div>
+        </article>
+        <article class="site-card">
+          <div class="site-card-kicker">04 · Statistical reasoning</div>
+          <h2><a href="spearman_rho.html">Correlation, fit &amp; ranks ↗</a></h2>
+          <p class="site-question">Do two quantities move together, and what can that tell us?</p>
+          <p>Build Pearson r, R² and Spearman ρ from the data. Change points, examine ranks, and see how outliers or nonlinear relationships alter the result.</p>
+          <div class="site-card-links"><a href="spearman_rho.html">Explore the statistics →</a></div>
+        </article>
+      </div>
+    </section>
+    <section class="site-section" aria-labelledby="applied-title">
+      <div class="site-section-head"><div><span class="site-section-label">Put it together</span><h2 id="applied-title">From concepts to experiments</h2></div><p>See these ideas meet model behavior, cache precision and the storage path.</p></div>
+      <div class="site-grid">
+        <article class="site-card"><h3><a href="fp8-kv-failure-atlas.html">FP8 KV-Cache Failure Atlas</a></h3><p>Mechanisms, causal controls and recovery options for fragile KV-cache layouts.</p></article>
+        <article class="site-card"><h3><a href="paper_memory_decode.html">Memory-traffic saturation</a></h3><p>How cache capacity, kernel speed and batch size interact in decode throughput.</p></article>
+        <article class="site-card"><h3><a href="io-uring-dmabuf.html">GPU memory to storage</a></h3><p>Early Linux DMA-BUF enablement, platform qualification and application tests.</p></article>
+      </div>
+    </section>
+    <footer class="site-footer"><p><a href="index.html">← Back to knlp</a></p><p>Concepts · Kernel-Style Machine Learning</p></footer>
+  </main>
+</body>
+</html>
