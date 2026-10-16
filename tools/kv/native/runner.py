@@ -205,12 +205,10 @@ def native_nll(llm, sample, path, repeat=False):
     return chosen[1:]
 
 
-def parse_native(text):
-    import re
+def parse_native(text, final_marker=None):
+    from .completion import final_text
 
-    text = re.split(r"<\|(?:im_end|end)\|>", text)[0]
-    text = re.sub(r"<\|[^>]+\|>", "", text).strip()
-    return text.strip(" \n\t.\"'`")
+    return final_text(text, final_marker)
 
 
 def bridge(args, manifest, scales):
