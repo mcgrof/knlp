@@ -1,0 +1,153 @@
+{
+  "capture_date_utc": "2026-08-03",
+  "capture_runtime": {
+    "attention_backend": "TRITON_ATTN",
+    "block_size": 32,
+    "check_layers": [
+      1
+    ],
+    "eager": true,
+    "gpu_arch": "gfx1100",
+    "gpu_memory_bytes": 48301604864,
+    "hip": "7.2.53211",
+    "image": "rocm/vllm-dev@sha256:9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c",
+    "prefix_caching": false,
+    "python": "3.12.13",
+    "recompute_ratio": 0.15,
+    "storage": "LocalCPU",
+    "tokenizers": "0.23.0rc0",
+    "torch": "2.11.0+gitd0c8b1f",
+    "transformers": "5.14.1"
+  },
+  "capture_source_pins": {
+    "lmcache": {
+      "commit": "d416824a6f8991d40005939f0a57d91445e49a06",
+      "tree": "8967472be6892352167fc51a6b15c12f0e98a282"
+    },
+    "vllm": {
+      "commit": "2f8d7fc1dce404241bd3bc149a9dc8f37f741bc9",
+      "tree": "71770a747388ba8980da1de590b1910eb227d45d"
+    }
+  },
+  "claim_boundary": "Saved GPU capture independently reverified on CPU; dated codec run on captured tensors. Collective parity is against serial recovery; ordinary recomputation parity, timing, task quality and live GPU capacity are not established.",
+  "claims": {
+    "cold_miss_control_pass": true,
+    "collective_forward_pass": true,
+    "collective_kernel_batching_claim": true,
+    "collective_reverse_pass": true,
+    "control_output_pass": true,
+    "forward_reverse_order_stability_pass": true,
+    "full_collective_lockstep_gate_pass": true,
+    "incompatible_partition_control_pass": true,
+    "lockstep_numerical_pass": true,
+    "lockstep_output_pass": true,
+    "numerical_capture_available": true,
+    "numerical_forward_ordinary_comparison_available": true,
+    "ordinary_baseline_pass": true,
+    "ordinary_pic_claim_accepted": false,
+    "ordinary_pic_diagnostic_pass": false,
+    "ordinary_pic_output_diagnostic_pass": true,
+    "performance_claim": false,
+    "serial_collective_mask_parity_pass": true,
+    "serial_oracle_pass": true,
+    "sibling_failure_isolation_pass": true,
+    "terminal_cleanup_pass": true,
+    "zero_sharing_control_pass": true
+  },
+  "codec": {
+    "all_members_bitwise_exact": true,
+    "codec_source": {
+      "commit": "aa4984b57f78b9d1dce2e8d870ce7aa4716cd341",
+      "tree": "d2b3feeecae29d0b7e8366e817738966d2d267eb"
+    },
+    "corruption_rejected": true,
+    "dense_bytes": 25165824,
+    "encoded_bytes": 17506917,
+    "encoded_sha256": "7f8362e9fdddcb94ad30c7fe0578f0ff432d11042612918161d371e489bd2b18",
+    "encoded_to_dense": 0.6956623792648315,
+    "kind": "offline_family_encoding",
+    "live_gpu_page_sharing": false,
+    "members": 4,
+    "performance_claim": false,
+    "schema_version": 1,
+    "source_pair": "reference",
+    "verified_summary_sha256": "6d96cfba4ebc47077cdf5854f3b28472648916214b8ee7ff58b4fd148ed0bb41"
+  },
+  "cpu_recheck_runtime": {
+    "gpu_devices_exposed": false,
+    "omp_num_threads": 2,
+    "python": "3.12.13",
+    "safetensors": "0.8.0",
+    "torch": "2.11.0+gitd0c8b1f"
+  },
+  "dated_source_pins": {
+    "lmcache": {
+      "commit": "aa4984b57f78b9d1dce2e8d870ce7aa4716cd341",
+      "tree": "d2b3feeecae29d0b7e8366e817738966d2d267eb"
+    },
+    "vllm": {
+      "commit": "18f90213f45783bad6b7acd7bc43cbba957a69f8",
+      "tree": "c9bed864a0b1082d9aba501a339de7d20cd29017"
+    }
+  },
+  "evidence": {
+    "arm_result_sha256": {
+      "cold_miss": "ac345c606513a657e14dc0e0e9537c4259554c8d6b2fb42b287e510287167bb4",
+      "collective_forward": "2db6bce57ed8c33c791b43d22995c3da0448a3a6760e6de5c2dc74e331263203",
+      "collective_reverse": "89bc8c21eae747fcd39a942972ab683d6804c9ce759975849d1b6a414e25c664",
+      "incompatible_partition": "cfe9713a1070ed6d9c171c96f56fa7d1d5c9da39c87fd9dabca38bb4e983510e",
+      "ordinary": "23752a8e30dadad511464c05b21486643fc6b927ea21aee8d14cac5c2c58b843",
+      "serial_oracle": "da126ba6f4a5caadd71bc06790ad5cf2d9ac5f51054bbf2837e08026e718a129",
+      "sibling_failure": "4f00fb15963979672b4833bc51dac4548f20d377b97128c37bea8fff7cec078b",
+      "zero_sharing": "1691b7229be7bc1b89a3c86e662de222fae0b57718180b3cf92a2f250008bebb"
+    },
+    "codec_result_sha256": "d0d443b0746e267ebc09d8ed1502b959a986d43a1d72afe512b6cfdc72d3c9ab",
+    "verified_summary_sha256": "6d96cfba4ebc47077cdf5854f3b28472648916214b8ee7ff58b4fd148ed0bb41"
+  },
+  "kind": "archived_gpu_capture_cpu_reverification",
+  "operation_participation_per_member": {
+    "collective_diff_operations": 1,
+    "collective_rope_operations": 24,
+    "position_recovery_collective_operations": 24,
+    "position_recovery_serial_operations": 0,
+    "serial_diff_operations": 0,
+    "serial_rope_operations": 0
+  },
+  "result": {
+    "maximum_ordinary_serial_logit_error": 0.55859375,
+    "maximum_serial_collective_logit_error": 0.0,
+    "members": 4,
+    "serial_collective_kv_bitwise_equal": true
+  },
+  "reverification_date": "2026-10-16",
+  "schema_version": 1,
+  "validation_status": {
+    "dated_cpu_contract_suite_pass": true,
+    "dated_gpu_capture_run": false,
+    "latency_benchmark": false,
+    "live_gpu_page_sharing": false,
+    "live_gpu_wrapper_cancellation_qualified": false,
+    "paper_scale_reproduction": false,
+    "quality_benchmark": false
+  },
+  "workload": {
+    "dtype": "bfloat16",
+    "kv_shape_per_member": [
+      2,
+      512,
+      24,
+      128
+    ],
+    "manifest_sha256": "2d78e3f4124cff8e93bd3e2bec77ff3402c5eecd14a3b743a88fe0820041f3d0",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "nominal_shared_fraction": 0.8,
+    "prompts": 5,
+    "realized_shared_fraction": 0.8125,
+    "recovered_siblings": 4,
+    "retrieved_tokens_per_sibling": 416,
+    "synthetic": true,
+    "tokens_per_prompt": 512,
+    "trace_sha256": "6b869dfafaab5216c5c41e6dcb5da676231243748ffb5b055098c761e5b404f3"
+  }
+}

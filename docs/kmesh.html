@@ -39,6 +39,7 @@ strong { color: var(--text); }
 em { color: var(--amber); font-style: normal; }
 section { padding: 54px 0; border-top: 1px solid var(--line); scroll-margin-top: 90px; }
 h2 { font-size: 29px; line-height: 1.3; letter-spacing: -.02em; margin: 0 0 24px; }
+h3 { font-size: 19px; line-height: 1.4; margin: 30px 0 16px; }
 .toc { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 28px 0 40px; font: 12px/1.7 var(--mono); }
 .toc a { color: var(--muted); }
 .toc a:hover { color: var(--green); }
@@ -49,6 +50,8 @@ h2 { font-size: 29px; line-height: 1.3; letter-spacing: -.02em; margin: 0 0 24px
 .stat .val.amber { color: var(--amber); }
 .stat .label { margin-top: 12px; color: var(--muted); font: 11px/1.7 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
 code { font-family: var(--mono); font-size: .92em; color: #c8b6ff; overflow-wrap: anywhere; }
+pre { padding: 20px; margin: 24px 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--card2); font: 12px/1.8 var(--mono); }
+pre code { overflow-wrap: normal; color: var(--text); }
 .table-wrap { overflow-x: auto; border-radius: 9px; margin: 24px 0; }
 table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
 th, td { padding: 15px 17px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -86,13 +89,15 @@ footer a { color: var(--muted); }
     <span class="spacer"></span>
     <a href="#redundancies">reuse</a>
     <a href="#milestone">first milestone</a>
+    <a href="#reproduce">reproduce</a>
+    <a href="#results">results</a>
     <a href="#papers">papers</a>
     <a href="io-uring-dmabuf.html">storage interface</a>
   </nav>
 </header>
 <main id="content">
 <div class="hero">
-  <span class="eyebrow">Inference systems · Research goals</span>
+  <span class="eyebrow">Inference systems · TokenDance-style baseline</span>
   <h1>KMesh</h1>
   <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
   <p class="lead">Request-centric inference execution flattens round, segment, branch, and
@@ -100,8 +105,10 @@ footer a { color: var(--muted); }
   rediscover relationships the orchestrator already knew — or miss them. KMesh
   investigates whether an inference engine can be given explicit, keyed state
   relationships so that recovery, scheduling, and storage operate on groups of
-  related requests rather than isolated token streams. This page states the goals;
-  it does not yet report results.</p>
+  related requests rather than isolated token streams. A bounded TokenDance-style
+  baseline now checks collective recovery against serial recovery and measures
+  exact family encoding. The reproduction instructions and reference results
+  below separate what passed from the longer-term research goals.</p>
   <p class="paper-links"><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
   &middot; <a href="https://arxiv.org/abs/2604.03143">TokenDance</a>
   &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a></p>
@@ -119,7 +126,10 @@ footer a { color: var(--muted); }
   <a href="#generalization">3. The generalization: keyed inference state</a>
   <a href="#unresolved">4. The long-term architecture is unresolved</a>
   <a href="#milestone">5. The first milestone</a>
-  <a href="#papers">6. Papers</a>
+  <a href="#baseline">6. The baseline we implement</a>
+  <a href="#reproduce">7. Reproduce the baseline</a>
+  <a href="#results">8. Results and limits</a>
+  <a href="#papers">9. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -155,9 +165,10 @@ boundaries even at different absolute positions; collective position-independent
 KV reuse that pays the recovery cost once per round instead of once per request;
 a Master&ndash;Mirror diff-aware storage scheme that encodes sibling caches as
 sparse differences against one dense master; and fused sparse restoration on
-transfer. It is the right shape — but no open-source implementation was released,
-so an open baseline has to be reconstructed before anything can be generalized
-from it.</p>
+transfer. KMesh implements an independent baseline of segment-aware collective
+recovery and exact family storage before testing broader abstractions. The
+bounded baseline below covers selected mechanisms; it is not a reproduction of
+the paper's complete serving system.</p>
 <p><a href="https://arxiv.org/abs/2604.06370">ForkKV</a> shows the opportunity is
 larger than the KV cache alone. Multi-LoRA agents co-hosted on one base model
 diverge in their KV because each adapter changes the activations for the same
@@ -236,8 +247,198 @@ runtime needs to share keyed inference state safely, run as experiments on an op
 vLLM baseline, not a finished system.</div>
 </section>
 
+<section id="baseline">
+<h2>6. The baseline we implement</h2>
+<p>The controlled workload has five synthetic 512-token prompts containing the
+same content at different absolute positions. One request primes LMCache;
+four siblings then recover 416 tokens each. That is <strong>81.25% realized
+sharing</strong> after segment rounding from the nominal 80% generator setting.
+There are no matching prompt-aligned full blocks, so ordinary prefix reuse
+cannot explain the recovery.</p>
+<p>The vLLM and LMCache branches execute collective position-independent
+recovery: they adjust retrieved keys for each sibling's positions and batch
+rotary-position and difference-analysis calls across compatible requests.
+Selection masks, attention and destination slots remain request-local. A
+separate Master&ndash;Mirror codec stores one full cache and exact differences
+for the other family members. Its encoded-byte measurement runs offline on
+captured tensors.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Case</th><th scope="col">Purpose</th></tr>
+<tr><td class="hi">ordinary / serial oracle</td><td>Record full recomputation and the existing per-request recovery path as separate references.</td></tr>
+<tr><td class="hi">collective forward / reverse</td><td>Check collective recovery, request-order stability and request-local masks. Raw numerical parity is checked between serial and forward collective captures.</td></tr>
+<tr><td class="hi">cold miss / zero sharing</td><td>Require safe ordinary computation when there is nothing eligible to recover.</td></tr>
+<tr><td class="hi">incompatible partition</td><td>Decline a group whose compatibility metadata does not permit collective recovery.</td></tr>
+<tr><td class="hi">sibling failure</td><td>Inject a failure and check isolation, fallback, ownership release and terminal cleanup.</td></tr>
+</table>
+</div>
+<p>The independent verifier reloads the raw tensors and checks their hashes,
+K/V bits, logits, masks, operation ledgers and cleanup. A successful launcher
+exit or a self-reported driver flag does not establish a result.</p>
+</section>
+
+<section id="reproduce">
+<h2>7. Reproduce the baseline</h2>
+<p>The harness lives in <code>tools/reproduce/tokendance/</code>, with the full
+prerequisites, commands and output contract in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md">reproducer README</a>.
+The scripts and defconfigs are on knlp main. The paired implementations are
+published in the <a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-tokendance-reproduction">vLLM fork branch</a>
+and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-16-feature-tokendance-reproduction">LMCache fork branch</a>.
+These experimental branches are separate from upstream releases. The raw
+reference capture is retained separately and is not distributed with knlp.</p>
+
+<h3>Validate the workload on CPU</h3>
+<pre><code>make defconfig-tokendance
+make tokendance-plan
+make
+make tokendance-test</code></pre>
+<p><code>defconfig-tokendance-cpu</code> selects the same CPU profile explicitly.
+This needs Python 3.10 or newer and GNU make. It generates the pinned trace
+without loading a model or touching a GPU. The resulting <code>result.json</code>
+states <code>synthetic_trace_only</code> and
+<code>executed_kv_reuse: false</code>. Use a fresh absolute
+<code>TOKENDANCE_OUTPUT</code> for each execution; existing outputs are never
+overwritten.</p>
+
+<h3>Use the exact component and runtime pins</h3>
+<p>Both published component branches are named
+<code>2026-10-16-feature-tokendance-reproduction</code>. The runner requires clean
+checkouts matching their commit and tree digests.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Component</th><th scope="col">Dated baseline commit</th></tr>
+<tr><td class="hi">vLLM</td><td><a href="https://github.com/mcgrof/vllm/commit/18f90213f45783bad6b7acd7bc43cbba957a69f8"><code>18f90213f45783bad6b7acd7bc43cbba957a69f8</code></a></td></tr>
+<tr><td class="hi">LMCache</td><td><a href="https://github.com/mcgrof/LMCache/commit/aa4984b57f78b9d1dce2e8d870ce7aa4716cd341"><code>aa4984b57f78b9d1dce2e8d870ce7aa4716cd341</code></a></td></tr>
+</table>
+</div>
+<p>From a knlp checkout, clone the paired branches into sibling directories
+and select the immutable commits:</p>
+<pre><code>git clone --single-branch --branch 2026-10-16-feature-tokendance-reproduction \
+  https://github.com/mcgrof/vllm.git ../vllm-tokendance
+git clone --single-branch --branch 2026-10-16-feature-tokendance-reproduction \
+  https://github.com/mcgrof/LMCache.git ../lmcache-tokendance
+git -C ../vllm-tokendance checkout --detach 18f90213f45783bad6b7acd7bc43cbba957a69f8
+git -C ../lmcache-tokendance checkout --detach aa4984b57f78b9d1dce2e8d870ce7aa4716cd341</code></pre>
+<p>Use the resulting absolute checkout paths for the source variables below.
+The default CPU trace profile needs neither component; the contract and model
+commands require the paired implementations.</p>
+<p>The GPU profile is deliberately narrow: one <code>gfx1100</code> device with
+48,301,604,864 bytes, the pinned ROCm container and prepared native Python
+environment, BF16, eager <code>TRITON_ATTN</code>, 32-token blocks and prefix
+caching disabled. The model is <code>Qwen/Qwen2.5-0.5B-Instruct</code> at revision
+<code>7ae557604adf67be50417f59c2c2f167def9a775</code>. Software versions, compiled
+extension hashes, model-file hashes, trace hashes and source trees are fixed
+by the harness. The wrapper does not build or download the native environment.</p>
+<p>Configure <code>TOKENDANCE_VLLM_SOURCE</code>,
+<code>TOKENDANCE_LMCACHE_SOURCE</code>, <code>TOKENDANCE_RUNTIME_VOLUME</code> and
+<code>TOKENDANCE_MODEL_DIR</code> with local paths and the prepared Docker volume.
+The host model path may be anywhere; the wrapper mounts it at the profile's
+fixed container path. Sources, model and runtime are read-only and execution
+has no network access. A CUDA GPU or a different native build requires its own
+qualification; changing an identity constant is not qualification.</p>
+
+<h3>Check contracts, then queue GPU execution</h3>
+<p>The CPU contract suite imports the real component code in the pinned
+environment without exposing GPU devices. Run it with the component and volume
+variables set and a fresh output directory:</p>
+<pre><code>TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
+TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
+TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
+TOKENDANCE_OUTPUT=/path/to/fresh-contract-results \
+make tokendance-contracts</code></pre>
+<p>For the model experiment, select the ROCm defconfig and submit the payload
+through the qualified host's <code>gpuq</code>. Pass variables explicitly in
+the payload so that they reach the queue worker:</p>
+<pre><code>make defconfig-tokendance-rocm
+make tokendance-plan
+gpuq status
+gpuq submit --experiment tokendance-baseline \
+  --description 'shared-update recovery correctness' \
+  --expected-minutes 20 --cwd "$PWD" -- /usr/bin/env \
+  TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
+  TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
+  TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
+  TOKENDANCE_MODEL_DIR=/path/to/pinned-model-snapshot \
+  TOKENDANCE_OUTPUT=/path/to/fresh-gpu-results \
+  make tokendance-gpu TOKENDANCE_PY=/usr/bin/python3
+gpuq show RUN_ID</code></pre>
+<p>Set <code>TOKENDANCE_DOCKER='sudo -n docker'</code> in the payload only where
+that is the configured Docker invocation. GPU execution requires the queue's
+<code>GPUQ_RUN_ID</code>. The launcher checks contracts and the resolved model
+profile, runs all eight cases in separate containers, then verifies them on CPU.
+The new wrapper's live GPU execution and cancellation are still unqualified.</p>
+
+<h3>Independently verify a capture and measure storage bytes</h3>
+<p>A saved capture can be checked without a GPU using Python with PyTorch and
+safetensors. The capture directory contains <code>arms/</code>. Keep verification
+outputs outside it. <code>reference</code> selects the original captured source
+pair, vLLM <code>2f8d7fc1dce4</code> and LMCache <code>d416824a6f89</code>;
+use <code>dated</code> for a new capture on the dated branches.</p>
+<pre><code>TOKENDANCE_BUNDLE=/path/to/eight-case-capture \
+TOKENDANCE_SOURCE_PAIR=reference \
+TOKENDANCE_OUTPUT=/path/to/fresh-verification \
+make tokendance-verify TOKENDANCE_PY=/path/to/torch-env/bin/python</code></pre>
+<p>After the independent gate passes, the offline codec command uses the dated
+LMCache implementation to encode, write, reload and bitwise-compare all four
+captured caches. It also rejects an intentionally corrupted payload.</p>
+<pre><code>TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
+TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
+TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
+TOKENDANCE_BUNDLE=/path/to/eight-case-capture \
+TOKENDANCE_VERIFICATION=/path/to/fresh-verification/verified.json \
+TOKENDANCE_OUTPUT=/path/to/fresh-codec-results \
+make tokendance-codec</code></pre>
+<p>Inspect <code>verified.json</code> and <code>report.json</code> for the recovery
+claims, <code>codec.json</code> for actual dense and encoded byte counts, and
+<code>family.bin</code> for the encoded artifact. Run
+<code>sha256sum -c SHA256SUMS</code> inside the verification directory to check
+the summary digest. Its result and ledger hashes bind the captured inputs.
+Any failed check leaves evidence and stops promotion.</p>
+</section>
+
+<section id="results">
+<h2>8. Results and limits</h2>
+<p><strong>Evidence status, 2026-10-16:</strong> the portable verifier independently
+rechecked the retained 2026-08-03 GPU capture on CPU. The dated component pair
+passed the CPU contract suite, and its LMCache codec encoded the captured
+tensors on CPU. There was no fresh model/GPU run on the dated pair. Exact
+source, workload and evidence digests are in the
+<a href="data/tokendance-reference.json">sanitized reference record</a>.</p>
+<div class="stat-grid">
+  <div class="stat"><div class="val">8 / 8</div><div class="label">saved GPU cases<br>independently reverified</div></div>
+  <div class="stat"><div class="val cyan">bitwise</div><div class="label">collective vs serial K/V<br>four recovered siblings</div></div>
+  <div class="stat"><div class="val amber">30.4%</div><div class="label">fewer encoded bytes<br>offline family storage</div></div>
+</div>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Measurement</th><th scope="col">Result</th><th scope="col">What it establishes</th></tr>
+<tr><td class="hi">Serial vs collective</td><td>Raw K/V bits identical; maximum absolute logit difference 0.0.</td><td>Batching preserves this serial recovery baseline for four siblings in this synthetic case.</td></tr>
+<tr><td class="hi">Order, fallback, cleanup</td><td>All eight cases pass their independent checks.</td><td>Reversing request order, missing data, incompatible groups and injected failure obey the bounded contract.</td></tr>
+<tr><td class="hi">Ordinary vs serial</td><td>Maximum absolute logit difference 0.55859375; numerical diagnostic fails.</td><td>Recovery is not numerically equivalent to full recomputation. That parity is not an accepted claim.</td></tr>
+<tr><td class="hi">Family codec</td><td>17,506,917 encoded bytes / 25,165,824 dense bytes = 69.566% of dense size.</td><td>Actual serialized storage saves 30.434%, including metadata, with exact restoration and corruption rejection.</td></tr>
+</table>
+</div>
+<p>The dense byte count is four siblings &times; two K/V planes &times; 512 tokens
+&times; 24 layers &times; 128 features &times; two BF16 bytes. Shared spans align
+by content before encoding. CPU codec measurement used the pinned container
+with two OpenMP threads and no GPU devices. It does not measure how many GPU
+pages an online engine can share.</p>
+<p>The collective ledger records 24 cached-key recovery operations, 24 model
+rotary operations and one difference-analysis operation per participating
+member. Those are participation records for shared calls, not separate calls
+to sum across members. They demonstrate batching; they do not demonstrate
+constant work or a latency improvement.</p>
+<div class="note"><strong>Correctness and encoded bytes are the measured results.</strong>
+The one-token output check passes, but does not establish agent-task quality.
+Capture synchronization and tensor writes invalidate timing comparisons. No
+throughput, latency, live GPU capacity, cascade-attention gain, DMA-BUF gain or
+end-to-end storage-offload result is established. This small-model synthetic
+baseline is not the paper's larger-model, real-agent workload evaluation.</div>
+</section>
+
 <section id="papers">
-<h2>6. Papers</h2>
+<h2>9. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
