@@ -40,6 +40,7 @@ def test_forced_lengths_account_for_all_outputs(tmp_path, length):
     )
     memory = dict(cuda_device_used_bytes=1)
     calls = []
+    synchronized_after_calls = []
 
     class Engine:
         llm_engine = SimpleNamespace(step=lambda: [])
@@ -91,6 +92,11 @@ def test_forced_lengths_account_for_all_outputs(tmp_path, length):
         json=json,
         hashlib=hashlib,
         time=time,
+        torch=SimpleNamespace(
+            cuda=SimpleNamespace(
+                synchronize=lambda: synchronized_after_calls.append(len(calls))
+            )
+        ),
         save=lambda path, value: path.write_text(json.dumps(value)),
     )
     exec(
@@ -107,6 +113,9 @@ def test_forced_lengths_account_for_all_outputs(tmp_path, length):
         output_tokens=length,
     )
     assert calls == [length, length]
+    assert synchronized_after_calls == [1, 2]
+    assert row["CUDA_synchronized_at_timing_boundaries"]
+    assert row["cohort_decode_seconds"] == length - 1
     assert row["output_tokens"] == length and row["output_tokens_per_request"] == length
     assert row["itl_p50_seconds"] == 1
     assert row["completion_linked_decode"]["steps"] == length - 2
