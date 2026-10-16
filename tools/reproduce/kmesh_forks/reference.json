@@ -1,0 +1,1215 @@
+{
+  "block_size": 16,
+  "bytes_per_token": 12288,
+  "loss_window_sweep": {
+    "points": [
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 1.0,
+        "child_hit_tokens": [
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 0.0,
+        "churn_tokens": 0,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 0,
+        "duplicated_full_blocks": 0,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 20480,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 416,
+        "written_bytes": 81788928,
+        "written_over_fork_oracle": 1.0
+      },
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 1.0,
+        "child_hit_tokens": [
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 0.25,
+        "churn_tokens": 4096,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 0,
+        "duplicated_full_blocks": 0,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 20480,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 416,
+        "written_bytes": 81788928,
+        "written_over_fork_oracle": 1.0
+      },
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 1.0,
+        "child_hit_tokens": [
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 0.5,
+        "churn_tokens": 8192,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 0,
+        "duplicated_full_blocks": 0,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 20480,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 416,
+        "written_bytes": 81788928,
+        "written_over_fork_oracle": 1.0
+      },
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 0.9992,
+        "child_hit_tokens": [
+          4080,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 0.75,
+        "churn_tokens": 12288,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 16,
+        "duplicated_full_blocks": 1,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 20464,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 417,
+        "written_bytes": 81985536,
+        "written_over_fork_oracle": 1.0024
+      },
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 0.8,
+        "child_hit_tokens": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 1.0,
+        "churn_tokens": 16384,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 4096,
+        "duplicated_full_blocks": 256,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 16384,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 672,
+        "written_bytes": 132120576,
+        "written_over_fork_oracle": 1.6154
+      },
+      {
+        "admission_failures": 0,
+        "ancestor_survival": 0.8,
+        "child_hit_tokens": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "churn_admission_failures": 0,
+        "churn_fraction": 1.5,
+        "churn_tokens": 24576,
+        "content_oracle_blocks": 416,
+        "content_oracle_bytes": 81788928,
+        "duplicated_boundary_tokens": 4096,
+        "duplicated_full_blocks": 256,
+        "fork_oracle_blocks": 416,
+        "hit_tokens": 16384,
+        "logical_blocks": 1696,
+        "logical_bytes": 333447168,
+        "logical_tokens": 27136,
+        "peak_used_blocks": 417,
+        "written_blocks": 672,
+        "written_bytes": 132120576,
+        "written_over_fork_oracle": 1.6154
+      }
+    ],
+    "pool_blocks": 1024,
+    "tree": "a4096-b5-t512"
+  },
+  "scenarios": {
+    "a2048-b8-t256": {
+      "concurrent_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 256,
+          "content_oracle_bytes": 50331648,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 256,
+          "hit_tokens": 16384,
+          "logical_blocks": 1280,
+          "logical_bytes": 251658240,
+          "logical_tokens": 20480,
+          "peak_used_blocks": 257,
+          "written_blocks": 256,
+          "written_bytes": 50331648,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "concurrent_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 256,
+          "content_oracle_bytes": 50331648,
+          "duplicated_boundary_tokens": 16384,
+          "duplicated_full_blocks": 1024,
+          "fork_oracle_blocks": 256,
+          "hit_tokens": 0,
+          "logical_blocks": 1280,
+          "logical_bytes": 251658240,
+          "logical_tokens": 20480,
+          "peak_used_blocks": 1153,
+          "written_blocks": 1280,
+          "written_bytes": 251658240,
+          "written_over_fork_oracle": 5.0
+        }
+      },
+      "pool_pressure_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 256,
+          "content_oracle_bytes": 50331648,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 256,
+          "hit_tokens": 16384,
+          "logical_blocks": 1280,
+          "logical_bytes": 251658240,
+          "logical_tokens": 20480,
+          "peak_used_blocks": 257,
+          "pool_blocks": 320,
+          "written_blocks": 256,
+          "written_bytes": 50331648,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "pool_pressure_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 6,
+          "content_oracle_blocks": 256,
+          "content_oracle_bytes": 50331648,
+          "duplicated_boundary_tokens": 4096,
+          "duplicated_full_blocks": 256,
+          "fork_oracle_blocks": 256,
+          "hit_tokens": 0,
+          "logical_blocks": 1280,
+          "logical_bytes": 251658240,
+          "logical_tokens": 20480,
+          "peak_used_blocks": 289,
+          "pool_blocks": 320,
+          "written_blocks": 416,
+          "written_bytes": 81788928,
+          "written_over_fork_oracle": 1.625
+        }
+      },
+      "sequential_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048,
+          2048
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 256,
+          "content_oracle_bytes": 50331648,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 256,
+          "hit_tokens": 16384,
+          "logical_blocks": 1280,
+          "logical_bytes": 251658240,
+          "logical_tokens": 20480,
+          "peak_used_blocks": 145,
+          "written_blocks": 256,
+          "written_bytes": 50331648,
+          "written_over_fork_oracle": 1.0
+        }
+      }
+    },
+    "a4096-b3-t256-l2": {
+      "concurrent_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 448,
+          "content_oracle_bytes": 88080384,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 448,
+          "hit_tokens": 51456,
+          "logical_blocks": 3664,
+          "logical_bytes": 720371712,
+          "logical_tokens": 58624,
+          "peak_used_blocks": 449,
+          "written_blocks": 448,
+          "written_bytes": 88080384,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "concurrent_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 448,
+          "content_oracle_bytes": 88080384,
+          "duplicated_boundary_tokens": 51456,
+          "duplicated_full_blocks": 3216,
+          "fork_oracle_blocks": 448,
+          "hit_tokens": 0,
+          "logical_blocks": 3664,
+          "logical_bytes": 720371712,
+          "logical_tokens": 58624,
+          "peak_used_blocks": 2593,
+          "written_blocks": 3664,
+          "written_bytes": 720371712,
+          "written_over_fork_oracle": 8.1786
+        }
+      },
+      "pool_pressure_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 448,
+          "content_oracle_bytes": 88080384,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 448,
+          "hit_tokens": 51456,
+          "logical_blocks": 3664,
+          "logical_bytes": 720371712,
+          "logical_tokens": 58624,
+          "peak_used_blocks": 449,
+          "pool_blocks": 560,
+          "written_blocks": 448,
+          "written_bytes": 88080384,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "pool_pressure_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 9,
+          "content_oracle_blocks": 448,
+          "content_oracle_bytes": 88080384,
+          "duplicated_boundary_tokens": 12544,
+          "duplicated_full_blocks": 784,
+          "fork_oracle_blocks": 448,
+          "hit_tokens": 0,
+          "logical_blocks": 3664,
+          "logical_bytes": 720371712,
+          "logical_tokens": 58624,
+          "peak_used_blocks": 545,
+          "pool_blocks": 560,
+          "written_blocks": 1088,
+          "written_bytes": 213909504,
+          "written_over_fork_oracle": 2.4286
+        }
+      },
+      "sequential_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 448,
+          "content_oracle_bytes": 88080384,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 448,
+          "hit_tokens": 51456,
+          "logical_blocks": 3664,
+          "logical_bytes": 720371712,
+          "logical_tokens": 58624,
+          "peak_used_blocks": 289,
+          "written_blocks": 448,
+          "written_bytes": 88080384,
+          "written_over_fork_oracle": 1.0
+        }
+      }
+    },
+    "a4096-b5-t512": {
+      "concurrent_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 416,
+          "content_oracle_bytes": 81788928,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 416,
+          "hit_tokens": 20480,
+          "logical_blocks": 1696,
+          "logical_bytes": 333447168,
+          "logical_tokens": 27136,
+          "peak_used_blocks": 417,
+          "written_blocks": 416,
+          "written_bytes": 81788928,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "concurrent_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 416,
+          "content_oracle_bytes": 81788928,
+          "duplicated_boundary_tokens": 20480,
+          "duplicated_full_blocks": 1280,
+          "fork_oracle_blocks": 416,
+          "hit_tokens": 0,
+          "logical_blocks": 1696,
+          "logical_bytes": 333447168,
+          "logical_tokens": 27136,
+          "peak_used_blocks": 1441,
+          "written_blocks": 1696,
+          "written_bytes": 333447168,
+          "written_over_fork_oracle": 4.0769
+        }
+      },
+      "pool_pressure_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 416,
+          "content_oracle_bytes": 81788928,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 416,
+          "hit_tokens": 20480,
+          "logical_blocks": 1696,
+          "logical_bytes": 333447168,
+          "logical_tokens": 27136,
+          "peak_used_blocks": 417,
+          "pool_blocks": 520,
+          "written_blocks": 416,
+          "written_bytes": 81788928,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "pool_pressure_uncached": {
+        "allocated": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 4,
+          "content_oracle_blocks": 416,
+          "content_oracle_bytes": 81788928,
+          "duplicated_boundary_tokens": 4096,
+          "duplicated_full_blocks": 256,
+          "fork_oracle_blocks": 416,
+          "hit_tokens": 0,
+          "logical_blocks": 1696,
+          "logical_bytes": 333447168,
+          "logical_tokens": 27136,
+          "peak_used_blocks": 289,
+          "pool_blocks": 520,
+          "written_blocks": 544,
+          "written_bytes": 106954752,
+          "written_over_fork_oracle": 1.3077
+        }
+      },
+      "sequential_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 416,
+          "content_oracle_bytes": 81788928,
+          "duplicated_boundary_tokens": 0,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 416,
+          "hit_tokens": 20480,
+          "logical_blocks": 1696,
+          "logical_bytes": 333447168,
+          "logical_tokens": 27136,
+          "peak_used_blocks": 289,
+          "written_blocks": 416,
+          "written_bytes": 81788928,
+          "written_over_fork_oracle": 1.0
+        }
+      }
+    },
+    "a4101-b3-t253-l2": {
+      "concurrent_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 440,
+          "content_oracle_bytes": 86507520,
+          "duplicated_boundary_tokens": 33,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 452,
+          "hit_tokens": 51456,
+          "logical_blocks": 3668,
+          "logical_bytes": 720396288,
+          "logical_tokens": 58626,
+          "peak_used_blocks": 449,
+          "written_blocks": 452,
+          "written_bytes": 88866816,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "concurrent_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 440,
+          "content_oracle_bytes": 86507520,
+          "duplicated_boundary_tokens": 51489,
+          "duplicated_full_blocks": 3216,
+          "fork_oracle_blocks": 452,
+          "hit_tokens": 0,
+          "logical_blocks": 3668,
+          "logical_bytes": 720396288,
+          "logical_tokens": 58626,
+          "peak_used_blocks": 2593,
+          "written_blocks": 3668,
+          "written_bytes": 721158144,
+          "written_over_fork_oracle": 8.115
+        }
+      },
+      "pool_pressure_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 440,
+          "content_oracle_bytes": 86507520,
+          "duplicated_boundary_tokens": 33,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 452,
+          "hit_tokens": 51456,
+          "logical_blocks": 3668,
+          "logical_bytes": 720396288,
+          "logical_tokens": 58626,
+          "peak_used_blocks": 449,
+          "pool_blocks": 565,
+          "written_blocks": 452,
+          "written_bytes": 88866816,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "pool_pressure_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 9,
+          "content_oracle_blocks": 440,
+          "content_oracle_bytes": 86507520,
+          "duplicated_boundary_tokens": 12556,
+          "duplicated_full_blocks": 784,
+          "fork_oracle_blocks": 452,
+          "hit_tokens": 0,
+          "logical_blocks": 3668,
+          "logical_bytes": 720396288,
+          "logical_tokens": 58626,
+          "peak_used_blocks": 547,
+          "pool_blocks": 565,
+          "written_blocks": 1091,
+          "written_bytes": 214499328,
+          "written_over_fork_oracle": 2.4137
+        }
+      },
+      "sequential_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352,
+          4352
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 440,
+          "content_oracle_bytes": 86507520,
+          "duplicated_boundary_tokens": 33,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 452,
+          "hit_tokens": 51456,
+          "logical_blocks": 3668,
+          "logical_bytes": 720396288,
+          "logical_tokens": 58626,
+          "peak_used_blocks": 289,
+          "written_blocks": 452,
+          "written_bytes": 88866816,
+          "written_over_fork_oracle": 1.0
+        }
+      }
+    },
+    "a4101-b5-t509": {
+      "concurrent_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 417,
+          "content_oracle_bytes": 81985536,
+          "duplicated_boundary_tokens": 25,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 422,
+          "hit_tokens": 20480,
+          "logical_blocks": 1702,
+          "logical_bytes": 333631488,
+          "logical_tokens": 27151,
+          "peak_used_blocks": 422,
+          "written_blocks": 422,
+          "written_bytes": 82968576,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "concurrent_uncached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 417,
+          "content_oracle_bytes": 81985536,
+          "duplicated_boundary_tokens": 20505,
+          "duplicated_full_blocks": 1280,
+          "fork_oracle_blocks": 422,
+          "hit_tokens": 0,
+          "logical_blocks": 1702,
+          "logical_bytes": 333631488,
+          "logical_tokens": 27151,
+          "peak_used_blocks": 1446,
+          "written_blocks": 1702,
+          "written_bytes": 334626816,
+          "written_over_fork_oracle": 4.0332
+        }
+      },
+      "pool_pressure_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 417,
+          "content_oracle_bytes": 81985536,
+          "duplicated_boundary_tokens": 25,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 422,
+          "hit_tokens": 20480,
+          "logical_blocks": 1702,
+          "logical_bytes": 333631488,
+          "logical_tokens": 27151,
+          "peak_used_blocks": 422,
+          "pool_blocks": 527,
+          "written_blocks": 422,
+          "written_bytes": 82968576,
+          "written_over_fork_oracle": 1.0
+        }
+      },
+      "pool_pressure_uncached": {
+        "allocated": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "hits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "admission_failures": 4,
+          "content_oracle_blocks": 417,
+          "content_oracle_bytes": 81985536,
+          "duplicated_boundary_tokens": 4101,
+          "duplicated_full_blocks": 256,
+          "fork_oracle_blocks": 422,
+          "hit_tokens": 0,
+          "logical_blocks": 1702,
+          "logical_bytes": 333631488,
+          "logical_tokens": 27151,
+          "peak_used_blocks": 290,
+          "pool_blocks": 527,
+          "written_blocks": 546,
+          "written_bytes": 107347968,
+          "written_over_fork_oracle": 1.2938
+        }
+      },
+      "sequential_cached": {
+        "allocated": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "hits": [
+          0,
+          4096,
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "summary": {
+          "admission_failures": 0,
+          "content_oracle_blocks": 417,
+          "content_oracle_bytes": 81985536,
+          "duplicated_boundary_tokens": 25,
+          "duplicated_full_blocks": 0,
+          "fork_oracle_blocks": 422,
+          "hit_tokens": 20480,
+          "logical_blocks": 1702,
+          "logical_bytes": 333631488,
+          "logical_tokens": 27151,
+          "peak_used_blocks": 290,
+          "written_blocks": 422,
+          "written_bytes": 82968576,
+          "written_over_fork_oracle": 1.0
+        }
+      }
+    }
+  },
+  "seed": 20260805
+}

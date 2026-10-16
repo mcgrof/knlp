@@ -1,0 +1,19 @@
+{
+  "block_size": 16,
+  "gpu": false,
+  "image": "rocm/vllm-dev@sha256:9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c",
+  "measurement": "cpu-allocator-metadata",
+  "omp_num_threads": 2,
+  "runtime_versions": {
+    "python": "3.12.13",
+    "torch": "2.11.0+gitd0c8b1f",
+    "vllm": "0.26.1rc1.dev221+g454ea5b52"
+  },
+  "schema_version": 1,
+  "seed": 20260805,
+  "vllm": {
+    "commit": "5ccaa1456af6d2c08fbb39e6c7bc4480df445d07",
+    "tree": "3e8d67726f15f528a40d7ab4110b7763c7a48cad"
+  },
+  "vllm_base": "454ea5b52611c933e00581723e2db56f0144cea7"
+}
