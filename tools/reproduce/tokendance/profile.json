@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "name": "shared-update-batched-qkv",
+  "source_pairs": {
+    "dated": {
+      "vllm": {
+        "commit": "18f90213f45783bad6b7acd7bc43cbba957a69f8",
+        "tree": "c9bed864a0b1082d9aba501a339de7d20cd29017"
+      },
+      "lmcache": {
+        "commit": "aa4984b57f78b9d1dce2e8d870ce7aa4716cd341",
+        "tree": "d2b3feeecae29d0b7e8366e817738966d2d267eb"
+      }
+    },
+    "reference": {
+      "vllm": {
+        "commit": "2f8d7fc1dce404241bd3bc149a9dc8f37f741bc9",
+        "tree": "71770a747388ba8980da1de590b1910eb227d45d"
+      },
+      "lmcache": {
+        "commit": "d416824a6f8991d40005939f0a57d91445e49a06",
+        "tree": "8967472be6892352167fc51a6b15c12f0e98a282"
+      }
+    }
+  },
+  "image": "rocm/vllm-dev@sha256:9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c",
+  "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "trace_sha256": "6b869dfafaab5216c5c41e6dcb5da676231243748ffb5b055098c761e5b404f3",
+  "manifest_sha256": "2d78e3f4124cff8e93bd3e2bec77ff3402c5eecd14a3b743a88fe0820041f3d0",
+  "arms": [
+    "ordinary",
+    "serial_oracle",
+    "collective_forward",
+    "collective_reverse",
+    "cold_miss",
+    "zero_sharing",
+    "incompatible_partition",
+    "sibling_failure"
+  ],
+  "model_files": {
+    "config.json": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+    "generation_config.json": "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6",
+    "merges.txt": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+    "model.safetensors": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+    "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+    "tokenizer_config.json": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+    "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+  }
+}
