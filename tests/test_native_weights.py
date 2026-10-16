@@ -91,3 +91,29 @@ def test_dense_cuda_join_rejects_incomplete_or_wrong_dispatch(change):
         data["traceEvents"][2]["args"]["External id"] = 0
     with pytest.raises(RuntimeError):
         fp16_dispatch_from_trace(data)
+
+
+def test_bf16_storage_rejects_fp16_and_counts_bias():
+    from tools.kv.native.weights import inspect_bf16_weights
+
+    value = model().to(torch.bfloat16)
+    value[0].bias = torch.nn.Parameter(torch.zeros(8, dtype=torch.bfloat16))
+    receipt = inspect_bf16_weights(value, 2, 0)
+    assert receipt["format"] == "bf16"
+    assert receipt["unique_parameter_bytes"] == 144
+    with pytest.raises(RuntimeError):
+        inspect_fp16_weights(value, 2, 0)
+    with pytest.raises(RuntimeError):
+        inspect_bf16_weights(value.to(torch.float16), 2, 0)
+
+
+def test_bf16_dispatch_joins_biased_dense_projections():
+    from tools.kv.native.weights import bf16_dispatch_from_trace
+
+    data = trace(112)
+    for event in data["traceEvents"][::8]:
+        event["name"] = "aten::addmm"
+    assert bf16_dispatch_from_trace(data)["covered_cpu_mm_calls"] == 112
+    data["traceEvents"][1]["args"]["External id"] = 9999
+    with pytest.raises(RuntimeError):
+        bf16_dispatch_from_trace(data)
