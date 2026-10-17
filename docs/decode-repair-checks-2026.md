@@ -1,5 +1,8 @@
 # October 16 repair checks: neither candidate qualified
 
+This page records the October 16 attempts. See the separate
+[October 17 follow-up](decode-routing-d64-followup-2026.md) for later qualification.
+
 Two separate bounded H100 checks followed the completed B32 study. They
 produced no fresh quality or timing result. The previous measured source
 refs and published results retain their original scope.

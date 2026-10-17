@@ -41,8 +41,9 @@
     <span class="tag tag-amber">CAPACITY ≠ THROUGHPUT</span></div>
   <div class="hero-links"><a href="#saturation">Explore the law ↓</a>
     <a href="#full-stack">Read the serving result ↓</a>
+    <a href="#october-followup-checks">October 17 routing follow-up ↓</a>
     <a href="bias-aware-kv-quantization.html">Choose a KV precision policy →</a></div>
-  <p class="fine" style="margin-top:22px">Explanation and presentation updated October 16, 2026.
+  <p class="fine" style="margin-top:22px">Explanation and findings updated October 17, 2026.
     Earlier measurements retain their stated model, hardware, and implementation scope.</p>
 </section>
 
@@ -443,9 +444,9 @@
 <section class="panel-section" id="october-repair-checks">
   <div class="panel-header">
     <span class="panel-id">R</span>
-    <h2 class="panel-title">Separate repair checks — neither candidate qualified</h2>
+    <h2 class="panel-title">October 16 repair checks — neither candidate qualified</h2>
   </div>
-  <p class="panel-body">Two bounded H100 checks followed the B32 closeout.
+  <p class="panel-body">The following records the October 16 attempts after the B32 closeout.
     The mixed-prefill metadata candidate stopped in its initial all-prefill admission,
     before any mixed decode/prefill batch. Across 34 completed layers, full output and LSE
     matched the existing mixed-cache fallback bit for bit. One of 417,792 fixed sampled
@@ -461,6 +462,30 @@
     Total use was 0.33449 GPU-hours, with a provisional $1.35 estimate including disk allowance.
     Neither check produced a new speed result or qualified dependency release.
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-repair-checks-2026.md">Exact scope, sources and failed gate</a>.</p>
+</section>
+
+<section class="panel-section" id="october-followup-checks">
+  <div class="panel-header"><span class="panel-id">OCT 17</span><h2 class="panel-title">Fresh-prefill routing passes the focused AWQ test</h2></div>
+  <p class="panel-body">On Qwen3-8B-AWQ, compact prefill now handles fresh prompts inside mixed decode/prefill batches.
+    Ten fresh, counterbalanced three-arm blocks on H100 give median complete-request throughput gains of
+    <strong>4.88% over accepted compact</strong> and <strong>3.45% over native</strong>.
+    Both comparisons win all 10 blocks, with Holm-adjusted sign p=0.001953.
+    This is the fixed 8,192-input-token, B32, 128-output, packed-AWQ/FP16 recipe with a 48 GiB pool.
+    The original eight-model matrix and earlier measured refs retain their scope.</p>
+  <p class="panel-body">All 360 same-dispatch routing checks pass across 36 layers and two prompt rotations.
+    Fresh NLL, retrieval and all 1,319 GSM8K cases pass preservation against both controls.
+    GSM scores 1,201/1,319 versus accepted 1,201 and native 1,199; gross-loss upper bounds are 0.227% and 1.927%, within 2%.
+    Clean allocator use peaks at 63.23 GiB, with 500 ms driver observations up to 63.98 GiB.
+    The separate three-block B8 engineering screen passes at a candidate/accepted median of 0.99889×.</p>
+  <p class="panel-body">This qualifies routing equivalence to the accepted compact operation, rather than exact ideal-FP32 attention.
+    The unchanged diagnostic still reports 27 output violations among 3,538,944 fixed sampled elements; sampled log normalizers pass.
+    Matched profiles retain CUDA launch correlation, gather and residual work, and host launch cost separately.
+    They are descriptive; the speed decision comes from complete-request trials.</p>
+  <p class="panel-body">Separately, the D64 layout repair passes its prescribed paged FA2 numerical suite:
+    18 original control-grid checks, 35 candidate-grid checks and the retained geometry fixtures.
+    The original D64 fixture fails numerically; the repaired fixture and declared candidate grid pass unchanged limits.
+    Contiguous/ragged paths and the full Qwen0.5 model remain unqualified. The older Qwen0.5 row is unchanged.
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-routing-d64-followup-2026.md">Scope, source pins, all block ratios and component accounting</a>.</p>
 </section>
 
 <section class="panel-section" id="per-model-throughput">
