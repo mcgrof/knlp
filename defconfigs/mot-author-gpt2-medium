@@ -1,0 +1,10 @@
+# Frozen author-code mechanics baseline for GPT-2 to GPT-2-medium.
+# First run the default CPU readiness target. Training remains explicit and
+# requires local snapshots pinned by revision:
+# make mot-author-train MOT_SOURCE=/path/to/MoT \
+#   MOT_SOURCE_MODEL=/path/to/gpt2-snapshot \
+#   MOT_TARGET_MODEL=/path/to/gpt2-medium-snapshot
+CONFIG_MOT_AUTHOR_BASELINE=y
+CONFIG_MOT_AUTHOR_PYTHON="python3"
+CONFIG_MOT_AUTHOR_SOURCE=""
+CONFIG_MOT_AUTHOR_OUTPUT_DIR="mot-author-gpt2-medium-output"

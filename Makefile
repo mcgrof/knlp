@@ -35,6 +35,10 @@ include Makefile.cas
 # CPU-only, offline regression suite; model fitting remains an explicit action.
 include Makefile.kv_lingo
 
+# Audit and run the pinned external Mixture-of-Translators author code. Plain
+# make performs CPU readiness only; training and evaluation stay explicit.
+include Makefile.mot
+
 # Include kvio storage-IO capture/replay targets (kvio-doctor, kvio-fetch,
 # kvio-build, kvio-replay, kvio-report).  When CONFIG_KNLP_REPRODUCE_KVIO=y
 # this overrides .DEFAULT_GOAL.
@@ -70,7 +74,8 @@ MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
 ifneq ($(strip $(MUVERA_SELECTED)),)
 MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
 	RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
-	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO KNLP_REPRODUCE_KVIO \
+	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
+	KNLP_REPRODUCE_KVIO \
 	KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
 	KNLP_REPRODUCE_KMESH_TRACE KNLP_REPRODUCE_KMESH_RESIDENCY \
 	KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \

@@ -1,0 +1,7 @@
+# Pinned Mixture-of-Translators author-code CPU readiness audit.
+# Set MOT_SOURCE=/path/to/MoT when running make. Plain make does not download
+# models, allocate a GPU, train a translator, or evaluate a language model.
+CONFIG_MOT_AUTHOR_BASELINE=y
+CONFIG_MOT_AUTHOR_PYTHON="python3"
+CONFIG_MOT_AUTHOR_SOURCE=""
+CONFIG_MOT_AUTHOR_OUTPUT_DIR="mot-author-output"

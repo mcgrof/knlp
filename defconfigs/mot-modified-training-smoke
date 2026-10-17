@@ -1,0 +1,6 @@
+# Two-step modified-MoT BF16 GPU execution check for an external allocation.
+# The revision-pinned 32-item manifest is not a quality evaluation dataset.
+CONFIG_MOT_AUTHOR_BASELINE=y
+CONFIG_MOT_AUTHOR_PYTHON="python3"
+CONFIG_MOT_AUTHOR_SOURCE=""
+CONFIG_MOT_AUTHOR_OUTPUT_DIR="mot-modified-training-smoke-output"

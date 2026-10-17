@@ -1,0 +1,6 @@
+# Bounded GPT-2 -> GPT-2-medium modified-MoT diagnostic.
+# GPU execution is explicit and external; outputs belong outside this tree.
+CONFIG_MOT_AUTHOR_BASELINE=y
+CONFIG_MOT_AUTHOR_PYTHON="python"
+CONFIG_MOT_AUTHOR_SOURCE=""
+CONFIG_MOT_AUTHOR_OUTPUT_DIR="mot-modified-diagnostic-output"

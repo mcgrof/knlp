@@ -20,3 +20,41 @@ config KV_LINGO_PYTHON
 	  Python environment with pytest, NumPy, and CPU PyTorch installed.
 
 endmenu
+
+menu "Mixture-of-Translators author-code baseline"
+
+config MOT_AUTHOR_BASELINE
+	bool "Enable the pinned MoT author-code readiness workflow"
+	default n
+	help
+	  Select the external author-code audit and reproduction wrapper for
+	  Mixture-of-Translators. Plain make runs CPU-only tests, provenance
+	  checks, and readiness diagnostics. It does not download models,
+	  allocate a GPU, train a translator, or run model evaluation.
+
+config MOT_AUTHOR_PYTHON
+	string "Python interpreter for MoT checks"
+	depends on MOT_AUTHOR_BASELINE
+	default "python3"
+	help
+	  Python environment with pytest and CPU PyTorch installed. The author
+	  source pins older runtime dependencies; record the actual environment.
+
+config MOT_AUTHOR_SOURCE
+	string "Path to the unchanged pinned MoT author checkout"
+	depends on MOT_AUTHOR_BASELINE
+	default ""
+	help
+	  External prosopher/MoT checkout at commit 9753626a11b49b86ab940d87d9e5640958eb87d2.
+	  The wrapper rejects another revision or a modified worktree. The
+	  MOT_SOURCE make variable can override this value.
+
+config MOT_AUTHOR_OUTPUT_DIR
+	string "MoT result output directory"
+	depends on MOT_AUTHOR_BASELINE
+	default "mot-author-output"
+	help
+	  External directory for generated configs, readiness receipts, model
+	  outputs, and checkpoints. Do not commit this directory to knlp.
+
+endmenu

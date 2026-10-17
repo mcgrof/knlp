@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: MIT
+
+MOT_AUTHOR_MOD := research.kv_translate.mot_author
+MOT_AUTHOR_PYTHON := $(or $(CONFIG_MOT_AUTHOR_PYTHON),python3)
+MOT_AUTHOR_BASE_ARGS := --config $(CONFIG_FILE) \
+	$(if $(MOT_SOURCE),--source $(MOT_SOURCE)) \
+	$(if $(MOT_OUTPUT),--output $(MOT_OUTPUT))
+MOT_AUTHOR_OUTPUT := $(or $(MOT_OUTPUT),$(subst ",,$(CONFIG_MOT_AUTHOR_OUTPUT_DIR)))
+MOT_AUTHOR_MODEL_ARGS := \
+	$(if $(MOT_SOURCE_MODEL),--source-model $(MOT_SOURCE_MODEL)) \
+	$(if $(MOT_TARGET_MODEL),--target-model $(MOT_TARGET_MODEL))
+
+.PHONY: mot-author-conflicts mot-author-test mot-author-doctor \
+	mot-author-upstream-test mot-author-render mot-author-audit \
+	mot-author-readiness mot-author-real-preflight \
+	mot-author-mechanics-preflight mot-author-freeze-smoke-data \
+	mot-author-freeze-diagnostic-data \
+	mot-author-diagnostic-controls \
+	mot-author-diagnostic-eval mot-author-replay-diagnostic \
+	mot-author-training-smoke \
+	mot-author-train mot-author-eval
+
+ifeq ($(CONFIG_MOT_AUTHOR_BASELINE),y)
+.DEFAULT_GOAL := mot-author-readiness
+endif
+
+MOT_AUTHOR_CONFLICTS := $(strip $(foreach v,SUBLIMINAL_LEARNING \
+	RESIDUAL_REPRODUCTION KV_LINGO KNLP_REPRODUCE_DECODE \
+	KNLP_REPRODUCE_CARTRIDGES KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS \
+	KNLP_REPRODUCE_KVIO KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
+	KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \
+	KNLP_REPRODUCE_KMESH_RESTORE KNLP_DMABUF KVTIDE KNLP_QUANT_FP8 \
+	KNLP_TF_REPRO KNLP_MODULAR_REPRO MATCHED_MICRO,\
+	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v))))
+
+mot-author-conflicts:
+	@test "$(CONFIG_MOT_AUTHOR_BASELINE)" = y || \
+		{ echo "Select a MoT author-baseline defconfig first"; exit 1; }
+	@test -z "$(MOT_AUTHOR_CONFLICTS)" || \
+		{ echo "Conflicting workloads: $(MOT_AUTHOR_CONFLICTS)"; exit 1; }
+
+mot-author-test:
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m pytest -q \
+		tests/kv_translate/test_mot_author.py
+
+mot-author-doctor: mot-author-conflicts
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) doctor
+
+mot-author-upstream-test: mot-author-conflicts
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) upstream-test
+
+mot-author-render: mot-author-conflicts
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) render $(MOT_AUTHOR_MODEL_ARGS)
+
+mot-author-audit: mot-author-conflicts
+	@mkdir -p $(MOT_AUTHOR_OUTPUT)
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) audit \
+		--output-json $(MOT_AUTHOR_OUTPUT)/CPU_READINESS.json
+
+mot-author-readiness: mot-author-test mot-author-doctor \
+	mot-author-upstream-test mot-author-render mot-author-audit
+
+# This is a CPU-only, no-training check of real decoder and cache mechanics.
+mot-author-real-preflight: mot-author-conflicts
+	@test -n "$(MOT_SOURCE_MODEL)" || \
+		{ echo "Set MOT_SOURCE_MODEL=/path/to/pinned-gpt2"; exit 1; }
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/pinned-gpt2-medium"; exit 1; }
+	@mkdir -p $(MOT_AUTHOR_OUTPUT)
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 \
+		HF_DATASETS_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) real-preflight \
+		$(MOT_AUTHOR_MODEL_ARGS) \
+		--output-json $(MOT_AUTHOR_OUTPUT)/REAL_MODEL_PREFLIGHT.json
+
+# Run unchanged-author and modified-mot in separate output directories.
+mot-author-mechanics-preflight: mot-author-conflicts
+	@test -n "$(MOT_VARIANT)" || \
+		{ echo "Set MOT_VARIANT=unchanged-author or modified-mot"; exit 1; }
+	@test -n "$(MOT_SOURCE_MODEL)" || \
+		{ echo "Set MOT_SOURCE_MODEL=/path/to/pinned-gpt2"; exit 1; }
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/pinned-gpt2-medium"; exit 1; }
+	@mkdir -p $(MOT_AUTHOR_OUTPUT)
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) mechanics-preflight \
+		$(MOT_AUTHOR_MODEL_ARGS) --variant $(MOT_VARIANT) \
+		--output-json $(MOT_AUTHOR_OUTPUT)/MECHANICS_PREFLIGHT.json
+
+mot-author-freeze-smoke-data: mot-author-conflicts
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/pinned-gpt2-medium"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/manifest.json"; exit 1; }
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) freeze-smoke-data \
+		--target-model $(MOT_TARGET_MODEL) \
+		--output-json $(MOT_DATA_MANIFEST)
+
+mot-author-freeze-diagnostic-data: mot-author-conflicts
+	@test -n "$(MOT_SOURCE_MODEL)" || \
+		{ echo "Set MOT_SOURCE_MODEL=/path/to/gpt2"; exit 1; }
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/gpt2-medium"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/diagnostic.json"; exit 1; }
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) freeze-diagnostic-data \
+		--source-model $(MOT_SOURCE_MODEL) \
+		--target-model $(MOT_TARGET_MODEL) \
+		--output-json $(MOT_DATA_MANIFEST) \
+		$(if $(MOT_SMOKE_MANIFEST),--smoke-manifest $(MOT_SMOKE_MANIFEST))
+
+mot-author-diagnostic-controls: mot-author-conflicts
+	@test -n "$(MOT_SOURCE_MODEL)" || \
+		{ echo "Set MOT_SOURCE_MODEL=/path/to/gpt2"; exit 1; }
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/gpt2-medium"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/diagnostic.json"; exit 1; }
+	@mkdir -p $(MOT_AUTHOR_OUTPUT)
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) diagnostic-controls \
+		$(MOT_AUTHOR_MODEL_ARGS) --data-manifest $(MOT_DATA_MANIFEST) \
+		--output-json $(MOT_AUTHOR_OUTPUT)/DIAGNOSTIC_CONTROLS.json
+
+mot-author-diagnostic-eval: mot-author-conflicts
+	@test -n "$(MOT_CHECKPOINT)" || \
+		{ echo "Set MOT_CHECKPOINT=/path/to/run"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/diagnostic.json"; exit 1; }
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) diagnostic-eval \
+		--checkpoint $(MOT_CHECKPOINT) --data-manifest $(MOT_DATA_MANIFEST)
+
+mot-author-replay-diagnostic: mot-author-conflicts
+	@test -n "$(MOT_RAW_RECORDS)" || \
+		{ echo "Set MOT_RAW_RECORDS=/path/to/PAIRED_RECORDS.jsonl"; exit 1; }
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) replay-diagnostic \
+		--input-jsonl $(MOT_RAW_RECORDS) \
+		--output-json $(MOT_AUTHOR_OUTPUT)/capped_evaluation/REPLAY_OFFLINE.json
+
+# GPU allocation is external. Give the payload a scheduler-neutral run identity.
+mot-author-training-smoke: mot-author-conflicts
+	@test -n "$(KNLP_GPU_RUN_ID)" || \
+		{ echo "Set KNLP_GPU_RUN_ID inside the GPU allocation"; exit 1; }
+	@test -n "$(MOT_SOURCE_MODEL)" || \
+		{ echo "Set MOT_SOURCE_MODEL=/path/to/pinned-gpt2"; exit 1; }
+	@test -n "$(MOT_TARGET_MODEL)" || \
+		{ echo "Set MOT_TARGET_MODEL=/path/to/pinned-gpt2-medium"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/manifest.json"; exit 1; }
+	@mkdir -p $(MOT_AUTHOR_OUTPUT)
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 \
+		HF_DATASETS_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) training-smoke $(MOT_AUTHOR_MODEL_ARGS) \
+		--data-manifest $(MOT_DATA_MANIFEST)
+
+# Training is never an implicit action. Pass exact local model snapshots:
+#   MOT_SOURCE_MODEL=/path/to/gpt2 MOT_TARGET_MODEL=/path/to/gpt2-medium
+mot-author-train: mot-author-conflicts
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) train $(MOT_AUTHOR_MODEL_ARGS)
+
+# Evaluation also requires an explicit checkpoint directory.
+mot-author-eval: mot-author-conflicts
+	@test -n "$(MOT_CHECKPOINT)" || \
+		{ echo "Set MOT_CHECKPOINT=/path/to/author/output"; exit 1; }
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) eval $(MOT_AUTHOR_MODEL_ARGS) \
+		--checkpoint $(MOT_CHECKPOINT)
