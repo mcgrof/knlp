@@ -1,0 +1,191 @@
+{
+  "accelerator": "H100",
+  "cached_uncached_greedy_output_parity": {
+    "d0": true,
+    "d0.b0": true,
+    "d0.b1": true,
+    "d0.b2": true,
+    "d0.b3": true,
+    "d0.b4": true
+  },
+  "cases": {
+    "burst_with_parent": {
+      "allocation_boundary_peak_used_blocks": 423,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        4096,
+        4096,
+        4096,
+        4096,
+        4096
+      ],
+      "observed_shared_sibling_pairs": 10,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 423
+    },
+    "children_after_parent_cached": {
+      "allocation_boundary_peak_used_blocks": 437,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        4096,
+        4096,
+        4096,
+        4096,
+        4096
+      ],
+      "observed_shared_sibling_pairs": 10,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 437
+    },
+    "children_after_parent_uncached": {
+      "allocation_boundary_peak_used_blocks": 1461,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "observed_shared_sibling_pairs": 0,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 1461
+    },
+    "churn_050": {
+      "allocation_boundary_peak_used_blocks": 513,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        4096,
+        4096,
+        4096,
+        4096,
+        4096
+      ],
+      "observed_shared_sibling_pairs": 10,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 513
+    },
+    "churn_100": {
+      "allocation_boundary_peak_used_blocks": 897,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        0,
+        4096,
+        4096,
+        4096,
+        4096
+      ],
+      "observed_shared_sibling_pairs": 6,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 897
+    },
+    "cold_sibling_burst": {
+      "allocation_boundary_peak_used_blocks": 422,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        0,
+        4096,
+        4096,
+        4096,
+        4096
+      ],
+      "observed_shared_sibling_pairs": 6,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 422
+    },
+    "fork_from_decode": {
+      "allocation_boundary_peak_used_blocks": 364,
+      "attention_backends": [
+        "FLASH_ATTN"
+      ],
+      "child_hit_tokens": [
+        4208,
+        4224,
+        4224
+      ],
+      "observed_shared_sibling_pairs": 3,
+      "resolved_scheduler": {
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "max_num_batched_tokens": 16384,
+        "max_num_seqs": 1024
+      },
+      "sampled_peak_used_blocks": 364
+    }
+  },
+  "date": "2026-10-16",
+  "identity": {
+    "block_size": 16,
+    "cuda_version": "13.0",
+    "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "python_version": "3.13.15",
+    "seed": 20260805,
+    "torch_version": "2.13.0+cu130",
+    "vllm_version": "0.30.1rc1.dev624+g84bcbc626"
+  },
+  "image": "nvcr.io/nvidia/cuda@sha256:121b25126d81cddeae4c048aa46e94050514ca6b8609a124027b38073e7ef4b6",
+  "inputs_sha256": {
+    "serving.py": "11d7ba2b9b505af65f9a175e2ae38a96e3e57d5028907be55dac9ab8eabf7791",
+    "serving_run.py": "eb60715cb65ae91e1cffefd7f4aa5af0bf70e9b64f7dd14c772b7827b6aa11fd",
+    "serving_verify.py": "a5adadcd7dd490d9b62c67c14a55e819bbd773c6def5272a5b10865f057f5698"
+  },
+  "measurement": "serving-fork-replay",
+  "performance_claim": false,
+  "result_sha256": {
+    "burst_with_parent.json": "7a892fcb3c8de078baf97219a047ef0411718aae9bade577e82a1cc0f505a673",
+    "children_after_parent_cached.json": "5541860762715113abb7365bcf5808726ba9a70344e7a6cb665181d15129d15a",
+    "children_after_parent_uncached.json": "d48a13cb154ace4c9c64a031cc4adb1574cdb3c7cd525293040be5914c099a33",
+    "churn_050.json": "840c3ad2ef5f70de65e3115745ac049b6c2e790bd380ef20d4640a886dcbdb1b",
+    "churn_100.json": "b722d423e0de45701427f0575069624083a427610b366b1c6eee21481cba1549",
+    "cold_sibling_burst.json": "7bda6332432051f8533247251b67cdddb0879f9f8b1c8a7a45347befc652c111",
+    "fork_from_decode.json": "9bf7ab0ebc73dba94593888ec71318b5b472d699ac7101e2a7f25d1d7c94b6e5"
+  },
+  "schema_version": 1,
+  "source": {
+    "commit": "1b76bf9dd9d52efbd75fb89bf2619898d8f01233",
+    "tree": "35eec96f528fcdff6e803ad9ec18d267782214db"
+  },
+  "status": "complete"
+}

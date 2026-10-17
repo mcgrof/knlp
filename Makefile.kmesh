@@ -4,7 +4,7 @@ KMESH_FORK_CONFIG ?= .config
 KMESH_FORK_DIR := tools/reproduce/kmesh_forks
 
 .PHONY: kmesh-fork kmesh-fork-plan kmesh-fork-contracts \
-	kmesh-fork-verify kmesh-fork-test
+	kmesh-fork-verify kmesh-fork-test kmesh-serving kmesh-serving-plan kmesh-serving-verify
 .NOTPARALLEL: kmesh-fork kmesh-fork-contracts kmesh-fork-verify
 
 kmesh-fork:
@@ -16,6 +16,13 @@ kmesh-fork-plan kmesh-fork-contracts kmesh-fork-verify:
 kmesh-fork-test:
 	@"$(KMESH_FORK_PY)" -m unittest discover -s tests/kmesh_forks -v
 
+kmesh-serving kmesh-serving-plan kmesh-serving-verify:
+	@"$(KMESH_FORK_PY)" $(KMESH_FORK_DIR)/serving_run.py --config "$(KMESH_FORK_CONFIG)" $(if $(filter kmesh-serving,$@),run,$(patsubst kmesh-serving-%,%,$@))
+
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_FORK),y)
 .DEFAULT_GOAL := kmesh-fork
+endif
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_SERVING),y)
+.DEFAULT_GOAL := kmesh-serving
 endif

@@ -115,6 +115,7 @@ class ReproductionTest(unittest.TestCase):
     def test_gpu_requires_a_reservation_before_any_runtime_work(self):
         env = dict(os.environ)
         env.pop("GPUQ_RUN_ID", None)
+        env["TOKENDANCE_MODE"] = "gpu"
         result = subprocess.run(
             [sys.executable, str(PACKAGE / "run.py"), "gpu"],
             env=env,
