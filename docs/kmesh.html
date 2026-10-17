@@ -614,8 +614,36 @@ speed, task quality, shared attention reads, cascade-attention gains or
 DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.</div>
 </section>
 
+<section id="restore-latency">
+<h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
+<p><strong>GPU validation queued; no new latency result yet.</strong>
+The H100 tests above establish recovery correctness and prefix-cache capacity
+sharing. Their serving replay uses no LMCache, and their TokenDance recovery
+uses CPU memory. Neither activates the DMA-BUF storage path.</p>
+<p>The new comparison connects the exact-prefix fork workload to LMCache's
+multiprocess storage connector. One arm restores from an owned NVMe file into
+registered host memory and copies to the GPU. The other restores into a
+registered GPU DMA-BUF arena, then transfers KV into the engine's cache.
+Both use the pinned current branches, the same chunk sizes, queue depth,
+memory budgets and synthetic token prefixes. The separate TokenDance
+shifted-span recovery profile remains CPU-backed.</p>
+<p>The 4,096-token ancestor contains 48 MiB of BF16 KV: two K/V components,
+24 layers, two KV heads, 64 values per head and two bytes per value.
+Sixteen 256-token chunks contain 3 MiB each. The adapter test measures complete
+restore and GPU-consumer readiness. The serving test measures time to the
+first generated token for one child and a five-child burst, with both the
+engine prefix cache and LMCache's resident cache cleared before each family.
+It retains actual backend read counts and payload bytes.</p>
+<p>Acceptance requires complete payload comparison, deliberate corruption
+rejection, the requested registered I/O route without payload fallback,
+matching output tokens and drained I/O ownership. Latency percentiles follow
+only after these checks pass. Repeated reads of the same SSD ranges are a
+warm-media test even though application caches are cold. Shared attention
+reads, prefetch and cross-engine page sharing remain separate experiments.</p>
+</section>
+
 <section id="papers">
-<h2>11. Papers</h2>
+<h2>12. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
