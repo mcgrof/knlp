@@ -25,6 +25,11 @@ VARIANTS = {
         True,
         True,
     ),
+    "mixed_prefill": ExecutionVariant(
+        {"vllm": "276305b29e0d11f95ada503ba76323ab24992e59", "flashinfer": FLASHINFER},
+        True,
+        True,
+    ),
     "compact": ExecutionVariant(
         {"vllm": "26cd429bac01d07909ed91e353f564d7aaa8d38f", "flashinfer": FLASHINFER},
         True,
@@ -40,7 +45,9 @@ def digest(path):
 def check_protocol(protocol, variant, environment):
     definition = resolve_variant(variant, VARIANTS)
     definition.verify_environment(environment)
-    if environment.get("VLLM_COMPACT_PREFILL") != str(int(variant == "compact")):
+    if environment.get("VLLM_COMPACT_PREFILL") != str(
+        int(variant in ("compact", "mixed_prefill"))
+    ):
         raise ValueError("compact flag differs from the selected variant")
     if protocol["backend_sources"] != dict(definition.sources):
         raise ValueError("protocol source differs from the selected variant")
