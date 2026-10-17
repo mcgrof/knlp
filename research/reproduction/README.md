@@ -33,6 +33,8 @@ and reporting order. A failed qualification prevents measured training.
 | `layerrope-mhc-tinystories-gsm8k` | First 16 GSM8K questions on saved clean 32-layer residual/mHC/M-O checkpoints; feasibility only |
 | `layerrope-mhc-beta` | Full input/output gains with three beta initializations; paired MNIST and 32-layer TinyStories comparisons |
 | `layerrope-mhc-beta-smoke` | Synthetic CPU training, checkpoint, observer and FP4/FP8 evaluation checks |
+| `layerrope-mhc-time-budget` | Four fresh model families at equal training time; explicit qualification and frozen run card |
+| `layerrope-mhc-time-budget-smoke` | Synthetic CPU checks for equal-time training, resume and reduced precision evaluation |
 
 For example:
 
@@ -60,6 +62,12 @@ fixed. `make residual-plan` prints the selected scope without training.
 `EFFECTIVE.json`, `PLAN.json`, `OPERATIONS.json` and `REPORT.json` retain the
 effective settings, operation status and incomplete runs. Checkpoints hold
 model, optimizer and RNG state. No runner rents compute.
+
+The [equal-time route](../layerrope_beta/time_budget/README.md) has separate
+input preparation, seed-audit and bounded hardware decisions. Its own
+supervisor qualifies two H100 GPUs before accepting the final matrix.
+Unlike the earlier routes, its landmark checkpoints live inside the
+configured output run so that each receipt and retained state stay together.
 
 MNIST is downloaded by torchvision. TinyStories preparation downloads the
 pinned `roneneldan/TinyStories` Parquet shards and GPT-2 tokenizer, scans all

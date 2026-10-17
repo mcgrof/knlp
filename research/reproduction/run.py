@@ -25,6 +25,7 @@ STUDIES = (
     "cache",
     "gsm8k",
     "beta",
+    "time-budget",
 )
 
 
@@ -50,6 +51,9 @@ def configuration(path, overrides=()):
             "KV_CACHE",
             "CACHE_DEPTH_RUN",
             "CACHE_CONFIRMATION_RUN",
+            "TIME_CARD",
+            "TIME_RESOURCE",
+            "TIME_ACTION",
         }
         if name not in allowed:
             raise ValueError("Unknown configuration override: " + name)
@@ -73,14 +77,17 @@ def configuration(path, overrides=()):
         "kv_cache": get("KV_CACHE", "y") == "y",
         "cache_depth_run": get("CACHE_DEPTH_RUN", ""),
         "cache_confirmation_run": get("CACHE_CONFIRMATION_RUN", ""),
+        "time_card": get("TIME_CARD", ""),
+        "time_resource": get("TIME_RESOURCE", ""),
+        "time_action": get("TIME_ACTION", "qualify"),
     }
     if result["study"] not in STUDIES or result["device"] not in ("cpu", "cuda"):
         raise ValueError("Unknown study or device")
     if result["max_seconds"] < 0 or not 1 <= result["cpu_threads"] <= 64:
         raise ValueError("Invalid resource limit")
-    if result["study"] == "beta" and result["max_seconds"] == 0:
+    if result["study"] in ("beta", "time-budget") and result["max_seconds"] == 0:
         raise ValueError(
-            "The full-gain beta study requires a finite elapsed-time limit"
+            "The beta and time-budget studies require a finite elapsed-time limit"
         )
     if result["seeds"] and result["study"] not in ("null", "layerrope"):
         raise ValueError("Aggregate and confirmation seed sets cannot be replaced")
@@ -91,11 +98,14 @@ def plan(config):
     from research.subliminal_learning.layerrope_study import ARMS
     from research.mo_variants.stage_c_common import ROWS, SEEDS
 
+    from research.layerrope_beta.time_budget.protocol import freeze
+
     return {
+        "time_budget": freeze() if config["study"] == "time-budget" else None,
         "effective_config": config,
         "scope": "smoke" if config["smoke"] else "scientific reproduction",
         "scientific_confirmation_allowed": not config["smoke"]
-        and config["study"] != "beta",
+        and config["study"] not in ("beta", "time-budget"),
         "full_gain_beta": {
             "beta_initializations": [-1.0, -0.5, 0.0],
             "language_depth": 32,
@@ -226,6 +236,31 @@ class Runner:
             entry["seconds"] = time.monotonic() - before
             with self.lock:
                 write(self.root / "OPERATIONS.json", self.operations)
+
+    def time_budget(self):
+        if self.config["smoke"]:
+            self.command(
+                "research.layerrope_beta.time_budget.smoke",
+                "--root",
+                self.root / "time-budget",
+                "--device",
+                self.config["device"],
+            )
+            return
+        if not self.config["time_card"] or not self.config["time_resource"]:
+            raise ValueError(
+                "Set TIME_CARD and TIME_RESOURCE to frozen qualification/execution inputs"
+            )
+        self.command(
+            "research.layerrope_beta.time_budget.run",
+            self.config["time_action"],
+            "--card",
+            self.config["time_card"],
+            "--resource",
+            self.config["time_resource"],
+            "--root",
+            self.root / "time-budget",
+        )
 
     def mnist(self):
         study, smoke = self.config["study"], self.config["smoke"]
@@ -531,12 +566,14 @@ def execute(config):
             runner.gsm8k()
         elif config["study"] == "beta":
             runner.beta()
+        elif config["study"] == "time-budget":
+            runner.time_budget()
         else:
             runner.tinystories()
         report["status"] = "complete"
         report["scientific_confirmation_allowed"] = not config["smoke"] and config[
             "study"
-        ] not in ("cache", "gsm8k", "beta")
+        ] not in ("cache", "gsm8k", "beta", "time-budget")
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise

@@ -23,6 +23,8 @@ PRESETS = (
     "layerrope-mhc-tinystories-gsm8k",
     "layerrope-mhc-beta",
     "layerrope-mhc-beta-smoke",
+    "layerrope-mhc-time-budget",
+    "layerrope-mhc-time-budget-smoke",
 )
 
 

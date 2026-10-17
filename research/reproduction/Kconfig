@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta, time-budget"
 	default "mnist"
 
 config RESIDUAL_SMOKE
@@ -73,6 +73,18 @@ config RESIDUAL_CACHE_CONFIRMATION_RUN
 	help
 	  The top-level external run directory containing confirmation/.
 	  Supply either saved cohort or both. Reports stay separate.
+
+config RESIDUAL_TIME_CARD
+	string "Frozen equal-time run card (JSON)"
+	default ""
+
+config RESIDUAL_TIME_RESOURCE
+	string "Bounded, owner-authorized hardware/resource decision (JSON)"
+	default ""
+
+config RESIDUAL_TIME_ACTION
+	string "Equal-time action: qualify or run"
+	default "qualify"
 
 endif
 endmenu

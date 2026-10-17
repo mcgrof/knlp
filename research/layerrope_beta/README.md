@@ -10,7 +10,9 @@ The full matrix has completed GPU qualification, fourteen MNIST rows and
 twenty-four final language-model runs. The [curated results](https://knlp.io/layerrope-mhc-quantization.html#learning)
 compare fresh training at equal tokens and subsequent quantization.
 The language-model comparison has three paired seeds and remains descriptive;
-equal-time training is an unrun next experiment.
+the separate [equal-time route](time_budget/README.md) implements the next
+comparison, with fresh tuning and final seeds. Its qualification and
+scientific results must be reported separately from the fixed-token data.
 All nine MNIST suppression comparisons fail; the mHC rows also fail the
 tracked routing-stability gate.
 Checkpoints, generated reports and raw measurements stay in the configured
