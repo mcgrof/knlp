@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-menu "Exact-prefix reasoning fork accounting"
+menu "Exact-prefix reasoning forks"
 
 config KNLP_REPRODUCE_KMESH_FORK
 	bool "Enable the real vLLM CPU allocator experiment"
@@ -67,6 +67,48 @@ config KNLP_KMESH_SERVING_WHEEL_PACKAGE
 config KNLP_KMESH_SERVING_MODEL_DIR
 	string "Pinned model snapshot directory"
 	default ""
+
+endif
+
+config KNLP_REPRODUCE_KMESH_RESTORE
+	bool "Compare host-staged and DMA-BUF ancestor restoration"
+	default n
+	help
+	  Restore an exact-prefix ancestor through the production LMCache
+	  multiprocess connector. Use a production gpuq reservation for
+	  transport measurements and optional strict serving qualification.
+
+if KNLP_REPRODUCE_KMESH_RESTORE
+
+config KNLP_KMESH_RESTORE_OUTPUT
+	string "Fresh restore output directory on qualified NVMe"
+	default "results/kmesh-restore"
+
+config KNLP_KMESH_RESTORE_VLLM_SOURCE
+	string "Clean pinned serving-replay vLLM checkout"
+	default ""
+
+config KNLP_KMESH_RESTORE_LMCACHE_SOURCE
+	string "Clean pinned restore-validation LMCache checkout"
+	default ""
+
+config KNLP_KMESH_RESTORE_MODEL_DIR
+	string "Authenticated local model snapshot"
+	default ""
+
+config KNLP_KMESH_RESTORE_GPU_PROVIDER
+	string "GPU buffer exporter: native or vulkan_rm"
+	default "vulkan_rm"
+	help
+	  The RTX 4090 qualification uses the experimental Vulkan/RM provider.
+	  Use native only after qualifying CUDA DMA-BUF export on the host.
+
+config KNLP_KMESH_RESTORE_SECTION
+	string "Scope: adapter or all (strict serving qualification)"
+	default "adapter"
+	help
+	  Adapter reproduces the qualified transport comparison. All also
+	  runs the serving gate, which can reject cold-burst recomputation.
 
 endif
 endmenu

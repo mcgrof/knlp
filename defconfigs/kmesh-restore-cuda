@@ -1,0 +1,9 @@
+# Compare registered host and experimental Vulkan/RM GPU restore paths.
+# Submit make through the host's production gpuq queue.
+CONFIG_KNLP_REPRODUCE_KMESH_RESTORE=y
+CONFIG_KNLP_KMESH_RESTORE_OUTPUT="results/kmesh-restore"
+CONFIG_KNLP_KMESH_RESTORE_VLLM_SOURCE=""
+CONFIG_KNLP_KMESH_RESTORE_LMCACHE_SOURCE=""
+CONFIG_KNLP_KMESH_RESTORE_MODEL_DIR=""
+CONFIG_KNLP_KMESH_RESTORE_GPU_PROVIDER="vulkan_rm"
+CONFIG_KNLP_KMESH_RESTORE_SECTION="adapter"
