@@ -26,3 +26,17 @@ endif
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_SERVING),y)
 .DEFAULT_GOAL := kmesh-serving
 endif
+
+KMESH_RESTORE_PY ?= $(PYTHON)
+KMESH_RESTORE_CONFIG ?= $(CONFIG_FILE)
+KMESH_RESTORE_DIR := tools/reproduce/kmesh_restore
+
+.PHONY: kmesh-restore kmesh-restore-plan kmesh-restore-verify
+.NOTPARALLEL: kmesh-restore
+
+kmesh-restore kmesh-restore-plan kmesh-restore-verify:
+	@"$(KMESH_RESTORE_PY)" $(KMESH_RESTORE_DIR)/entry.py --config "$(KMESH_RESTORE_CONFIG)" $(if $(filter kmesh-restore,$@),run,$(patsubst kmesh-restore-%,%,$@))
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_RESTORE),y)
+.DEFAULT_GOAL := kmesh-restore
+endif
