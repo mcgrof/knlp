@@ -99,6 +99,10 @@ separate vLLM checkout for the allocator check described in
 [the allocator README](../kmesh_forks/README.md). The generated environment
 contains paths, not credentials. The model snapshot occupies its canonical
 path under `/scratch/hf`; the harness authenticates every required file.
+The compiler defaults to architecture 9.0, four build jobs and one NVCC thread.
+`TORCH_CUDA_ARCH_LIST`, `MAX_JOBS` and `NVCC_THREADS` can override these build
+inputs for a separate hardware qualification. They do not change the H100
+runtime profile's acceptance requirements.
 
 The native run writes the same raw tensors, semantic ledgers, independent
 `verified.json` and offline `codec/codec.json` as the historical profile.

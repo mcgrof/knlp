@@ -51,7 +51,8 @@ export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 export CPATH="$runtime_dir/venv/lib/python3.13/site-packages/nvidia/cu13/include${CPATH:+:$CPATH}"
 (
     cd "$runtime_dir/lmcache"
-    TORCH_CUDA_ARCH_LIST=9.0 MAX_JOBS=4 NVCC_THREADS=1 \
+    TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0}" \
+        MAX_JOBS="${MAX_JOBS:-4}" NVCC_THREADS="${NVCC_THREADS:-1}" \
         SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 \
         "$runtime_python" setup.py build_ext --inplace
 )
