@@ -172,3 +172,102 @@ reuse, chunking, window, softcap or sinks. Other routes use the mixed
 fallback. In particular, 8K/B32 can mix admissions and decode and does
 not inherit the B8 result. The BF16 port is separate and quality-negative;
 this recipe does not enable it or the closed symmetric AWQ recipe.
+
+## Matched B32 retest configuration
+
+The original quality phase used knlp
+`c4bb3827078c979fd8529db7a518a58101cb5927`. Phi-4 and AWQ timing use
+`a6016292d39734c006cfc272eab4c7f131d6bc4d`. Corrected dense Qwen3 work uses
+`720bc0261a97ea11d129c6dfcb6cf8c2d4ca5055`. Use the last immutable checkout
+for a new replication; public main continues to move.
+The dependency commits in the source table are unchanged.
+
+Freeze `engine.disable_log_stats=false` in both protocols. The offline
+vLLM default omits request metrics, which made the initial timing attempts
+invalid. The corrected source rejects disabled statistics before warmup.
+No valid timing is pooled across sources. Phi-4 reuses its full original
+quality panel after verifying unchanged scoring/model math, inputs,
+scales and routes except statistics bookkeeping, plus fresh actual
+production profiles. Other valid negative primary cells stay closed.
+
+An audit found a native-only
+unit-scale placeholder in the first dense Qwen3 fixtures, so those attempts
+are excluded. Dense-only reruns restore the exact previously accepted
+calibration, SHA256 `267dc6420febfb8fd6201ba60dd0eeae6b16315e93090337a82005fd9bf4f656`,
+verified against actual prior quality provenance. The corrected source
+rejects placeholders before serving. No new calibration or scale tuning
+is selected from the scored answers.
+
+Primary timing uses FP16 weights and activations, 32 unique pretokenized
+1024-token prompts and 128 forced outputs, with EOS ignored only for
+timing. Native uses `FLASH_ATTN` with `flash_attn_version=3`; asymmetric
+uses FlashInfer with its supported compact or mixed route. This includes
+backend differences and does not isolate a single kernel. Both arms use
+the same explicit byte pool within each model. The following metadata,
+revisions, routes and native floors were frozen before model scoring.
+Accepting metadata is not proof that a backend supports that geometry:
+the production reference and actual graph/route checks remain mandatory.
+
+| Model | Revision | L / Q / KV / D | Asymmetric route | Primary pool GiB | Native retrieval / GSM floors |
+| --- | --- | --- | --- | --- | --- |
+| Qwen/Qwen3-8B | `b968826d9c46dd6066d109eabc6255188de91218` | 36 / 32 / 8 / 128 | compact | 32 | 0.80 / 0.50 |
+| Qwen/Qwen2.5-7B-Instruct | `a09a35458c702b33eeacc393d103063234e8bc28` | 28 / 28 / 4 / 128 | mixed | 32 | 0.50 / 0.50 |
+| Qwen/Qwen2.5-0.5B-Instruct | `7ae557604adf67be50417f59c2c2f167def9a775` | 24 / 14 / 2 / 64 | mixed | 8 | 0.50 / 0.15 |
+| Qwen/Qwen2.5-1.5B-Instruct | `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` | 28 / 12 / 2 / 128 | mixed | 8 | 0.50 / 0.25 |
+| mistralai/Mistral-7B-Instruct-v0.3 | `c170c708c41dac9275d15a8fff4eca08d52bab71` | 32 / 32 / 8 / 128 | compact | 32 | 0.50 / 0.50 |
+| meta-llama/Llama-3.1-8B-Instruct | `0e9e39f249a16976918f6564b8830bc894c89659` | 32 / 32 / 8 / 128 | compact | 32 | 0.50 / 0.50 |
+| microsoft/Phi-4 | `2db69c1c3e91a05d2c64a3185acfbaf36f744e25` | 40 / 40 / 10 / 128 | mixed | 24 | 0.50 / 0.50 |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-7B | `916b56a44061fd5cd7d6a8fb632557ed4f724f60` | 28 / 28 / 4 / 128 | mixed | 32 | 0.50 / 0.50 |
+
+For a new primary replication, use the preparation command above with
+`--lengths 1024` and the chosen immutable model revision. Before native
+calibration, record its actual layer/head inventory in the input
+manifest's `geometry`. Before committing the protocol, record the same
+inventory in every variant's `protocol.json`, with `packed_execution`
+set to FP16, the actual attention-layer count, four linear modules per
+layer, and one embedding module for tied weights or two otherwise. Set
+the native primary `attention_config` to the FlashAttention 3 configuration
+above. Keep the asymmetric configuration as FlashInfer. The default
+freeze helper remains the separate Qwen3/FlashInfer B8 recipe; these
+explicit protocol choices must precede scoring and its committed receipt.
+
+Freeze the model's native floors with the input metadata. For the R1
+pinned template, retrieval uses `retrieval_final_marker="</think>"` and
+`retrieval_max_output_tokens=2048`; missing delimiters and truncations are
+wrong. No other model uses that delimiter. GSM keeps its strict parser
+and 2048-token cap. No absolute perplexity ceiling is added. Never change
+these fields or calibration scales after reading scored model answers.
+
+Run the public geometry, NLL, retrieval and GSM entrypoints for each
+required arm, using `--batch 32 --length 1024` for the primary NLL and
+retrieval stages. Comparative timing requires the complete workload-bound
+qualification receipt. Each eligible primary model receives ten fresh
+paired processes, with five native-first and five asymmetric-first blocks
+in an order frozen before scoring. Require all quality/production gates,
+a median ratio of at least 1.01 and the positive sign test after Holm
+correction over the original 24 comparisons. Missing historical arms
+retain p=1. Preserve every paired ratio and invalid-run record.
+
+The 8192-token bridge uses native FlashInfer, not the primary FA3 native
+control. It has three fresh pairs per cell, separate from the primary
+family. Dense B8 uses 32 GiB and dense B32 uses 40 GiB in both arms; native
+B32 live payload alone needs 36.5625 GiB. AWQ uses 48 GiB at both batches,
+with model revision `4da05a8edb55c6046cce958586c33b61da07bb79`.
+Existing accepted quality is reused only after exact input, scale, parser,
+source, scheduler and math/route equivalence checks, plus a fresh actual
+profile. The inherited full GSM receipts contain actual B32 work; B8-only
+qualification is insufficient. Dense B32 receives a fresh full panel.
+
+The pinned Mistral tokenizer has a historical Hub metadata size mismatch
+for `tokenizer.model`: the Git LFS pointer is 130 bytes, while its verified
+payload is 587404 bytes, SHA256
+`37f00374dea48658ee8f5d0f21895b9bc55cb0103939607c8185bfd1c6ca1f89`.
+The study restored exact Git/LFS bytes into the standard pinned Hub cache
+before model execution; it did not change tokenizer or runtime code.
+Record any equivalent cache repair and its hashes in a replication.
+
+The page's derived data retains all primary models and bridge cells,
+including failed and ineligible outcomes. These are new workloads; do not
+infer old-to-new deltas from the historical April table. Input generation
+for a replication remains a new frozen evaluation, not a distribution of
+private campaign prompts or a promise of identical timings.
