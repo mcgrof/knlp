@@ -2,10 +2,10 @@
 """Build the same explicit environment for Python and its build-tool children."""
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 
 def child_environment(venv, *, cuda="/usr/local/cuda", base=None):
@@ -25,10 +25,10 @@ def build_tool_receipt(env):
         path = shutil.which(name, path=env["PATH"])
         if path is None:
             raise FileNotFoundError(name)
-        tools[name] = dict(
-            path=path,
-            version=subprocess.check_output(
+        tools[name] = {
+            "path": path,
+            "version": subprocess.check_output(
                 [path, "--version"], env=env, text=True, stderr=subprocess.STDOUT
             ).strip(),
-        )
-    return dict(python=sys.executable, tools=tools, path=env["PATH"])
+        }
+    return {"python": sys.executable, "tools": tools, "path": env["PATH"]}
