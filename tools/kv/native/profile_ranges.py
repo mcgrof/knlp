@@ -26,9 +26,10 @@ def join_cuda_events(trace):
     launches = {}
     groups = {}
     for event in events:
-        if event.get("cat") != "cuda_runtime" or "correlation" not in event.get(
-            "args", {}
-        ):
+        if event.get("cat") not in (
+            "cuda_runtime",
+            "cuda_driver",
+        ) or "correlation" not in event.get("args", {}):
             continue
         found = [
             r
@@ -81,7 +82,7 @@ def join_cuda_events(trace):
                 for e in kernels
             ]
         )
-        group["host_cuda_runtime_us"] = sum(
+        group["host_cuda_api_us"] = sum(
             e["host_duration_us"] for e in group["launches"].values()
         )
         group["launches"] = list(group["launches"].values())
