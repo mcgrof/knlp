@@ -100,7 +100,13 @@ def trace_attention_routes(path):
     """Add profiling ranges outside serving timers; restore every wrapped API."""
     import flashinfer
     import torch
-    from vllm.v1.attention.backends.compact_prefill import CompactPrefillWorkspace
+
+    try:
+        from vllm.v1.attention.backends.compact_prefill import CompactPrefillWorkspace
+    except ModuleNotFoundError as exc:
+        if exc.name != "vllm.v1.attention.backends.compact_prefill":
+            raise
+        CompactPrefillWorkspace = None
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
     from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
@@ -112,7 +118,9 @@ def trace_attention_routes(path):
     original_execute = GPUModelRunner.execute_model
     original_prepare = GPUModelRunner.prepare_inputs
     original_forward = FlashInferImpl.forward
-    original_gather = CompactPrefillWorkspace.gather
+    original_gather = (
+        None if CompactPrefillWorkspace is None else CompactPrefillWorkspace.gather
+    )
     prefill_type = flashinfer.BatchPrefillWithPagedKVCacheWrapper
     decode_type = flashinfer.BatchDecodeWithPagedKVCacheWrapper
     original_prefill = prefill_type.run
@@ -196,7 +204,8 @@ def trace_attention_routes(path):
     GPUModelRunner.execute_model = execute
     GPUModelRunner.prepare_inputs = prepare
     FlashInferImpl.forward = forward
-    CompactPrefillWorkspace.gather = gather
+    if CompactPrefillWorkspace is not None:
+        CompactPrefillWorkspace.gather = gather
     prefill_type.run = prefill
     decode_type.run = decode
     try:
@@ -205,7 +214,8 @@ def trace_attention_routes(path):
         GPUModelRunner.execute_model = original_execute
         GPUModelRunner.prepare_inputs = original_prepare
         FlashInferImpl.forward = original_forward
-        CompactPrefillWorkspace.gather = original_gather
+        if CompactPrefillWorkspace is not None:
+            CompactPrefillWorkspace.gather = original_gather
         prefill_type.run = original_prefill
         decode_type.run = original_decode
         path.write_text(json.dumps(records, indent=2) + "\n")

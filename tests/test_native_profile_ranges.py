@@ -43,3 +43,116 @@ def test_correlate_async_gpu_time_without_using_host_duration():
     assert result["matched_cuda_kernels"] == 1 and result["unmatched_cuda_kernels"] == 1
     assert group["device_kernel_sum_us"] == 3 and group["device_kernel_union_us"] == 3
     assert group["host_range_us"] == 1000 and group["host_cuda_api_us"] == 10
+
+
+def test_native_trace_without_compact_module(monkeypatch, tmp_path):
+    import json
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from tools.kv.native.profile_ranges import trace_attention_routes
+
+    class Wrapper:
+        def run(self, query, cache):
+            return "native result"
+
+    class Attention:
+        def forward(self, layer, query, cache):
+            return Wrapper().run(query, cache)
+
+    class Runner:
+        def prepare_inputs(self, output):
+            return SimpleNamespace(req_ids=["fresh"])
+
+    class Query:
+        dtype = "float16"
+
+        def __len__(self):
+            return 3
+
+    def execute(runner, output):
+        runner.prepare_inputs(output)
+        return Attention().forward(
+            SimpleNamespace(layer_name="layer0"),
+            Query(),
+            SimpleNamespace(dtype="float16"),
+        )
+
+    Runner.execute_model = execute
+    modules = {
+        "flashinfer": {
+            "BatchPrefillWithPagedKVCacheWrapper": Wrapper,
+            "BatchDecodeWithPagedKVCacheWrapper": type(
+                "Decode", (), {"run": Wrapper.run}
+            ),
+        },
+        "vllm.v1.attention.backends.flashinfer": {"FlashInferImpl": Attention},
+        "vllm.v1.worker.gpu.model_runner": {"GPUModelRunner": Runner},
+    }
+    # Keep the native package importable while its optional compact module is absent.
+    for name in [
+        "vllm",
+        "vllm.v1",
+        "vllm.v1.attention",
+        "vllm.v1.attention.backends",
+        "vllm.v1.worker",
+        "vllm.v1.worker.gpu",
+    ]:
+        module = ModuleType(name)
+        module.__path__ = []
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.delitem(
+        sys.modules, "vllm.v1.attention.backends.compact_prefill", raising=False
+    )
+    for name, attributes in modules.items():
+        module = ModuleType(name)
+        vars(module).update(attributes)
+        monkeypatch.setitem(sys.modules, name, module)
+    originals = (
+        Runner.execute_model,
+        Runner.prepare_inputs,
+        Attention.forward,
+        Wrapper.run,
+    )
+    path = tmp_path / "operations.json"
+    with trace_attention_routes(path):
+        assert (
+            Runner().execute_model(
+                SimpleNamespace(_knlp_batch_id=7, num_scheduled_tokens={"fresh": 3})
+            )
+            == "native result"
+        )
+    assert originals == (
+        Runner.execute_model,
+        Runner.prepare_inputs,
+        Attention.forward,
+        Wrapper.run,
+    )
+    rows = json.loads(path.read_text())
+    assert len(rows) == 1 and rows[0]["tag"] == "knlp|prefill|7|layer0"
+    assert rows[0]["query_tokens"] == 3 and rows[0]["requests"] == ["fresh"]
+
+
+def test_compact_import_dependency_error_is_not_hidden(monkeypatch, tmp_path):
+    import builtins
+    import sys
+    from types import ModuleType
+
+    import pytest
+
+    from tools.kv.native.profile_ranges import trace_attention_routes
+
+    monkeypatch.setitem(sys.modules, "flashinfer", ModuleType("flashinfer"))
+    original = builtins.__import__
+
+    def load(name, *args, **kwargs):
+        if name == "vllm.v1.attention.backends.compact_prefill":
+            raise ModuleNotFoundError(
+                "missing internal dependency", name="compact_dependency"
+            )
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", load)
+    with pytest.raises(ModuleNotFoundError, match="internal dependency"):
+        with trace_attention_routes(tmp_path / "operations.json"):
+            raise AssertionError("broken compact import was hidden")
