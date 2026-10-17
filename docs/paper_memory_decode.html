@@ -440,6 +440,29 @@
 
 
 <!-- FLASHINFER PER-MODEL PRODUCTION THROUGHPUT -->
+<section class="panel-section" id="october-repair-checks">
+  <div class="panel-header">
+    <span class="panel-id">R</span>
+    <h2 class="panel-title">Separate repair checks — neither candidate qualified</h2>
+  </div>
+  <p class="panel-body">Two bounded H100 checks followed the B32 closeout.
+    The mixed-prefill metadata candidate stopped in its initial all-prefill admission,
+    before any mixed decode/prefill batch. Across 34 completed layers, full output and LSE
+    matched the existing mixed-cache fallback bit for bit. One of 417,792 fixed sampled
+    outputs exceeded the independent stored-value reference bound. CPU replay reproduces
+    the discrepancy and an FP16 probability-rounding diagnostic. This does not establish
+    a routing defect. Fresh quality and comparative timing were not reached.</p>
+  <p class="panel-body">The separate D64 layout candidate passed CPU address-coverage checks
+    and compiled four CUDA layout instantiations. Its numerical JIT check stopped before
+    output because the launcher omitted the environment's <code>ninja</code> directory
+    from <code>PATH</code>. The original D64 failure and candidate repair therefore remain
+    numerically untested in this follow-up; the earlier Qwen0.5 failure row retains its scope.</p>
+  <p class="panel-body">Both pods are deleted after verified exports and CPU replay.
+    Total use was 0.33449 GPU-hours, with a provisional $1.35 estimate including disk allowance.
+    Neither check produced a new speed result or qualified dependency release.
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-repair-checks-2026.md">Exact scope, sources and failed gate</a>.</p>
+</section>
+
 <section class="panel-section" id="per-model-throughput">
   <div class="panel-header">
     <span class="panel-id">THROUGHPUT</span>
