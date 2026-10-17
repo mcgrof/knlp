@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import torch
 
 from .instrument import save, tensor_inventory
+from .qualification import record_attention_check
 
 
 def qualify(inputs, output, *, dtype=torch.float16, geometry=None):
@@ -131,8 +132,37 @@ def qualify(inputs, output, *, dtype=torch.float16, geometry=None):
     weights = torch.einsum("bhd,thd->bht", q.float(), keys) / (dim**0.5)
     reference = torch.einsum("bht,thd->bhd", weights.softmax(-1), vals)
     error = (result.float() - reference).abs()
-    if float(error.max()) > 0.005 or float(error.mean()) > 0.001:
-        raise RuntimeError("actual remapped FP8-V decode differs from FP32 reference")
+    fixture = {
+        "query": q,
+        "key": key,
+        "value": value,
+        "page_indptr": torch.tensor([0, 3], dtype=torch.int32),
+        "page_indices": torch.tensor([3, 0, 2], dtype=torch.int32),
+        "last_page_len": torch.tensor([1], dtype=torch.int32),
+    }
+    configuration = {
+        "layers": layers,
+        "layer_instance": layers - 1,
+        "query_heads": query_heads,
+        "kv_heads": heads,
+        "head_dim": dim,
+        "page_size": 16,
+        "stored_tokens": 33,
+        "k_scale": 1.0,
+        "v_scale": 1 / 64,
+        "dtype": str(dtype),
+        "input_source": str(inputs),
+    }
+    record_attention_check(
+        output,
+        "geometry-decode",
+        wrapper=wrapper,
+        result=result,
+        reference=reference,
+        tensors=fixture,
+        cache=cache,
+        configuration=configuration,
+    )
     prefill = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
         workspace, "NHD", backend="auto"
     )
@@ -166,8 +196,16 @@ def qualify(inputs, output, *, dtype=torch.float16, geometry=None):
     logits.masked_fill_(~allowed[None, :, :], -torch.inf)
     pref_reference = torch.einsum("hqt,thd->qhd", logits.softmax(-1), vals)
     pref_error = (pref_result.float() - pref_reference).abs()
-    if float(pref_error.max()) > 0.005 or float(pref_error.mean()) > 0.001:
-        raise RuntimeError("actual causal paged prefill differs from FP32 reference")
+    record_attention_check(
+        output,
+        "geometry-prefill",
+        wrapper=prefill,
+        result=pref_result,
+        reference=pref_reference,
+        tensors={**fixture, "query": queries},
+        cache=cache,
+        configuration=configuration,
+    )
     info = tensor_inventory(cache)
     if info[0]["storage_pointer"] != info[1]["storage_pointer"]:
         raise RuntimeError("candidate allocator copied the cache planes")
