@@ -31,6 +31,22 @@ def validate_sources(source, pair="dated"):
             raise ValueError(f"{project} source is dirty")
 
 
+def validate_current_runtime(runtime):
+    """Bind a CUDA capture to the committed runtime and wheel identities."""
+    current = profile()["current_cuda"]
+    for key, value in current["runtime"].items():
+        if runtime.get(key) != value:
+            raise ValueError(f"current CUDA runtime differs at {key}")
+    if runtime.get("image") != current["image"]:
+        raise ValueError("current CUDA image differs")
+    hashes = {
+        name: item["sha256"]
+        for name, item in runtime.get("compiled_extensions", {}).items()
+    }
+    if hashes != current["extension_hashes"]:
+        raise ValueError("current CUDA compiled extensions differ")
+
+
 def source_identity(path):
     path = Path(path).resolve()
 

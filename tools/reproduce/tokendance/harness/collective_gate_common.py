@@ -12,7 +12,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-SERIAL_GATE_SHA256 = "479418c4bb46b64735eff07e58f37c145052113864f158f535f79cfe7205eb6b"
+SERIAL_GATE_SHA256 = "cbc27a88402ddf0f05470b5afef14719c6b3d33a5b42df2f872f5a958965a763"
 EXPECTED_VLLM_COMMIT = "18f90213f45783bad6b7acd7bc43cbba957a69f8"
 EXPECTED_VLLM_TREE = "c9bed864a0b1082d9aba501a339de7d20cd29017"
 EXPECTED_LMCACHE_COMMIT = "aa4984b57f78b9d1dce2e8d870ce7aa4716cd341"
@@ -56,6 +56,11 @@ def _load_serial_gate() -> ModuleType:
 
 
 serial = _load_serial_gate()
+if serial.CURRENT_CUDA:
+    EXPECTED_VLLM_COMMIT = serial.EXPECTED_VLLM_COMMIT
+    EXPECTED_VLLM_TREE = serial.EXPECTED_VLLM_TREE
+    EXPECTED_LMCACHE_COMMIT = serial.EXPECTED_LMCACHE_COMMIT
+    EXPECTED_LMCACHE_TREE = serial.EXPECTED_LMCACHE_TREE
 
 # The trace, image, wheel extensions, runtime, and model are intentionally the
 # accepted serial gate's exact immutable inputs. Only the two source descendants

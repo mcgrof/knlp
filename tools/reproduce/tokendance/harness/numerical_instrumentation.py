@@ -146,6 +146,11 @@ def _strict_value_equal(actual: Any, expected: Any) -> bool:
     if type(actual) is not type(expected):
         return False
     if is_dataclass(expected) and not isinstance(expected, type):
+        if (
+            hasattr(expected, "__dict__")
+            and vars(actual).keys() != vars(expected).keys()
+        ):
+            return False
         return all(
             _strict_value_equal(
                 getattr(actual, field.name),
@@ -943,7 +948,7 @@ class NumericalInstrumentation:
             runtime.get("image") != common.EXPECTED_IMAGE
             or runtime.get("target_volume") != common.EXPECTED_TARGET_VOLUME
             or runtime.get("accelerator_count") != 1
-            or runtime.get("device_arch") != "gfx1100"
+            or runtime.get("device_arch") != common.EXPECTED_RUNTIME["device_arch"]
         ):
             raise NumericalCaptureError(
                 "finish runtime is not the pinned single-device runtime"

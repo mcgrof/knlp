@@ -1,0 +1,66 @@
+{
+  "accelerator": "H100",
+  "claims": {
+    "cold_miss_control_pass": true,
+    "collective_forward_pass": true,
+    "collective_kernel_batching_claim": true,
+    "collective_reverse_pass": true,
+    "control_output_pass": true,
+    "forward_reverse_order_stability_pass": true,
+    "full_collective_lockstep_gate_pass": true,
+    "incompatible_partition_control_pass": true,
+    "lockstep_numerical_pass": true,
+    "lockstep_output_pass": true,
+    "numerical_capture_available": true,
+    "numerical_forward_ordinary_comparison_available": true,
+    "ordinary_baseline_pass": true,
+    "ordinary_pic_claim_accepted": false,
+    "ordinary_pic_diagnostic_pass": false,
+    "ordinary_pic_output_diagnostic_pass": true,
+    "performance_claim": false,
+    "serial_collective_mask_parity_pass": true,
+    "serial_oracle_pass": true,
+    "sibling_failure_isolation_pass": true,
+    "terminal_cleanup_pass": true,
+    "zero_sharing_control_pass": true
+  },
+  "codec": {
+    "all_members_bitwise_exact": true,
+    "codec_source": {
+      "commit": "643f8ca3962e0d02687ed9d0194e0915679b3c0b",
+      "tree": "6712036a58a4597bd0c1ad0d16bf3291b429d702"
+    },
+    "corruption_rejected": true,
+    "dense_bytes": 25165824,
+    "encoded_bytes": 17506917,
+    "encoded_sha256": "b45faca3fa17c1387a161f2bd9aa69ce7a3bf763b73e2cf1c8aef0a723071043",
+    "encoded_to_dense": 0.6956623792648315,
+    "kind": "offline_family_encoding",
+    "live_gpu_page_sharing": false,
+    "members": 4,
+    "performance_claim": false,
+    "schema_version": 1,
+    "source_pair": "current",
+    "verified_summary_sha256": "aead6e98ab5c0e2bf69f24bc60182b508327f810d6c675916ece0f51489efd1b"
+  },
+  "date": "2026-10-16",
+  "kind": "native_gpu_capture",
+  "maximum_ordinary_serial_logit_error": 0.5625,
+  "maximum_serial_collective_logit_error": 0.0,
+  "members": 4,
+  "qualification": "Single-device synthetic correctness only; timing is invalid under capture instrumentation.",
+  "schema_version": 1,
+  "serial_collective_kv_bitwise_equal": true,
+  "source_pair": "current",
+  "source_pins": {
+    "lmcache": {
+      "commit": "643f8ca3962e0d02687ed9d0194e0915679b3c0b",
+      "tree": "6712036a58a4597bd0c1ad0d16bf3291b429d702"
+    },
+    "vllm": {
+      "commit": "21ad334d124ea9258e6fc37fa10a275f4e706930",
+      "tree": "a193cbd8e3b460b233a210baaf81a2c6c12e0a34"
+    }
+  },
+  "verified_summary_sha256": "aead6e98ab5c0e2bf69f24bc60182b508327f810d6c675916ece0f51489efd1b"
+}

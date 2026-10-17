@@ -94,6 +94,30 @@ TRACE_CONFIG = {
     "tokens_per_agent": 512,
 }
 
+# Runtime selection changes source and accelerator pins, never the workload
+# or the numerical acceptance policy.
+CURRENT_CUDA = os.environ.get("TOKENDANCE_PROFILE") == "current-cuda"
+if os.environ.get("TOKENDANCE_PROFILE", "historical") not in (
+    "historical",
+    "current-cuda",
+):
+    raise RuntimeError("unknown TokenDance runtime profile")
+if CURRENT_CUDA:
+    _profile = json.loads(
+        Path(__file__).resolve().parents[1].joinpath("profile.json").read_text()
+    )
+    _current = _profile["current_cuda"]
+    EXPECTED_IMAGE = _current["image"]
+    EXPECTED_TARGET_VOLUME = _current["target_volume"]
+    EXPECTED_RUNTIME = _current["runtime"]
+    EXPECTED_EXTENSION_HASHES = _current["extension_hashes"]
+    _pins = _profile["source_pairs"]["current"]
+    EXPECTED_VLLM_COMMIT = _pins["vllm"]["commit"]
+    EXPECTED_VLLM_TREE = _pins["vllm"]["tree"]
+    EXPECTED_LMCACHE_COMMIT = _pins["lmcache"]["commit"]
+    EXPECTED_LMCACHE_TREE = _pins["lmcache"]["tree"]
+    MODEL_PATH = os.environ["TOKENDANCE_MODEL_DIR"]
+
 
 class GateError(RuntimeError):
     """A gate input or observation violated the frozen contract."""
@@ -267,6 +291,7 @@ def _runtime_identity(
         "python_executable": sys.executable,
         "torch": torch.__version__,
         "hip": torch.version.hip,
+        "cuda": torch.version.cuda,
         "transformers": transformers.__version__,
         "tokenizers": importlib.metadata.version("tokenizers"),
         "sortedcontainers": importlib.metadata.version("sortedcontainers"),
@@ -278,7 +303,11 @@ def _runtime_identity(
         "overlay_vllm_module": vllm.__file__,
         "overlay_lmcache_module": lmcache.__file__,
         "accelerator_count": torch.cuda.device_count(),
-        "device_arch": properties.gcnArchName,
+        "device_arch": (
+            f"sm_{properties.major}{properties.minor}"
+            if torch.version.hip is None
+            else properties.gcnArchName
+        ),
         "device_total_memory": properties.total_memory,
         "image": EXPECTED_IMAGE,
         "compiled_extensions": {
@@ -286,6 +315,15 @@ def _runtime_identity(
             for name, digest in extension_hashes.items()
         },
     }
+    if CURRENT_CUDA:
+        runtime["lmcache_compiled_extensions"] = {
+            name: {
+                "path": str(path),
+                "sha256": _sha256(path),
+            }
+            for name in ("lmcache_native", "cuda_ops")
+            for path in [Path(importlib.import_module(f"lmcache.{name}").__file__)]
+        }
     observed = {name: runtime.get(name) for name in EXPECTED_RUNTIME}
     if observed != EXPECTED_RUNTIME:
         raise GateError(
@@ -297,6 +335,14 @@ def _runtime_identity(
 
 def _load_vllm_overlay(source: Path, wheel_package: Path) -> Any:
     source_package = source / "vllm"
+    existing = sys.modules.get("vllm")
+    if existing is not None:
+        if (
+            Path(existing.__file__).resolve()
+            != (source_package / "__init__.py").resolve()
+        ):
+            raise GateError("a different vLLM package was imported before the overlay")
+        return existing
     spec = importlib.util.spec_from_file_location(
         "vllm",
         source_package / "__init__.py",
@@ -657,7 +703,7 @@ def _install_instrumentation(
 
 
 def _kv_transfer_config() -> dict[str, Any]:
-    return {
+    config = {
         "kv_connector": "MultiConnector",
         "kv_role": "kv_both",
         "engine_id": "kmesh-serial-pic-v1",
@@ -702,6 +748,10 @@ def _kv_transfer_config() -> dict[str, Any]:
             ],
         },
     }
+    if CURRENT_CUDA:
+        for field in ("kv_buffer_size", "kv_rank", "kv_parallel_size", "kv_ip"):
+            del config[field]
+    return config
 
 
 def _engine_kwargs(*, connectors: bool) -> dict[str, Any]:
@@ -1246,11 +1296,9 @@ def main() -> None:
         from lmcache.v1.config import LMCacheEngineConfig
         from vllm import LLM
 
-        vllm_c = importlib.import_module("vllm._C")
-        vllm_rocm_c = importlib.import_module("vllm._rocm_C")
         extension_paths = {
-            "_C": Path(vllm_c.__file__),
-            "_rocm_C": Path(vllm_rocm_c.__file__),
+            name: Path(importlib.import_module(f"vllm.{name}").__file__)
+            for name in EXPECTED_EXTENSION_HASHES
         }
         extension_hashes = {
             name: _sha256(path) for name, path in extension_paths.items()

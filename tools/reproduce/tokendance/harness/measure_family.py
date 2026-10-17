@@ -28,7 +28,7 @@ def main():
         "full_collective_lockstep_gate_pass"
     ):
         raise ValueError("independent eight-case verification is required")
-    expected_codec = profile()["source_pairs"]["dated"]["lmcache"]
+    expected_codec = profile()["source_pairs"][verified["source_pair"]]["lmcache"]
     codec_source = source_identity(args.lmcache_source)
     if codec_source["status_porcelain"] or any(
         codec_source[key] != value for key, value in expected_codec.items()

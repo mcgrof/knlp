@@ -21,6 +21,7 @@ from contract import (
     profile,
     source_identity,
     validate_assets,
+    validate_current_runtime,
     validate_sources,
     validate_trace,
 )
@@ -32,12 +33,39 @@ spec.loader.exec_module(runner)
 
 class ReproductionTest(unittest.TestCase):
     def test_both_explicit_source_pairs_and_wrong_commit_rejection(self):
-        for pair in ("dated", "reference"):
+        for pair in ("dated", "reference", "current"):
             source = copy.deepcopy(profile()["source_pairs"][pair])
             validate_sources(source, pair)
             source["vllm"]["commit"] = "0" * 40
             with self.assertRaisesRegex(ValueError, "source pins"):
                 validate_sources(source, pair)
+
+    def test_current_runtime_cannot_substitute_a_different_build(self):
+        pins = profile()["current_cuda"]
+        runtime = copy.deepcopy(pins["runtime"])
+        runtime["image"] = pins["image"]
+        runtime["compiled_extensions"] = {
+            name: {"sha256": digest}
+            for name, digest in pins["extension_hashes"].items()
+        }
+        validate_current_runtime(runtime)
+        for key in (*pins["runtime"], "image"):
+            changed = copy.deepcopy(runtime)
+            changed[key] = "different"
+            with self.subTest(field=key), self.assertRaisesRegex(ValueError, "differs"):
+                validate_current_runtime(changed)
+        changed = copy.deepcopy(runtime)
+        changed["compiled_extensions"]["_C_stable_libtorch"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "extensions differ"):
+            validate_current_runtime(changed)
+
+    def test_cuda_plan_selects_the_current_source_pair(self):
+        with patch.dict(os.environ, {"TOKENDANCE_MODE": "cuda"}):
+            cfg = runner.settings(Path("/absent/config"))
+        self.assertEqual(cfg["SOURCE_PAIR"], "current")
+        value = runner.plan(cfg)
+        self.assertEqual(value["source_pins"], profile()["source_pairs"]["current"])
+        self.assertTrue(value["gpu_execution"])
 
     def test_dirty_source_is_rejected(self):
         source = copy.deepcopy(profile()["source_pairs"]["dated"])

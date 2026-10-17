@@ -24,7 +24,8 @@ native environment described below.
 
 [CPU profile](#start-with-the-cpu-profile) ·
 [Component and runtime pins](#pin-the-component-checkouts-and-native-environment) ·
-[GPU execution](#run-the-eight-gpu-cases-through-gpuq) ·
+[Current H100 profile](#current-cuda-profile) ·
+[Historical GPU execution](#run-the-eight-gpu-cases-through-gpuq) ·
 [Capture verification](#recheck-an-existing-capture-and-measure-encoded-bytes) ·
 [Results](#reference-result-and-its-limits)
 
@@ -52,7 +53,68 @@ absolute path to preserve multiple runs. The runner refuses to overwrite a
 previous result. Failed runtime executions retain `failure.json` and logs;
 they must not be described as passes.
 
+## Current CUDA profile
+
+The current profile ports the same eight-case experiment to newer vLLM
+and LMCache branches that contain DMA-BUF and prefill/decode support.
+This experiment still uses LocalCPU storage: it tests recovery correctness,
+not GPU-direct storage latency. The original trace, numerical gates and
+model revision remain unchanged. Each case runs in a fresh process on one
+H100 with BF16, eager execution and Triton attention.
+
+Both component branches are named
+`2026-10-16-feature-kmesh-current-validation`. Exact source commits and
+Git trees are in `source_pairs.current` in [profile.json](profile.json).
+Its `current_cuda` section pins the image, Python and CUDA packages,
+GPU geometry and compiled vLLM extension digests. LMCache builds from the
+pinned source; its native extension digests are recorded and must agree
+across all cases. The Python packages and official vLLM wheel are fixed in
+[requirements-cuda.lock](requirements-cuda.lock).
+
+Inside the pinned image, install Git, a C++ compiler, libnuma development
+headers, `uv`, and the CUDA 13.0 compiler, runtime development headers and
+CCCL headers. The runtime image alone does not include these build tools.
+Set `CUDA_HOME` to that toolkit and put its `bin` directory on `PATH`.
+Then prepare a fresh directory:
+
+```sh
+bash tools/reproduce/tokendance/prepare_cuda.sh /workspace/kmesh-runtime
+. /workspace/kmesh-runtime/run.env
+make defconfig-tokendance-cuda
+make tokendance-plan
+TOKENDANCE_OUTPUT=/workspace/tokendance-h100 make tokendance-gpu
+```
+
+Run the GPU command within a `gpuq` reservation or on an explicitly owned
+RunPod pod. The wrapper requires `GPUQ_RUN_ID` or `RUNPOD_POD_ID` and the
+pinned image declaration emitted by `run.env`. It does not create a pod or
+reserve a GPU. On shared lab hosts, submit the command through `gpuq` with
+these variables in the queued payload. A GPU and runtime must match the
+profile; another device requires separate qualification.
+
+Preparation clones the public branches, checks their exact trees, builds
+LMCache's CUDA extension, links only matching wheel binaries into ignored
+vLLM source paths, and downloads the pinned model. It also prepares a
+separate vLLM checkout for the allocator check described in
+[the allocator README](../kmesh_forks/README.md). The generated environment
+contains paths, not credentials. The model snapshot occupies its canonical
+path under `/scratch/hf`; the harness authenticates every required file.
+
+The native run writes the same raw tensors, semantic ledgers, independent
+`verified.json` and offline `codec/codec.json` as the historical profile.
+It runs CPU contracts and resolved-config checks before loading the model.
+Offline model flags prevent model downloads during execution; this native
+launcher does not provide Docker's network isolation or read-only mounts.
+Its synchronized capture timings are not performance measurements.
+
+For a captured current run, select `TOKENDANCE_SOURCE_PAIR=current` when
+using `make tokendance-verify`. Historical captures keep their original
+source and runtime checks below.
+
 ## Pin the component checkouts and native environment
+
+These pins describe the historical ROCm profile. Use the current CUDA
+profile above for the H100 retest.
 
 Both published component branches are named
 `2026-10-16-feature-tokendance-reproduction`. A checkout must be clean and match
@@ -252,3 +314,14 @@ those dated branches was run as part of this integration. No latency,
 throughput, end-to-end storage offload, cascade-attention benefit, GPU memory
 capacity, agent-task quality or paper-scale performance result follows from
 these checks. See [the KMesh page](../../../docs/kmesh.html).
+
+The current CUDA profile was freshly retested on one H100 on 2026-10-16,
+using the rebased branches pinned in `source_pairs.current`. All eight cases
+and the independent verifier pass. Serial and collective K/V match bit for
+bit, with zero maximum logit difference. The ordinary/serial diagnostic still
+fails, with maximum absolute logit difference 0.5625. The offline codec again
+uses 17,506,917 bytes, restores all four members exactly and rejects corruption.
+This qualifies the current LocalCPU recovery baseline; it establishes no
+DMA-BUF or prefill/decode transfer result. The sanitized
+[H100 retest record](../../../docs/data/tokendance-h100-retest.json) binds these
+findings to their source commits and verifier digest.
