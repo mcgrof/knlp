@@ -537,6 +537,33 @@ All seven cases and the independent block-table verifier pass. A warm
 4,096-token ancestor is physically shared by all five children; their writable
 tails remain separate. This tests real model execution and scheduler admission,
 beyond the earlier CPU allocator check.</p>
+<h3 id="prefix-sharing">What creates the shared ancestor?</h3>
+<p>vLLM's <strong>automatic prefix caching (APC)</strong> creates the physical
+sharing. The reproducer submits five ordinary requests. Each contains the
+same 4,096 token IDs, followed by a different 512-token tail. There is no
+special request-fork operation or family declaration in this replay.</p>
+<p>Within one engine, vLLM hashes each complete token block together with
+the preceding prefix's hash and relevant cache identity. Once its KV data
+has been computed, the block enters the prefix-cache index. A request with
+the same prefix finds that block and acquires a reference to the same
+physical block ID. Reference counts protect blocks while requests use them.
+Each divergent suffix receives separate writable blocks.</p>
+<pre><code>Child A block table: [shared ancestor blocks] + [private A blocks]
+Child B block table: [shared ancestor blocks] + [private B blocks]
+Child C block table: [shared ancestor blocks] + [private C blocks]</code></pre>
+<p>The harness supplies matching token prefixes; the production vLLM
+allocator supplies the sharing. See the pinned source for
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/kv_cache_utils.py#L684">block hashing</a>,
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/kv_cache_manager.py#L264">prefix lookup</a>
+and
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/block_pool.py#L755">reference acquisition</a>.
+Only complete cached blocks can be reused. Different earlier tokens,
+incompatible cache identities or eviction can prevent a hit.</p>
+<p>This result establishes exact-prefix capacity sharing inside one engine.
+It does not establish cross-engine sharing or reuse of a span after a
+different private history. Each child can still read the shared KV data
+again during attention. Cascade attention addresses repeated attention
+reads; DMA-BUF storage restoration addresses a separate transfer path.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Serving case</th><th scope="col">Child prefix hits, tokens</th><th scope="col">Peak used pool blocks</th></tr>
