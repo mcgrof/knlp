@@ -621,7 +621,8 @@ DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.
 
 <section id="restore-latency">
 <h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
-<p><strong>GPU validation queued; no new latency result yet.</strong>
+<p><strong>Transport controls pass; serving numerical qualification is open.</strong>
+No new latency result is accepted yet.
 The H100 tests above establish recovery correctness and prefix-cache capacity
 sharing. Their serving replay uses no LMCache, and their TokenDance recovery
 uses CPU memory. Neither activates the DMA-BUF storage path.</p>
@@ -630,7 +631,7 @@ uses CPU memory. Neither activates the DMA-BUF storage path.</p>
 and the
 <a href="https://github.com/mcgrof/LMCache/tree/007a3388331209737ee19c095e430907fc467952">LMCache restore-validation branch</a>.
 The latter extends the existing checksum diagnostic to the current packed KV
-layouts. Its CPU endpoint checks pass; GPU qualification remains queued.</p>
+layouts. Its CPU endpoint checks pass; a GPU qualification retry is queued.</p>
 <p>The new comparison connects the exact-prefix fork workload to LMCache's
 multiprocess storage connector. One arm restores from an owned NVMe file into
 registered host memory and copies to the GPU. The other restores into a
@@ -651,6 +652,15 @@ matching output tokens and drained I/O ownership. Latency percentiles follow
 only after these checks pass. Repeated reads of the same SSD ranges are a
 warm-media test even though application caches are cold. Shared attention
 reads, prefetch and cross-engine page sharing remain separate experiments.</p>
+<p>The initial GPU smoke verifies complete synthetic payloads, actual model-KV
+prefix digests and the native direct/staged I/O routes. Greedy output tokens
+match full recomputation in both arms. The chosen-token log-probability check
+fails: the largest absolute difference is <code>0.0728383</code>, above the
+fixed <code>0.02</code> limit. This attempt remains a failed serving gate.
+A retry enables vLLM's batch-invariant kernels for recomputation and both
+storage arms, keeping the limit unchanged, to test whether batch-dependent
+arithmetic explains the difference. Timing claims remain pending; this mode
+can also change performance relative to vLLM's default kernels.</p>
 </section>
 
 <section id="papers">
