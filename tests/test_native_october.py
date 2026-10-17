@@ -79,10 +79,10 @@ def protocol(variant):
 def test_exact_variant_and_capture(variant):
     env = {
         **VARIANTS[variant].environment({}),
-        "VLLM_COMPACT_PREFILL": str(int(variant == "compact")),
+        "VLLM_COMPACT_PREFILL": str(int(variant in ("compact", "mixed_prefill"))),
     }
     assert check_protocol(protocol(variant), variant, env) is VARIANTS[variant]
-    env["VLLM_COMPACT_PREFILL"] = str(int(variant != "compact"))
+    env["VLLM_COMPACT_PREFILL"] = str(int(variant not in ("compact", "mixed_prefill")))
     with pytest.raises(ValueError, match="compact flag"):
         check_protocol(protocol(variant), variant, env)
 

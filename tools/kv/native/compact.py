@@ -348,7 +348,7 @@ def validate_gather_fixture(fixture_path, destination):
 
 
 @contextmanager
-def validate_model_layers(destination):
+def validate_model_layers(destination, *, stored_value_check=False):
     """Check every routed layer in actual model forwards, outside timing."""
     from vllm.v1.attention.backends.compact_prefill import (
         CompactPrefillWorkspace,
@@ -409,7 +409,23 @@ def validate_model_layers(destination):
         )
         output_check = full_comparison(result, reference)
         lse_check = full_comparison(actual_lse, reference_lse)
+        independent = None
+        if stored_value_check:
+            from .stored_prefill import check
+
+            independent = check(
+                workspace,
+                query,
+                cache,
+                source_indices,
+                page_plan,
+                result,
+                actual_lse,
+                kwargs,
+                destination / f"stored-{len(rows):04}.pt",
+            )
         row = dict(
+            independent=independent,
             layer=name,
             query_tokens=query.shape[0],
             lengths=list(page_plan.query_lengths),
@@ -428,7 +444,11 @@ def validate_model_layers(destination):
         rows.append(row)
         with (destination / "layers.jsonl").open("a") as stream:
             stream.write(json.dumps(row, allow_nan=False) + "\n")
-        if not output_check["passed"] or not lse_check["passed"]:
+        if (
+            not output_check["passed"]
+            or not lse_check["passed"]
+            or (independent is not None and not independent["passed"])
+        ):
             indices = source_indices.long()
             torch.save(
                 dict(
@@ -462,7 +482,10 @@ def validate_model_layers(destination):
                 layers=sorted({x["layer"] for x in rows}),
                 passed=bool(rows)
                 and all(
-                    x["output"]["passed"] and x["lse"]["passed"] for x in rows
+                    x["output"]["passed"]
+                    and x["lse"]["passed"]
+                    and (x["independent"] is None or x["independent"]["passed"])
+                    for x in rows
                 ),
             ),
         )
