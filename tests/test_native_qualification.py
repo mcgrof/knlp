@@ -45,3 +45,26 @@ def test_capture_before_raise(tmp_path, kind):
     assert "physical_cache_storage_1" not in artifact
     assert artifact["page_indices"].tolist() == [3, 0, 2]
     assert receipt["backend"] == "test" and receipt["use_tensor_cores"]
+
+
+def test_loaded_binary_in_isolated_jit_root(tmp_path, monkeypatch):
+    import hashlib
+    import sys
+    from types import SimpleNamespace
+
+    from tools.kv.native.qualification import loaded_attention_libraries
+
+    root = tmp_path / "isolated/cached_ops"
+    root.mkdir(parents=True)
+    binary = root / "batch_prefill.so"
+    binary.write_bytes(b"known-test-binary")
+    maps = tmp_path / "maps"
+    maps.write_text("0000-ffff r-xp 0000 00:00 0 " + str(binary) + "\n")
+    monkeypatch.setitem(
+        sys.modules,
+        "flashinfer.jit.env",
+        SimpleNamespace(FLASHINFER_JIT_DIR=root, FLASHINFER_AOT_DIR=tmp_path / "empty"),
+    )
+    assert loaded_attention_libraries(maps) == [
+        {"path": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+    ]
