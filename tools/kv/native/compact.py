@@ -79,9 +79,7 @@ def _observe_route_calls(destination, runner_type, workspace_type, label):
         phase = label()
         batch_id = getattr(scheduler_output, "_knlp_batch_id", None)
         if phase is not None and batch_id is None:
-            raise RuntimeError(
-                "labeled worker batch missing scheduler identity"
-            )
+            raise RuntimeError("labeled worker batch missing scheduler identity")
         contexts.append(dict(label=phase, batch_id=batch_id, request_ids=None))
         try:
             return original_execute(runner, scheduler_output, *args, **kwargs)
@@ -96,9 +94,7 @@ def _observe_route_calls(destination, runner_type, workspace_type, label):
 
     def run(workspace, query, cache, source_indices, page_plan, **kwargs):
         if not contexts or contexts[-1]["request_ids"] is None:
-            raise RuntimeError(
-                "actual worker batch missing from compact coverage"
-            )
+            raise RuntimeError("actual worker batch missing from compact coverage")
         row = dict(
             **contexts[-1],
             lengths=list(page_plan.query_lengths),
@@ -114,6 +110,7 @@ def _observe_route_calls(destination, runner_type, workspace_type, label):
 
     runner_type.execute_model = execute
     runner_type.prepare_inputs = prepare
+    run.__wrapped__ = original_run
     workspace_type.run = run
     try:
         yield
@@ -156,9 +153,7 @@ def validate_gather_fixture(fixture_path, destination):
     destination.mkdir(parents=True, exist_ok=True)
     data = torch.load(fixture_path, map_location="cpu", weights_only=True)
     meta = json.loads(fixture_path.with_suffix(".json").read_text())
-    assert (
-        hashlib.sha256(fixture_path.read_bytes()).hexdigest() == meta["sha256"]
-    )
+    assert hashlib.sha256(fixture_path.read_bytes()).hexdigest() == meta["sha256"]
     geometry = select_geometry(
         str(data["k"].dtype).removeprefix("torch."),
         data["q"].shape[-2],
@@ -175,9 +170,7 @@ def validate_gather_fixture(fixture_path, destination):
     # Both planes share one storage, with guards around regions and matching
     # padded page strides. The page map includes zero and high nonzero IDs.
     page_count, padded_tokens = 2053, 18
-    plane_elements = (
-        page_count * padded_tokens * geometry.kv_heads * geometry.head_dim
-    )
+    plane_elements = page_count * padded_tokens * geometry.kv_heads * geometry.head_dim
     guard = 4096
     raw = torch.full(
         (plane_elements * 3 + guard * 3,),
@@ -223,9 +216,7 @@ def validate_gather_fixture(fixture_path, destination):
         tails = torch.tensor(plan.last_page_lengths, dtype=torch.int32)
         workspace.k.fill_(-37)
         workspace.v.fill_(37)
-        kwargs = dict(
-            sm_scale=meta["sm_scale"], window_left=-1, logits_soft_cap=0.0
-        )
+        kwargs = dict(sm_scale=meta["sm_scale"], window_left=-1, logits_soft_cap=0.0)
         started = time.perf_counter()
         workspace.plan(plan, qptr, ptr, tails, **kwargs)
         mixed.plan(
@@ -267,9 +258,9 @@ def validate_gather_fixture(fixture_path, destination):
             and (workspace.v[plan.pages :] == 37).all()
         )
         unchanged = tensor_hash(raw) == source_hash
-        output_check, lse_check = full_comparison(
-            actual, reference
-        ), full_comparison(lse, reference_lse)
+        output_check, lse_check = full_comparison(actual, reference), full_comparison(
+            lse, reference_lse
+        )
         row = dict(
             case=case,
             lengths=lengths,
@@ -330,9 +321,7 @@ def validate_gather_fixture(fixture_path, destination):
         except RuntimeError:
             overlap_rejected = True
         else:
-            raise RuntimeError(
-                "compact workspace accepted overlapping submission"
-            )
+            raise RuntimeError("compact workspace accepted overlapping submission")
     save(
         destination / "summary.json",
         dict(
@@ -463,9 +452,7 @@ def validate_model_layers(destination, *, stored_value_check=False):
                 ),
                 destination / "failure.pt",
             )
-            raise RuntimeError(
-                "compact full-tensor layer comparison failed: " + name
-            )
+            raise RuntimeError("compact full-tensor layer comparison failed: " + name)
         return result
 
     FlashInferImpl.forward = forward

@@ -5,6 +5,7 @@ This explicit mode checks equivalence to the accepted compact dispatch. Ideal
 FP32 and mixed-kernel comparisons keep their original bounds as diagnostics.
 """
 
+import inspect
 from contextlib import contextmanager
 from itertools import accumulate
 from pathlib import Path
@@ -65,6 +66,7 @@ def validate_routing_layers(destination):
         FlashInferImpl.forward,
         CompactPrefillWorkspace.run,
     )
+    accepted_run = inspect.unwrap(old_run)
     oracle = CompactPrefillWorkspace("cuda")
     current, rows = [], []
 
@@ -221,8 +223,8 @@ def validate_routing_layers(destination):
                 )
                 del expected_plane
             del source_before
-            trusted = old_run(oracle, query, cache, ids, trusted_plan, **args)
-            repeat = old_run(oracle, query, cache, ids, trusted_plan, **args)
+            trusted = accepted_run(oracle, query, cache, ids, trusted_plan, **args)
+            repeat = accepted_run(oracle, query, cache, ids, trusted_plan, **args)
             require_equal(trusted, repeat, "prefill repeatability")
             _, trusted_lse = oracle.wrapper.run(
                 query,
