@@ -121,6 +121,7 @@ def validate_routing_layers(destination):
         output_scale=None,
         output_block_scale=None,
     ):
+        before_rows = len(rows)
         active = attn_metadata is not None and hasattr(attn_metadata, "_routing_oracle")
         if active:
             n = attn_metadata.num_actual_tokens
@@ -163,7 +164,6 @@ def validate_routing_layers(destination):
                     require_equal(output[:nd], expected, "decode output placement")
                 rows[-1]["decode_tokens_checked"] = nd
                 rows[-1]["forward_placement_verified"] = True
-                save(destination / f"call-{len(rows)-1:04d}.json", rows[-1])
             return result
         except BaseException:
             if active:
@@ -175,6 +175,7 @@ def validate_routing_layers(destination):
         finally:
             if active:
                 current.pop()
+                _save_forward_receipt(destination, rows, before_rows)
 
     def run(workspace, query, cache, source_indices, page_plan, **kwargs):
         name, metadata, full_query, full_output = current[-1]
@@ -304,7 +305,6 @@ def validate_routing_layers(destination):
             raise
         finally:
             rows.append(row)
-            save(destination / f"call-{len(rows)-1:04d}.json", row)
         return result
 
     (
@@ -512,3 +512,11 @@ def validate_routing_fixture(destination):
     result = {"passed": True, "checks": checks, "faults": faults}
     save(destination / "RESULT.json", result)
     return result
+
+
+def _save_forward_receipt(destination, rows, before):
+    """Create a call receipt once, after attention and output placement finish."""
+    if len(rows) > before:
+        if len(rows) != before + 1:
+            raise RuntimeError("one attention call per layer forward is required")
+        save(Path(destination) / f"call-{before:04d}.json", rows[-1])
