@@ -2,6 +2,7 @@
 """Retain attention operands and numerical evidence before enforcing tolerances."""
 
 import hashlib
+import sys
 from pathlib import Path
 
 import torch
@@ -51,23 +52,7 @@ def record_attention_check(
             seen.add(pointer)
     payload = directory / "tensors.pt"
     torch.save(artifact, payload)
-    libraries = []
-    maps = Path("/proc/self/maps")
-    if maps.exists():
-        paths = {
-            line.split()[-1]
-            for line in maps.read_text().splitlines()
-            if ".so" in line and "flashinfer" in line
-        }
-        for filename in sorted(paths):
-            path = Path(filename)
-            if path.is_file():
-                libraries.append(
-                    {
-                        "path": filename,
-                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                    }
-                )
+    libraries = loaded_attention_libraries()
     passed = all_finite and maximum <= 0.005 and mean <= 0.001
     receipt = {
         "passed": passed,
@@ -92,3 +77,37 @@ def record_attention_check(
             f"{stage} differs from FP32 reference; retained {directory / 'check.json'}"
         )
     return receipt
+
+
+def loaded_attention_libraries(maps_path=Path("/proc/self/maps")):
+    """Find mapped attention binaries even in explicitly isolated JIT roots."""
+    jit = sys.modules.get("flashinfer.jit.env")
+    roots = [
+        Path(getattr(jit, name)).resolve()
+        for name in ("FLASHINFER_JIT_DIR", "FLASHINFER_AOT_DIR")
+        if jit is not None and hasattr(jit, name)
+    ]
+    libraries = []
+    if maps_path.exists():
+        paths = {
+            line.split()[-1]
+            for line in maps_path.read_text().splitlines()
+            if ".so" in line
+        }
+        for filename in sorted(paths):
+            path = Path(filename)
+            if (
+                path.is_absolute()
+                and path.is_file()
+                and (
+                    "flashinfer" in filename
+                    or any(path.resolve().is_relative_to(root) for root in roots)
+                )
+            ):
+                libraries.append(
+                    {
+                        "path": filename,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+    return libraries
