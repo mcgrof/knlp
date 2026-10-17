@@ -8,6 +8,7 @@ must happen between invocations. This module never changes dependency source.
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from .graph import ExecutionVariant, resolve_variant
@@ -60,6 +61,27 @@ def check_timing_protocol(protocol):
         raise ValueError("timing requires explicit disable_log_stats=False")
 
 
+def check_scales(record, geometry):
+    """Require calibrated positive scales before any scored serving engine."""
+    if record.get("status") == "native_only_calibration_placeholder" or not any(
+        record.get(key) for key in ("method", "scale_method", "calibration_receipt")
+    ):
+        raise ValueError(
+            "serving requires calibrated scales, not a native-only placeholder"
+        )
+    scales = record["scales"]
+    for layer in range(geometry["layers"]):
+        for component in ("k", "v"):
+            value = scales.get(f"{layer}.{component}")
+            if (
+                not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError("calibrated scale inventory is incomplete or invalid")
+    return scales
+
+
 def check_qualification(path, protocol_path, *, length, batch):
     value = json.loads(Path(path).read_text())
     if value.get("passed") is not True or digest(protocol_path) not in value.get(
@@ -103,7 +125,9 @@ def build_engine(inputs, output, variant, arm, cache_bytes, stage):
     schedule._mode = "buffered"
     schedule.install(output / f"schedule-{stage_name}-{arm}-0.jsonl")
     manifest = core.read_json(inputs / "qwen.json.gz")
-    scales = core.read_json(inputs / "scales.json")["scales"]
+    scales = check_scales(
+        core.read_json(inputs / "scales.json"), manifest.get("geometry", {"layers": 36})
+    )
     capture = output / "before-capture"
     capture.mkdir()
 

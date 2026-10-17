@@ -10,9 +10,27 @@ from tools.kv.native.october import (
     check_protocol,
     check_qualification,
     check_timing_protocol,
+    check_scales,
     digest,
 )
 from tools.kv.native.completion import request_metrics
+
+
+def test_scored_serving_rejects_native_calibration_placeholder():
+    value = {
+        "status": "native_only_calibration_placeholder",
+        "scales": {"0.k": 1.0, "0.v": 1.0},
+    }
+    with pytest.raises(ValueError, match="native-only placeholder"):
+        check_scales(value, {"layers": 1})
+    value.pop("status")
+    with pytest.raises(ValueError, match="calibrated scales"):
+        check_scales(value, {"layers": 1})
+    value["method"] = "max_abs_div_448_float32_once"
+    assert check_scales(value, {"layers": 1}) is value["scales"]
+    value["scales"]["0.v"] = float("nan")
+    with pytest.raises(ValueError, match="inventory"):
+        check_scales(value, {"layers": 1})
 
 
 @pytest.mark.parametrize("flag", [None, True, 0])

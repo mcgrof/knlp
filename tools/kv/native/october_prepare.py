@@ -72,6 +72,14 @@ def freeze(args):
     for name in ("qwen.json.gz", "gsm8k-frozen.json", "scales.json"):
         if not (root / name).is_file():
             raise ValueError("missing prepared input: " + name)
+    from .october import check_scales
+    import gzip
+
+    manifest = json.loads(gzip.decompress((root / "qwen.json.gz").read_bytes()))
+    check_scales(
+        json.loads((root / "scales.json").read_text()),
+        manifest.get("geometry", {"layers": 36}),
+    )
     source = Path(__file__).resolve().parents[3]
     sha = subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
