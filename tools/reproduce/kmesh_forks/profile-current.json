@@ -1,0 +1,20 @@
+{
+  "block_size": 16,
+  "execution": "local",
+  "gpu": false,
+  "lmcache_exercised": false,
+  "measurement": "cpu-allocator-metadata",
+  "omp_num_threads": 2,
+  "runtime_versions": {
+    "python": "3.13.15",
+    "torch": "2.13.0+cu130",
+    "vllm": "0.30.1rc1.dev624+g84bcbc626"
+  },
+  "schema_version": 1,
+  "seed": 20260805,
+  "vllm": {
+    "commit": "1b76bf9dd9d52efbd75fb89bf2619898d8f01233",
+    "tree": "35eec96f528fcdff6e803ad9ec18d267782214db"
+  },
+  "vllm_base": "21ad334d124ea9258e6fc37fa10a275f4e706930"
+}

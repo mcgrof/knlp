@@ -8,6 +8,11 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+PROFILES = {"historical": "profile.json", "current": "profile-current.json"}
+
+
+def load_profile(name):
+    return json.loads((ROOT / PROFILES[name]).read_text())
 
 
 def require(condition, message):
@@ -15,9 +20,9 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def verify(result):
+def verify(result, profile_name="historical"):
     reference = json.loads((ROOT / "reference.json").read_text())
-    profile = json.loads((ROOT / "profile.json").read_text())
+    profile = load_profile(profile_name)
     require(result.get("schema_version") == 1, "missing result schema")
     require(
         result.get("measurement") == "cpu-allocator-metadata",
@@ -103,6 +108,7 @@ def verify(result):
     )
     return {
         "status": "pass",
+        "profile": profile_name,
         "measurement": "cpu-allocator-metadata",
         "tree_scenarios": sum(len(cases) for cases in reference["scenarios"].values()),
         "eviction_points": len(reference["loss_window_sweep"]["points"]),
@@ -116,8 +122,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--profile", choices=PROFILES, default="historical")
     args = parser.parse_args()
-    report = verify(json.loads(args.result.read_text()))
+    report = verify(json.loads(args.result.read_text()), args.profile)
     report["result_sha256"] = hashlib.sha256(args.result.read_bytes()).hexdigest()
     report["reference_sha256"] = hashlib.sha256(
         (ROOT / "reference.json").read_bytes()

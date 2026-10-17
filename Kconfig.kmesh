@@ -10,6 +10,13 @@ config KNLP_REPRODUCE_KMESH_FORK
 
 if KNLP_REPRODUCE_KMESH_FORK
 
+config KNLP_KMESH_FORK_PROFILE
+	string "Runtime profile: historical or current"
+	default "historical"
+	help
+	  Keep the workload fixed while selecting an explicit source/runtime
+	  pair. The current profile runs locally with GPU visibility disabled.
+
 config KNLP_KMESH_FORK_OUTPUT
 	string "Fresh output directory"
 	default "results/kmesh-forks"
@@ -25,6 +32,14 @@ config KNLP_KMESH_FORK_RUNTIME_VOLUME
 config KNLP_KMESH_FORK_DOCKER
 	string "Container command prefix"
 	default "docker"
+
+config KNLP_KMESH_FORK_PYTHON
+	string "Current profile's prepared native Python interpreter"
+	default ""
+
+config KNLP_KMESH_FORK_WHEEL_PACKAGE
+	string "Current profile's matching installed vLLM package directory"
+	default ""
 
 endif
 endmenu

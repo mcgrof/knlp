@@ -17,6 +17,14 @@ serving replay and later attention/storage experiments remain separate steps.
 [Run](#run-the-allocator-matrix) · [Runtime](#prepare-the-pinned-runtime) ·
 [Results](#read-the-results) · [Verification](#verify-and-test)
 
+The workload has two explicit software profiles. The `historical` profile
+retains the published source and prepared container. The `current` profile
+repeats the same matrix against the newer vLLM integration branch with CUDA
+libraries, with GPU visibility disabled. It validates allocator behavior only;
+it does not exercise LMCache, DMA-BUF transfers or prefill/decode handoff.
+The newer TokenDance recovery implementation requires its own model-execution
+qualification; this allocator result cannot establish it.
+
 ## Run the allocator matrix
 
 From knlp's root, with Python 3.10 or newer and GNU make:
@@ -81,6 +89,46 @@ A different runtime needs separate qualification. Building or distributing a
 fresh native environment is not automated by this profile. If Docker requires
 an administrator-approved prefix, set `KMESH_FORK_DOCKER='sudo -n docker'`.
 
+### Repeat on the current allocator
+
+The current source pin in [profile-current.json](profile-current.json) extends
+the newer integration branch with the allocator benchmark and fork tests.
+Use the dated branch and exact source pin:
+
+```sh
+git clone --single-branch --branch 2026-10-16-feature-kmesh-serving-replay \
+  https://github.com/mcgrof/vllm.git ../vllm-kmesh-current
+git -C ../vllm-kmesh-current checkout --detach 1b76bf9dd9d52efbd75fb89bf2619898d8f01233
+```
+
+The branch retains the current TokenDance code and adds the allocator
+benchmark without changing the production memory manager.
+
+Use a clean checkout at that exact commit and a prepared Python 3.13.15
+environment with PyTorch `2.13.0+cu130` and the compiled vLLM wheel based on
+`84bcbc62644356270aaaa5e2d0237d03adc9bb3a`. Its import version must be
+`0.30.1rc1.dev624+g84bcbc626`. As for an editable vLLM installation, the
+matching native extensions must be available inside nested source packages,
+including `vllm/vllm_flash_attn`; the top-level wheel overlay does not extend
+those packages' search paths. Provisioning these prerequisites is manual.
+
+```sh
+make defconfig-kmesh-fork-accounting-current
+export KMESH_FORK_VLLM_SOURCE=/absolute/path/to/pinned-vllm
+export KMESH_FORK_PYTHON=/absolute/path/to/prepared-venv/bin/python
+export KMESH_FORK_WHEEL_PACKAGE=/absolute/path/to/site-packages/vllm
+export KMESH_FORK_OUTPUT="$PWD/results/forks-current-run"
+make
+KMESH_FORK_OUTPUT="$PWD/results/forks-current-contracts" make kmesh-fork-contracts
+```
+
+This profile runs locally, hides GPUs and sets the library offline flags. It
+does not apply the historical container's read-only mounts or network
+namespace isolation. It verifies source commit/tree and runtime versions,
+checks the allocator import path and rejects a GPU-visible runtime. The
+contracts report requires all collected prefix-cache tests to pass without
+skips. Both profiles retain seed `20260805` and two OpenMP threads.
+
 ## Read the results
 
 The complete [CPU capture](../../../docs/data/kmesh-fork-accounting.json) was
@@ -137,6 +185,13 @@ establishes no quality, latency, throughput or end-to-end capacity result.
 
 ## Verify and test
 
+The [current allocator capture](../../../docs/data/kmesh-fork-accounting-current.json)
+matches every historical scenario summary, hit vector and eviction point.
+The current prefix-cache suite passes all 174 collected tests without skips.
+Uncached block ID allocation order differs in some rows, while cached ancestor
+aliasing and private tails satisfy the same checks. Neither this run nor the
+historical CPU run tests the TokenDance model recovery or a storage transfer.
+
 The portable verifier compares the entire saved counter matrix, hit vectors
 and eviction sweep. It also checks observed block tables for ancestor aliasing
 and sibling-private tails; optimistic summary counts alone cannot pass.
@@ -145,6 +200,9 @@ and sibling-private tails; optimistic summary counts alone cannot pass.
 python3 tools/reproduce/kmesh_forks/verify.py \
   results/forks-run/results.json --output results/forks-run/rechecked.json
 ```
+
+Add `--profile current` when checking a current-runtime capture. A capture
+from one runtime is rejected under the other profile.
 
 Run the real vLLM prefix-cache unit suite in a separate fresh output directory:
 
