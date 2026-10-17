@@ -84,6 +84,10 @@ stay packed, with FP16 activations. Dense FP16 uses 32 GiB. Calibration
 observes real native writes and 128 generated steps per calibration
 prompt, then rounds each max-abs/448 scale to FP32 once. Evaluation
 documents never enter calibration. Never tune scales on scored answers.
+Scored serving rejects native-only placeholder scales. When reusing prior
+calibration, match the scale hash to the effective protocol used by the
+accepted quality run. A matching copy in a local preparation folder is
+insufficient evidence; that folder can still contain a calibration placeholder.
 
 Commit the frozen inputs/protocol in your results repository before GSM
 scoring. Create `SCORING-UNLOCKED.json` in each variant input directory,
