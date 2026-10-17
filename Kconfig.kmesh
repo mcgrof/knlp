@@ -42,4 +42,31 @@ config KNLP_KMESH_FORK_WHEEL_PACKAGE
 	default ""
 
 endif
+
+config KNLP_REPRODUCE_KMESH_SERVING
+	bool "Replay exact-prefix forks through the current serving engine"
+	default n
+	help
+	  Run the original warm, cold, burst, eviction and decode-fork cases
+	  with a real model on an available GPU and the prepared runtime.
+
+if KNLP_REPRODUCE_KMESH_SERVING
+
+config KNLP_KMESH_SERVING_OUTPUT
+	string "Fresh serving output directory"
+	default "results/kmesh-serving"
+
+config KNLP_KMESH_SERVING_VLLM_SOURCE
+	string "Clean pinned serving-replay vLLM checkout"
+	default ""
+
+config KNLP_KMESH_SERVING_WHEEL_PACKAGE
+	string "Matching installed vLLM wheel package"
+	default ""
+
+config KNLP_KMESH_SERVING_MODEL_DIR
+	string "Pinned model snapshot directory"
+	default ""
+
+endif
 endmenu

@@ -131,7 +131,8 @@ footer a { color: var(--muted); }
   <a href="#reproduce">7. Reproduce the baseline</a>
   <a href="#results">8. Results and limits</a>
   <a href="#fork-accounting">9. Do reasoning forks need a new memory manager?</a>
-  <a href="#papers">10. Papers</a>
+  <a href="#serving-replay">10. Does sharing survive real serving?</a>
+  <a href="#papers">11. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -455,7 +456,7 @@ ancestor remains cached. The experiment drives the real
 <code>KVCacheManager</code> on CPU and records actual block IDs. It treats
 allocation as completed prefill, without a model, scheduler, KV tensors or GPU.
 The complete five-tree matrix and six eviction points match the archived
-experiment. This is the allocator check; serving replay comes separately.</p>
+experiment. The serving replay below checks the real model and scheduler separately.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Primary fork tree</th><th scope="col">Written blocks</th><th scope="col">Peak pool usage</th><th scope="col">Failed admissions</th></tr>
@@ -528,8 +529,66 @@ no corresponding KV tensors are allocated. Cascade attention, proactive
 retention, external caching and DMA-BUF remain separate questions.</div>
 </section>
 
+<section id="serving-replay">
+<h2>10. Does sharing survive real serving?</h2>
+<p><strong>Yes, for this exact-prefix fork tree.</strong> The original serving
+replay was forward-ported and rerun on an H100 with the rebased vLLM branch.
+All seven cases and the independent block-table verifier pass. A warm
+4,096-token ancestor is physically shared by all five children; their writable
+tails remain separate. This tests real model execution and scheduler admission,
+beyond the earlier CPU allocator check.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Serving case</th><th scope="col">Child prefix hits, tokens</th><th scope="col">Peak used pool blocks</th></tr>
+<tr><td class="hi">Warm parent, cache on</td><td>4,096 &times; 5</td><td>437</td></tr>
+<tr><td class="hi">Warm parent, cache off</td><td>0 &times; 5</td><td>1,461</td></tr>
+<tr><td class="hi">Parent and children in one burst</td><td>4,096 &times; 5</td><td>423</td></tr>
+<tr><td class="hi">Cold sibling burst</td><td>0, then 4,096 &times; 4</td><td>422</td></tr>
+<tr><td class="hi">Half-pool churn</td><td>4,096 &times; 5</td><td>513</td></tr>
+<tr><td class="hi">Full-pool churn</td><td>0, then 4,096 &times; 4</td><td>897</td></tr>
+<tr><td class="hi">Fork after parent decode</td><td>4,208; 4,224; 4,224</td><td>364</td></tr>
+</table>
+</div>
+<p>The warm case observes shared prefix IDs in all ten live sibling pairs.
+Its peak includes the null block and 20 child decode blocks beyond the CPU
+allocator's 417-block peak. With caching off, sibling block tables are disjoint.
+Both controls produce the same generated token IDs for the parent and all
+five children in this run.</p>
+<p>A cold burst or full-pool churn makes one child compute the ancestor before
+the other four reuse it. The decode fork uses the parent's actual 128 generated
+tokens: the first child fills the last incomplete 16-token block, and the other
+two hit the complete 4,224-token prefix. These outcomes are specific to the
+tested workload and scheduling; they do not establish a bound under repeated
+interleaved eviction or preemption.</p>
+<h3>Reproduce the serving replay</h3>
+<p>Use the current CUDA preparation instructions in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">baseline README</a>,
+then run these commands in a GPU reservation or on an explicitly owned pod:</p>
+<pre><code>. /workspace/kmesh-runtime/run.env
+make defconfig-kmesh-serving-cuda
+make kmesh-serving-plan
+KMESH_SERVING_OUTPUT=/workspace/serving-forks make
+make kmesh-fork-test</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md#replay-forks-through-the-serving-engine">serving instructions</a>
+describe the seven fresh processes and independent CPU recheck. The
+<a href="data/kmesh-serving-h100.json">sanitized result</a> binds the source,
+script and raw-result digests. The model is
+<code>Qwen/Qwen2.5-0.5B-Instruct</code> at the baseline's pinned revision.
+Runtime is Python 3.13.15, PyTorch
+<code>2.13.0+cu130</code>, CUDA 13.0 and vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, BF16 and eager execution with two
+OpenMP threads. Stock defaults resolve to FlashAttention, 16,384 maximum
+batched tokens, 1,024 maximum sequences, chunked prefill and asynchronous
+scheduling. The recorder checks allocation/free boundaries and also retains
+the original five-millisecond pool samples.</p>
+<div class="note"><strong>Engine-level prefix capacity sharing is confirmed.</strong>
+The measurements cover one model and fork tree. They do not establish serving
+speed, task quality, shared attention reads, cascade-attention gains or
+DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.</div>
+</section>
+
 <section id="papers">
-<h2>10. Papers</h2>
+<h2>11. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>

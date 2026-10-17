@@ -110,7 +110,8 @@ environment with PyTorch `2.13.0+cu130` and the compiled vLLM wheel based on
 `0.30.1rc1.dev624+g84bcbc626`. As for an editable vLLM installation, the
 matching native extensions must be available inside nested source packages,
 including `vllm/vllm_flash_attn`; the top-level wheel overlay does not extend
-those packages' search paths. Provisioning these prerequisites is manual.
+those packages' search paths. The baseline CUDA preparation script also prepares this allocator
+environment; see the current CUDA instructions in the baseline README.
 
 ```sh
 make defconfig-kmesh-fork-accounting-current
@@ -215,3 +216,99 @@ shared references surviving a sibling's release, and the negative control of
 matching suffix tokens after different causal prefixes. The portable tests
 reject missing controls, missing eviction points, optimistic uncached counts,
 aliased writable tails, inconsistent counters and changed runtime versions.
+
+## Replay forks through the serving engine
+
+The serving replay checks whether the allocator result survives real model
+execution and scheduler admission. A child uses its parent's exact token
+sequence plus an independent tail. The model runs locally in the real vLLM
+engine; this is not a scheduler simulation or a network load test. LMCache
+is not used in these seven cases.
+
+The current CUDA preparation command in the
+[baseline README](../tokendance/README.md#current-cuda-profile) prepares the
+pinned runtime, model and separate vLLM serving checkout. From that environment:
+
+```sh
+. /workspace/kmesh-runtime/run.env
+make defconfig-kmesh-serving-cuda
+make kmesh-serving-plan
+KMESH_SERVING_OUTPUT=/workspace/serving-forks make
+make kmesh-fork-test
+```
+
+Run the GPU command with the prepared interpreter on an available GPU.
+The launcher requires the pinned image declaration and a clean checkout matching
+[profile-current.json](profile-current.json). It authenticates the model
+snapshot and runs each case in a fresh process. Source, commands, script
+hashes, runtime versions and resolved scheduler settings remain in the bundle.
+It refuses to overwrite an earlier output directory.
+
+The workload retains seed `20260805`, a 4,096-token ancestor, five 512-token
+tails and 16-token blocks. Warm cached and uncached controls generate one
+parent token followed by up to 64 tokens per child. Burst and churn cases
+generate up to eight child tokens. Churn submits unrelated 2,048-token prompts
+through a 1,024-block pool before the children. The decode-fork case generates
+up to 128 parent tokens and builds three child prompts from those actual
+output tokens plus fresh 512-token tails.
+
+The recorder observes actual allocation and free boundaries, including active
+request block tables. An independent verifier checks physical prefix aliases,
+separate writable tails, event-derived peaks, released request ownership and
+all seven completed cases. The original five-millisecond pool sampler is
+retained as a separate observation. These counters describe pool allocation;
+they do not measure device memory traffic or serving speed. Recording and
+synchronization make the saved timings unsuitable for performance claims.
+
+A CPU recheck needs the original capture directory and the same committed
+reproducer inputs:
+
+```sh
+KMESH_SERVING_BUNDLE=/workspace/serving-forks \
+KMESH_SERVING_OUTPUT=/workspace/serving-rechecked \
+make kmesh-serving-verify
+```
+
+### H100 serving result
+
+All seven cases and the independent physical-block checks pass on the rebased
+source branch. The
+[sanitized serving record](../../../docs/data/kmesh-serving-h100.json) gives
+the source tree, script and result digests. Raw operational captures remain
+separately retained; knlp distributes the reproducer and bounded summary.
+
+| Case | Child prefix hits, tokens | Peak used pool blocks |
+| --- | --- | ---: |
+| Warm parent, prefix cache on | 4,096 × 5 | 437 |
+| Warm parent, prefix cache off | 0 × 5 | 1,461 |
+| Parent and children in one burst | 4,096 × 5 | 423 |
+| Cold sibling burst | 0, then 4,096 × 4 | 422 |
+| Churn equal to half the pool | 4,096 × 5 | 513 |
+| Churn equal to the full pool | 0, then 4,096 × 4 | 897 |
+| Fork after 128 generated parent tokens | 4,208; 4,224; 4,224 | 364 |
+
+The warm control demonstrates prefix aliasing in all ten live sibling pairs.
+Its 437-block peak includes the null block and 20 decode-tail blocks beyond
+the allocator experiment's 417-block peak. The uncached control has disjoint
+physical blocks and produces the same generated token IDs for the parent and
+all five children in this run. This bounded output check is not a quality
+benchmark.
+
+Cold arrival and full-pool churn leave one child to compute the missing
+ancestor, after which four siblings reuse it. Decode-created prefixes also
+share: the first child fills the last incomplete 16-token parent block and
+later children hit the full 4,224-token fork boundary. These are observed
+outcomes for this workload, not universal guarantees under interleaved traffic
+or preemption.
+
+Model: `Qwen/Qwen2.5-0.5B-Instruct` at the model revision pinned in
+`tokendance/profile.json`. Runtime: one H100, Python 3.13.15, PyTorch `2.13.0+cu130`, CUDA 13.0 and vLLM
+`0.30.1rc1.dev624+g84bcbc626`, with BF16, eager execution and two OpenMP
+threads. Stock defaults resolve to FlashAttention, 16,384 maximum batched
+tokens, 1,024 maximum sequences, chunked prefill and asynchronous scheduling.
+The replay records these choices rather than assuming that another engine
+version has the same defaults.
+
+The engine already shares exact-prefix storage capacity in these cases. This
+experiment does not measure shared attention reads, cascade attention,
+storage offload or DMA-BUF latency. Those remain separate questions.
