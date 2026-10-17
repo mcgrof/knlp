@@ -3,7 +3,6 @@
 """Load the pinned vLLM source over its matching compiled wheel on CPU."""
 
 import importlib.util
-import json
 import os
 from pathlib import Path
 import runpy
@@ -12,7 +11,12 @@ import sys
 
 def main():
     source = Path(os.environ["KMESH_FORK_SOURCE"])
-    wheel = Path("/opt/kmesh-target/lib/python3.12/site-packages/vllm")
+    wheel = Path(
+        os.environ.get(
+            "KMESH_FORK_WHEEL_PACKAGE",
+            "/opt/kmesh-target/lib/python3.12/site-packages/vllm",
+        )
+    )
     spec = importlib.util.spec_from_file_location(
         "vllm",
         source / "vllm/__init__.py",
@@ -24,7 +28,10 @@ def main():
     import torch
     from vllm.v1.core import kv_cache_manager
 
-    profile = json.loads(Path("/inputs/profile.json").read_text())
+    profile_name = sys.argv[2] if len(sys.argv) > 2 else "historical"
+    from verify import load_profile
+
+    profile = load_profile(profile_name)
     actual = {
         "python": sys.version.split()[0],
         "torch": torch.__version__,
@@ -41,7 +48,11 @@ def main():
     mode = sys.argv[1]
     if mode == "run":
         script = source / "benchmarks/kmesh/fork_block_accounting.py"
-        sys.argv = [str(script), "--output", "/outputs/results.json"]
+        sys.argv = [
+            str(script),
+            "--output",
+            os.environ.get("KMESH_FORK_RESULT", "/outputs/results.json"),
+        ]
         runpy.run_path(str(script), run_name="__main__")
     elif mode == "contracts":
         import pytest
@@ -55,6 +66,11 @@ def main():
                     "-q",
                     "-p",
                     "no:cacheprovider",
+                    "--junitxml="
+                    + str(
+                        Path(os.environ.get("KMESH_FORK_RESULTS_DIR", "/outputs"))
+                        / "contracts.xml"
+                    ),
                 ]
             )
         )

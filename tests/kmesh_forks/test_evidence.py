@@ -69,6 +69,20 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "wrong vllm"):
             verifier.verify(self.result)
 
+    def test_current_capture_requires_its_explicit_profile(self):
+        current = json.loads(
+            (ROOT / "docs/data/kmesh-fork-accounting-current.json").read_text()
+        )
+        report = verifier.verify(current, "current")
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["profile"], "current")
+        with self.assertRaisesRegex(ValueError, "wrong python"):
+            verifier.verify(current)
+
+    def test_historical_runtime_cannot_pass_as_current(self):
+        with self.assertRaisesRegex(ValueError, "wrong python"):
+            verifier.verify(self.result, "current")
+
 
 if __name__ == "__main__":
     unittest.main()

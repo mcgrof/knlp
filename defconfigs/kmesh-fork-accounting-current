@@ -1,0 +1,5 @@
+# Repeat the same real allocator workload on the current software pair.
+# This CPU profile does not execute LMCache or exercise DMA-BUF transfers.
+CONFIG_KNLP_REPRODUCE_KMESH_FORK=y
+CONFIG_KNLP_KMESH_FORK_PROFILE="current"
+CONFIG_KNLP_KMESH_FORK_OUTPUT="results/kmesh-forks-current"
