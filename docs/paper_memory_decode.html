@@ -42,7 +42,7 @@
   <div class="hero-links"><a href="#saturation">Explore the law ↓</a>
     <a href="#full-stack">Read the serving result ↓</a>
     <a href="bias-aware-kv-quantization.html">Choose a KV precision policy →</a></div>
-  <p class="fine" style="margin-top:22px">Explanation and presentation updated September 15, 2026.
+  <p class="fine" style="margin-top:22px">Explanation and presentation updated October 16, 2026.
     Earlier measurements retain their stated model, hardware, and implementation scope.</p>
 </section>
 
@@ -162,14 +162,15 @@
 <section class="panel-section" id="full-stack">
   <div class="panel-header">
     <span class="panel-id">Serving evidence</span>
-    <h2 class="panel-title">Full-Stack vLLM + FlashInfer Validation — Qwen2.5-7B-Instruct on H100</h2>
+    <h2 class="panel-title">Historical Qwen2.5-7B serving results — source identity unresolved</h2>
   </div>
   <p class="panel-body">
-    The asymmetric K16/V8 result now runs end-to-end through the modified vLLM + FlashInfer serving stack
-    (vLLM branch <code>20260702-k16fp8</code>, fork commit 758786e2; FlashInfer branch
-    <code>20260702-asym-k16v8-decode-upstream</code>, fork commit ff0c51cf) with explicit FlashInfer backend
-    selection. The asymmetric path exercises prefill-time V quantization on cache write, paged-cache writes,
-    and an asymmetric FlashInfer decode kernel; prefill computes fresh full-precision K/V. The table reports
+    The table preserves the previously reported Qwen2.5-7B serving measurements.
+    Their exact full-stack source identity remains unresolved. The July 2 vLLM
+    <code>758786e2</code> and FlashInfer <code>ff0c51cf</code> links identify decode-only
+    lineage; that vLLM revision rejects asymmetric prefill and cannot substantiate
+    this prompt-to-generation recipe.
+    The historical report compares
     controlled FP16 / FP8-sym / K16/V8 measurements on the same H100 path: K16/V8 matches FP16 perplexity to
     reported precision at both 2K and 8K context, and the 200-problem GSM8K screen did not resolve a difference
     between K16/V8 (90.0%) and FP16 (90.5%) — a screen of this size can detect collapse (symmetric FP8: 2.0%)
@@ -216,8 +217,8 @@
   <p class="panel-body" style="margin-top:16px;">
     Symmetric FP8 PPL gets <em>5× worse</em> from 2K to 8K (214→1058) — the K-fragility phenomenon strengthens
     at longer context. Asymmetric K16/V8 matches FP16 perplexity to the reported precision at both context lengths.
-    K16 denotes native 16-bit keys: the recipe below uses BF16. Historical FP16 labels are retained for their original comparisons; do not assume every table uses an identical baseline.
-    This is the serving-stack validation reported here; the earlier HuggingFace <code>DynamicCache</code> simulation in
+    K16 denotes native 16-bit keys. Historical FP16 labels are retained for their original comparisons; source gaps prevent treating every table as an identical baseline.
+    These are historical reported serving results with unresolved source provenance; the earlier HuggingFace <code>DynamicCache</code> simulation in
     the precision-asymmetry section is a separate numerical cross-check.
   </p>
 
@@ -225,9 +226,9 @@
     The reported 48-sequence test found bit-identical prefill NLL and 100% autoregressive token agreement
     for K16/V8 versus the reference at each tested degree. At TP = 4, the four KV heads shard to one head per rank.
     These are finite-sample correctness observations, not proof of zero quality cost on all workloads.
-    Fresh full-precision prefill K/V also means prefill agreement alone cannot qualify reads from a quantized cache.</p>
+    The source identity for these historical checks also remains unresolved. Prefill agreement alone does not qualify reads from a quantized cache.</p>
 
-  <div class="kr-label" style="margin-top:24px;">Implementation checks on the reported fork builds</div>
+  <div class="kr-label" style="margin-top:24px;">Historical reported implementation checks; exact builds unresolved</div>
   <div class="kr-table" style="margin:12px 0;">
     <table style="width:100%;border-collapse:collapse;font-family:var(--mono);">
       <thead>
@@ -261,20 +262,11 @@
     </table>
   </div>
 
-  <div class="kr-label" style="margin-top:24px;">Recipe for the measured fork pair</div>
-  <pre style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;color:var(--text);"><code>from vllm import LLM, SamplingParams
-
-llm = LLM(
-    model="Qwen/Qwen2.5-7B-Instruct",
-    dtype="bfloat16",
-    kv_cache_dtype=("auto", "fp8_e4m3"),         # K native, V FP8
-    attention_config={"backend": "FLASHINFER"},  # required: auto picks FlashAttn
-)</code></pre>
-  <p class="panel-body" style="margin-top:8px;color:var(--text2);">
-    The <code>VLLM_ATTENTION_BACKEND</code> environment variable is <em>not honored</em> in this vLLM build —
-    pass <code>attention_config={"backend": "FLASHINFER"}</code> explicitly. Auto-selection picks FlashAttention,
-    which lacks the asymmetric tuple writer.
-  </p>
+  <p class="panel-body">For the current qualified serving implementation, use the
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>
+    and its immutable source pins. That Qwen3 recipe is separate from the historical Qwen2.5
+    measurements above and does not recover their original runtime. The July 2 decode-only
+    links are not an end-to-end reproduction command.</p>
 </section>
 
 <!-- HEADLINE — ASYMMETRIC K16/V8 -->
@@ -846,9 +838,9 @@ llm = LLM(
     <h2 class="panel-title">Reproduce — Companion Repos and Defconfig Workflow</h2>
   </div>
   <p class="panel-body">Use the <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October configuration</a>
-    for the optimized serving results. The historical integration branches below support older
-    defconfigs and do not establish the source of the April B32 table. On October 16, the July2
-    FlashInfer branch resolved to <code>ff0c51cf676bf4461695c34af564461f1e30c0a6</code> and the July2
+    for the optimized serving results. The decode-only lineage branches below are retained for historical reference. They do not
+    establish the full-stack source of the legacy quality tables or the April B32 table. On October 16, the July 2
+    FlashInfer branch resolved to <code>ff0c51cf676bf4461695c34af564461f1e30c0a6</code> and the July 2
     vLLM branch to <code>758786e23230a4a1a9b2b6046fb516943751b3ae</code>.</p>
   <p class="panel-body">The formerly printed pins instead belong to the later pre-bias branches:
     FlashInfer <a href="https://github.com/mcgrof/flashinfer/tree/2026-08-22-feature-prebias-k8-cache">2026-08-22-feature-prebias-k8-cache</a>
@@ -870,7 +862,7 @@ llm = LLM(
         <tr style="border-bottom:1px solid var(--border);">
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">mcgrof/vllm</a></td>
           <td style="padding:10px 16px;"><code>20260702-k16fp8</code> (fork commit 758786e2)</td>
-          <td style="padding:10px 16px;">Dated fork implementation: K16/V8 cache with a decode-only asym read (prefill stays full-precision), tuple K/V, loud-fail on asym misroute</td>
+          <td style="padding:10px 16px;">Decode-only lineage: K16/V8 tuple cache and asymmetric decode; asymmetric prefill raises NotImplementedError. This revision does not reproduce the legacy serving table</td>
         </tr>
         <tr style="border-bottom:1px solid var(--border);">
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">mcgrof/flashinfer</a></td>
@@ -899,10 +891,10 @@ llm = LLM(
     The knlp defconfig system selects and runs the reproduction workflow. Review its configuration before building:
   </p>
   <pre style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;color:var(--text);"><code>git clone https://github.com/mcgrof/knlp.git && cd knlp
-make defconfig-decode-upstream   # Dated fork profile; verify resolved revisions
+make defconfig-decode-upstream   # Legacy decode-only profile; inspect supported stages
 make</code></pre>
   <p class="panel-body" style="margin-top:8px;">
-    <code>defconfig-decode-upstream</code> selects the dated branches above. Branch names can move; record and verify the resolved commit IDs before treating a run as a reproduction.  The reproduction profiles are: <code>defconfig-decode</code> (core full-stack
+    <code>defconfig-decode-upstream</code> selects the legacy decode-only branches above; it is not a reproduction of the reported full-stack quality results. Use the separate October configuration for the current qualified serving recipe. Branch names can move; record the resolved commit IDs and actual supported stages.  The reproduction profiles are: <code>defconfig-decode</code> (core full-stack
     quality battery + standalone FlashInfer gates + LMCache codec checks),
     <code>defconfig-decode-sat</code> (saturation model + Hill fit), and
     <code>defconfig-decode-full</code> (everything possible from the paper, with structured skip reports
@@ -927,8 +919,8 @@ make</code></pre>
     <a href="https://knlp.io/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://knlp.io/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://knlp.io/spearman_rho.html">Spearman ρ</a>
-    <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">FlashInfer Fork</a>
-    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">vLLM Fork</a>
+    <a href="https://github.com/mcgrof/flashinfer/tree/20261016-asym-k16v8-serving">FlashInfer Fork</a>
+    <a href="https://github.com/mcgrof/vllm/tree/20261016-k16v8-compact-prefill">vLLM Fork</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache Fork</a>
     <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant Docs</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
