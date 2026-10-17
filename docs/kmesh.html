@@ -616,46 +616,96 @@ DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.
 
 <section id="restore-latency">
 <h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
-<p><strong>Transport controls pass; serving numerical qualification is open.</strong>
-No new latency result is accepted yet.
-The H100 tests above establish recovery correctness and prefix-cache capacity
-sharing. Their serving replay uses no LMCache, and their TokenDance recovery
-uses CPU memory. Neither activates the DMA-BUF storage path.</p>
-<p>The prepared sources are the
+<p><strong>Yes at the transport boundary; a serving latency benefit remains unqualified.</strong>
+Retested on 2026-10-16 with an RTX 4090 and the current rebased branches,
+DMA-BUF reduces median GPU-consumer readiness by <strong>15.8%</strong> for a
+48 MiB ancestor. Storage-load completion itself is nearly equal. The separate
+serving qualification stops when one child recomputes rather than restores
+its ancestor, so no formal serving timing is accepted.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Transport metric</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
+<tr><td class="hi">Adapter load complete</td><td>8.294 / 8.460 ms</td><td>8.246 / 8.429 ms</td></tr>
+<tr><td class="hi">GPU consumer ready</td><td>11.238 / 11.423 ms</td><td>9.463 / 9.633 ms</td></tr>
+</table>
+</div>
+<p>Four pairs alternate staged/direct order, with 100 measured restores per
+arm in each pair. Every pair has a lower direct-path readiness median,
+by 15.25&ndash;16.37%. Five warmups per cell are excluded from timing summaries.
+Across smoke and formal cells, all <strong>854 complete payload checks</strong>
+pass, and both deliberately corrupted payloads are rejected. The native
+submission/completion journal proves <code>dmabuf_fixed</code> versus
+<code>host_fixed</code>, with complete bytes and drained ownership.</p>
+<p>The adapter submits all sixteen chunks, waits for completion, then copies
+them into a GPU consumer that reduces every byte. The first timer ends at
+adapter completion; the second ends at the GPU consumer fence. Full byte
+comparison and SHA256 run outside timing. Destinations are poisoned before
+every restore. SSD ranges and registered mappings are warm. These measurements
+describe complete transfer paths; physical NVMe command splitting was not
+matched or traced.</p>
+
+<h3>What the model checks establish</h3>
+<p>The new integration uses the production <code>LMCacheMPConnector</code>.
+One arm restores an owned NVMe file into registered host memory and copies
+to the engine. The other restores into a registered GPU DMA-BUF arena, then
+copies KV into the engine cache. This is cold external-cache restoration;
+the earlier warm automatic-prefix-cache sharing result is a separate test.
+The TokenDance shifted-span recovery profile remains CPU-backed.</p>
+<p>The initial default-kernel smoke matches restored model KV and generated
+tokens, but its largest chosen-token log-probability difference from full
+recomputation is <code>0.0728383</code>, above the fixed <code>0.02</code> limit.
+That attempt remains failed. Enabling vLLM's batch-invariant kernels in the
+retry, including recomputation, gives <strong>zero difference for all 48
+checked chosen-token log probabilities</strong> and identical generated tokens.
+All twelve post-family model-KV prefix members match their producer.</p>
+<p>The retry fails a different strict gate: one child in a five-request
+host-staged warmup reports zero cached ancestor tokens. Its output remains
+correct, but recomputation does not qualify as restoration. Formal serving
+pairs therefore do not run. The cause of that cache miss remains open.
+The reproducer retains this gate, and does not remove the request or widen
+the numerical bound. Batch-invariant arithmetic can also change performance
+relative to default vLLM kernels. Post-family checksum block IDs can be reused
+between siblings; they do not establish simultaneous physical sharing.</p>
+
+<h3>Reproduce the qualified transport result</h3>
+<p>The source inputs are the
 <a href="https://github.com/mcgrof/vllm/tree/1b76bf9dd9d52efbd75fb89bf2619898d8f01233">current vLLM serving branch</a>
-and the
+and
 <a href="https://github.com/mcgrof/LMCache/tree/007a3388331209737ee19c095e430907fc467952">LMCache restore-validation branch</a>.
-The latter extends the existing checksum diagnostic to the current packed KV
-layouts. Its CPU endpoint checks pass; a GPU qualification retry is queued.</p>
-<p>The new comparison connects the exact-prefix fork workload to LMCache's
-multiprocess storage connector. One arm restores from an owned NVMe file into
-registered host memory and copies to the GPU. The other restores into a
-registered GPU DMA-BUF arena, then transfers KV into the engine's cache.
-Both use the pinned current branches, the same chunk sizes, queue depth,
-memory budgets and synthetic token prefixes. The separate TokenDance
-shifted-span recovery profile remains CPU-backed.</p>
-<p>The 4,096-token ancestor contains 48 MiB of BF16 KV: two K/V components,
-24 layers, two KV heads, 64 values per head and two bytes per value.
-Sixteen 256-token chunks contain 3 MiB each. The adapter test measures complete
-restore and GPU-consumer readiness. The serving test measures time to the
-first generated token for one child and a five-child burst, with both the
-engine prefix cache and LMCache's resident cache cleared before each family.
-It retains actual backend read counts and payload bytes.</p>
-<p>Acceptance requires complete payload comparison, deliberate corruption
-rejection, the requested registered I/O route without payload fallback,
-matching output tokens and drained I/O ownership. Latency percentiles follow
-only after these checks pass. Repeated reads of the same SSD ranges are a
-warm-media test even though application caches are cold. Shared attention
-reads, prefetch and cross-engine page sharing remain separate experiments.</p>
-<p>The initial GPU smoke verifies complete synthetic payloads, actual model-KV
-prefix digests and the native direct/staged I/O routes. Greedy output tokens
-match full recomputation in both arms. The chosen-token log-probability check
-fails: the largest absolute difference is <code>0.0728383</code>, above the
-fixed <code>0.02</code> limit. This attempt remains a failed serving gate.
-A retry enables vLLM's batch-invariant kernels for recomputation and both
-storage arms, keeping the limit unchanged, to test whether batch-dependent
-arithmetic explains the difference. Timing claims remain pending; this mode
-can also change performance relative to vLLM's default kernels.</p>
+The latter extends the checksum endpoint to the current packed KV layouts.
+The
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
+gives native preparation, exact pins, queued execution and CPU rechecks.
+The <a href="data/kmesh-dmabuf-restore.json">sanitized record</a> contains
+all percentiles, paired rounds, source hashes and both failed serving gates.</p>
+<pre><code>make defconfig-kmesh-restore-cuda
+make kmesh-restore-plan
+
+# Set source, model and NVMe output paths in menuconfig or the environment.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_OUTPUT=/path/to/results make kmesh-restore-verify</code></pre>
+<p>The default preset selects the qualified adapter comparison and the
+experimental Vulkan/RM GPU provider. <code>KMESH_RESTORE_SECTION=all</code>
+also attempts the strict serving qualification. Run on a host with the
+<a href="io-uring-dmabuf.html">qualified experimental DMA-BUF kernel and storage route</a>;
+a stock RunPod container does not provide that host integration.</p>
+<p>The model is Qwen2.5-0.5B-Instruct at the baseline's pinned revision,
+BF16 with a 4,096-token ancestor and five distinct 512-token tails. Two K/V
+components &times; 24 layers &times; 256 tokens &times; two KV heads &times;
+64 values &times; two bytes make each 3 MiB chunk; sixteen make 48 MiB.
+Both arms configure 256 MiB L1 capacity, a 512 MiB engine KV pool, 4 MiB slots,
+ordinary file <code>O_DIRECT</code>, io_uring depth eight and one load/store
+worker. Equal configured capacity does not mean equal total process memory.</p>
+<p>Runtime: Python 3.13.15, PyTorch <code>2.13.0+cu130</code>, vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, NVIDIA 615.71.09, CUDA compiler
+13.4.92 and the experimental <code>7.3.0-rc3-dmabuf-mapfence-20261008</code>
+kernel. There are two OpenMP/MKL threads, without a CPU-affinity cap.
+Model startup and checksum controls are outside timed intervals.</p>
+<div class="note"><strong>The measured win is GPU-consumer readiness.</strong>
+It does not establish cold-media behavior, general model quality, serving
+throughput, cascade-attention gains or cross-engine page sharing. Strict
+all-child restoration and serving latency qualification remain open.</div>
 </section>
 
 <section id="papers">
