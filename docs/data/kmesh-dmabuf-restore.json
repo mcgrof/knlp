@@ -1,0 +1,369 @@
+{
+  "schema_version": 1,
+  "measured_local_date": "2026-10-16",
+  "timezone": "America/Los_Angeles",
+  "status": {
+    "adapter": "PASS",
+    "strict_serving": "FAIL",
+    "formal_serving_pairs_run": 0
+  },
+  "sources": {
+    "knlp_reproducer": "4397b30d0e85a0a02288436561947993ad12fdf0",
+    "vllm": "1b76bf9dd9d52efbd75fb89bf2619898d8f01233",
+    "lmcache": "007a3388331209737ee19c095e430907fc467952"
+  },
+  "runtime": {
+    "torch": "2.13.0+cu130",
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "capability": [
+      8,
+      9
+    ],
+    "kernel": "7.3.0-rc3-dmabuf-mapfence-20261008",
+    "threads": 2,
+    "batch_invariant": true,
+    "nvidia_driver": "615.71.09",
+    "lmcache_cuda_compiler": "13.4.92",
+    "gpu_provider": "vulkan_rm",
+    "vllm": "0.30.1rc1.dev624+g84bcbc626",
+    "python": "3.13.15",
+    "kernel_build_recorded_source": "856b6583ab2f4581e81670845eadb69de7a68b30",
+    "kernel_build_id": "bc7469520c321bf4d523ca6f71b911cf54b54d47"
+  },
+  "workload": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "model_files_sha256": {
+      "config.json": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+      "generation_config.json": "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6",
+      "merges.txt": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+      "model.safetensors": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+      "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "tokenizer_config.json": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+      "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    },
+    "seed": 20260805,
+    "dtype": "bfloat16",
+    "ancestor_tokens": 4096,
+    "private_tail_tokens": 512,
+    "max_generated_tokens": 1,
+    "chunk_tokens": 256,
+    "chunk_bytes": 3145728,
+    "ancestor_chunks": 16,
+    "ancestor_bytes": 50331648,
+    "l1_capacity_bytes_per_arm": 268435456,
+    "engine_kv_pool_bytes": 536870912,
+    "slot_bytes": 4194304,
+    "filesystem": "XFS",
+    "media": "owned regular file on physical NVMe",
+    "direct_io": true,
+    "io_engine": "io_uring",
+    "queue_depth": 8,
+    "load_workers": 1,
+    "store_workers": 1,
+    "omp_threads": 2,
+    "mkl_threads": 2,
+    "cpu_affinity_cap": false,
+    "ssd_ranges": "warm",
+    "registration_and_mapping": "warm",
+    "adapter_destinations_poisoned": true,
+    "serving_application_caches_cleared": true
+  },
+  "transport": {
+    "summary": {
+      "direct": {
+        "load": {
+          "count": 400,
+          "p50_ms": 8.2457235,
+          "p95_ms": 8.4287045,
+          "p99_ms": 11.66684301
+        },
+        "ready": {
+          "count": 400,
+          "p50_ms": 9.4625415,
+          "p95_ms": 9.63268405,
+          "p99_ms": 12.96670931
+        },
+        "rounds": 4
+      },
+      "staged": {
+        "load": {
+          "count": 400,
+          "p50_ms": 8.293599,
+          "p95_ms": 8.459774549999999,
+          "p99_ms": 11.9112457
+        },
+        "ready": {
+          "count": 400,
+          "p50_ms": 11.238126,
+          "p95_ms": 11.4231155,
+          "p99_ms": 14.9235137
+        },
+        "rounds": 4
+      }
+    },
+    "paired_rounds": [
+      {
+        "round": 0,
+        "order": [
+          "staged",
+          "direct"
+        ],
+        "direct": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.2261185,
+            "p95_ms": 8.332309,
+            "p99_ms": 11.561570510000001
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 9.456171000000001,
+            "p95_ms": 9.5613745,
+            "p99_ms": 12.800387910000001
+          }
+        },
+        "staged": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.3420785,
+            "p95_ms": 8.473603,
+            "p99_ms": 11.8265908
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 11.307186,
+            "p95_ms": 11.460733999999999,
+            "p99_ms": 14.8048424
+          }
+        },
+        "ready_median_reduction_percent": 16.37025339461117
+      },
+      {
+        "round": 1,
+        "order": [
+          "direct",
+          "staged"
+        ],
+        "direct": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.254589,
+            "p95_ms": 8.40829505,
+            "p99_ms": 8.596105370000018
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 9.442476,
+            "p95_ms": 9.6407105,
+            "p99_ms": 9.789592580000019
+          }
+        },
+        "staged": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.341878999999999,
+            "p95_ms": 8.4726935,
+            "p99_ms": 11.925786600000002
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 11.2894905,
+            "p95_ms": 11.427609499999999,
+            "p99_ms": 14.93020459
+          }
+        },
+        "ready_median_reduction_percent": 16.360477029499254
+      },
+      {
+        "round": 2,
+        "order": [
+          "staged",
+          "direct"
+        ],
+        "direct": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.325963999999999,
+            "p95_ms": 8.44532195,
+            "p99_ms": 11.66733821
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 9.5073315,
+            "p95_ms": 9.68288405,
+            "p99_ms": 12.858533110000002
+          }
+        },
+        "staged": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.278399,
+            "p95_ms": 8.37853355,
+            "p99_ms": 11.771478
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 11.2174455,
+            "p95_ms": 11.32721255,
+            "p99_ms": 14.7694796
+          }
+        },
+        "ready_median_reduction_percent": 15.24512867033765
+      },
+      {
+        "round": 3,
+        "order": [
+          "direct",
+          "staged"
+        ],
+        "direct": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.2201085,
+            "p95_ms": 8.35457745,
+            "p99_ms": 11.63511351
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 9.4507315,
+            "p95_ms": 9.603510550000001,
+            "p99_ms": 12.96670931
+          }
+        },
+        "staged": {
+          "load": {
+            "count": 100,
+            "p50_ms": 8.279973,
+            "p95_ms": 8.40319555,
+            "p99_ms": 8.639528110000025
+          },
+          "ready": {
+            "count": 100,
+            "p50_ms": 11.225380000000001,
+            "p95_ms": 11.34074505,
+            "p99_ms": 11.626956920000024
+          }
+        },
+        "ready_median_reduction_percent": 15.809251000856994
+      }
+    ],
+    "positive_full_payload_checks_including_warmups": 854,
+    "deliberately_corrupted_payloads_rejected": 2,
+    "native_routes": {
+      "direct": "dmabuf_fixed",
+      "staged": "host_fixed"
+    },
+    "ready_median_reduction_percent": 15.79964933655308,
+    "checks": {
+      "routes_proven": true,
+      "payloads_exact": true
+    }
+  },
+  "serving_smoke": {
+    "matched_token_observations": 48,
+    "maximum_chosen_logprob_delta": 0.0,
+    "fixed_logprob_bound": 0.02,
+    "matching_model_kv_prefix_members": 12,
+    "recomputed_members": [
+      {
+        "mode": "staged",
+        "fanout": 5,
+        "sample": -1,
+        "warmup": true,
+        "member": 3,
+        "num_cached_tokens": 0,
+        "cached_token_stats": {
+          "num_vllm_cached_tokens": 0,
+          "num_lmcache_cached_tokens": 0,
+          "num_lmcache_extra_cached_tokens": 0
+        }
+      }
+    ],
+    "payload_bytes_per_family": {
+      "direct-n1": [
+        50331648,
+        50331648,
+        50331648,
+        50331648
+      ],
+      "direct-n5": [
+        251658240,
+        251658240,
+        201326592,
+        251658240
+      ],
+      "staged-n1": [
+        50331648,
+        50331648,
+        50331648,
+        50331648
+      ],
+      "staged-n5": [
+        150994944,
+        251658240,
+        150994944,
+        251658240
+      ]
+    },
+    "failed_gate": "ancestor was recomputed instead of restored/reused"
+  },
+  "retained_default_kernel_failure": {
+    "maximum_chosen_logprob_delta": 0.07283830642700195,
+    "fixed_bound": 0.02,
+    "formal_pairs_run": 0
+  },
+  "evidence": {
+    "capture_harness_sha256": {
+      "adapter.py": "463261d00ac61e2d801570f2402bddcdbdbf191b5756e1e1dde051697f8a36c7",
+      "restore_common.py": "b556bc86ba1e83129e12788af883b6c4fdf7849ca1b10494612f43c868abde2b",
+      "run.py": "8fd18a66284d79f056f413dfda88555f5089036e9a48ac1f584138ebb7a94fd3",
+      "server.py": "3e9eed9d70e8d6888f453d81dd31220df80d7b624accca3a1867979cc93c0a57",
+      "verify.py": "3788022e8361b1bc6d843ee52e31e5e08c14d9eb51aca4b69c39dd322d0b1250",
+      "worker.py": "7da655cff71e8aeffba5d778da8d5104169e03ada4a32535cce5a5f7b85a48db"
+    },
+    "published_verifier_sha256": "b3a132dd8575660e036157582d66fb55547bad70a37b9f97a7fa85309489d3a8",
+    "raw_manifest_sha256": "2d415ad4b7888c57d96a21bd11c6da31b141275170773c71e0015641bd8576d7",
+    "reproduction_changes_after_capture": [
+      "Add adapter-only dispatch and plan metadata; adapter, worker, server and common motion code remain byte-identical.",
+      "Strengthen only the independent CPU verifier with finite-likelihood and exact-layer checks."
+    ],
+    "native_binary_sha256": {
+      "vllm/_C_stable_libtorch.abi3.so": "f08910ebc61ec7d37d1ab5feec66cf9602a3d5160c1cd28c4e0ba8e8cab66aa0",
+      "vllm/_deepselect_C.abi3.so": "84e0dafb560846f1cac04cfe45b511242d3757990eec6dcda303cc84ed459893",
+      "vllm/_flashkda_C.abi3.so": "94fed636cc610e199b7b486f97c790d0919ae384f80d264e380566196dcdb862",
+      "vllm/_flashmla_C.abi3.so": "3a8e6d267d18fbfa58ab9c6dc7d868e230894cfd8662fa06a03a8a609ec6b7d4",
+      "vllm/_flashmla_extension_C.abi3.so": "c9b6fd42b4fa294846a6bd4661be33eb954342014fc716ae07f827da5019a0e8",
+      "vllm/_moe_C_stable_libtorch.abi3.so": "65be3121d8ae4008b52e958622dff7f9fdf2747652d4eb9527b08faefb825015",
+      "vllm/_qutlass_C.abi3.so": "fe01010ecabe95b179acaa6817ac7771f66f0fd2fef99caf44f607f0cf737ebe",
+      "vllm/_rust_tool_parser.abi3.so": "357d03f199412fba209fd13d9dcca91e5917bf936b5a7c9833e4617abd523f1f",
+      "vllm/cumem_allocator.abi3.so": "6e74676bc7f1cc264cefd097992cfe39d8d5b859e6ee10bef20f6920463460d9",
+      "vllm/fs_io_C.abi3.so": "33a2230eee458b5585a1da6a02fa3a2927891e7c29608e2cab1490bec1e9a3f5",
+      "vllm/spinloop.abi3.so": "d9611e3b08ab8ed4ec80c28d483371aad10b212ab597603e60452ab0e8549b7f",
+      "vllm/third_party/deep_gemm/_C.cpython-310-x86_64-linux-gnu.so": "c40e0f8865ab9adcdf02510ffc4b5926dcc447de00019b2b358a6ff5686ba426",
+      "vllm/third_party/deep_gemm/_C.cpython-311-x86_64-linux-gnu.so": "40dbb78e51362603e45ca6128195234b2bdcf33cde4b15b17f649eec70545d8d",
+      "vllm/third_party/deep_gemm/_C.cpython-312-x86_64-linux-gnu.so": "6d28cb75b448b6329e2e5b496410291a2119465af58f92c5ac0b079e5a4fb43f",
+      "vllm/third_party/deep_gemm/_C.cpython-313-x86_64-linux-gnu.so": "a2c58076a479119318c87dfebb800df67a0da8636fe8154de5b312a5b4651d33",
+      "vllm/third_party/deep_gemm/_C.cpython-314-x86_64-linux-gnu.so": "1829b7f4ca10219607c21497757d2e446fc230a4a848b33cf8c0d53d060d2c5e",
+      "vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so": "db8b4687ba2824445e40b574886408a010596e7bfa1fbe1af4d4cf8d40af8cf9",
+      "vllm/vllm_flash_attn/_vllm_fa3_C.abi3.so": "7a887225b0b84b054eba050a225b560586fad483e3874893593ba83912c771aa",
+      "lmcache/_vulkan_rm.cpython-313-x86_64-linux-gnu.so": "a8f0db4eabece84af6b0f769f8dbf2cdb03b18c37f2933eded89ddd7335515fe",
+      "lmcache/cuda_ops.cpython-313-x86_64-linux-gnu.so": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+      "lmcache/lmcache_fs.cpython-313-x86_64-linux-gnu.so": "d73c1020f1c33dbe56e47aed06524cfcb54eea940f43dc6a3e5ae1d09ba794c2",
+      "lmcache/lmcache_native.cpython-313-x86_64-linux-gnu.so": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b",
+      "lmcache/lmcache_redis.cpython-313-x86_64-linux-gnu.so": "2b0c2195e70b22e27ebfbc5b9785929e9b312f53b93736f8c675f7bfbcdc88ce",
+      "lmcache_rust_raw_block_io.so": "3aa34dacf7577a4a426a012ee19f184b2d7c40383662260b7b54eacb64e2275b"
+    }
+  },
+  "limits": [
+    "Warm SSD ranges and registered mappings; application caches are cold.",
+    "Equal configured L1 capacity is not equal total process memory.",
+    "Native operations do not establish physical NVMe command geometry.",
+    "The default-kernel numerical failure remains failed.",
+    "Batch-invariant serving smoke passes bounded outputs but fails strict all-child restoration.",
+    "Formal serving timing did not run; no serving latency benefit is claimed.",
+    "Post-family prefix hashes do not prove simultaneous block aliasing.",
+    "This does not measure task quality, decode throughput or cascade attention."
+  ]
+}
