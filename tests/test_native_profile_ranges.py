@@ -14,8 +14,8 @@ def test_correlate_async_gpu_time_without_using_host_duration():
                 "dur": 1000,
             },
             {
-                "cat": "cuda_runtime",
-                "name": "cudaLaunchKernel",
+                "cat": "cuda_driver",
+                "name": "cuLaunchKernel",
                 "pid": 1,
                 "tid": 2,
                 "ts": 100,
@@ -42,4 +42,4 @@ def test_correlate_async_gpu_time_without_using_host_duration():
     group = result["groups"][0]
     assert result["matched_cuda_kernels"] == 1 and result["unmatched_cuda_kernels"] == 1
     assert group["device_kernel_sum_us"] == 3 and group["device_kernel_union_us"] == 3
-    assert group["host_range_us"] == 1000 and group["host_cuda_runtime_us"] == 10
+    assert group["host_range_us"] == 1000 and group["host_cuda_api_us"] == 10
