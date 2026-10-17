@@ -21,6 +21,16 @@
         "commit": "d416824a6f8991d40005939f0a57d91445e49a06",
         "tree": "8967472be6892352167fc51a6b15c12f0e98a282"
       }
+    },
+    "current": {
+      "vllm": {
+        "commit": "21ad334d124ea9258e6fc37fa10a275f4e706930",
+        "tree": "a193cbd8e3b460b233a210baaf81a2c6c12e0a34"
+      },
+      "lmcache": {
+        "commit": "643f8ca3962e0d02687ed9d0194e0915679b3c0b",
+        "tree": "6712036a58a4597bd0c1ad0d16bf3291b429d702"
+      }
     }
   },
   "image": "rocm/vllm-dev@sha256:9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c",
@@ -45,5 +55,30 @@
     "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
     "tokenizer_config.json": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
     "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+  },
+  "current_cuda": {
+    "image": "nvcr.io/nvidia/cuda@sha256:121b25126d81cddeae4c048aa46e94050514ca6b8609a124027b38073e7ef4b6",
+    "target_volume": "kmesh-h100-cuda130",
+    "runtime": {
+      "python": "3.13.15",
+      "torch": "2.13.0+cu130",
+      "hip": null,
+      "cuda": "13.0",
+      "transformers": "5.17.0",
+      "tokenizers": "0.23.3",
+      "sortedcontainers": "2.4.0",
+      "aiofile": "3.12.3",
+      "caio": "0.12.9",
+      "target_volume": "kmesh-h100-cuda130",
+      "wheel_vllm_distribution": "0.30.1rc1.dev624+g84bcbc626",
+      "overlay_vllm_version": "0.30.1rc1.dev624+g84bcbc626",
+      "accelerator_count": 1,
+      "device_arch": "sm_90",
+      "device_total_memory": 85017493504
+    },
+    "extension_hashes": {
+      "_C_stable_libtorch": "f08910ebc61ec7d37d1ab5feec66cf9602a3d5160c1cd28c4e0ba8e8cab66aa0",
+      "_moe_C_stable_libtorch": "65be3121d8ae4008b52e958622dff7f9fdf2747652d4eb9527b08faefb825015"
+    }
   }
 }

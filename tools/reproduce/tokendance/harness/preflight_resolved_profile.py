@@ -55,10 +55,17 @@ def main() -> None:
     sys.path.insert(0, str(args.lmcache_source))
     vllm = base._load_vllm_overlay(args.vllm_source, args.wheel_vllm_package)
     import lmcache
-    import lmcache.c_ops as c_ops
+
+    if base.CURRENT_CUDA:
+        import lmcache.lmcache_native as c_ops
+
+        importlib.import_module("lmcache.cuda_ops")
+    else:
+        import lmcache.c_ops as c_ops
     import torch
     import transformers
     from lmcache.integration.vllm.target_profile import validate_target_profile
+    from lmcache.integration.vllm.kmesh_runtime import build_kmesh_runtime_evidence
     from lmcache.integration.vllm.vllm_v1_adapter import (
         LMCacheConnectorV1Impl,
         _KMeshLayerwiseStoreSession,
@@ -133,6 +140,9 @@ def main() -> None:
                 role=role,
                 vllm_config=lmcache_children[0],
             )
+            build_kmesh_runtime_evidence(
+                lmcache_children[0], lmcache_config, role=role, target_profile=profile
+            )
         resolved[profile] = {
             "target_profile": observed_profile,
             "worker_cls": config.parallel_config.worker_cls,
@@ -154,12 +164,19 @@ def main() -> None:
         LMCBlendOperationCounts,
         LMCacheLookupClient,
     )
+    ops = resolve_device_ops(torch_device_type)
     c_ops_symbols = (
-        "EngineKVFormat",
-        "alloc_pinned_ptr",
-        "single_layer_kv_transfer",
+        ("EngineKVFormat",)
+        if base.CURRENT_CUDA
+        else ("EngineKVFormat", "alloc_pinned_ptr", "single_layer_kv_transfer")
     )
     missing_c_ops = [name for name in c_ops_symbols if not hasattr(c_ops, name)]
+    if base.CURRENT_CUDA:
+        missing_c_ops += [
+            name
+            for name in ("alloc_pinned_ptr", "single_layer_kv_transfer")
+            if not hasattr(ops, name)
+        ]
     if missing_c_ops:
         raise GateError("LMCache c_ops shim lacks: " + ", ".join(missing_c_ops))
 

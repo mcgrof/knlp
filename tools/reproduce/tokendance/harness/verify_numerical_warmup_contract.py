@@ -490,14 +490,13 @@ def _verify_finish_id_domains() -> dict[str, int]:
             for observation in observations
         ]
     }
+    import collective_gate_common as common
+
     runtime = {
-        "image": (
-            "rocm/vllm-dev@sha256:"
-            "9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c"
-        ),
-        "target_volume": "kmesh-rocm723-target-lmcache-v2",
+        "image": common.EXPECTED_IMAGE,
+        "target_volume": common.EXPECTED_TARGET_VOLUME,
         "accelerator_count": 1,
-        "device_arch": "gfx1100",
+        "device_arch": common.EXPECTED_RUNTIME["device_arch"],
     }
     selected, recovery, copied_runtime = instrumentation._validate_finish_evidence(
         arm="ordinary",

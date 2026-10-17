@@ -38,6 +38,7 @@ def settings(path):
                 key, value = line.split("=", 1)
                 result[key.removeprefix("CONFIG_KNLP_TOKENDANCE_")] = value.strip('"')
     for key in [
+        "MODE",
         "VLLM_SOURCE",
         "LMCACHE_SOURCE",
         "OUTPUT",
@@ -47,15 +48,16 @@ def settings(path):
         "BUNDLE",
         "SOURCE_PAIR",
         "VERIFICATION",
+        "WHEEL_PACKAGE",
     ]:
         if "TOKENDANCE_" + key in os.environ:
             result[key] = os.environ["TOKENDANCE_" + key]
     result.setdefault("MODE", "cpu")
     result.setdefault("OUTPUT", "results/tokendance")
     result.setdefault("DOCKER", "docker")
-    result.setdefault("SOURCE_PAIR", "dated")
-    if result["MODE"] not in ("cpu", "gpu"):
-        raise ValueError("TOKENDANCE_MODE must be cpu or gpu")
+    result.setdefault("SOURCE_PAIR", "current" if result["MODE"] == "cuda" else "dated")
+    if result["MODE"] not in ("cpu", "gpu", "cuda"):
+        raise ValueError("TOKENDANCE_MODE must be cpu or gpu or cuda")
     return result
 
 
@@ -119,19 +121,29 @@ def sources(cfg):
 
 
 def plan(cfg):
+    cuda = cfg["MODE"] == "cuda"
     return {
         "schema_version": 1,
         "mode": cfg["MODE"],
-        "source_pins": profile()["source_pairs"]["dated"],
+        "source_pins": profile()["source_pairs"]["current" if cuda else "dated"],
         "arms": profile()["arms"],
         "trace_sha256": profile()["trace_sha256"],
-        "gpu_execution": cfg["MODE"] == "gpu",
-        "gpu_requires": [
-            "available GPU",
-            "pinned ROCm runtime volume and image",
-            "local pinned model snapshot",
-            "clean dated source checkouts",
-        ],
+        "gpu_execution": cfg["MODE"] in ("gpu", "cuda"),
+        "gpu_requires": (
+            [
+                "available GPU",
+                "pinned current CUDA runtime and matching vLLM wheel",
+                "local pinned model snapshot",
+                "clean current source checkouts",
+            ]
+            if cuda
+            else [
+                "available GPU",
+                "pinned ROCm runtime volume and image",
+                "local pinned model snapshot",
+                "clean dated source checkouts",
+            ]
+        ),
         "output": cfg["OUTPUT"],
         "performance_claim": False,
         "harness_assets_sha256": digest(ROOT / "assets.json"),
@@ -327,7 +339,7 @@ def main():
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--bundle", type=Path)
-    parser.add_argument("--source-pair", choices=["dated", "reference"])
+    parser.add_argument("--source-pair", choices=["dated", "reference", "current"])
     args = parser.parse_args()
     cfg = settings(args.config)
     if args.output:
@@ -336,6 +348,22 @@ def main():
         cfg["BUNDLE"] = str(args.bundle)
     if args.source_pair:
         cfg["SOURCE_PAIR"] = args.source_pair
+    if cfg["MODE"] == "cuda" and args.action in ("run", "gpu", "contracts", "codec"):
+        action = "run" if args.action in ("run", "gpu") else args.action
+        env = os.environ.copy()
+        env.update({"TOKENDANCE_" + key: value for key, value in cfg.items()})
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "native.py"),
+                "--config",
+                str(args.config),
+                action,
+            ],
+            env=env,
+            check=True,
+        )
+        return
     action = cfg["MODE"] if args.action == "run" else args.action
     validate_assets()
     if action == "plan":

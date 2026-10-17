@@ -402,6 +402,14 @@ passed the CPU contract suite, and its LMCache codec encoded the captured
 tensors on CPU. There was no fresh model/GPU run on the dated pair. Exact
 source, workload and evidence digests are in the
 <a href="data/tokendance-reference.json">sanitized reference record</a>.</p>
+<p><strong>H100 retest, 2026-10-16:</strong> all eight cases pass on the
+rebased <a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-current-validation">vLLM</a>
+and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-16-feature-kmesh-current-validation">LMCache</a>
+branches. The accepted serial/collective correctness and encoded-byte findings
+are unchanged. Full-recomputation parity remains unclaimed. The
+<a href="data/tokendance-h100-retest.json">retest record</a> and
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">CUDA reproducer</a>
+contain the exact pins and results.</p>
 <div class="stat-grid">
   <div class="stat"><div class="val">8 / 8</div><div class="label">saved GPU cases<br>independently reverified</div></div>
   <div class="stat"><div class="val cyan">bitwise</div><div class="label">collective vs serial K/V<br>four recovered siblings</div></div>
@@ -477,6 +485,12 @@ the next four hit 4,096. At 1.00 and 1.50, the first child misses the ancestor
 entirely and the next four hit fully. In this metadata admission sequence,
 the first child's simulated prefill repopulates the lost blocks. This does
 not establish a universal bound under interleaved traffic or preemption.</p>
+
+<p>The CPU allocator matrix was also repeated on the rebased serving
+branch with the current CUDA environment and GPU visibility disabled. All
+25 scenarios and six eviction points agree, and all 174 prefix-cache tests
+pass. The <a href="data/kmesh-fork-accounting-current.json">current capture</a>
+and README give the source and runtime pins.</p>
 
 <h3>Reproduce this allocator check</h3>
 <p>The

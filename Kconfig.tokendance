@@ -8,12 +8,14 @@ config KNLP_REPRODUCE_TOKENDANCE
 if KNLP_REPRODUCE_TOKENDANCE
 
 config KNLP_TOKENDANCE_MODE
-	string "Execution: cpu or gpu"
+	string "Execution: cpu, gpu (ROCm container), or cuda (native)"
 	default "cpu"
 	help
 	  cpu validates the exact synthetic workload without a model or GPU.
 	  gpu runs all eight recovery/control cases in a pinned ROCm container.
 	  GPU execution requires an available GPU and the component checkouts.
+	  cuda runs the pinned current source/runtime on an available GPU,
+	  using the selected Python interpreter.
 
 config KNLP_TOKENDANCE_OUTPUT
 	string "Fresh output directory"
@@ -38,6 +40,10 @@ config KNLP_TOKENDANCE_MODEL_DIR
 config KNLP_TOKENDANCE_DOCKER
 	string "Container command prefix"
 	default "docker"
+
+config KNLP_TOKENDANCE_WHEEL_PACKAGE
+	string "Current CUDA profile's matching installed vLLM package"
+	default ""
 
 endif
 endmenu

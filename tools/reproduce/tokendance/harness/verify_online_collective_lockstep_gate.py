@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from contract import profile, validate_sources
+from contract import profile, validate_current_runtime, validate_sources
 
 import safetensors
 import torch
@@ -3366,7 +3366,7 @@ def _parse_args() -> argparse.Namespace:
             type=Path,
         )
     parser.add_argument(
-        "--source-pair", choices=["dated", "reference"], default="dated"
+        "--source-pair", choices=["dated", "reference", "current"], default="dated"
     )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--checksums", required=True, type=Path)
@@ -3382,7 +3382,16 @@ def main() -> None:
 
     for result in results.values():
         validate_sources(result["source"], args.source_pair)
+        if args.source_pair == "current":
+            validate_current_runtime(result["runtime"])
     baseline_identity = _identity(results["ordinary"])
+    if args.source_pair == "current":
+        compiled = results["ordinary"]["runtime"]["lmcache_compiled_extensions"]
+        if set(compiled) != {"lmcache_native", "cuda_ops"} or any(
+            item["runtime"].get("lmcache_compiled_extensions") != compiled
+            for item in results.values()
+        ):
+            raise RuntimeError("LMCache native extensions differ between CUDA arms")
     identity_match = {
         arm: _identity(value) == baseline_identity
         for arm, value in results.items()
