@@ -7,6 +7,15 @@ an independent tail. For example, five children extend a 4,096-token ancestor
 with 512 tokens each. These are synthetic causal-prefix forks, rather than
 matching text placed after different private histories.
 
+The harness supplies the matching token sequences. vLLM's automatic prefix
+caching supplies physical sharing inside one engine: complete token blocks
+are indexed by a hash of their tokens, preceding prefix and relevant cache
+identity. A matching request acquires references to those existing KV blocks;
+its divergent tail receives separate writable blocks. The replay uses ordinary
+requests, without a request-fork API or explicit family declaration. Shared
+block IDs save cache capacity. They do not by themselves share attention work,
+cross engine boundaries or eliminate external storage transfers.
+
 The benchmark drives the real `KVCacheManager` from the pinned vLLM branch.
 It allocates metadata and treats admission as completed prefill, following
 vLLM's prefix-cache unit-test convention. No model, scheduler, tensor storage,
