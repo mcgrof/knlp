@@ -405,3 +405,39 @@ python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
 The exporter uses the standard library and checks the exact source pins.
 The optional plot requires Matplotlib. It shows every retained trial and
 median, including attained fork gaps and reactive/fully-warm references.
+
+## Retaining the ancestor in external L1
+
+`make defconfig-kmesh-retained-prefetch-cuda` selects a separate control on
+that same pinned LMCache source. An engine preload makes the ancestor reusable
+in vLLM, but later LOOKUPs can still fetch its chunks from NVMe. This profile
+compares the engine preload with the stock `POST /cache/prefetches` operation
+followed by that same engine preload. The HTTP operation loads the ancestor
+from storage into external L1 and retains it without read locks. It does not
+make vLLM's own ancestor ready; the one-token engine request still does that.
+
+Both arms start with empty engine and external L1 caches, retain the same
+NVMe index, and use a synthetic 250 ms fork gap. The clock starts before the
+HTTP operation, including submission, completion polling and subsequent
+engine work. The verifier requires warming to complete before child release.
+This is an adequately-warm control, not a measurement of the minimum useful
+lead time. It uses no estimated wait-time term. Five retained paired families
+follow three warmups, alternating arm order at each sample. Staged and DMA-BUF
+paths and fanouts four and eight each have a fresh storage owner and engine.
+The same 512 MiB engine KV pool and 512 MiB external arena apply to both arms.
+
+The retained arm must read exactly sixteen 3 MiB chunks for the whole family,
+including its HTTP operation, and leave sixteen nontemporary external-L1
+objects with no read locks, write locks or external I/O leases. This is extra
+residency inside the same configured arena; it is not free memory. Every child
+must reuse the local ancestor, with exactly one complete external engine load
+in the preceding warm request. The ordinary arm's actual backend reads remain
+visible, independently of this GPU sharing. An unused retained preload must
+still incur sixteen chunk reads and one wasted declaration. Terminal cleanup
+must empty L1. All token, chosen-logprob, model-KV, native-route, byte-count,
+corruption and ownership gates still apply; no audit-history eviction passes.
+
+This profile is implemented and has CPU verifier/driver coverage. Its GPU
+qualification and measured findings are reported separately on the KMesh page.
+It does not qualify eviction pressure, retained-object priority, GPU-memory
+leases, cross-engine sharing, or a general serving latency improvement.

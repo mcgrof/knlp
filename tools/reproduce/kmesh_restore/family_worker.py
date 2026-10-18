@@ -28,10 +28,20 @@ from worker import (
 
 
 def replay(
-    engine, ancestor, children, params, warm_params, policy, gap_ms, label, declare=None
+    engine,
+    ancestor,
+    children,
+    params,
+    warm_params,
+    policy,
+    gap_ms,
+    label,
+    declare=None,
+    prepare=None,
 ):
     """Drive the public engine loop, adding children at the attained fork gap."""
     start = time.perf_counter_ns()
+    preparation = None if prepare is None else prepare()
     release = None
     warm_done = None
     warm_output = None
@@ -75,6 +85,7 @@ def replay(
     if set(completed) != set(names):
         raise RuntimeError("engine lost or duplicated a family child")
     return {
+        "preparation": preparation,
         "declaration_identity": identity,
         "rows": result_rows([completed[name] for name in names], 8),
         "warm_rows": [] if warm_output is None else result_rows([warm_output], 1),

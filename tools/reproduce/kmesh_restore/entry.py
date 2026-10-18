@@ -68,13 +68,13 @@ def command(config: dict) -> list[str]:
         flags.pop("SECTION")
     for key, flag in flags.items():
         result.extend(["--" + flag, config.get(key, "")])
-    if config["SECTION"] in ("coldburst", "family"):
+    if config["SECTION"] in ("coldburst", "family", "retained"):
         result.extend(
             [
                 "--rounds",
                 "1",
                 "--serving-samples",
-                "5" if config["SECTION"] == "family" else "3",
+                "5" if config["SECTION"] in ("family", "retained") else "3",
                 "--adapter-samples",
                 "1",
             ]
@@ -97,7 +97,7 @@ def main() -> None:
                     "vllm_commit": VLLM_COMMIT,
                     "lmcache_commit": (
                         FAMILY_PREFETCH_COMMIT
-                        if config["SECTION"] == "family"
+                        if config["SECTION"] in ("family", "retained")
                         else (
                             SINGLEFLIGHT_COMMIT
                             if config["SECTION"] == "singleflight"
@@ -107,18 +107,20 @@ def main() -> None:
                     "ancestor_bytes": CHUNK_BYTES * CHUNKS,
                     "rounds": (
                         1
-                        if config["SECTION"] in ("coldburst", "singleflight", "family")
+                        if config["SECTION"]
+                        in ("coldburst", "singleflight", "family", "retained")
                         else 4
                     ),
                     "section": config["SECTION"],
                     "adapter_samples_per_round": (
                         0
-                        if config["SECTION"] in ("coldburst", "singleflight", "family")
+                        if config["SECTION"]
+                        in ("coldburst", "singleflight", "family", "retained")
                         else 100
                     ),
                     "serving_families_per_fanout_per_round": (
                         5
-                        if config["SECTION"] == "family"
+                        if config["SECTION"] in ("family", "retained")
                         else (
                             3
                             if config["SECTION"] == "coldburst"

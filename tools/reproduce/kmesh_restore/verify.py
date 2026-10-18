@@ -292,11 +292,16 @@ if __name__ == "__main__":
     parser.add_argument("--stage", choices=("smoke", "measured"), default="measured")
     parser.add_argument(
         "--section",
-        choices=("all", "adapter", "serving", "coldburst", "family"),
+        choices=("all", "adapter", "serving", "coldburst", "family", "retained"),
         default="all",
     )
     args = parser.parse_args()
-    if args.section == "family":
+    if args.section == "retained":
+        from retained_verify import verify_retained
+
+        result = verify_retained(args.root)
+        write_json(args.root / "retained-verified.json", result)
+    elif args.section == "family":
         from family_verify import verify_family
 
         result = verify_family(args.root)

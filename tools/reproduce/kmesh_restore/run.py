@@ -108,7 +108,7 @@ def serving(
             consumer_script,
             (
                 [str(path)]
-                if consumer_script == "family_worker.py"
+                if consumer_script in ("family_worker.py", "retained_worker.py")
                 else [str(path), "consumer"]
             ),
             destination / "consumer.log",
@@ -147,7 +147,7 @@ def main(args: argparse.Namespace) -> None:
             args.lmcache_source,
             (
                 FAMILY_PREFETCH_COMMIT
-                if args.section == "family"
+                if args.section in ("family", "retained")
                 else (
                     SINGLEFLIGHT_COMMIT if args.singleflight_control else LMCACHE_COMMIT
                 )
@@ -209,7 +209,7 @@ def main(args: argparse.Namespace) -> None:
             "singleflight_control": args.singleflight_control,
             "fanouts": (
                 [4, 8]
-                if args.section == "family"
+                if args.section in ("family", "retained")
                 else ([2, 4, 8] if args.section == "coldburst" else [1, 5])
             ),
             "mode_order": [
@@ -246,7 +246,7 @@ def main(args: argparse.Namespace) -> None:
             args.output / ("corruption-" + mode + "-rejected.json"),
             {"returncode": code, "expected_payload_rejection": True},
         )
-    if args.section == "family":
+    if args.section in ("family", "retained"):
         config |= {
             "fanouts": [4, 8],
             "arena_bytes": 512 << 20,
@@ -268,13 +268,17 @@ def main(args: argparse.Namespace) -> None:
                     config | {"mode": mode, "fanouts": [fanout]},
                     args.output / f"{mode}-n{fanout}",
                     args.serving_samples,
-                    "family_worker.py",
+                    (
+                        "retained_worker.py"
+                        if args.section == "retained"
+                        else "family_worker.py"
+                    ),
                 )
-                print("COMPLETE", mode, "family", fanout, flush=True)
+                print("COMPLETE", mode, args.section, fanout, flush=True)
         execute(
             "verify.py",
-            [str(args.output), "--section", "family"],
-            args.output / "family-verify.log",
+            [str(args.output), "--section", args.section],
+            args.output / (args.section + "-verify.log"),
         )
         return
     if args.section == "coldburst":
@@ -372,7 +376,9 @@ if __name__ == "__main__":
     parser.add_argument("--serving-samples", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument(
-        "--section", choices=("adapter", "all", "coldburst", "family"), default="all"
+        "--section",
+        choices=("adapter", "all", "coldburst", "family", "retained"),
+        default="all",
     )
     parser.add_argument(
         "--singleflight-control",

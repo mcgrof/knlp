@@ -97,7 +97,7 @@ def prompts(fanout: int = 5) -> tuple[list[int], list[list[int]]]:
 
 
 def http(port: int, route: str, body: dict | None = None) -> dict:
-    """Call a loopback control endpoint outside the model timing interval."""
+    """Call a loopback control endpoint and return its JSON response."""
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/{route}",
         data=None if body is None else json.dumps(body).encode(),
