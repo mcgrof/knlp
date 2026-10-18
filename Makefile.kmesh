@@ -40,3 +40,17 @@ kmesh-restore kmesh-restore-plan kmesh-restore-verify:
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_RESTORE),y)
 .DEFAULT_GOAL := kmesh-restore
 endif
+
+KMESH_CASCADE_PY ?= $(PYTHON)
+KMESH_CASCADE_CONFIG ?= $(CONFIG_FILE)
+KMESH_CASCADE_DIR := tools/reproduce/kmesh_cascade
+
+.PHONY: kmesh-cascade kmesh-cascade-plan kmesh-cascade-verify
+.NOTPARALLEL: kmesh-cascade
+
+kmesh-cascade kmesh-cascade-plan kmesh-cascade-verify:
+	@"$(KMESH_CASCADE_PY)" $(KMESH_CASCADE_DIR)/run.py --config "$(KMESH_CASCADE_CONFIG)" $(if $(filter kmesh-cascade,$@),run,$(patsubst kmesh-cascade-%,%,$@))
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_CASCADE),y)
+.DEFAULT_GOAL := kmesh-cascade
+endif

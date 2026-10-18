@@ -111,4 +111,28 @@ config KNLP_KMESH_RESTORE_SECTION
 	  runs the serving gate, which can reject cold-burst recomputation.
 
 endif
+
+config KNLP_REPRODUCE_KMESH_CASCADE
+	bool "Compare shared-prefix cascade attention on the current vLLM"
+	default n
+	help
+	  Replay the original 8B reasoning family with disabled, natural and
+	  forced cascade policies. Check actual kernel engagement separately
+	  from timing and generated-token differences. Use an available GPU.
+
+if KNLP_REPRODUCE_KMESH_CASCADE
+
+config KNLP_KMESH_CASCADE_OUTPUT
+	string "Fresh cascade output directory"
+	default "results/kmesh-cascade"
+
+config KNLP_KMESH_CASCADE_VLLM_SOURCE
+	string "Clean pinned serving-replay vLLM checkout"
+	default ""
+
+config KNLP_KMESH_CASCADE_MODEL_DIR
+	string "Authenticated Llama-3.1-8B-Instruct snapshot"
+	default ""
+
+endif
 endmenu

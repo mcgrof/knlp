@@ -1,0 +1,5 @@
+# Replay the original 8B cascade controls on an available GPU.
+CONFIG_KNLP_REPRODUCE_KMESH_CASCADE=y
+CONFIG_KNLP_KMESH_CASCADE_OUTPUT="results/kmesh-cascade-cuda"
+CONFIG_KNLP_KMESH_CASCADE_VLLM_SOURCE=""
+CONFIG_KNLP_KMESH_CASCADE_MODEL_DIR=""
