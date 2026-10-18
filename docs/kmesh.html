@@ -666,6 +666,21 @@ The reproducer retains this gate, and does not remove the request or widen
 the numerical bound. Batch-invariant arithmetic can also change performance
 relative to default vLLM kernels. Post-family checksum block IDs can be reused
 between siblings; they do not establish simultaneous physical sharing.</p>
+<p>An October 17 diagnostic repeat with DEBUG logging passes all transport
+and serving gates. All <strong>96 continuation observations</strong>, including
+warmups, match recomputation exactly in both generated tokens and chosen-token
+log probabilities. Every child reports the full 4,096-token cached ancestor.
+This repeat uses one paired round and one retained family per fanout and arm.
+Logging can change race timing, so it neither explains the earlier miss nor
+establishes a serving speedup. The full repeat without DEBUG logging remains
+pending. The <a href="data/kmesh-restore-diagnostic-20261017.json">diagnostic
+record</a> preserves the counts and limits without reporting its instrumented
+times as performance results.</p>
+<p>Each measured five-child burst in that diagnostic issues 80 backend chunk
+reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. These
+counts motivate the later cold-burst coalescing test. They count adapter
+requests and completed payload bytes, not physical NVMe commands, and do not
+prove how many ancestor copies occupy GPU memory simultaneously.</p>
 
 <h3>Reproduce the qualified transport result</h3>
 <p>The source inputs are the
