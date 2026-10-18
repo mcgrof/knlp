@@ -616,24 +616,23 @@ DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.
 
 <section id="restore-latency">
 <h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
-<p><strong>Yes at the transport boundary; a serving latency benefit remains unqualified.</strong>
-Retested on 2026-10-16 with an RTX 4090 and the current rebased branches,
-DMA-BUF reduces median GPU-consumer readiness by <strong>15.8%</strong> for a
-48 MiB ancestor. Storage-load completion itself is nearly equal. The separate
-serving qualification stops when one child recomputes rather than restores
-its ancestor, so no formal serving timing is accepted.</p>
+<p><strong>Yes for transport readiness and a single restored child in this workload.</strong>
+Retested on 2026-10-17 with an RTX 4090 and the current rebased branches,
+DMA-BUF reduces median GPU-consumer readiness by <strong>16.3%</strong> for a
+48 MiB ancestor and single-child time to first token by <strong>6.4%</strong>.
+The five-child burst has no stable latency benefit. All strict restoration
+and numerical gates pass in this repeat without DEBUG logging.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Transport metric</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
-<tr><td class="hi">Adapter load complete</td><td>8.294 / 8.460 ms</td><td>8.246 / 8.429 ms</td></tr>
-<tr><td class="hi">GPU consumer ready</td><td>11.238 / 11.423 ms</td><td>9.463 / 9.633 ms</td></tr>
+<tr><td class="hi">Adapter load complete</td><td>8.063 / 8.204 ms</td><td>8.023 / 8.160 ms</td></tr>
+<tr><td class="hi">GPU consumer ready</td><td>11.006 / 11.165 ms</td><td>9.211 / 9.364 ms</td></tr>
 </table>
 </div>
 <p>Four pairs alternate staged/direct order, with 100 measured restores per
-arm in each pair. Every pair has a lower direct-path readiness median,
-by 15.25&ndash;16.37%. Five warmups per cell are excluded from timing summaries.
-Across smoke and formal cells, all <strong>854 complete payload checks</strong>
-pass, and both deliberately corrupted payloads are rejected. The native
+arm in each pair, giving 400 measured restores per arm. Five warmups per cell
+are excluded from timing summaries. Complete payload checks pass, and both
+deliberately corrupted payloads are rejected. The native
 submission/completion journal proves <code>dmabuf_fixed</code> versus
 <code>host_fixed</code>, with complete bytes and drained ownership.</p>
 <p>The adapter submits all sixteen chunks, waits for completion, then copies
@@ -672,17 +671,38 @@ warmups, match recomputation exactly in both generated tokens and chosen-token
 log probabilities. Every child reports the full 4,096-token cached ancestor.
 This repeat uses one paired round and one retained family per fanout and arm.
 Logging can change race timing, so it neither explains the earlier miss nor
-establishes a serving speedup. The full repeat without DEBUG logging remains
-pending. The <a href="data/kmesh-restore-diagnostic-20261017.json">diagnostic
+establishes a serving speedup. The <a href="data/kmesh-restore-diagnostic-20261017.json">diagnostic
 record</a> preserves the counts and limits without reporting its instrumented
 times as performance results.</p>
-<p>Each measured five-child burst in that diagnostic issues 80 backend chunk
-reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. These
+<h3>Serving repeat without diagnostic logging</h3>
+<p>The subsequent four-pair repeat uses INFO logging in both components and
+20 measured families per fanout and arm in each pair. Every one of its
+<strong>1,152 continuation observations</strong>, including smoke checks and
+warmups, restores the full 4,096-token ancestor, matches generated tokens and
+has zero chosen-token log-probability difference from recomputation. Model-KV
+digests, native routes, complete payloads and drained ownership also pass.
+No cache-admission fix was made; the earlier miss remains unexplained.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Time to first token</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
+<tr><td class="hi">One child, 80 measured requests per arm</td><td>25.015 / 26.105 ms</td><td>23.403 / 24.412 ms</td></tr>
+<tr><td class="hi">Five-child burst, 400 measured requests per arm</td><td>55.183 / 75.137 ms</td><td>54.912 / 75.257 ms</td></tr>
+</table>
+</div>
+<p>Single-child median latency favors DMA-BUF in all four paired rounds.
+Five-child paired changes vary in sign; the pooled median changes by only
+0.5%, while median batch completion is 74.576 ms direct versus 73.883 ms
+staged. These measurements do not establish a stable burst benefit. The
+<a href="data/kmesh-restore-serving-20261017.json">full-repeat record</a>
+retains all percentiles, paired medians, counts and limits.</p>
+<p>Every retained five-child burst issues 80 backend chunk
+reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. A
+single child reads sixteen chunks, or 48 MiB. These
 counts motivate the later cold-burst coalescing test. They count adapter
 requests and completed payload bytes, not physical NVMe commands, and do not
 prove how many ancestor copies occupy GPU memory simultaneously.</p>
 
-<h3>Reproduce the qualified transport result</h3>
+<h3>Reproduce the transport and serving comparison</h3>
 <p>The source inputs are the
 <a href="https://github.com/mcgrof/vllm/tree/1b76bf9dd9d52efbd75fb89bf2619898d8f01233">current vLLM serving branch</a>
 and
@@ -691,8 +711,9 @@ The latter extends the checksum endpoint to the current packed KV layouts.
 The
 <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
 gives native preparation, exact pins, queued execution and CPU rechecks.
-The <a href="data/kmesh-dmabuf-restore.json">sanitized record</a> contains
-all percentiles, paired rounds, source hashes and both failed serving gates.</p>
+The <a href="data/kmesh-dmabuf-restore.json">initial transport record</a>
+retains the October 16 measurements and both failed serving gates; the
+October 17 full-repeat record above contains the accepted serving timings.</p>
 <pre><code>make defconfig-kmesh-restore-cuda
 make kmesh-restore-plan
 
@@ -702,7 +723,8 @@ make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
 KMESH_RESTORE_OUTPUT=/path/to/results make kmesh-restore-verify</code></pre>
 <p>The default preset selects the qualified adapter comparison and the
 experimental Vulkan/RM GPU provider. <code>KMESH_RESTORE_SECTION=all</code>
-also attempts the strict serving qualification. Run on a host with the
+also runs the strict serving qualification used in the full repeat. Keep
+both component log levels at INFO for the timing comparison. Run on a host with the
 <a href="io-uring-dmabuf.html">qualified experimental DMA-BUF kernel and storage route</a>;
 a stock RunPod container does not provide that host integration.</p>
 <p>The model is Qwen2.5-0.5B-Instruct at the baseline's pinned revision,
@@ -717,10 +739,11 @@ worker. Equal configured capacity does not mean equal total process memory.</p>
 13.4.92 and the experimental <code>7.3.0-rc3-dmabuf-mapfence-20261008</code>
 kernel. There are two OpenMP/MKL threads, without a CPU-affinity cap.
 Model startup and checksum controls are outside timed intervals.</p>
-<div class="note"><strong>The measured win is GPU-consumer readiness.</strong>
+<div class="note"><strong>The measured wins are GPU-consumer readiness and single-child latency.</strong>
 It does not establish cold-media behavior, general model quality, serving
-throughput, cascade-attention gains or cross-engine page sharing. Strict
-all-child restoration and serving latency qualification remain open.</div>
+throughput, cascade-attention gains or cross-engine page sharing. Five-child
+burst latency has no stable improvement, and the earlier admission miss
+remains open despite this passing repeat.</div>
 </section>
 
 <section id="papers">

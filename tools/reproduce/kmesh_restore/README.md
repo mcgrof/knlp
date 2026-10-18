@@ -5,8 +5,9 @@ restore an offloaded ancestor for a family of reasoning requests. It connects
 the existing exact-prefix workload to the real LMCache multiprocess connector,
 then compares registered host staging with a registered GPU DMA-BUF arena.
 The four-pair RTX 4090 transport comparison passes. Median GPU-consumer
-readiness is 9.463 ms direct versus 11.238 ms staged, 15.8% lower. Adapter
-completion itself is nearly equal, 8.246 versus 8.294 ms. Each arm has 400
+readiness is 9.211 ms direct versus 11.006 ms staged, 16.3% lower in the
+October 17 repeat. Adapter completion itself is nearly equal, 8.023 versus
+8.063 ms. Each arm has 400
 measured samples; byte checks, deliberate corruption rejection, actual native
 routes and drained ownership pass. This measures repeated warm SSD ranges.
 See the [results and limits](https://knlp.io/kmesh.html#restore-latency).
@@ -19,9 +20,21 @@ chosen-logprob bound against full recomputation. That attempt remains a failed
 gate. The deterministic retry matches all 48 bounded output-token observations
 and their chosen log probabilities exactly, but fails a separate strict gate:
 one child in a five-request warmup recomputes rather than reusing the ancestor.
-Formal serving timing stops at that gate. The default defconfig reproduces the
-qualified adapter comparison. The optional full pipeline retains the strict
-serving gate; no end-to-end serving latency benefit is established.
+Formal serving timing stopped at that gate. The October 17 full repeat with
+INFO logging passes all strict gates: all 1,152 continuation observations,
+including warmups, restore the complete ancestor and match recomputation's
+tokens and chosen log probabilities exactly. No admission fix was made;
+the earlier miss remains unexplained.
+
+Four alternating pairs retain 20 families per fanout and arm per pair.
+Single-child median time to first token is 23.403 ms direct versus 25.015 ms
+staged, 6.4% lower, with all four paired medians favoring direct. Five-child
+pooled medians are 54.912 versus 55.183 ms, but paired changes vary in sign
+and batch completion does not improve. There is no stable burst benefit.
+Every retained five-child family reads 240 MiB for its 48 MiB ancestor in
+both paths. Those are adapter request counts, not device command traces or
+proof of simultaneous GPU-memory copies. The default defconfig selects the
+adapter comparison; `KMESH_RESTORE_SECTION=all` selects the full comparison.
 
 Each serving row retains vLLM's request identifier so a cache miss can be
 matched to the connector and storage logs. For an admission investigation,
