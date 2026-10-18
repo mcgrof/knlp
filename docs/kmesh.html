@@ -135,6 +135,7 @@ footer a { color: var(--muted); }
   <a href="#restore-latency">11. Does DMA-BUF reduce offloaded-ancestor latency?</a>
   <a href="#cascade">12. Does cascade reach the shared-prefix attention path?</a>
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
+  <a href="#singleflight">14. Can one loader remove duplicate GPU ancestors?</a>
   <a href="#papers">14. Papers</a>
 </div>
 
@@ -906,6 +907,63 @@ KMESH_RESTORE_SECTION=coldburst KMESH_RESTORE_OUTPUT=/path/to/results \
 describe the queued wrapper and independent CPU recheck. This is a measured
 baseline: no singleflight, family prefetch, new allocator or sharing fix has
 been added.</p>
+</section>
+
+<section id="singleflight">
+<h2>14. Can one loader remove duplicate GPU ancestors?</h2>
+<p><strong>Yes in this replay; repeated NVMe reads remain.</strong> The original
+exact-prefix singleflight gate is retested on the current DMA-BUF-capable
+LMCache branch and RTX 4090. Singleflight selects one loader for an externally
+cached text ancestor. Followers defer before GPU allocation and retry vLLM's
+ordinary local prefix cache after the leader publishes the ancestor.</p>
+<p>Disabled and enabled controls use identical sources and native binaries.
+Each path and arrival case retains twenty families after three warmups:
+bursts of two, four and eight children, plus a completed leader followed by
+three children. The gate records <strong>29 actual follower joins</strong>,
+including warmups. Every enabled family, including warmups, has one external
+engine load, one ready ancestor spanning 256 blocks, and local hits for all
+remaining children. No registry state remains after a family completes.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Case</th><th scope="col">Gate disabled: ready GPU copies</th><th scope="col">Gate enabled: ready GPU copies</th><th scope="col">Backend payload, either gate</th></tr>
+<tr><td class="hi">Two-child burst</td><td>1</td><td>1</td><td>96 MiB</td></tr>
+<tr><td class="hi">Four-child burst</td><td>1&ndash;2</td><td>1</td><td>192 MiB</td></tr>
+<tr><td class="hi">Eight-child burst</td><td>1&ndash;6 staged; 1&ndash;2 DMA-BUF</td><td>1</td><td>384 MiB</td></tr>
+<tr><td class="hi">Leader, then three children</td><td>1</td><td>1</td><td>192 MiB</td></tr>
+</table></div>
+<p>The read totals are unchanged: the 48 MiB ancestor is still read once per
+child at the backend. The gate follows LOOKUP, which has already started L2
+prefetch, including for children that later find the ancestor in vLLM.
+<strong>GPU load coalescing and storage-read suppression are separate
+problems.</strong> DMA-BUF changes the transfer route; it does not fix this
+lookup behavior.</p>
+<p>Across both controls, all <strong>1,656 continuations</strong> and
+<strong>13,248 chosen-token log probabilities</strong> match recomputation
+exactly, including warmups. Every child has the full 4,096-token cached
+ancestor. Producer/restored KV checksums, native registered-buffer routes,
+complete byte receipts and drained ownership pass. The
+<a href="data/kmesh-singleflight-20261017.json">sanitized comparison</a>
+retains every backend count, copy/load histograms, exact source/model/native
+hashes and numerical bounds. Each control/path/arrival uses one engine;
+these are not independent randomized process pairs or a general race-rate
+estimate. No serving-speed claim follows from this instrumented replay.</p>
+<h3>Reproduce the load gate</h3>
+<p>Use public LMCache branch
+<a href="https://github.com/mcgrof/LMCache/tree/2026-10-17-feature-kmesh-external-singleflight"><code>2026-10-17-feature-kmesh-external-singleflight</code></a>
+at <code>100442de5a49</code>, with vLLM unchanged at
+<code>1b76bf9dd9d5</code>. Both author and committer dates are October 17.</p>
+<pre><code>make defconfig-kmesh-singleflight-cuda
+make kmesh-restore-plan
+
+# Configure the prepared interpreter and authenticated model/source paths.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=singleflight KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
+describes the pinned inputs and strict checks. The next original experiment
+compares reactive coalescing with an ancestor preloaded before child arrival.
+It must charge preload work and unused declarations, measure the attained
+fork gap, and retain storage-read accounting.</p>
 </section>
 
 <section id="papers">
