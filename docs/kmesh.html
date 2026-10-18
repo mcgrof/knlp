@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh investigates shared inference state: a TokenDance-style recovery baseline and reproducible exact-prefix reasoning fork accounting in vLLM.">
+<meta name="description" content="KMesh experiments reproduce TokenDance-style recovery, exact-prefix sharing, cascade and DMA-BUF offload in vLLM and LMCache.">
 <title>KMesh: Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</title>
 <style>
 :root {
@@ -98,7 +98,7 @@ footer a { color: var(--muted); }
 </header>
 <main id="content">
 <div class="hero">
-  <span class="eyebrow">Inference systems · Recovery and exact-prefix forks</span>
+  <span class="eyebrow">Inference systems · Recovery, sharing and offload</span>
   <h1>KMesh</h1>
   <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
   <p class="lead">Request-centric inference execution flattens round, segment, branch, and
@@ -108,8 +108,9 @@ footer a { color: var(--muted); }
   relationships so that recovery, scheduling, and storage operate on groups of
   related requests rather than isolated token streams. A bounded TokenDance-style
   baseline now checks collective recovery against serial recovery and measures
-  exact family encoding. The reproduction instructions and reference results
-  below separate what passed from the longer-term research goals.</p>
+  exact family encoding. Subsequent profiles test engine sharing, cascade,
+  DMA-BUF offload and ancestor preloading separately. The instructions and measured results below distinguish
+  those mechanisms from the longer-term research goals.</p>
   <p class="paper-links"><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
   &middot; <a href="https://arxiv.org/abs/2604.03143">TokenDance</a>
   &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a></p>
@@ -136,7 +137,8 @@ footer a { color: var(--muted); }
   <a href="#cascade">12. Does cascade reach the shared-prefix attention path?</a>
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
   <a href="#singleflight">14. Can one loader remove duplicate GPU ancestors?</a>
-  <a href="#papers">14. Papers</a>
+  <a href="#preload">15. What does an early ancestor declaration buy?</a>
+  <a href="#papers">16. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -960,14 +962,106 @@ make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
 KMESH_RESTORE_SECTION=singleflight KMESH_RESTORE_OUTPUT=/path/to/results \
   make kmesh-restore-verify</code></pre>
 <p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
-describes the pinned inputs and strict checks. The next original experiment
-compares reactive coalescing with an ancestor preloaded before child arrival.
-It must charge preload work and unused declarations, measure the attained
-fork gap, and retain storage-read accounting.</p>
+describes the pinned inputs and strict checks. The following section compares
+reactive coalescing with an ancestor preloaded before child arrival, charging
+preload work and unused declarations while measuring attained fork gaps and
+retaining storage-read accounting.</p>
+</section>
+
+<section id="preload">
+<h2>15. What does an early ancestor declaration buy?</h2>
+<p><strong>Early declaration coordinates restoration; this replay shows mixed
+latency.</strong> vLLM's existing prefix cache creates the sharing. The caller
+knows the ancestor and intended fanout,
+submits a one-token warm request, then releases children during the fork gap.
+The connector parks matching children before LOOKUP while the warm request
+is active and their ancestor is not locally reusable. Completion, cancellation
+or expiry releases the wait. Local reuse is credited after allocation admits
+the child, independently of an external lookup hit or miss. The declaration
+itself submits no I/O and leases no GPU blocks.</p>
+<pre><code>Reactive: child arrival -&gt; one ancestor restore -&gt; local sharing
+Declared: warm request -&gt; attained fork gap -&gt; child arrival -&gt; local sharing</code></pre>
+<p>Measured on October 17, 2026, on RTX 4090, this replay releases requests
+through vLLM's public engine loop. Requested gaps are 0, 10, 25 and 100 ms; a synchronous engine
+step can delay release, so every sample records its attained gap. Children
+can arrive before the warm request finishes. No estimated unfinished-restore
+term is added to a measured warm-child time.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path / children</th><th scope="col">Reactive</th><th scope="col">Fully warm control</th><th scope="col">Declared / 0 ms</th><th scope="col">Declared / 25 ms</th><th scope="col">Declared / 100 ms</th></tr>
+<tr><td class="hi">Host staged / 4</td><td>46.631</td><td>54.893</td><td>58.093</td><td>32.493</td><td>34.220</td></tr><tr><td class="hi">Host staged / 8</td><td>48.592</td><td>34.118</td><td>85.430</td><td>57.333</td><td>49.814</td></tr><tr><td class="hi">DMA-BUF / 4</td><td>31.611</td><td>45.872</td><td>53.601</td><td>33.004</td><td>32.165</td></tr><tr><td class="hi">DMA-BUF / 8</td><td>40.851</td><td>40.565</td><td>76.435</td><td>45.818</td><td>41.324</td></tr>
+</table></div>
+<p>Values are median time to first token for the first submitted child, in
+milliseconds, with 5 retained families per case after three warmups.
+The declared 100 ms case has a lower median than reactive coalescing in
+1 of four path/fanout combinations; zero-gap preloading has
+a higher median in all four. Warming completed before child
+release in 20 of 20 retained 100 ms families. These are
+exploratory observations from one engine per path/fanout in fixed case order,
+with visible sample variation. They do not establish a general serving
+speedup or a causal performance difference between storage paths.</p>
+<figure style="margin:24px 0">
+<img src="images/kmesh-preload-20261017.svg" width="1000" height="650" style="width:100%;height:auto;border-radius:9px;background:white" alt="Four panels plot measured first-child latency against attained fork gap, with reactive and fully warm median references.">
+<figcaption style="color:var(--muted);font-size:13px;margin-top:12px">Points
+are every retained declared-preload sample; diamonds are medians grouped by
+requested gap. Each panel has its own vertical scale. The warm-completion value in the
+data measures a one-token warm request, including lookup, restoration,
+last-token computation and sampling; it is not an isolated DMA duration.</figcaption>
+</figure>
+<p><strong>Storage work remains separate.</strong> Each full family, including
+its warm request when present, uses one complete external engine ancestor
+load. The backend can still read that ancestor for later LOOKUPs even after
+vLLM has it locally. The
+<a href="data/kmesh-family-prefetch-20261017.json">verified public record</a>
+retains every retained family's backend read count, local-hit/load counts and timing
+samples. Four unused-preload controls release no children: each incurs
+16 native payload reads, 48 MiB, and one wasted declaration without a child
+hit. Preloading consumes real work; logical declaration bytes are not
+measured storage savings.</p>
+<p>All 1,152 child and
+164 warm continuations, including warmups
+and unused controls, match their references. All
+9,380 chosen-token log probabilities match exactly, maximum delta 0.0. Every child reuses
+the full 4,096-token ancestor. The first warmup of each case also checks
+producer/restored model-KV digests and live ready ancestor ownership.
+Registered native routes, complete bytes and drained ownership pass for every
+family; no I/O evidence eviction is accepted.
+412 children exercise
+pre-LOOKUP waiting. Immutable prefix identities are cached on the request
+tracker so repeated waiting polls do not copy and hash the prompt again.</p>
+<p>This is a caller-driven Python-connector prototype with synthetic exact
+prefixes, distinct 512-token tails, eight greedy child tokens, batch-invariant
+arithmetic, a 512 MiB engine KV pool and a 512 MiB external arena. Each
+path/fanout uses a fresh storage owner and engine to keep audit history
+bounded. Retained timings have allocation observation hooks removed. The
+NVMe index stays warm and both resident caches are cleared before each
+family. The test has no eviction-pressure workload and does not qualify
+HBM retention leases, task quality or cross-engine sharing.</p>
+<h3>Reproduce actual fork-gap preloading</h3>
+<p>Use LMCache <a href="https://github.com/mcgrof/LMCache/commit/44a52bda3b494e3d427e65b08d7196c70f631c47"><code>44a52bda3b49</code></a>
+and vLLM <code>1b76bf9dd9d5</code>, with the prepared model and native runtime
+specified in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>.</p>
+<pre><code>make defconfig-kmesh-family-prefetch-cuda
+make kmesh-restore-plan
+
+# Set model/source paths and the prepared interpreter as described in the README.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=family KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify
+
+python tools/reproduce/kmesh_restore/publish_family.py /path/to/results \
+  --output public-results.json
+python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
+  --output preload.svg</code></pre>
+<p>The next control uses LMCache's existing retained L2-to-L1 warm operation
+before the engine preload. It asks whether keeping those chunks in external
+L1 removes repeated NVMe reads while preserving longer-prefix discovery. Its
+HTTP work and extra residency must be counted separately from GPU sharing.</p>
 </section>
 
 <section id="papers">
-<h2>14. Papers</h2>
+<h2>16. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>

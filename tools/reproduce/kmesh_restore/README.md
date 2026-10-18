@@ -383,3 +383,25 @@ hooks removed. Each fanout uses a fresh storage owner and engine so the full nat
 audit stays within its bounded history; no evidence eviction is accepted.
 Cases use fixed order and one engine per path/fanout; results do not
 establish a general production speedup or independent process-level confidence.
+
+The current RTX 4090 replay passes every correctness and storage gate, with
+1,152 child and 164 warm continuations, 9,380 exact chosen-token logprobs and
+412 actual pre-LOOKUP deferrals. Timing remains mixed: the 100 ms preload
+has a lower first-child median than reactive coalescing in one of four
+path/fanout combinations, while the zero-gap preload is slower in all four.
+These exploratory five-sample cases do not establish a consistent serving
+latency benefit. The public page preserves every retained sample and backend
+read count instead of combining them into one speedup.
+
+After CPU verification, export and plot the measured observations with:
+
+```sh
+python tools/reproduce/kmesh_restore/publish_family.py /path/to/results \
+  --output public-results.json
+python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
+  --output preload.svg
+```
+
+The exporter uses the standard library and checks the exact source pins.
+The optional plot requires Matplotlib. It shows every retained trial and
+median, including attained fork gaps and reactive/fully-warm references.
