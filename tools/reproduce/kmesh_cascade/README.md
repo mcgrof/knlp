@@ -7,6 +7,14 @@ the common prefix as one group, then merges each request's private suffix.
 This experiment checks that GPU-memory read opportunity. It does not use
 LMCache or measure DMA-BUF, NVMe traffic or storage coalescing.
 
+The October 17 RTX 4090 run reaches cascade on all 128 observed steps with
+the normal heuristic. Natural versus disabled median warm generation is
+3.973 versus 4.836 seconds across three repetitions, but 24 of 96 retained
+continuations change. This is exploratory timing and an engagement result,
+not a numerical-equivalence or quality claim. The forced arm does not
+override a single verdict at this shape. See the
+[complete result and limits](https://knlp.io/kmesh.html#cascade).
+
 The original synthetic workload is Llama-3.1-8B-Instruct with an 8,192-token
 ancestor, 32 different 512-token tails, seed 20260809 and 128 greedy generated
 tokens per child. The source and ten model-artifact hashes are fixed in

@@ -132,7 +132,9 @@ footer a { color: var(--muted); }
   <a href="#results">8. Results and limits</a>
   <a href="#fork-accounting">9. Do reasoning forks need a new memory manager?</a>
   <a href="#serving-replay">10. Does sharing survive real serving?</a>
-  <a href="#papers">11. Papers</a>
+  <a href="#restore-latency">11. Does DMA-BUF reduce offloaded-ancestor latency?</a>
+  <a href="#cascade">12. Does cascade reach the shared-prefix attention path?</a>
+  <a href="#papers">13. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -746,8 +748,68 @@ burst latency has no stable improvement, and the earlier admission miss
 remains open despite this passing repeat.</div>
 </section>
 
+<section id="cascade">
+<h2>12. Does cascade reach the shared-prefix attention path?</h2>
+<p><strong>Yes, with the cascade-capable runner and flag selected explicitly.</strong>
+The October 17 RTX 4090 retest uses the current vLLM serving branch with
+Llama-3.1-8B-Instruct, an 8,192-token shared ancestor, 32 distinct 512-token
+tails and 128 greedy generated tokens per child. Automatic prefix caching
+shares capacity; cascade groups attention reads of that ancestor and merges
+each child's private suffix. This test uses GPU-resident KV only. It does
+not use LMCache or measure storage restoration.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Cascade policy</th><th scope="col">Observed layer-kernel calls</th><th scope="col">Median warm generation wall time</th><th scope="col">Changed continuations versus disabled</th></tr>
+<tr><td class="hi">Disabled</td><td>0</td><td>4,835.837 ms</td><td>0 / 96</td></tr>
+<tr><td class="hi">Enabled, natural heuristic</td><td>4,096</td><td>3,972.896 ms</td><td>24 / 96</td></tr>
+<tr><td class="hi">Enabled, forced heuristic</td><td>4,096</td><td>3,974.941 ms</td><td>27 / 96</td></tr>
+</table>
+</div>
+<p>The untimed engagement control observes an 8,192-token common prefix on
+all 128 runner steps: 128 steps &times; 32 layers gives 4,096 kernel calls.
+Every natural heuristic verdict is true, so forcing engagement adds nothing
+at this shape. The disabled control makes no cascade calls. Each timed
+request reuses 8,688 prompt tokens, including the complete ancestor.</p>
+<p>The natural path's median generation wall time is 17.8% lower in these
+three repetitions. Each policy has one fresh engine process, run in fixed
+disabled/enabled/forced order. This is exploratory evidence, without
+independent alternating process pairs. Timing includes cached-prefill
+scheduling and all 128 decode tokens, after removing the kernel-observation
+wrappers. It is not a measurement of attention bandwidth or decode-only
+latency.</p>
+<p>Cascade changes floating-point evaluation order. The natural and forced
+arms change 24 and 27 of their 96 retained continuations relative to the
+disabled arm; each arm contains three repetitions of 32 children. This
+passes engagement checks, but does not establish numerical equivalence or
+task quality. Batch-invariant arithmetic is disabled because current vLLM
+disables cascade under that policy; the preceding restore comparison uses
+batch-invariant arithmetic and remains a separate result.</p>
+<p>The reproducible profile explicitly selects the V1 runner and
+FlashAttention 2, BF16, eager execution, synchronous scheduling, 32 maximum
+sequences, 4,096 maximum batched tokens and a 4 GiB KV pool. Runtime is
+Python 3.13.15, PyTorch <code>2.13.0+cu130</code>, CUDA 13.0 and vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, with two OpenMP/MKL threads and
+no CPU-affinity cap. The Llama snapshot is
+<code>0e9e39f249a16976918f6564b8830bc894c89659</code>. The
+<a href="data/kmesh-cascade-20261017.json">sanitized result</a> retains
+all samples, engagement counters and source/model/native hashes.</p>
+<h3>Reproduce the cascade controls</h3>
+<pre><code>make defconfig-kmesh-cascade-cuda
+make kmesh-cascade-plan
+
+# Set model and source paths in menuconfig or the environment.
+make kmesh-cascade KMESH_CASCADE_PY=/path/to/prepared/python
+
+KMESH_CASCADE_OUTPUT=/path/to/results make kmesh-cascade-verify</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_cascade/README.md">cascade README</a>
+describes the authenticated inputs, process-local policy, rejected comparisons
+and CPU recheck. This tests an existing vLLM feature, with no family-aware
+scheduler or new attention kernel. The next original control is the cold
+external-cache burst versus a leader completed before its followers.</p>
+</section>
+
 <section id="papers">
-<h2>12. Papers</h2>
+<h2>13. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
