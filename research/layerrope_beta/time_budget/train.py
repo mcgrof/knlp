@@ -42,6 +42,8 @@ def source_identity():
             "Makefile.residual_reproduction",
             "defconfigs/layerrope-mhc-time-budget",
             "defconfigs/layerrope-mhc-time-budget-smoke",
+            "defconfigs/layerrope-mhc-routing-audit",
+            "defconfigs/layerrope-mhc-routing-audit-smoke",
         )
     )
     return {str(p.relative_to(base)): sha(p) for p in sorted(paths) if p.is_file()}
@@ -69,6 +71,7 @@ def train(
     resume=None,
     resume_sha=None,
     stop_after_updates=None,
+    on_update=None,
     smoke=False
 ):
     protocol = freeze()
@@ -301,6 +304,9 @@ def train(
             for target in targets:
                 if target not in done and clock.seconds >= target:
                     landmark(target, preceding)
+            if on_update is not None:
+                # Optional offline diagnostics never advance the training clock.
+                on_update(model, optimizer, stream, clock, step, history, checkpoint)
             if stop[0] or stop_after_updates is not None and step >= stop_after_updates:
                 result["status"] = "stopped"
                 break
