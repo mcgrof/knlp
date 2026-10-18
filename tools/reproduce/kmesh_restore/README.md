@@ -264,6 +264,17 @@ make kmesh-restore-verify`. CPU tests in `tests/test_kmesh_coldburst.py` reject
 null blocks, undrained requests and confusion between later reuse and live
 sharing.
 
+The October 17 eight-token run passes all gates: 216 continuations and 1,728
+chosen-token log probabilities match recomputation exactly, including warmups.
+Every retained family reads one 48 MiB ancestor per child, even in the
+leader-first control. That control has only one external engine load and
+three local-prefix followers. Most bursts also share one live ancestor;
+one of three retained eight-child DMA-BUF families uses three copies.
+Ordinary lookup starts prefetch before local-hit subtraction, while the
+optional eager-prefetch flag is off. Storage reads and GPU destinations must
+therefore be assessed separately. See the
+[per-family results](https://knlp.io/kmesh.html#coldburst).
+
 ## Recheck the evidence
 
 Raw provenance includes exact source commits, model artifact hashes, native
