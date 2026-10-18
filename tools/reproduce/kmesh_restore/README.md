@@ -23,6 +23,13 @@ Formal serving timing stops at that gate. The default defconfig reproduces the
 qualified adapter comparison. The optional full pipeline retains the strict
 serving gate; no end-to-end serving latency benefit is established.
 
+Each serving row retains vLLM's request identifier so a cache miss can be
+matched to the connector and storage logs. For an admission investigation,
+set `LMCACHE_LOG_LEVEL=DEBUG` and `VLLM_LOGGING_LEVEL=DEBUG` in the queued
+wrapper. These logs add overhead; use a separate run without diagnostic
+logging for latency comparisons. The numerical and cached-ancestor gates
+apply to both runs.
+
 The model is Qwen/Qwen2.5-0.5B-Instruct at revision
 `7ae557604adf67be50417f59c2c2f167def9a775`. The workload retains seed 20260805,
 a 4,096-token ancestor and five different 512-token tails. Each 256-token KV

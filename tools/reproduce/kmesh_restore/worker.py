@@ -144,6 +144,7 @@ def main(config: dict, role: str) -> None:
                 raise RuntimeError("vLLM did not return a first-token latency")
             rows.append(
                 {
+                    "request_id": result.request_id,
                     "token_ids": sequence.token_ids,
                     "logprob": sequence.logprobs[0][sequence.token_ids[0]].logprob,
                     "ttft_ms": result.metrics.first_token_latency * 1000,
