@@ -1,6 +1,19 @@
 /* Empirical fit illustrations. No synthetic point is a measured observation. */
 (() => {
   'use strict';
+  // Preserve direct links to evidence now grouped in disclosure sections.
+  function revealHashTarget() {
+    const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (!target) return;
+    let parent = target.parentElement;
+    while (parent) {
+      if (parent.tagName === 'DETAILS') parent.open = true;
+      parent = parent.parentElement;
+    }
+    requestAnimationFrame(() => target.scrollIntoView());
+  }
+  window.addEventListener('hashchange', revealHashTarget);
+  revealHashTarget();
   const startInput = document.getElementById('capacityStart');
   const factorInput = document.getElementById('capacityFactor');
   const batchInput = document.getElementById('batchSlider');
@@ -129,3 +142,4 @@
   updateCapacity();
   updateHistorical();
 })();
+

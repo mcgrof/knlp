@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memory-Traffic Saturation in Autoregressive Transformer Decode</title>
-<meta name="description" content="Understand how active decode batch, KV-cache capacity, and kernel performance interact. An empirical saturation model, measured K16/V8 serving results, and explicit boundaries for NVMe offloading.">
+<meta name="description" content="Asymmetric K16/V8 KV caching delivers a qualified 3.45% batch-32 serving gain on Qwen3-8B-AWQ. Current source pins, quality checks, memory accounting and the next dense-model test.">
 <link rel="canonical" href="https://knlp.io/paper_memory_decode.html">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <link rel="stylesheet" href="assets/memory-decode.css">
@@ -15,7 +15,7 @@
 <header class="site-header"><div class="header-inner">
   <a class="site-logo" href="./">knlp</a>
   <nav class="site-nav" aria-label="Page navigation">
-    <a href="#saturation">saturation law</a><a href="#october-serving">October serving</a><a href="#october-b32-findings">B32 findings</a>
+    <a href="#october-followup-checks">current results</a><a href="#next-tests">next tests</a><a href="#saturation">saturation law</a>
     <a href="#tiering">offloading</a><a href="#reproduce">reproduce</a>
     <a href="bias-aware-kv-quantization.html">KV policy</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
@@ -25,26 +25,109 @@
 
 <section class="hero" aria-labelledby="page-title">
   <div class="eyebrow">Memory-Traffic Saturation in Autoregressive Transformer Decode</div>
-  <h1 id="page-title">Decode throughput<br>has a ceiling.</h1>
-  <p class="hero-sub">More KV-cache capacity lets a GPU hold more concurrent sequences.
-    How much faster it serves them depends on where it sits on the throughput curve.
-    The Saturation Law describes that diminishing return; quantization changes both
-    the capacity available and, potentially, the cost of processing each token.</p>
-  <p class="hero-sub">The serving study connects that systems question to numerical quality.
-    Keeping keys at 16 bits and values in FP8 rescues the tested fragile-key model,
-    while reducing conventional KV payload by 25%. Throughput gains depend on the
-    model, context, batch, and executing kernel.</p>
-  <div class="hero-decision"><b>The planning question</b>
-    How much of the extra capacity becomes useful throughput within the latency budget?</div>
-  <div class="tag-row"><span class="tag tag-green">EMPIRICAL SATURATION MODEL</span>
-    <span class="tag tag-cyan">MEASURED K16/V8 SERVING</span>
-    <span class="tag tag-amber">CAPACITY ≠ THROUGHPUT</span></div>
-  <div class="hero-links"><a href="#saturation">Explore the law ↓</a>
-    <a href="#full-stack">Read the serving result ↓</a>
-    <a href="#october-followup-checks">October 17 routing follow-up ↓</a>
-    <a href="bias-aware-kv-quantization.html">Choose a KV precision policy →</a></div>
-  <p class="fine" style="margin-top:22px">Explanation and findings updated October 17, 2026.
-    Earlier measurements retain their stated model, hardware, and implementation scope.</p>
+  <h1 id="page-title">Smaller KV cache.<br>A measured serving gain.</h1>
+  <p class="hero-sub">Does asymmetric KV quantization still help when model weights already ship in INT4?
+    <strong>Yes, in the qualified Qwen3-8B-AWQ recipe.</strong> Keeping keys in FP16 and values in FP8
+    improves complete-request throughput by <strong>3.45% over native FP16 KV</strong> at batch 32.
+    Both arms keep the same packed INT4 weights and FP16 compute; native KV uses FlashInfer.</p>
+  <div class="hero-decision"><b>October 2026 · current finding</b>
+    Better prefill routing makes the smaller cache faster at the same batch.
+    Transfer to dense weights and other models is the next question.</div>
+  <div class="tag-row"><span class="tag tag-green">8,192 INPUT TOKENS · BATCH 32 · 128 OUTPUTS</span>
+    <span class="tag tag-cyan">1 × H100 SXM 80 GB</span>
+    <span class="tag tag-amber">QUALITY GATES PASS</span></div>
+  <div class="hero-links"><a href="#october-followup-checks">Read the current result ↓</a>
+    <a href="#reproduce">Use the measured source pair ↓</a>
+    <a href="#saturation">Explore capacity and throughput ↓</a></div>
+  <p class="fine" style="margin-top:22px">Updated October 18, 2026 · Results through October 17.
+    <a href="#earlier-measurements">Earlier measurements and their original limits</a> remain available.</p>
+</section>
+
+<section class="panel-section" id="october-followup-checks">
+  <div class="panel-header"><span class="panel-id">Current serving result</span>
+    <h2>Asymmetric KV beats native KV at batch 32</h2></div>
+  <div class="preamble-grid">
+    <div class="preamble-card"><div class="pc-label">Versus native FP16 K/V</div>
+      <div class="pc-title">+3.45% throughput</div><div class="pc-desc">Same packed AWQ weights, workload and 48 GiB KV byte pool. Complete requests include prefill, scheduling and decode.</div></div>
+    <div class="preamble-card"><div class="pc-label">Versus preceding compact route</div>
+      <div class="pc-title">+4.88% throughput</div><div class="pc-desc">Fresh prompts inside mixed prefill/decode batches now use the compact path. The underlying FlashInfer revision is unchanged.</div></div>
+    <div class="preamble-card"><div class="pc-label">At equal token slots</div>
+      <div class="pc-title">25% less KV payload</div><div class="pc-desc">Real FP16-key / FP8-value storage. This is a KV payload saving; total GPU memory also includes weights and workspaces.</div></div>
+  </div>
+  <p class="panel-body"><strong>INT4 describes the weights, not the KV cache.</strong>
+    The checkpoint stays packed in every arm. Native KV stores both keys and values in FP16;
+    asymmetric KV stores keys in FP16 and values in FP8 E4M3. This test uses FP16 compute,
+    so it does not establish a gain over a BF16 serving recipe.</p>
+  <p class="panel-body">Ten fresh, counterbalanced three-arm confirmation blocks give median
+    candidate/native and candidate/preceding-compact ratios of <strong>1.034483×</strong> and
+    <strong>1.048814×</strong>. Each comparison wins all ten blocks and passes the predeclared
+    1% practical-gain rule; each Holm-adjusted one-sided sign p-value is <strong>0.001953</strong>.
+    Pilot runs are separate. The three-block batch-8 engineering screen passes its 0.99 threshold
+    at 0.99889× versus preceding compact; it does not establish a new batch-8 gain.</p>
+  <h3>What makes this faster?</h3>
+  <p class="panel-body">Compact prefill gathers stored K16/V8 pages into one bounded FP16 workspace
+    for native FA3 prefill. Casting values back to FP16 retains their quantization error.
+    Previously, only the first eight of 32 prompts used this route; four later admissions fell back
+    because their batches also contained decoding requests. The new vLLM route selects the fresh
+    prompts inside each mixed batch and maps their query and cache pages correctly.
+    <strong>All 32 prompts now use compact prefill.</strong> Decode still reads the compressed cache.</p>
+  <p class="panel-body">The gain removes a serving overhead that previously hid the benefit of
+    asymmetric storage. It supports a better complete-request recipe at this workload.
+    It does not show that the decode kernel itself became 3.45% faster, or that adding more
+    resident sequences yields the same percentage gain. The <a href="#saturation">saturation model</a>
+    explains why capacity and fixed-batch speed must be measured separately.</p>
+  <h3>Quality and memory qualify the result</h3>
+  <div class="scroll"><table><caption>Qwen3-8B-AWQ, 8K input, batch 32. Quality comparisons use both native and preceding compact controls.</caption>
+    <thead><tr><th>Check</th><th>Current evidence</th></tr></thead><tbody>
+    <tr><td>Production routing</td><td>All 360 same-dispatch checks pass across 36 layers, five admission cohorts and two prompt rotations; fixed fault injections are detected.</td></tr>
+    <tr><td>Task quality</td><td>Fresh NLL on 32 documents, 100 retrieval cases and all 1,319 GSM8K questions pass the frozen preservation gates.</td></tr>
+    <tr><td>GSM8K</td><td>Candidate 1,201/1,319; native 1,199; preceding compact 1,201. Gross-loss upper bounds are 1.927% versus native and 0.227% versus preceding compact, within the 2% limit.</td></tr>
+    <tr><td>Actual storage</td><td>K16/V8 persistent tensors, one shared 256 MiB payload workspace, no full FP16 value shadow. Clean allocator peak: 63.23 GiB; driver observations every 500 ms reach 63.98 GiB.</td></tr>
+    </tbody></table></div>
+  <p class="panel-body">The fixed byte pool can use saved bytes for more token slots. This test does
+    <strong>not measure a new maximum resident batch</strong>, and the driver samples are not a continuous
+    peak measurement. Earlier 58/59/44 capacity endpoints belong to the separately measured
+    <a href="#october-serving">preceding compact, mixed and native recipes</a>.</p>
+  <details><summary>Numerical contract and full measurement data</summary>
+    <p class="panel-body">Routing qualification compares the accepted compact operation with an independent
+      raw-page mapping and the same batched dispatch. It does not establish exact ideal-FP32 attention.
+      The unchanged ideal-reference diagnostic retains 27 output violations among 3,538,944 fixed sampled
+      elements and zero sampled log-normalizer violations. The earlier failed strict-reference attempt
+      remains in the record. These correlated samples are not a model-wide error-rate estimate.</p>
+    <p class="panel-body">Matched component profiles separate device work, gathering and host launch cost.
+      They explain the route change; the speed decision uses the complete-request trials.
+      <a href="data/mixed-fresh-prefill-20261017.json">All confirmation ratios, quality bounds and source pins</a> ·
+      <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-routing-d64-followup-2026.md">Full method and component measurements</a>.</p>
+  </details>
+  <h3>A separate FlashInfer fix: D64 correctness</h3>
+  <p class="panel-body">The repaired paged FA2 path for 64-element heads passes its declared numerical
+    fixtures. On the original failing fixture, maximum error falls from 0.0467 to 0.0000278 against
+    the unchanged 0.005 limit. <strong>This repair is not part of the measured AWQ speed stack.</strong>
+    Full Qwen2.5-0.5B quality and throughput, and contiguous/ragged paths, remain unqualified.</p>
+  <div class="warn-box"><div class="wr-label">Scope across models</div>
+    The earlier standardized 1K/batch-32 study has two quality-eligible models and no confirmed
+    throughput gain; five models fail a quality gate and one fails a production check.
+    Those results use their original sources and workload. The new 8K AWQ result does not replace
+    that matrix or qualify the BF16 and symmetric-AWQ recipes that failed quality.
+    <a href="#october-b32-findings">Read the complete matrix and controls</a>.</div>
+</section>
+
+<section class="panel-section" id="next-tests">
+  <div class="panel-header"><span class="panel-id">Next tests · unmeasured</span>
+    <h2>Does the routing gain transfer to dense weights?</h2></div>
+  <p class="panel-body">The next useful test is <strong>dense Qwen3-8B in FP16 at 8K input and batch 32</strong>.
+    It fits the new route's existing head geometry and dtype guard. Compare native KV, preceding compact
+    and the new route with the same FlashInfer revision and a matched 40 GiB pool. Fresh production
+    checks and task-quality gates precede ten new confirmation blocks. A pass would establish transfer
+    beyond INT4 weights; it would still not establish BF16 support or a gain for every model.</p>
+  <p class="panel-body">Separately, run the repaired D64 path through <strong>Qwen2.5-0.5B's original
+    production check and quality panel</strong>. Synthetic kernel correctness is the prerequisite;
+    model quality remains the question. Timing follows only after a valid model-quality pass and a
+    separately frozen performance plan.</p>
+  <p class="panel-body">These targeted tests are more informative than repeating every historical row.
+    Broader context, batch and backend tests follow successful transfer. Failed quality recipes need
+    a concrete numerical fix before another speed study. Exact April-to-current speedup deltas remain
+    unavailable because the historical workload and source provenance are incomplete.</p>
 </section>
 
 <section class="panel-section" id="saturation">
@@ -160,371 +243,16 @@
 </section>
 
 <!-- HEADLINE: FULL-STACK Qwen2.5-7B QUALITY VALIDATION -->
-<section class="panel-section" id="full-stack">
-  <div class="panel-header">
-    <span class="panel-id">Serving evidence</span>
-    <h2 class="panel-title">Historical Qwen2.5-7B serving results — source identity unresolved</h2>
-  </div>
-  <p class="panel-body">
-    The table preserves the previously reported Qwen2.5-7B serving measurements.
-    Their exact full-stack source identity remains unresolved. The July 2 vLLM
-    <code>758786e2</code> and FlashInfer <code>ff0c51cf</code> links identify decode-only
-    lineage; that vLLM revision rejects asymmetric prefill and cannot substantiate
-    this prompt-to-generation recipe.
-    The historical report compares
-    controlled FP16 / FP8-sym / K16/V8 measurements on the same H100 path: K16/V8 matches FP16 perplexity to
-    reported precision at both 2K and 8K context, and the 200-problem GSM8K screen did not resolve a difference
-    between K16/V8 (90.0%) and FP16 (90.5%) — a screen of this size can detect collapse (symmetric FP8: 2.0%)
-    but cannot establish equivalence.
-  </p>
 
-  <div class="kr-table" style="margin:24px 0;">
-    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);">
-      <thead>
-        <tr style="border-bottom:2px solid var(--border2);">
-          <th style="text-align:left;padding:12px 16px;color:var(--text2);font-weight:600;">Config</th>
-          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@2K</th>
-          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@8K</th>
-          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">GSM8K (n=200)</th>
-          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">Smoke tok/s</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:12px 16px;">FP16 baseline</td>
-          <td style="text-align:right;padding:12px 16px;">6.997</td>
-          <td style="text-align:right;padding:12px 16px;">5.243</td>
-          <td style="text-align:right;padding:12px 16px;">90.5%</td>
-          <td style="text-align:right;padding:12px 16px;">102.6</td>
-        </tr>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:12px 16px;">FP8 symmetric</td>
-          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>214.3</strong></td>
-          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>1058.0</strong></td>
-          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>2.0%</strong></td>
-          <td style="text-align:right;padding:12px 16px;">97.9</td>
-        </tr>
-        <tr>
-          <td style="padding:12px 16px;"><strong>Asymmetric K16/V8</strong></td>
-          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>6.997</strong></td>
-          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>5.243</strong></td>
-          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>90.0%</strong></td>
-          <td style="text-align:right;padding:12px 16px;">105.8</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p class="panel-body" style="margin-top:16px;">
-    Symmetric FP8 PPL gets <em>5× worse</em> from 2K to 8K (214→1058) — the K-fragility phenomenon strengthens
-    at longer context. Asymmetric K16/V8 matches FP16 perplexity to the reported precision at both context lengths.
-    K16 denotes native 16-bit keys. Historical FP16 labels are retained for their original comparisons; source gaps prevent treating every table as an identical baseline.
-    These are historical reported serving results with unresolved source provenance; the earlier HuggingFace <code>DynamicCache</code> simulation in
-    the precision-asymmetry section is a separate numerical cross-check.
-  </p>
-
-  <p class="panel-body" style="margin-top:16px;"><strong>Tensor parallelism was tested at TP = 1, 2, and 4 on a 4×H100 pod.</strong>
-    The reported 48-sequence test found bit-identical prefill NLL and 100% autoregressive token agreement
-    for K16/V8 versus the reference at each tested degree. At TP = 4, the four KV heads shard to one head per rank.
-    These are finite-sample correctness observations, not proof of zero quality cost on all workloads.
-    The source identity for these historical checks also remains unresolved. Prefill agreement alone does not qualify reads from a quantized cache.</p>
-
-  <div class="kr-label" style="margin-top:24px;">Historical reported implementation checks; exact builds unresolved</div>
-  <div class="kr-table" style="margin:12px 0;">
-    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);">
-      <thead>
-        <tr style="border-bottom:2px solid var(--border2);">
-          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Gate</th>
-          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Result</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;">FlashInfer decode, BF16-K / FP8-V</td>
-          <td style="padding:10px 16px;color:var(--green);">rel err 0.0254 vs BF16 ref</td>
-        </tr>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;">FlashInfer prefill, BF16-K / FP8-V</td>
-          <td style="padding:10px 16px;color:var(--green);">rel err 0.0255 vs BF16 ref</td>
-        </tr>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;">vLLM cache writer</td>
-          <td style="padding:10px 16px;color:var(--green);">K bit-exact, V within FP8 noise</td>
-        </tr>
-        <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;">K/V aliasing check</td>
-          <td style="padding:10px 16px;color:var(--green);">disjoint storage</td>
-        </tr>
-        <tr>
-          <td style="padding:10px 16px;">Required backend</td>
-          <td style="padding:10px 16px;">FlashInfer via <code>attention_config</code></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p class="panel-body">For the current qualified serving implementation, use the
-    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>
-    and its immutable source pins. That Qwen3 recipe is separate from the historical Qwen2.5
-    measurements above and does not recover their original runtime. The July 2 decode-only
-    links are not an end-to-end reproduction command.</p>
-</section>
 
 <!-- HEADLINE — ASYMMETRIC K16/V8 -->
-<section class="panel-section" id="asym-k16v8">
-  <div class="panel-header">
-    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">HEADLINE</span>
-    <h2 class="panel-title">K16/V8 — A Qualified Option for Fragile Keys</h2>
-  </div>
-  <p class="panel-body">
-    Storing keys at native 16-bit precision and only quantizing values to FP8 removes FP8 K operand preparation
-    before each tile's QK operation. Account for FP8 V preparation before PV and measure how much the kernel
-    overlaps it. On the standalone CUDA-core FlashInfer decode kernel on the headline Qwen2.5-7B lane, asymmetric
-    K16/V8 is close to the FP16 reference in this measurement and leads the measured symmetric FP8 path; on the
-    SM90 Tensor Core kernel family the sign reverses — symmetric K8/V8 runs 16–19% faster than K16/V8 at
-    bandwidth-bound shapes (see the linked hardware notes).
-    Across the eight-model vLLM batch-32 comparison below, asymmetric is up to 4.2% faster than symmetric FP8
-    on the models where it leads. K16/V8 provides 1.33× the KV payload capacity of K16/V16, but only two-thirds of K8/V8 capacity.
-    This implementation uses modified vLLM/FlashInfer kernels without changing model weights or retraining. Quality qualification remains necessary.
-  </p>
 
-  <div class="scroll"><table><caption>Conventional equally sized K/V tensors; raw payload ratios only.</caption>
-    <thead><tr><th>Layout</th><th>Bytes per K/V pair</th><th>KV capacity vs K16/V16</th><th>Qualification</th></tr></thead>
-    <tbody><tr><td>K16/V16</td><td>4</td><td>1.00×</td><td>Full-precision reference</td></tr>
-    <tr><td>K16/V8</td><td>3</td><td>1.33×</td><td>Retains key precision; qualify value compression</td></tr>
-    <tr><td>K8/V8</td><td>2</td><td>2.00×</td><td>Qualify both keys and values for the workload</td></tr></tbody>
-  </table></div>
-
-  <div class="key-result">
-    <div class="kr-label">Mechanism — why bytes alone do not predict throughput</div>
-    Hopper has no native BF16-query by plain-FP8-key QK instruction with a K scale operand. Prepare each active K
-    tile on chip before QK and advance online softmax tile by tile. Compare the unhidden preparation and occupancy
-    cost against the extra K16 HBM byte. Account for V preparation before PV. CDNA 3 provides FP8-by-FP8 MFMA with
-    no scale operands; place the scale in software around MFMA. Use the completed
-    <a href="bias-aware-kv-quantization.html" style="color:var(--cyan);">bias-aware KV findings</a> and the
-    <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
-      style="color:var(--cyan);">hardware notes</a>.
-  </div>
-
-  <div class="warn-box">
-    <div class="wr-label">Quality rescue on fragile-key models</div>
-    NIAH multikey-3 retrieval at 32K tokens on H100 via vLLM + FlashInfer, across three models:
-    <div style="margin-top:10px; font-family:var(--mono);  line-height:1.8;">
-      <strong>Qwen2.5-7B (fragile)</strong> &nbsp;&nbsp;FP16: 0.84 &nbsp;·&nbsp; FP8-sym: <span style="color:var(--red);">0.00</span> &nbsp;·&nbsp; Asym K16/V8: <span style="color:var(--green);">0.89</span><br>
-      <strong>Qwen3-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 0.95 &nbsp;·&nbsp; FP8-sym: 0.92 &nbsp;·&nbsp; Asym K16/V8: 0.95<br>
-      <strong>Llama-3.1-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 1.00 &nbsp;·&nbsp; FP8-sym: 1.00 &nbsp;·&nbsp; Asym K16/V8: 1.00
-    </div>
-    Qwen2.5-7B scores zero under symmetric FP8 in this retrieval test.
-    The tested K16/V8 retrieval score is 0.89 versus 0.84 for the Qwen2.5-7B reference. Without an uncertainty estimate, this difference does not establish superiority. The two other models show no collapse in this test. <strong>When one
-    qualified KV-cache scheme must cover these tested robust- and fragile-key models, asymmetric K16/V8 is the preferred
-    option</strong> among the evaluated fused FP8 paths: it is the only one here that holds quality on the
-    fragile models while matching the tolerant ones. The later diagnosis helps explain these observations: symmetric FP8-K collapse tracks K-projection <strong>bias magnitude</strong> (with a distinct
-    partial-RoPE failure mode), so on a <em>known-robust</em> model symmetric FP8-K is quality-admissible and,
-    being denser, can be the better choice. See the
-    <a href="fp8-kv-failure-atlas.html" style="color:var(--cyan);">FP8 KV-cache failure atlas</a> for the
-    root cause and the per-model fragility map. A fuller comparison of K16/V8 against the broader
-    KV-quantization field — symmetric FP8, pre-bias, sub-8-bit values, and other approaches across quality,
-    capacity, kernel cost, and served goodput — is now available in the
-    <a href="kv-compression-frontier.html" style="color:var(--cyan);">KV-cache compression frontier</a>.
-  </div>
-
-  <div class="citation-block">
-    Code: <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a> ·
-    serving branch <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream"><code>20260702-asym-k16v8-decode-upstream</code></a>
-    (fork commit ff0c51cf; curated decode-only K16/FP8 dtype-split series). vLLM-side plumbing on
-    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8"><code>20260702-k16fp8</code></a>
-    (fork commit 758786e2). The
-    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>
-    dev tip carries a five-commit CUDA template refactor giving independent K and V dtypes in prefill and
-    decode; its mixed-dtype prefill kernels compile and pass fp32-reference audits, but it is not part of
-    the validated serving pair.
-    Integrates with vLLM via <code>LLM(kv_cache_dtype=("auto", "fp8_e4m3"),
-    attention_config={"backend": "FLASHINFER"})</code>.
-  </div>
-</section>
 
 <!-- OCTOBER 2026 SERVING UPDATE -->
-<section class="panel-section" id="october-serving">
-  <div class="panel-header"><span class="panel-id">OCT 2026</span>
-    <h2>October 2026: qualified batch-8 serving gains</h2></div>
-  <p class="panel-body">The optimized serving stack combines a smaller persistent KV cache with a modest
-    complete-request throughput gain in two tested recipes. On one H100 SXM 80 GB at TP1, with
-    8,192 input tokens, batch 8 and 128 generated tokens, Qwen3-8B-AWQ improves by <strong>2.28%</strong>
-    over matched native FP16 KV. Dense Qwen3-8B executing in FP16 improves by <strong>2.49%</strong>.
-    Both pass the frozen NLL, retrieval and full GSM8K preservation tests. These are workload-specific
-    serving results. The completed B32 retest below gives separate model and batch results.</p>
-  <div class="scroll"><table><caption>October complete-request throughput: median within-block ratios from seven fresh three-arm process blocks per recipe, separate from pilots. Native means 16-bit K and V.</caption>
-    <thead><tr><th>Checkpoint and actual execution</th><th>Compact / native</th><th>Frozen quality decision</th></tr></thead><tbody>
-    <tr><td>Qwen3-8B-AWQ: packed INT4 weights, FP16 execution</td><td>1.022845850× (+2.28%)</td><td>NLL, retrieval and all 1,319 GSM8K questions pass</td></tr>
-    <tr><td>Qwen3-8B: dense FP16 weights and execution</td><td>1.02486566× (+2.49%)</td><td>NLL, retrieval and all 1,319 GSM8K questions pass</td></tr>
-    <tr><td>Qwen2.5-7B-Instruct: BF16 weights and execution</td><td>1.006177719× (+0.62%)</td><td>GSM gross-loss preservation fails; experimental</td></tr>
-    </tbody></table></div>
-  <p class="panel-body">Every primary ratio favors compact. Ratios within a process block are correlated.
-    The same weight checkpoint is used across each experiment's cache arms: AWQ weights remain packed.
-    The first two native controls use FP16 KV. Timing pools are fixed at <strong>48 GiB for AWQ</strong>
-    and <strong>32 GiB for dense FP16 and BF16</strong>. APC and chunked prefill are off.
-    These results compare complete serving recipes, rather than an isolated attention kernel.</p>
-  <h3>Make prefill cheap enough to expose the decode benefit</h3>
-  <p class="panel-body">Earlier writer, scale handling and decode graph work improved decode, but long-query
-    prefill still held back complete requests. The compact route gathers stored K16/V8 pages into
-    <strong>one bounded, shared FP16 workspace</strong> for native FA3 prefill. The values were already
-    quantized: casting them to FP16 does not restore pristine values. It retains no full per-layer FP16 V
-    shadow. Decode continues to consume compressed persistent values. In the controlled AWQ study,
-    compact is <strong>6.19% faster than the preceding mixed stack</strong> and 2.28% above native for
-    complete requests. This spans vLLM allocation, dispatch, writer/scale/graph handling and FlashInfer;
-    percentages from separate campaigns must not be added.</p>
-  <div class="scroll"><table><caption>Memory and capacity are separate from the fixed-B8 throughput measurement.</caption>
-    <thead><tr><th>Quantity</th><th>Measured or calculated scope</th></tr></thead><tbody>
-    <tr><td>Persistent K16/V8 payload</td><td>0.75× native at equal token slots: 25% less KV payload, not total GPU memory</td></tr>
-    <tr><td>Compact temporary storage, Qwen3</td><td>296.140625 MiB constant GPU workspace, including 256 MiB shared payload; variable metadata and 8 MiB pinned CPU storage. Count aliases once.</td></tr>
-    <tr><td>Separate automatic-pool AWQ resident endpoints</td><td>Compact 58 · preceding mixed 59 · native 44 requests. Compact admits 31.82% more than native after workspace costs.</td></tr>
-    </tbody></table></div>
-  <p class="panel-body">A fixed byte pool can spend saved payload on additional token slots, so total reserved
-    memory need not fall. The automatic-pool endpoints measure resident capacity, not throughput,
-    queueing or cost per token. Do not multiply that capacity ratio by the fixed-B8 speed ratio.</p>
-  <div class="warn-box"><div class="wr-label">The current limits are part of the result</div>
-    The existing descriptive AWQ 8K/B32 compact/native ratio is <strong>0.985629×</strong>, about 1.44%
-    slower, with mixed prefill/decode fallback. The BF16 transfer has a slightly higher net GSM score,
-    but its gross-loss upper bound exceeds the frozen limit; it remains experimental. A separate
-    Q8/K8/V8 AWQ recipe fails quality and has no comparative throughput measurement. These are
-    recipe-specific outcomes, not a K-only mechanism proof or a verdict on all symmetric policies.</div>
-  <p class="panel-body" id="batch32-study-status"><strong>Completed: the matched batch-32 test.</strong>
-    The <a href="#october-b32-findings">full findings below</a> retain all eight primary models and four bridge cells,
-    including quality failures, a production failure and inconclusive timing. Two primary recipes qualified for
-    complete paired timing; neither met the predeclared gain rule. The B8 gain does not replace any historical B32 row.
-    Exact old-to-new deltas remain unavailable because the April provenance is incomplete.</p>
-  <h3>Dated source and reproduction</h3>
-  <div class="scroll"><table><caption>Exact measured dependencies, published October 16. Controls remain reachable through vLLM ancestry.</caption>
-    <thead><tr><th>Dependency</th><th>Public branch</th><th>Immutable measured commit</th></tr></thead><tbody>
-    <tr><td>FlashInfer</td><td><a href="https://github.com/mcgrof/flashinfer/tree/20261016-asym-k16v8-serving">20261016-asym-k16v8-serving</a></td><td><a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">800a550</a></td></tr>
-    <tr><td>vLLM compact prefill</td><td><a href="https://github.com/mcgrof/vllm/tree/20261016-k16v8-compact-prefill">20261016-k16v8-compact-prefill</a></td><td><a href="https://github.com/mcgrof/vllm/commit/26cd429bac01d07909ed91e353f564d7aaa8d38f">26cd429</a></td></tr>
-    <tr><td>vLLM preceding mixed / native controls</td><td>Same dated branch ancestry</td><td><a href="https://github.com/mcgrof/vllm/commit/1a4dcc01ab09cd337499c0138c732eb741218b57">1a4dcc0</a> / <a href="https://github.com/mcgrof/vllm/commit/c21c0878210695db7b108cdc285aaf0cf890190a">c21c087</a></td></tr>
-    </tbody></table></div>
-  <p class="panel-body">These exact commits extend the July 6 full mixed-cache serving bases, separately from
-    the later pre-bias work. See the <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">separate October reproduction configuration</a>
-    for source/build pins, public input and scale generation, graph capture, scheduling, CPU threads,
-    quality gates, memory accounting and timing boundaries. Historical defconfig defaults remain separate.</p>
-  <h3>October 16 video update</h3>
-  <figure style="margin:20px 0">
-    <video controls preload="metadata" playsinline poster="media/asymmetric-october-2026/poster.png" style="display:block;width:100%;max-width:100%;height:auto;border-radius:12px">
-      <source src="media/asymmetric-october-2026/update.mp4" type="video/mp4">
-      <track kind="captions" src="media/asymmetric-october-2026/captions.vtt" srclang="en" label="English" default>
-      <a href="media/asymmetric-october-2026/update.mp4">Download the video</a>.
-    </video>
-    <figcaption>October 16 presentation, recorded before the B32 retest · <a href="#october-b32-findings">completed B32 findings</a> · stock synthetic narration · <a href="https://github.com/mcgrof/knlp/blob/main/docs/media/asymmetric-october-2026/transcript.md">text transcript</a> ·
-      <a href="media/asymmetric-october-2026/captions.vtt">captions</a> · <a href="media/asymmetric-october-2026/data.json">numerical data</a>.</figcaption>
-  </figure>
-</section>
-
-<section class="panel-section" id="october-b32-findings">
-  <div class="panel-header"><span class="panel-id">B32 RETEST</span><h2>Completed October batch-32 retest</h2></div>
-  <p class="panel-body">2 of eight primary models qualified for the paired timing study; 0 met the predeclared gain rule. Every planned model remains visible below. Tables scroll horizontally on small screens. Failed production or quality gates have no qualified throughput ratio.</p>
-  <p class="panel-body">One H100 SXM 80GB, tensor parallel size 1, FP16 weights and activations, 22 CPU threads, 32 concurrent requests with 1,024 frozen input token IDs and 128 forced outputs each. Native stores keys and values in FP16; asymmetric stores FP16 keys and FP8 E4M3 values. Prefix caching and chunked prefill are off. Primary native KV uses FlashAttention 3; asymmetric KV uses FlashInfer with its supported compact or mixed route. These are complete serving-recipe comparisons, including the backend difference.</p>
-  <div class="scroll"><table id="b32-primary-results" style="min-width:880px"><caption>Primary results. Ratios are asymmetric/native complete-request throughput. Brackets show the descriptive, unadjusted 95% paired-block bootstrap interval for the median.</caption><thead><tr><th>Model</th><th>Asymmetric route</th><th>Configured KV pool</th><th>Outcome</th><th>Median ratio [95% CI]</th><th>Holm p, family 24</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>compact</td><td>32 GiB</td><td>No confirmed gain</td><td>1.00264× [1.00090, 1.00488]</td><td>0.257812</td></tr><tr><td>Qwen/Qwen2.5-7B-Instruct</td><td>mixed</td><td>32 GiB</td><td>Fails NLL margin</td><td>N/A</td><td>1</td></tr><tr><td>Qwen/Qwen2.5-0.5B-Instruct</td><td>mixed</td><td>8 GiB</td><td>D64 production decode/reference check failed</td><td>N/A</td><td>1</td></tr><tr><td>Qwen/Qwen2.5-1.5B-Instruct</td><td>mixed</td><td>8 GiB</td><td>Fails GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>mistralai/Mistral-7B-Instruct-v0.3</td><td>compact</td><td>32 GiB</td><td>Fails native GSM floor, GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>meta-llama/Llama-3.1-8B-Instruct</td><td>compact</td><td>32 GiB</td><td>Fails GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>microsoft/Phi-4</td><td>mixed</td><td>24 GiB</td><td>No confirmed gain</td><td>0.97355× [0.97246, 0.97553]</td><td>1</td></tr><tr><td>deepseek-ai/DeepSeek-R1-Distill-Qwen-7B</td><td>mixed</td><td>32 GiB</td><td>Fails native retrieval floor, retrieval preservation</td><td>N/A</td><td>1</td></tr></tbody></table></div>
-  <div class="scroll"><table id="b32-primary-quality" style="min-width:880px"><caption>Strict quality panel. NLL bounds resample independent documents. Retrieval and GSM show native → asymmetric scores and exact one-sided 95% gross-loss upper bounds.</caption><thead><tr><th>Model</th><th>Mean ΔNLL [upper]</th><th>Retrieval</th><th>GSM8K</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>+0.000263 [upper +0.001287]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>1175/1319 → 1178/1319; 11 losses, 14 gains; loss upper 1.377%</td></tr><tr><td>Qwen/Qwen2.5-7B-Instruct</td><td>+0.055686 [upper +0.070457]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>Not run</td></tr><tr><td>Qwen/Qwen2.5-0.5B-Instruct</td><td>Not run</td><td>Not run</td><td>Not run</td></tr><tr><td>Qwen/Qwen2.5-1.5B-Instruct</td><td>+0.000951 [upper +0.001974]</td><td>88/100 → 88/100; 1 losses, 1 gains; loss upper 4.656%</td><td>720/1319 → 685/1319; 129 losses, 94 gains; loss upper 11.231%</td></tr><tr><td>mistralai/Mistral-7B-Instruct-v0.3</td><td>-0.000051 [upper +0.000399]</td><td>73/100 → 73/100; 0 losses, 0 gains; loss upper 2.951%</td><td>314/1319 → 306/1319; 42 losses, 34 gains; loss upper 4.099%</td></tr><tr><td>meta-llama/Llama-3.1-8B-Instruct</td><td>-0.001505 [upper -0.000306]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>874/1319 → 870/1319; 20 losses, 16 gains; loss upper 2.196%</td></tr><tr><td>microsoft/Phi-4</td><td>-0.000690 [upper -0.000238]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>1252/1319 → 1253/1319; 3 losses, 4 gains; loss upper 0.587%</td></tr><tr><td>deepseek-ai/DeepSeek-R1-Distill-Qwen-7B</td><td>-0.008660 [upper -0.003593]</td><td>49/100 → 54/100; 7 losses, 12 gains; loss upper 12.746%</td><td>Not run</td></tr></tbody></table></div>
-  <p class="panel-body">Quality precedes timing: 32 independent NLL documents with 128 cached-decode targets each, 100 exact retrieval cases, and all 1,319 questions in the frozen strict GSM8K chat adaptation when earlier gates pass. NLL upper Δ must be at most ln(1.01), retrieval gross-loss upper at most 5%, and GSM gross-loss upper at most 2%. Errors and truncated answers are wrong. Native quality floors are fixed per model and are included in the data file. A failed native floor limits the conclusion to this scored recipe.</p>
-  <p class="panel-body">Eligible primary cells use ten fresh process pairs in a frozen, counterbalanced order. A gain requires all gates, median ratio at least 1.01, and a positive one-sided sign test after Holm correction over all 24 planned comparisons. Missing historical comparisons retain p=1. Ties are non-wins. No old-to-new speedup delta is inferred from the April table.</p>
-  <p class="panel-body">All retained timing explicitly enables request statistics in both arms. Phi-4 and AWQ use knlp <code>a6016292</code>; corrected dense Qwen3 cells use <code>720bc026</code>. The earlier recorder received no request metrics and produced no valid paired timing. Those attempts are excluded. Phi-4 retains its complete quality panel from <code>c4bb3827</code>: scoring, model math, inputs, scales and routes are unchanged, and both corrected arms pass fresh production profiles. No valid timing is pooled across source versions.</p>
-  <p class="panel-body">An input audit invalidated the first dense Qwen3 attempts: preparation had copied a native-only unit-scale placeholder, so those quality decisions and timings are excluded. The affected dense cells were rerun with the exact already-accepted calibrated scales, verified against the prior scored protocols. No scales were tuned against the new answers. The corrected source rejects placeholders before serving. All unaffected primary and AWQ measurements are retained.</p>
-  <h3>Separate 8K bridge</h3>
-  <p class="panel-body">Both bridge native and asymmetric recipes use FlashInfer. Dense weights and activations are FP16; AWQ weights stay packed INT4 with FP16 activations. Each eligible cell uses three fresh process pairs at 8,192 input tokens and 128 forced outputs. These ratios are descriptive and do not enter the primary family. The compact variant retains guarded fallback for mixed prefill/decode calls; the profile counters are included in the data file. Accepted quality is reused only for the unchanged dense B8 and AWQ recipes, after input, scale, source and actual B32 route checks; production profiles are fresh. Dense B32 receives fresh quality checks at its frozen 40 GiB pool, including full GSM when earlier gates pass.</p>
-  <div class="scroll"><table id="b32-bridge-results" style="min-width:880px"><caption>Descriptive October bridge, with all four planned cells retained.</caption><thead><tr><th>Model / weights</th><th>Batch</th><th>Configured KV pool</th><th>Quality evidence</th><th>Median ratio [95% CI]</th><th>Outcome</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>8</td><td>32 GiB</td><td>Reused accepted quality; fresh production</td><td>1.01934× [1.01914, 1.02073]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B</td><td>32</td><td>40 GiB</td><td>Fresh quality; fresh production</td><td>0.98782× [0.98574, 0.99132]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B-AWQ</td><td>8</td><td>48 GiB</td><td>Reused accepted quality; fresh production</td><td>1.02220× [1.02110, 1.02350]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B-AWQ</td><td>32</td><td>48 GiB</td><td>Reused accepted quality; fresh production</td><td>0.98833× [0.98727, 0.98844]</td><td>Descriptive bridge</td></tr></tbody></table></div>
-  <p class="panel-body">The timer excludes process startup, build and one fixed warmup, then synchronizes CUDA at both complete-request boundaries. It includes prefill, scheduling and decode. Completion-linked records separately verify actual full-batch decode; those host completion intervals are not isolated GPU kernel time. Equal byte pools can allocate different token-slot counts. The 25% K16/V8 payload saving at equal slots is not a 25% reduction in total GPU memory, and capacity ratios are not multiplied by throughput ratios.</p>
-  <details><summary>Qwen/Qwen3-8B · 1024 input tokens · B32: all retained paired ratios</summary><p>0.9935141×, 1.0046516×, 1.0002696×, 1.0014335×, 1.0058214×, 1.0016846×, 1.0039351×, 1.0036023×, 1.0068204×, 1.0015314×.</p><p>Median arm rates: native 2146.93 output tokens/s; asymmetric 2154.13 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-<details><summary>microsoft/Phi-4 · 1024 input tokens · B32: all retained paired ratios</summary><p>0.9736099×, 0.9712515×, 0.9746203×, 0.9733828×, 0.9734810×, 0.9757707×, 0.9715308×, 0.9759696×, 0.9730844×, 0.9755253×.</p><p>Median arm rates: native 1276.18 output tokens/s; asymmetric 1243.18 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-<details><summary>Qwen/Qwen3-8B · 8192 input tokens · B8: all retained paired ratios</summary><p>1.0191417×, 1.0193403×, 1.0207322×.</p><p>Median arm rates: native 324.31 output tokens/s; asymmetric 330.59 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-<details><summary>Qwen/Qwen3-8B · 8192 input tokens · B32: all retained paired ratios</summary><p>0.9913167×, 0.9878161×, 0.9857369×.</p><p>Median arm rates: native 412.94 output tokens/s; asymmetric 408.61 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-<details><summary>Qwen/Qwen3-8B-AWQ · 8192 input tokens · B8: all retained paired ratios</summary><p>1.0221985×, 1.0234999×, 1.0211044×.</p><p>Median arm rates: native 338.49 output tokens/s; asymmetric 346.40 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-<details><summary>Qwen/Qwen3-8B-AWQ · 8192 input tokens · B32: all retained paired ratios</summary><p>0.9884363×, 0.9883347×, 0.9872666×.</p><p>Median arm rates: native 406.56 output tokens/s; asymmetric 401.78 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
-  <p class="panel-body"><a href="data/asymmetric-b32-20261016.json">Complete derived data, all retained ratios, model pins and frozen floors</a> · <a href="https://github.com/mcgrof/knlp/commit/c4bb3827078c979fd8529db7a518a58101cb5927">Original quality source</a> · <a href="https://github.com/mcgrof/knlp/commit/a6016292d39734c006cfc272eab4c7f131d6bc4d">Phi/AWQ timing source</a> · <a href="https://github.com/mcgrof/knlp/commit/720bc0261a97ea11d129c6dfcb6cf8c2d4ca5055">Dense calibration guard and runtime</a> · <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>.</p>
-</section>
 
 
 <!-- FLASHINFER PER-MODEL PRODUCTION THROUGHPUT -->
-<section class="panel-section" id="october-repair-checks">
-  <div class="panel-header">
-    <span class="panel-id">R</span>
-    <h2 class="panel-title">October 16 repair checks — neither candidate qualified</h2>
-  </div>
-  <p class="panel-body">The following records the October 16 attempts after the B32 closeout.
-    The mixed-prefill metadata candidate stopped in its initial all-prefill admission,
-    before any mixed decode/prefill batch. Across 34 completed layers, full output and LSE
-    matched the existing mixed-cache fallback bit for bit. One of 417,792 fixed sampled
-    outputs exceeded the independent stored-value reference bound. CPU replay reproduces
-    the discrepancy and an FP16 probability-rounding diagnostic. This does not establish
-    a routing defect. Fresh quality and comparative timing were not reached.</p>
-  <p class="panel-body">The separate D64 layout candidate passed CPU address-coverage checks
-    and compiled four CUDA layout instantiations. Its numerical JIT check stopped before
-    output because the launcher omitted the environment's <code>ninja</code> directory
-    from <code>PATH</code>. The original D64 failure and candidate repair therefore remain
-    numerically untested in this follow-up; the earlier Qwen0.5 failure row retains its scope.</p>
-  <p class="panel-body">Both pods are deleted after verified exports and CPU replay.
-    Total use was 0.33449 GPU-hours, with a provisional $1.35 estimate including disk allowance.
-    Neither check produced a new speed result or qualified dependency release.
-    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-repair-checks-2026.md">Exact scope, sources and failed gate</a>.</p>
-</section>
 
-<section class="panel-section" id="october-followup-checks">
-  <div class="panel-header"><span class="panel-id">OCT 17</span><h2 class="panel-title">Fresh-prefill routing passes the focused AWQ test</h2></div>
-  <p class="panel-body">On Qwen3-8B-AWQ, compact prefill now handles fresh prompts inside mixed decode/prefill batches.
-    Ten fresh, counterbalanced three-arm blocks on H100 give median complete-request throughput gains of
-    <strong>4.88% over accepted compact</strong> and <strong>3.45% over native</strong>.
-    Both comparisons win all 10 blocks, with Holm-adjusted sign p=0.001953.
-    This is the fixed 8,192-input-token, B32, 128-output, packed-AWQ/FP16 recipe with a 48 GiB pool.
-    The original eight-model matrix and earlier measured refs retain their scope.</p>
-  <p class="panel-body">All 360 same-dispatch routing checks pass across 36 layers and two prompt rotations.
-    Fresh NLL, retrieval and all 1,319 GSM8K cases pass preservation against both controls.
-    GSM scores 1,201/1,319 versus accepted 1,201 and native 1,199; gross-loss upper bounds are 0.227% and 1.927%, within 2%.
-    Clean allocator use peaks at 63.23 GiB, with 500 ms driver observations up to 63.98 GiB.
-    The separate three-block B8 engineering screen passes at a candidate/accepted median of 0.99889×.</p>
-  <p class="panel-body">This qualifies routing equivalence to the accepted compact operation, rather than exact ideal-FP32 attention.
-    The unchanged diagnostic still reports 27 output violations among 3,538,944 fixed sampled elements; sampled log normalizers pass.
-    Matched profiles retain CUDA launch correlation, gather and residual work, and host launch cost separately.
-    They are descriptive; the speed decision comes from complete-request trials.</p>
-  <p class="panel-body">Separately, the D64 layout repair passes its prescribed paged FA2 numerical suite:
-    18 original control-grid checks, 35 candidate-grid checks and the retained geometry fixtures.
-    The original D64 fixture fails numerically; the repaired fixture and declared candidate grid pass unchanged limits.
-    Contiguous/ragged paths and the full Qwen0.5 model remain unqualified. The older Qwen0.5 row is unchanged.
-    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-routing-d64-followup-2026.md">Scope, source pins, all block ratios and component accounting</a>.</p>
-</section>
-
-<section class="panel-section" id="per-model-throughput">
-  <div class="panel-header">
-    <span class="panel-id">THROUGHPUT</span>
-    <h2 class="panel-title">Historical April 2026 batch-32 throughput</h2>
-  </div>
-  <p class="panel-body">These eight published values match an April 16, 2026 results file, rather than an
-    established July run. The retained logs show eager FP16 execution, APC and chunked prefill enabled,
-    a 16,384-token scheduler budget, native FLASH_ATTN/FA3 and asymmetric FLASHINFER. Exact source,
-    checkpoint/tokenizer revisions, prompt IDs, successful Qwen3/Phi logs and timer boundaries are not
-    fully recovered. The reported sequence-length field does not attest actual prompt length.
-    Treat these as historical serving measurements, not a matched comparison with the October stack.</p>
-  <p class="panel-body">The Qwen2.5-7B asymmetric/native ratio is 1.377×. Retained native logs show about
-    54.53 GiB of KV capacity and 1,020,992 token slots, above this B32 workload. They do not establish
-    the earlier explanation that native capacity pressure caused that ratio. The remaining asymmetric/native
-    ratios range from 0.871× to 1.029×. Cause requires a matched workload and profiling.</p>
-
-  <!-- Published serving measurements. -->
-  <div class="scroll"><table><caption>Published H100 batch-32 serving throughput. Ratios use the 16-bit baseline in the same row.</caption><thead><tr><th>Model</th><th>16-bit KV (tok/s)</th><th>K8/V8 (tok/s)</th><th>K16/V8 (tok/s)</th><th>K16/V8 / baseline</th></tr></thead><tbody>
-<tr><td>Qwen2.5-0.5B</td><td>3,312.3</td><td>3,098.9</td><td>2,884.4</td><td>0.871×</td></tr>
-<tr><td>Qwen2.5-1.5B</td><td>2,912.9</td><td>2,741.3</td><td>2,857.4</td><td>0.981×</td></tr>
-<tr><td>Qwen2.5-7B</td><td>2,065.7</td><td>2,763.0</td><td>2,845.0</td><td>1.377×</td></tr>
-<tr><td>Mistral-7B</td><td>2,861.8</td><td>2,915.9</td><td>2,945.4</td><td>1.029×</td></tr>
-<tr><td>Llama-3.1-8B</td><td>2,084.9</td><td>2,085.5</td><td>2,105.2</td><td>1.010×</td></tr>
-<tr><td>Qwen3-8B</td><td>2,467.3</td><td>2,282.8</td><td>2,315.5</td><td>0.938×</td></tr>
-<tr><td>Phi-4-14B</td><td>1,027.6</td><td>1,041.5</td><td>1,018.4</td><td>0.991×</td></tr>
-<tr><td>DS-R1-Qwen-7B</td><td>2,979.5</td><td>2,896.4</td><td>2,866.4</td><td>0.962×</td></tr>
-</tbody></table></div>
-
-  <div class="key-result"><div class="kr-label">Preserve the observed ordering; leave its cause open</div>
-    Asymmetric leads symmetric FP8 in five of eight historical rows and trails it in three.
-    This fixed-batch table does not isolate a kernel mechanism or prove physical byte savings.
-    Quality is a separate model/workload condition; retrieval evidence elsewhere on this page does
-    not qualify every cell in this table. An equal-memory capacity test answers a different question.</div>
-  <div class="citation-block">Historical evidence identifier: <code>24d34902e272a293409f0b9f90d362344252f342</code>,
-    <code>h100_throughput_sweep.json</code>. The printed later branch pins are not attested as the source
-    of these April rows. The new matched study will retain this table and report its own workload and provenance.</div>
-</section>
 
 <!-- FUSION PRINCIPLE / MECHANISM PROOF (demoted to a compact aside) -->
 <section class="panel-section" id="fused-int4-rd">
@@ -879,14 +607,375 @@
   </div>
 </section>
 
+<section class="panel-section" id="earlier-measurements">
+  <div class="panel-header"><span class="panel-id">Evidence archive</span>
+    <h2>Earlier measurements, with their original scope</h2></div>
+  <p class="panel-body">The current result is above. This archive preserves the earlier batch-8 gains,
+    eight-model batch-32 matrix, failed attempts, historical quality tables and dated video.
+    Source changes, workloads and quality contracts differ; percentages from these studies cannot be added.</p>
+  <details><summary>Open earlier results and source history</summary>
+<section class="panel-section" id="october-serving">
+  <div class="panel-header"><span class="panel-id">OCT 2026</span>
+    <h2>October 2026: qualified batch-8 serving gains</h2></div>
+  <p class="panel-body">The optimized serving stack combines a smaller persistent KV cache with a modest
+    complete-request throughput gain in two tested recipes. On one H100 SXM 80 GB at TP1, with
+    8,192 input tokens, batch 8 and 128 generated tokens, Qwen3-8B-AWQ improves by <strong>2.28%</strong>
+    over matched native FP16 KV. Dense Qwen3-8B executing in FP16 improves by <strong>2.49%</strong>.
+    Both pass the frozen NLL, retrieval and full GSM8K preservation tests. These are workload-specific
+    serving results. The completed B32 retest below gives separate model and batch results.</p>
+  <div class="scroll"><table><caption>October complete-request throughput: median within-block ratios from seven fresh three-arm process blocks per recipe, separate from pilots. Native means 16-bit K and V.</caption>
+    <thead><tr><th>Checkpoint and actual execution</th><th>Compact / native</th><th>Frozen quality decision</th></tr></thead><tbody>
+    <tr><td>Qwen3-8B-AWQ: packed INT4 weights, FP16 execution</td><td>1.022845850× (+2.28%)</td><td>NLL, retrieval and all 1,319 GSM8K questions pass</td></tr>
+    <tr><td>Qwen3-8B: dense FP16 weights and execution</td><td>1.02486566× (+2.49%)</td><td>NLL, retrieval and all 1,319 GSM8K questions pass</td></tr>
+    <tr><td>Qwen2.5-7B-Instruct: BF16 weights and execution</td><td>1.006177719× (+0.62%)</td><td>GSM gross-loss preservation fails; experimental</td></tr>
+    </tbody></table></div>
+  <p class="panel-body">Every primary ratio favors compact. Ratios within a process block are correlated.
+    The same weight checkpoint is used across each experiment's cache arms: AWQ weights remain packed.
+    The first two native controls use FP16 KV. Timing pools are fixed at <strong>48 GiB for AWQ</strong>
+    and <strong>32 GiB for dense FP16 and BF16</strong>. APC and chunked prefill are off.
+    These results compare complete serving recipes, rather than an isolated attention kernel.</p>
+  <h3>Make prefill cheap enough to expose the decode benefit</h3>
+  <p class="panel-body">Earlier writer, scale handling and decode graph work improved decode, but long-query
+    prefill still held back complete requests. The compact route gathers stored K16/V8 pages into
+    <strong>one bounded, shared FP16 workspace</strong> for native FA3 prefill. The values were already
+    quantized: casting them to FP16 does not restore pristine values. It retains no full per-layer FP16 V
+    shadow. Decode continues to consume compressed persistent values. In the controlled AWQ study,
+    compact is <strong>6.19% faster than the preceding mixed stack</strong> and 2.28% above native for
+    complete requests. This spans vLLM allocation, dispatch, writer/scale/graph handling and FlashInfer;
+    percentages from separate campaigns must not be added.</p>
+  <div class="scroll"><table><caption>Memory and capacity are separate from the fixed-B8 throughput measurement.</caption>
+    <thead><tr><th>Quantity</th><th>Measured or calculated scope</th></tr></thead><tbody>
+    <tr><td>Persistent K16/V8 payload</td><td>0.75× native at equal token slots: 25% less KV payload, not total GPU memory</td></tr>
+    <tr><td>Compact temporary storage, Qwen3</td><td>296.140625 MiB constant GPU workspace, including 256 MiB shared payload; variable metadata and 8 MiB pinned CPU storage. Count aliases once.</td></tr>
+    <tr><td>Separate automatic-pool AWQ resident endpoints</td><td>Compact 58 · preceding mixed 59 · native 44 requests. Compact admits 31.82% more than native after workspace costs.</td></tr>
+    </tbody></table></div>
+  <p class="panel-body">A fixed byte pool can spend saved payload on additional token slots, so total reserved
+    memory need not fall. The automatic-pool endpoints measure resident capacity, not throughput,
+    queueing or cost per token. Do not multiply that capacity ratio by the fixed-B8 speed ratio.</p>
+  <div class="warn-box"><div class="wr-label">Limits of the preceding compact recipe</div>
+    Before the mixed-batch routing change, the descriptive AWQ 8K/B32 compact/native ratio was <strong>0.985629×</strong>, about 1.44%
+    slower, with mixed prefill/decode fallback. The <a href="#october-followup-checks">current route</a> has a separate qualified B32 gain. The BF16 transfer has a slightly higher net GSM score,
+    but its gross-loss upper bound exceeds the frozen limit; it remains experimental. A separate
+    Q8/K8/V8 AWQ recipe fails quality and has no comparative throughput measurement. These are
+    recipe-specific outcomes, not a K-only mechanism proof or a verdict on all symmetric policies.</div>
+  <p class="panel-body" id="batch32-study-status"><strong>Completed: the matched batch-32 test.</strong>
+    The <a href="#october-b32-findings">full findings below</a> retain all eight primary models and four bridge cells,
+    including quality failures, a production failure and inconclusive timing. Two primary recipes qualified for
+    complete paired timing; neither met the predeclared gain rule. The B8 gain does not replace any historical B32 row.
+    Exact old-to-new deltas remain unavailable because the April provenance is incomplete.</p>
+  <h3>Dated source and reproduction</h3>
+  <div class="scroll"><table><caption>Exact measured dependencies, published October 16. Controls remain reachable through vLLM ancestry.</caption>
+    <thead><tr><th>Dependency</th><th>Public branch</th><th>Immutable measured commit</th></tr></thead><tbody>
+    <tr><td>FlashInfer</td><td><a href="https://github.com/mcgrof/flashinfer/tree/20261016-asym-k16v8-serving">20261016-asym-k16v8-serving</a></td><td><a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">800a550</a></td></tr>
+    <tr><td>vLLM compact prefill</td><td><a href="https://github.com/mcgrof/vllm/tree/20261016-k16v8-compact-prefill">20261016-k16v8-compact-prefill</a></td><td><a href="https://github.com/mcgrof/vllm/commit/26cd429bac01d07909ed91e353f564d7aaa8d38f">26cd429</a></td></tr>
+    <tr><td>vLLM preceding mixed / native controls</td><td>Same dated branch ancestry</td><td><a href="https://github.com/mcgrof/vllm/commit/1a4dcc01ab09cd337499c0138c732eb741218b57">1a4dcc0</a> / <a href="https://github.com/mcgrof/vllm/commit/c21c0878210695db7b108cdc285aaf0cf890190a">c21c087</a></td></tr>
+    </tbody></table></div>
+  <p class="panel-body">These exact commits extend the July 6 full mixed-cache serving bases, separately from
+    the later pre-bias work. See the <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">separate October reproduction configuration</a>
+    for source/build pins, public input and scale generation, graph capture, scheduling, CPU threads,
+    quality gates, memory accounting and timing boundaries. Historical defconfig defaults remain separate.</p>
+  <h3>October 16 video update</h3>
+  <figure style="margin:20px 0">
+    <video controls preload="metadata" playsinline poster="media/asymmetric-october-2026/poster.png" style="display:block;width:100%;max-width:100%;height:auto;border-radius:12px">
+      <source src="media/asymmetric-october-2026/update.mp4" type="video/mp4">
+      <track kind="captions" src="media/asymmetric-october-2026/captions.vtt" srclang="en" label="English" default>
+      <a href="media/asymmetric-october-2026/update.mp4">Download the video</a>.
+    </video>
+    <figcaption>Historical October 16 presentation, recorded before the B32 matrix and the current routing gain · <a href="#october-b32-findings">completed B32 findings</a> · stock synthetic narration · <a href="https://github.com/mcgrof/knlp/blob/main/docs/media/asymmetric-october-2026/transcript.md">text transcript</a> ·
+      <a href="media/asymmetric-october-2026/captions.vtt">captions</a> · <a href="media/asymmetric-october-2026/data.json">numerical data</a>.</figcaption>
+  </figure>
+</section>
+
+<section class="panel-section" id="october-b32-findings">
+  <div class="panel-header"><span class="panel-id">B32 RETEST</span><h2>Earlier implementation: October batch-32 matrix</h2></div>
+  <p class="panel-body">2 of eight primary models qualified for the paired timing study; 0 met the predeclared gain rule. Every planned model remains visible below. Tables scroll horizontally on small screens. Failed production or quality gates have no qualified throughput ratio.</p>
+  <p class="panel-body">One H100 SXM 80GB, tensor parallel size 1, FP16 weights and activations, 22 CPU threads, 32 concurrent requests with 1,024 frozen input token IDs and 128 forced outputs each. Native stores keys and values in FP16; asymmetric stores FP16 keys and FP8 E4M3 values. Prefix caching and chunked prefill are off. Primary native KV uses FlashAttention 3; asymmetric KV uses FlashInfer with its supported compact or mixed route. These are complete serving-recipe comparisons, including the backend difference.</p>
+  <div class="scroll"><table id="b32-primary-results" style="min-width:880px"><caption>Primary results. Ratios are asymmetric/native complete-request throughput. Brackets show the descriptive, unadjusted 95% paired-block bootstrap interval for the median.</caption><thead><tr><th>Model</th><th>Asymmetric route</th><th>Configured KV pool</th><th>Outcome</th><th>Median ratio [95% CI]</th><th>Holm p, family 24</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>compact</td><td>32 GiB</td><td>No confirmed gain</td><td>1.00264× [1.00090, 1.00488]</td><td>0.257812</td></tr><tr><td>Qwen/Qwen2.5-7B-Instruct</td><td>mixed</td><td>32 GiB</td><td>Fails NLL margin</td><td>N/A</td><td>1</td></tr><tr><td>Qwen/Qwen2.5-0.5B-Instruct</td><td>mixed</td><td>8 GiB</td><td>D64 production decode/reference check failed</td><td>N/A</td><td>1</td></tr><tr><td>Qwen/Qwen2.5-1.5B-Instruct</td><td>mixed</td><td>8 GiB</td><td>Fails GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>mistralai/Mistral-7B-Instruct-v0.3</td><td>compact</td><td>32 GiB</td><td>Fails native GSM floor, GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>meta-llama/Llama-3.1-8B-Instruct</td><td>compact</td><td>32 GiB</td><td>Fails GSM preservation</td><td>N/A</td><td>1</td></tr><tr><td>microsoft/Phi-4</td><td>mixed</td><td>24 GiB</td><td>No confirmed gain</td><td>0.97355× [0.97246, 0.97553]</td><td>1</td></tr><tr><td>deepseek-ai/DeepSeek-R1-Distill-Qwen-7B</td><td>mixed</td><td>32 GiB</td><td>Fails native retrieval floor, retrieval preservation</td><td>N/A</td><td>1</td></tr></tbody></table></div>
+  <div class="scroll"><table id="b32-primary-quality" style="min-width:880px"><caption>Strict quality panel. NLL bounds resample independent documents. Retrieval and GSM show native → asymmetric scores and exact one-sided 95% gross-loss upper bounds.</caption><thead><tr><th>Model</th><th>Mean ΔNLL [upper]</th><th>Retrieval</th><th>GSM8K</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>+0.000263 [upper +0.001287]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>1175/1319 → 1178/1319; 11 losses, 14 gains; loss upper 1.377%</td></tr><tr><td>Qwen/Qwen2.5-7B-Instruct</td><td>+0.055686 [upper +0.070457]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>Not run</td></tr><tr><td>Qwen/Qwen2.5-0.5B-Instruct</td><td>Not run</td><td>Not run</td><td>Not run</td></tr><tr><td>Qwen/Qwen2.5-1.5B-Instruct</td><td>+0.000951 [upper +0.001974]</td><td>88/100 → 88/100; 1 losses, 1 gains; loss upper 4.656%</td><td>720/1319 → 685/1319; 129 losses, 94 gains; loss upper 11.231%</td></tr><tr><td>mistralai/Mistral-7B-Instruct-v0.3</td><td>-0.000051 [upper +0.000399]</td><td>73/100 → 73/100; 0 losses, 0 gains; loss upper 2.951%</td><td>314/1319 → 306/1319; 42 losses, 34 gains; loss upper 4.099%</td></tr><tr><td>meta-llama/Llama-3.1-8B-Instruct</td><td>-0.001505 [upper -0.000306]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>874/1319 → 870/1319; 20 losses, 16 gains; loss upper 2.196%</td></tr><tr><td>microsoft/Phi-4</td><td>-0.000690 [upper -0.000238]</td><td>100/100 → 100/100; 0 losses, 0 gains; loss upper 2.951%</td><td>1252/1319 → 1253/1319; 3 losses, 4 gains; loss upper 0.587%</td></tr><tr><td>deepseek-ai/DeepSeek-R1-Distill-Qwen-7B</td><td>-0.008660 [upper -0.003593]</td><td>49/100 → 54/100; 7 losses, 12 gains; loss upper 12.746%</td><td>Not run</td></tr></tbody></table></div>
+  <p class="panel-body">Quality precedes timing: 32 independent NLL documents with 128 cached-decode targets each, 100 exact retrieval cases, and all 1,319 questions in the frozen strict GSM8K chat adaptation when earlier gates pass. NLL upper Δ must be at most ln(1.01), retrieval gross-loss upper at most 5%, and GSM gross-loss upper at most 2%. Errors and truncated answers are wrong. Native quality floors are fixed per model and are included in the data file. A failed native floor limits the conclusion to this scored recipe.</p>
+  <p class="panel-body">Eligible primary cells use ten fresh process pairs in a frozen, counterbalanced order. A gain requires all gates, median ratio at least 1.01, and a positive one-sided sign test after Holm correction over all 24 planned comparisons. Missing historical comparisons retain p=1. Ties are non-wins. No old-to-new speedup delta is inferred from the April table.</p>
+  <p class="panel-body">All retained timing explicitly enables request statistics in both arms. Phi-4 and AWQ use knlp <code>a6016292</code>; corrected dense Qwen3 cells use <code>720bc026</code>. The earlier recorder received no request metrics and produced no valid paired timing. Those attempts are excluded. Phi-4 retains its complete quality panel from <code>c4bb3827</code>: scoring, model math, inputs, scales and routes are unchanged, and both corrected arms pass fresh production profiles. No valid timing is pooled across source versions.</p>
+  <p class="panel-body">An input audit invalidated the first dense Qwen3 attempts: preparation had copied a native-only unit-scale placeholder, so those quality decisions and timings are excluded. The affected dense cells were rerun with the exact already-accepted calibrated scales, verified against the prior scored protocols. No scales were tuned against the new answers. The corrected source rejects placeholders before serving. All unaffected primary and AWQ measurements are retained.</p>
+  <h3>Separate 8K bridge</h3>
+  <p class="panel-body">Both bridge native and asymmetric recipes use FlashInfer. Dense weights and activations are FP16; AWQ weights stay packed INT4 with FP16 activations. Each eligible cell uses three fresh process pairs at 8,192 input tokens and 128 forced outputs. These ratios are descriptive and do not enter the primary family. The compact variant retains guarded fallback for mixed prefill/decode calls; the profile counters are included in the data file. Accepted quality is reused only for the unchanged dense B8 and AWQ recipes, after input, scale, source and actual B32 route checks; production profiles are fresh. Dense B32 receives fresh quality checks at its frozen 40 GiB pool, including full GSM when earlier gates pass.</p>
+  <div class="scroll"><table id="b32-bridge-results" style="min-width:880px"><caption>Descriptive October bridge, with all four planned cells retained.</caption><thead><tr><th>Model / weights</th><th>Batch</th><th>Configured KV pool</th><th>Quality evidence</th><th>Median ratio [95% CI]</th><th>Outcome</th></tr></thead><tbody><tr><td>Qwen/Qwen3-8B</td><td>8</td><td>32 GiB</td><td>Reused accepted quality; fresh production</td><td>1.01934× [1.01914, 1.02073]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B</td><td>32</td><td>40 GiB</td><td>Fresh quality; fresh production</td><td>0.98782× [0.98574, 0.99132]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B-AWQ</td><td>8</td><td>48 GiB</td><td>Reused accepted quality; fresh production</td><td>1.02220× [1.02110, 1.02350]</td><td>Descriptive bridge</td></tr><tr><td>Qwen/Qwen3-8B-AWQ</td><td>32</td><td>48 GiB</td><td>Reused accepted quality; fresh production</td><td>0.98833× [0.98727, 0.98844]</td><td>Descriptive bridge</td></tr></tbody></table></div>
+  <p class="panel-body">The timer excludes process startup, build and one fixed warmup, then synchronizes CUDA at both complete-request boundaries. It includes prefill, scheduling and decode. Completion-linked records separately verify actual full-batch decode; those host completion intervals are not isolated GPU kernel time. Equal byte pools can allocate different token-slot counts. The 25% K16/V8 payload saving at equal slots is not a 25% reduction in total GPU memory, and capacity ratios are not multiplied by throughput ratios.</p>
+  <details><summary>Qwen/Qwen3-8B · 1024 input tokens · B32: all retained paired ratios</summary><p>0.9935141×, 1.0046516×, 1.0002696×, 1.0014335×, 1.0058214×, 1.0016846×, 1.0039351×, 1.0036023×, 1.0068204×, 1.0015314×.</p><p>Median arm rates: native 2146.93 output tokens/s; asymmetric 2154.13 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+<details><summary>microsoft/Phi-4 · 1024 input tokens · B32: all retained paired ratios</summary><p>0.9736099×, 0.9712515×, 0.9746203×, 0.9733828×, 0.9734810×, 0.9757707×, 0.9715308×, 0.9759696×, 0.9730844×, 0.9755253×.</p><p>Median arm rates: native 1276.18 output tokens/s; asymmetric 1243.18 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+<details><summary>Qwen/Qwen3-8B · 8192 input tokens · B8: all retained paired ratios</summary><p>1.0191417×, 1.0193403×, 1.0207322×.</p><p>Median arm rates: native 324.31 output tokens/s; asymmetric 330.59 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+<details><summary>Qwen/Qwen3-8B · 8192 input tokens · B32: all retained paired ratios</summary><p>0.9913167×, 0.9878161×, 0.9857369×.</p><p>Median arm rates: native 412.94 output tokens/s; asymmetric 408.61 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+<details><summary>Qwen/Qwen3-8B-AWQ · 8192 input tokens · B8: all retained paired ratios</summary><p>1.0221985×, 1.0234999×, 1.0211044×.</p><p>Median arm rates: native 338.49 output tokens/s; asymmetric 346.40 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+<details><summary>Qwen/Qwen3-8B-AWQ · 8192 input tokens · B32: all retained paired ratios</summary><p>0.9884363×, 0.9883347×, 0.9872666×.</p><p>Median arm rates: native 406.56 output tokens/s; asymmetric 401.78 output tokens/s. The primary comparison uses within-pair ratios, rather than a ratio of these medians.</p></details>
+  <p class="panel-body"><a href="data/asymmetric-b32-20261016.json">Complete derived data, all retained ratios, model pins and frozen floors</a> · <a href="https://github.com/mcgrof/knlp/commit/c4bb3827078c979fd8529db7a518a58101cb5927">Original quality source</a> · <a href="https://github.com/mcgrof/knlp/commit/a6016292d39734c006cfc272eab4c7f131d6bc4d">Phi/AWQ timing source</a> · <a href="https://github.com/mcgrof/knlp/commit/720bc0261a97ea11d129c6dfcb6cf8c2d4ca5055">Dense calibration guard and runtime</a> · <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>.</p>
+</section>
+
+<section class="panel-section" id="october-repair-checks">
+  <div class="panel-header">
+    <span class="panel-id">R</span>
+    <h2 class="panel-title">October 16 repair checks — neither candidate qualified</h2>
+  </div>
+  <p class="panel-body">These October 16 attempts precede the <a href="#october-followup-checks">completed routing and D64 qualifications</a>.
+    The mixed-prefill metadata candidate stopped in its initial all-prefill admission,
+    before any mixed decode/prefill batch. Across 34 completed layers, full output and LSE
+    matched the existing mixed-cache fallback bit for bit. One of 417,792 fixed sampled
+    outputs exceeded the independent stored-value reference bound. CPU replay reproduces
+    the discrepancy and an FP16 probability-rounding diagnostic. This does not establish
+    a routing defect. Fresh quality and comparative timing were not reached.</p>
+  <p class="panel-body">The separate D64 layout candidate passed CPU address-coverage checks
+    and compiled four CUDA layout instantiations. Its numerical JIT check stopped before
+    output because the launcher omitted the environment's <code>ninja</code> directory
+    from <code>PATH</code>. At that point, the original D64 failure and candidate repair had not been numerically tested in that follow-up; the earlier Qwen0.5 failure row retains its scope.</p>
+  <p class="panel-body">Both pods are deleted after verified exports and CPU replay.
+    Total use was 0.33449 GPU-hours, with a provisional $1.35 estimate including disk allowance.
+    Neither check produced a new speed result or qualified dependency release.
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-repair-checks-2026.md">Exact scope, sources and failed gate</a>.</p>
+</section>
+
+<section class="panel-section" id="full-stack">
+  <div class="panel-header">
+    <span class="panel-id">Serving evidence</span>
+    <h2 class="panel-title">Historical Qwen2.5-7B serving results — source identity unresolved</h2>
+  </div>
+  <p class="panel-body">
+    The table preserves the previously reported Qwen2.5-7B serving measurements.
+    Their exact full-stack source identity remains unresolved. The July 2 vLLM
+    <code>758786e2</code> and FlashInfer <code>ff0c51cf</code> links identify decode-only
+    lineage; that vLLM revision rejects asymmetric prefill and cannot substantiate
+    this prompt-to-generation recipe.
+    The historical report compares
+    controlled FP16 / FP8-sym / K16/V8 measurements on the same H100 path: K16/V8 matches FP16 perplexity to
+    reported precision at both 2K and 8K context, and the 200-problem GSM8K screen did not resolve a difference
+    between K16/V8 (90.0%) and FP16 (90.5%) — a screen of this size can detect collapse (symmetric FP8: 2.0%)
+    but cannot establish equivalence.
+  </p>
+
+  <div class="kr-table" style="margin:24px 0;">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border2);">
+          <th style="text-align:left;padding:12px 16px;color:var(--text2);font-weight:600;">Config</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@2K</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@8K</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">GSM8K (n=200)</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">Smoke tok/s</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:12px 16px;">FP16 baseline</td>
+          <td style="text-align:right;padding:12px 16px;">6.997</td>
+          <td style="text-align:right;padding:12px 16px;">5.243</td>
+          <td style="text-align:right;padding:12px 16px;">90.5%</td>
+          <td style="text-align:right;padding:12px 16px;">102.6</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:12px 16px;">FP8 symmetric</td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>214.3</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>1058.0</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>2.0%</strong></td>
+          <td style="text-align:right;padding:12px 16px;">97.9</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;"><strong>Asymmetric K16/V8</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>6.997</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>5.243</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>90.0%</strong></td>
+          <td style="text-align:right;padding:12px 16px;">105.8</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="panel-body" style="margin-top:16px;">
+    Symmetric FP8 PPL gets <em>5× worse</em> from 2K to 8K (214→1058) — the K-fragility phenomenon strengthens
+    at longer context. Asymmetric K16/V8 matches FP16 perplexity to the reported precision at both context lengths.
+    K16 denotes native 16-bit keys. Historical FP16 labels are retained for their original comparisons; source gaps prevent treating every table as an identical baseline.
+    These are historical reported serving results with unresolved source provenance; the earlier HuggingFace <code>DynamicCache</code> simulation in
+    the precision-asymmetry section is a separate numerical cross-check.
+  </p>
+
+  <p class="panel-body" style="margin-top:16px;"><strong>Tensor parallelism was tested at TP = 1, 2, and 4 on a 4×H100 pod.</strong>
+    The reported 48-sequence test found bit-identical prefill NLL and 100% autoregressive token agreement
+    for K16/V8 versus the reference at each tested degree. At TP = 4, the four KV heads shard to one head per rank.
+    These are finite-sample correctness observations, not proof of zero quality cost on all workloads.
+    The source identity for these historical checks also remains unresolved. Prefill agreement alone does not qualify reads from a quantized cache.</p>
+
+  <div class="kr-label" style="margin-top:24px;">Historical reported implementation checks; exact builds unresolved</div>
+  <div class="kr-table" style="margin:12px 0;">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border2);">
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Gate</th>
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">FlashInfer decode, BF16-K / FP8-V</td>
+          <td style="padding:10px 16px;color:var(--green);">rel err 0.0254 vs BF16 ref</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">FlashInfer prefill, BF16-K / FP8-V</td>
+          <td style="padding:10px 16px;color:var(--green);">rel err 0.0255 vs BF16 ref</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">vLLM cache writer</td>
+          <td style="padding:10px 16px;color:var(--green);">K bit-exact, V within FP8 noise</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">K/V aliasing check</td>
+          <td style="padding:10px 16px;color:var(--green);">disjoint storage</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 16px;">Required backend</td>
+          <td style="padding:10px 16px;">FlashInfer via <code>attention_config</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="panel-body">For the current qualified serving implementation, use the
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>
+    and its immutable source pins. That Qwen3 recipe is separate from the historical Qwen2.5
+    measurements above and does not recover their original runtime. The July 2 decode-only
+    links are not an end-to-end reproduction command.</p>
+</section>
+
+<section class="panel-section" id="asym-k16v8">
+  <div class="panel-header">
+    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">HEADLINE</span>
+    <h2 class="panel-title">K16/V8 — A Qualified Option for Fragile Keys</h2>
+  </div>
+  <p class="panel-body">
+    Storing keys at native 16-bit precision and only quantizing values to FP8 removes FP8 K operand preparation
+    before each tile's QK operation. Account for FP8 V preparation before PV and measure how much the kernel
+    overlaps it. On the standalone CUDA-core FlashInfer decode kernel on the headline Qwen2.5-7B lane, asymmetric
+    K16/V8 is close to the FP16 reference in this measurement and leads the measured symmetric FP8 path; on the
+    SM90 Tensor Core kernel family the sign reverses — symmetric K8/V8 runs 16–19% faster than K16/V8 at
+    bandwidth-bound shapes (see the linked hardware notes).
+    Across the eight-model vLLM batch-32 comparison below, asymmetric is up to 4.2% faster than symmetric FP8
+    on the models where it leads. K16/V8 provides 1.33× the KV payload capacity of K16/V16, but only two-thirds of K8/V8 capacity.
+    This implementation uses modified vLLM/FlashInfer kernels without changing model weights or retraining. Quality qualification remains necessary.
+  </p>
+
+  <div class="scroll"><table><caption>Conventional equally sized K/V tensors; raw payload ratios only.</caption>
+    <thead><tr><th>Layout</th><th>Bytes per K/V pair</th><th>KV capacity vs K16/V16</th><th>Qualification</th></tr></thead>
+    <tbody><tr><td>K16/V16</td><td>4</td><td>1.00×</td><td>Full-precision reference</td></tr>
+    <tr><td>K16/V8</td><td>3</td><td>1.33×</td><td>Retains key precision; qualify value compression</td></tr>
+    <tr><td>K8/V8</td><td>2</td><td>2.00×</td><td>Qualify both keys and values for the workload</td></tr></tbody>
+  </table></div>
+
+  <div class="key-result">
+    <div class="kr-label">Mechanism — why bytes alone do not predict throughput</div>
+    Hopper has no native BF16-query by plain-FP8-key QK instruction with a K scale operand. Prepare each active K
+    tile on chip before QK and advance online softmax tile by tile. Compare the unhidden preparation and occupancy
+    cost against the extra K16 HBM byte. Account for V preparation before PV. CDNA 3 provides FP8-by-FP8 MFMA with
+    no scale operands; place the scale in software around MFMA. Use the completed
+    <a href="bias-aware-kv-quantization.html" style="color:var(--cyan);">bias-aware KV findings</a> and the
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
+      style="color:var(--cyan);">hardware notes</a>.
+  </div>
+
+  <div class="warn-box">
+    <div class="wr-label">Quality rescue on fragile-key models</div>
+    NIAH multikey-3 retrieval at 32K tokens on H100 via vLLM + FlashInfer, across three models:
+    <div style="margin-top:10px; font-family:var(--mono);  line-height:1.8;">
+      <strong>Qwen2.5-7B (fragile)</strong> &nbsp;&nbsp;FP16: 0.84 &nbsp;·&nbsp; FP8-sym: <span style="color:var(--red);">0.00</span> &nbsp;·&nbsp; Asym K16/V8: <span style="color:var(--green);">0.89</span><br>
+      <strong>Qwen3-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 0.95 &nbsp;·&nbsp; FP8-sym: 0.92 &nbsp;·&nbsp; Asym K16/V8: 0.95<br>
+      <strong>Llama-3.1-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 1.00 &nbsp;·&nbsp; FP8-sym: 1.00 &nbsp;·&nbsp; Asym K16/V8: 1.00
+    </div>
+    Qwen2.5-7B scores zero under symmetric FP8 in this retrieval test.
+    The tested K16/V8 retrieval score is 0.89 versus 0.84 for the Qwen2.5-7B reference. Without an uncertainty estimate, this difference does not establish superiority. The two other models show no collapse in this test. <strong>When one
+    qualified KV-cache scheme must cover these tested robust- and fragile-key models, asymmetric K16/V8 is the preferred
+    option</strong> among the evaluated fused FP8 paths: it is the only one here that holds quality on the
+    fragile models while matching the tolerant ones. The later diagnosis helps explain these observations: symmetric FP8-K collapse tracks K-projection <strong>bias magnitude</strong> (with a distinct
+    partial-RoPE failure mode), so on a <em>known-robust</em> model symmetric FP8-K is quality-admissible and,
+    being denser, can be the better choice. See the
+    <a href="fp8-kv-failure-atlas.html" style="color:var(--cyan);">FP8 KV-cache failure atlas</a> for the
+    root cause and the per-model fragility map. A fuller comparison of K16/V8 against the broader
+    KV-quantization field — symmetric FP8, pre-bias, sub-8-bit values, and other approaches across quality,
+    capacity, kernel cost, and served goodput — is now available in the
+    <a href="kv-compression-frontier.html" style="color:var(--cyan);">KV-cache compression frontier</a>.
+  </div>
+
+  <div class="citation-block">
+    Code: <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a> ·
+    serving branch <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream"><code>20260702-asym-k16v8-decode-upstream</code></a>
+    (fork commit ff0c51cf; curated decode-only K16/FP8 dtype-split series). vLLM-side plumbing on
+    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8"><code>20260702-k16fp8</code></a>
+    (fork commit 758786e2). The
+    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>
+    dev tip carries a five-commit CUDA template refactor giving independent K and V dtypes in prefill and
+    decode; its mixed-dtype prefill kernels compile and pass fp32-reference audits, but it is not part of
+    the validated serving pair.
+    Integrates with vLLM via <code>LLM(kv_cache_dtype=("auto", "fp8_e4m3"),
+    attention_config={"backend": "FLASHINFER"})</code>.
+  </div>
+</section>
+
+<section class="panel-section" id="per-model-throughput">
+  <div class="panel-header">
+    <span class="panel-id">THROUGHPUT</span>
+    <h2 class="panel-title">Historical April 2026 batch-32 throughput</h2>
+  </div>
+  <p class="panel-body">These eight published values match an April 16, 2026 results file, rather than an
+    established July run. The retained logs show eager FP16 execution, APC and chunked prefill enabled,
+    a 16,384-token scheduler budget, native FLASH_ATTN/FA3 and asymmetric FLASHINFER. Exact source,
+    checkpoint/tokenizer revisions, prompt IDs, successful Qwen3/Phi logs and timer boundaries are not
+    fully recovered. The reported sequence-length field does not attest actual prompt length.
+    Treat these as historical serving measurements, not a matched comparison with the October stack.</p>
+  <p class="panel-body">The Qwen2.5-7B asymmetric/native ratio is 1.377×. Retained native logs show about
+    54.53 GiB of KV capacity and 1,020,992 token slots, above this B32 workload. They do not establish
+    the earlier explanation that native capacity pressure caused that ratio. The remaining asymmetric/native
+    ratios range from 0.871× to 1.029×. Cause requires a matched workload and profiling.</p>
+
+  <!-- Published serving measurements. -->
+  <div class="scroll"><table><caption>Published H100 batch-32 serving throughput. Ratios use the 16-bit baseline in the same row.</caption><thead><tr><th>Model</th><th>16-bit KV (tok/s)</th><th>K8/V8 (tok/s)</th><th>K16/V8 (tok/s)</th><th>K16/V8 / baseline</th></tr></thead><tbody>
+<tr><td>Qwen2.5-0.5B</td><td>3,312.3</td><td>3,098.9</td><td>2,884.4</td><td>0.871×</td></tr>
+<tr><td>Qwen2.5-1.5B</td><td>2,912.9</td><td>2,741.3</td><td>2,857.4</td><td>0.981×</td></tr>
+<tr><td>Qwen2.5-7B</td><td>2,065.7</td><td>2,763.0</td><td>2,845.0</td><td>1.377×</td></tr>
+<tr><td>Mistral-7B</td><td>2,861.8</td><td>2,915.9</td><td>2,945.4</td><td>1.029×</td></tr>
+<tr><td>Llama-3.1-8B</td><td>2,084.9</td><td>2,085.5</td><td>2,105.2</td><td>1.010×</td></tr>
+<tr><td>Qwen3-8B</td><td>2,467.3</td><td>2,282.8</td><td>2,315.5</td><td>0.938×</td></tr>
+<tr><td>Phi-4-14B</td><td>1,027.6</td><td>1,041.5</td><td>1,018.4</td><td>0.991×</td></tr>
+<tr><td>DS-R1-Qwen-7B</td><td>2,979.5</td><td>2,896.4</td><td>2,866.4</td><td>0.962×</td></tr>
+</tbody></table></div>
+
+  <div class="key-result"><div class="kr-label">Preserve the observed ordering; leave its cause open</div>
+    Asymmetric leads symmetric FP8 in five of eight historical rows and trails it in three.
+    This fixed-batch table does not isolate a kernel mechanism or prove physical byte savings.
+    Quality is a separate model/workload condition; retrieval evidence elsewhere on this page does
+    not qualify every cell in this table. An equal-memory capacity test answers a different question.</div>
+  <div class="citation-block">Historical evidence identifier: <code>24d34902e272a293409f0b9f90d362344252f342</code>,
+    <code>h100_throughput_sweep.json</code>. The printed later branch pins are not attested as the source
+    of these April rows. The new matched study will retain this table and report its own workload and provenance.</div>
+</section>
+  </details>
+</section>
+
 <!-- REPRODUCE -->
 <section class="panel-section" id="reproduce">
   <div class="panel-header">
     <span class="panel-id" style="background:rgba(124,110,255,0.15);color:var(--accent3,#7c6eff);border-color:#5a4fc0;">REP</span>
-    <h2 class="panel-title">Reproduce — Companion Repos and Defconfig Workflow</h2>
+    <h2 class="panel-title">Reproduce the current result</h2>
   </div>
+  <p class="panel-body">Use the exact pair below for the qualified AWQ 8K/batch-32 result.
+    Branches are public; immutable commits identify the measured code.
+    The <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-routing-d64-followup-2026.md">current reproduction method</a>
+    records model and scale pins, controls, graphs, scheduler settings and quality gates.</p>
+  <div class="scroll"><table><caption>Current routing recipe. Keep the separate D64 repair out of this speed comparison.</caption>
+    <thead><tr><th>Component</th><th>Public branch</th><th>Measured commit</th></tr></thead><tbody>
+    <tr><td>vLLM: mixed-batch fresh prefill</td><td><a href="https://github.com/mcgrof/vllm/tree/2026-10-17-feature-mixed-fresh-prefill">2026-10-17-feature-mixed-fresh-prefill</a></td><td><a href="https://github.com/mcgrof/vllm/commit/276305b29e0d11f95ada503ba76323ab24992e59">276305b2</a></td></tr>
+    <tr><td>FlashInfer: measured serving kernels</td><td><a href="https://github.com/mcgrof/flashinfer/tree/20261016-asym-k16v8-serving">20261016-asym-k16v8-serving</a></td><td><a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">800a550f</a></td></tr>
+    <tr><td>knlp: model, quality and timing harness</td><td>Immutable source</td><td><a href="https://github.com/mcgrof/knlp/commit/f91b3c3f1b59090a40398ebf1a9b4a980c2215a0">f91b3c3f</a></td></tr>
+    </tbody></table></div>
+  <p class="panel-body">The D64 numerical qualification separately uses FlashInfer
+    <a href="https://github.com/mcgrof/flashinfer/tree/2026-10-17-fix-mixed-d64-paged-layout">2026-10-17-fix-mixed-d64-paged-layout</a>
+    at <a href="https://github.com/mcgrof/flashinfer/commit/72b18b4f1eef45a718de640568d7a0144cf3ab89">72b18b4f</a>,
+    with vLLM <code>26cd429b</code>. Combining both new branches is an unqualified source pair.</p>
+  <details><summary>Earlier reproduction profiles and source lineage</summary>
   <p class="panel-body">Use the <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October configuration</a>
-    for the optimized serving results. The decode-only lineage branches below are retained for historical reference. They do not
+    for the preceding compact serving results. The decode-only lineage branches below are retained for historical reference. They do not
     establish the full-stack source of the legacy quality tables or the April B32 table. On October 16, the July 2
     FlashInfer branch resolved to <code>ff0c51cf676bf4461695c34af564461f1e30c0a6</code> and the July 2
     vLLM branch to <code>758786e23230a4a1a9b2b6046fb516943751b3ae</code>.</p>
@@ -942,7 +1031,7 @@
 make defconfig-decode-upstream   # Legacy decode-only profile; inspect supported stages
 make</code></pre>
   <p class="panel-body" style="margin-top:8px;">
-    <code>defconfig-decode-upstream</code> selects the legacy decode-only branches above; it is not a reproduction of the reported full-stack quality results. Use the separate October configuration for the current qualified serving recipe. Branch names can move; record the resolved commit IDs and actual supported stages.  The reproduction profiles are: <code>defconfig-decode</code> (core full-stack
+    <code>defconfig-decode-upstream</code> selects the legacy decode-only branches above; it is not a reproduction of the reported full-stack quality results. Use the current routing method above for the qualified batch-32 serving recipe. Branch names can move; record the resolved commit IDs and actual supported stages.  The reproduction profiles are: <code>defconfig-decode</code> (core full-stack
     quality battery + standalone FlashInfer gates + LMCache codec checks),
     <code>defconfig-decode-sat</code> (saturation model + Hill fit), and
     <code>defconfig-decode-full</code> (everything possible from the paper, with structured skip reports
@@ -953,6 +1042,7 @@ make</code></pre>
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/reproduce/paper-memory-decode.md">docs/reproduce/paper-memory-decode.md</a>
     for the workflow and hardware requirements. These are fork-specific research recipes, not instructions for an unmodified upstream installation. Fresh prefill, cached-prefix prefill, and decode require separate correctness coverage; full-precision fresh prefill alone does not validate mixed-dtype prefix reads.
   </p>
+  </details>
 </section>
 
 </main>
@@ -968,7 +1058,7 @@ make</code></pre>
     <a href="https://knlp.io/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://knlp.io/spearman_rho.html">Spearman ρ</a>
     <a href="https://github.com/mcgrof/flashinfer/tree/20261016-asym-k16v8-serving">FlashInfer Fork</a>
-    <a href="https://github.com/mcgrof/vllm/tree/20261016-k16v8-compact-prefill">vLLM Fork</a>
+    <a href="https://github.com/mcgrof/vllm/tree/2026-10-17-feature-mixed-fresh-prefill">vLLM Fork</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache Fork</a>
     <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant Docs</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
@@ -978,3 +1068,4 @@ make</code></pre>
 <script src="assets/memory-decode.js" defer></script>
 </body>
 </html>
+

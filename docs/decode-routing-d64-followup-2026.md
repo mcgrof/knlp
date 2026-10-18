@@ -1,4 +1,6 @@
-# October 17: mixed fresh-prefill routing and the D64 numerical repair
+# Current AWQ batch-32 serving recipe and the separate D64 repair
+
+Results measured October 17, 2026; presentation updated October 18.
 
 The focused Qwen3-8B-AWQ routing test passes its production and task-quality
 gates. Ten fresh confirmation blocks give median throughput gains of
@@ -10,6 +12,13 @@ against a 0.99 threshold. Its three blocks are not a statistical
 noninferiority study. Keep this route opt-in and
 scoped to the tested model, backend and recipe.
 
+Native means FP16 K/V through FlashInfer, with the same packed INT4 AWQ
+weights and FP16 compute. It does not mean dense weights, BF16 compute,
+or the FA3 native baseline used in the earlier eight-model matrix.
+The throughput change comes from vLLM routing with the unchanged
+FlashInfer revision below. The separate D64 repair is not part of that
+speed result. No new maximum resident-batch endpoint is measured.
+
 [Routing and quality](#routing-and-quality) ·
 [D64 numerical repair](#d64-is-a-separate-numerical-qualification) ·
 [Component profiles](#matched-component-profiles)
@@ -20,9 +29,11 @@ The new route compacts only the fresh-prefill suffix inside a mixed batch.
 The accepted implementation uses compact for the initial all-fresh admission
 and falls back on the four mixed admissions. Decode, persistent K16/V8
 storage, scales and the one 256 MiB workspace remain unchanged. The study
-uses Qwen/Qwen3-8B-AWQ revision 4da05a8e, packed Machete weights, FP16,
-and tensor parallel size one,
-8,192 actual input tokens, batch 32 (B32) and 128 forced outputs. Page size is 16/NHD,
+uses Qwen/Qwen3-8B-AWQ revision
+`4da05a8edb55c6046cce958586c33b61da07bb79`, packed Machete weights,
+FP16 compute, one H100 SXM 80 GB and tensor parallel size one.
+It has 8,192 actual input tokens, batch 32 (B32) and 128 forced outputs.
+Page size is 16 with NHD layout.
 The byte pool is 48 GiB, with 22 threads, at most 96 sequences and
 65,536 batched tokens.
 Automatic prefix caching (APC) and chunked prefill are off. FULL_DECODE_ONLY captures 1/8/32/44/45/59/60/96.
@@ -41,7 +52,8 @@ The [fresh-prefill vLLM branch](https://github.com/mcgrof/vllm/tree/2026-10-17-f
 retains the exact measured candidate. The separate
 [paged D64 FlashInfer branch](https://github.com/mcgrof/flashinfer/tree/2026-10-17-fix-mixed-d64-paged-layout)
 retains the numerical repair. The original measured branches keep their
-previous tips.
+previous tips. The combination of the new routing vLLM and D64 FlashInfer
+is not a qualified serving pair.
 
 The independent oracle reconstructs pages from raw worker request order,
 query offsets, KV lengths and block tables before candidate slicing. All 360
@@ -143,3 +155,4 @@ between the two compact routes. The native end-to-end gain is established
 by the separate confirmation trials; this profile does not isolate its
 cause. Correlated host launch cost and the remaining device work are
 available separately in the data file.
+
