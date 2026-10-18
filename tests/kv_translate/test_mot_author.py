@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 
 from research.kv_translate.mot_author.recipe import (
+    FROZEN_DIAGNOSTIC_CONTENT_SHA256,
     MODEL_REVISIONS,
     UPSTREAM_SHA,
     build_channel_profile_config,
@@ -31,6 +33,7 @@ from research.kv_translate.mot_author.preflight import (
     inspect_model_snapshot,
 )
 from research.kv_translate.mot_author.mechanics import inspect_mechanics_source
+from research.kv_translate.mot_author.diagnostic_eval import replay_paired_jsonl
 from research.kv_translate.mot_author.recipe import (
     MODIFIED_MOT_COMMITS,
     MODIFIED_MOT_SHA,
@@ -53,12 +56,14 @@ def test_frozen_gpt2_recipe_uses_paper_training_precision(tmp_path: Path) -> Non
     assert train["mot_num_translators"] == 2
     assert train["mot_top_k"] == 1
     assert train["num_bottom_full_attn"] == 2
+    assert train["attention_backend"] == "dense_selected"
     assert channel["num_train_examples"] == 128
     assert channel["num_val_examples"] == 64
     assert channel["max_steps"] == 128
     assert evaluation["max_examples_per_dataset"] == 100
     assert evaluation["generation_max_new_tokens"] == 64
     assert set(MODEL_REVISIONS) == {"gpt2", "gpt2-medium"}
+    assert len(FROZEN_DIAGNOSTIC_CONTENT_SHA256) == 64
 
 
 def test_reproduction_matrix_keeps_paper_claim_bounded() -> None:
@@ -113,7 +118,7 @@ def test_model_snapshot_requires_exact_revision(tmp_path: Path) -> None:
 
 
 def test_modified_mot_commit_chain_is_explicit() -> None:
-    assert len(MODIFIED_MOT_COMMITS) == 4
+    assert len(MODIFIED_MOT_COMMITS) == 5
     assert MODIFIED_MOT_SHA == MODIFIED_MOT_COMMITS[-1]
     assert all(len(commit) == 40 for commit in MODIFIED_MOT_COMMITS)
 
@@ -125,6 +130,31 @@ def test_mechanics_source_rejects_unknown_variant(tmp_path: Path) -> None:
         assert "Not a git checkout" in str(error)
     else:
         raise AssertionError("non-checkout source was accepted")
+
+
+def test_diagnostic_replay_reports_id_and_score_contracts(tmp_path: Path) -> None:
+    rows = [
+        {
+            "item_id": f"item-{index}",
+            "task": "boolq",
+            "document_group": f"document-{index}",
+            "truncation_status": False,
+            "candidate": {"score": float(index), "parse_status": "parsed"},
+            "native": {"score": 1.0, "parse_status": "parsed"},
+        }
+        for index in range(2)
+    ]
+    source = tmp_path / "records.jsonl"
+    source.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    result = replay_paired_jsonl(source, tmp_path / "replay.json")
+
+    assert result["record_count"] == 2
+    assert result["unique_item_id_count"] == 2
+    assert result["item_ids_unique"] is True
+    assert result["both_arm_score_contract_pass"] is True
 
 
 def test_training_smoke_recipe_is_bounded_and_frozen() -> None:

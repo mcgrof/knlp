@@ -11,6 +11,7 @@ from typing import Any
 
 from .diagnostic_data import CONTEXT_TOKENS_EXECUTED, PARTITION_ROWS, SCHEMA
 from .mechanics import inspect_mechanics_source
+from .recipe import FROZEN_DIAGNOSTIC_CONTENT_SHA256
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -58,6 +59,8 @@ def run_diagnostic_controls(
     actual_manifest_sha = _canonical_sha256(content_without_sha)
     if declared_manifest_sha != actual_manifest_sha:
         raise RuntimeError("Modified-MoT diagnostic manifest content hash mismatch")
+    if actual_manifest_sha != FROZEN_DIAGNOSTIC_CONTENT_SHA256:
+        raise RuntimeError("Modified-MoT diagnostic is not the frozen admitted data")
 
     scan_rows = []
     mismatch_item_ids = []

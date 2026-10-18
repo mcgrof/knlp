@@ -5,12 +5,16 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import math
 from pathlib import Path
 import random
 import subprocess
 import sys
 import time
 from typing import Any
+
+from .diagnostic_data import SCHEMA as DIAGNOSTIC_DATA_SCHEMA
+from .recipe import FROZEN_DIAGNOSTIC_CONTENT_SHA256
 
 
 def _sha256(path: Path) -> str:
@@ -29,6 +33,13 @@ def _tree_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _percentile(sorted_values: list[float], probability: float) -> float:
     if not sorted_values:
         return float("nan")
@@ -45,9 +56,16 @@ def aggregate_paired_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         by_task.setdefault(record["task"], []).append(record)
     result: dict[str, Any] = {}
     for task, rows in sorted(by_task.items()):
+        def valid_score(row: dict[str, Any], arm: str) -> bool:
+            score = row[arm].get("score")
+            return (
+                isinstance(score, (int, float))
+                and math.isfinite(float(score))
+                and 0.0 <= float(score) <= 1.0
+            )
+
         complete = len(rows) == 100 and all(
-            row["candidate"].get("score") is not None
-            and row["native"].get("score") is not None
+            valid_score(row, "candidate") and valid_score(row, "native")
             for row in rows
         )
         task_result: dict[str, Any] = {
@@ -100,10 +118,21 @@ def aggregate_paired_records(records: list[dict[str, Any]]) -> dict[str, Any]:
 def replay_paired_jsonl(input_jsonl: Path, output_json: Path) -> dict[str, Any]:
     records = [json.loads(line) for line in input_jsonl.read_text(encoding="utf-8").splitlines() if line]
     aggregates = aggregate_paired_records(records)
+    item_ids = [str(record["item_id"]) for record in records]
+    score_contract_pass = all(
+        isinstance(record[arm].get("score"), (int, float))
+        and math.isfinite(float(record[arm]["score"]))
+        and 0.0 <= float(record[arm]["score"]) <= 1.0
+        for record in records
+        for arm in ("candidate", "native")
+    )
     payload = {
         "schema": "knlp_mot_capped_diagnostic_replay_v1",
         "raw_records_sha256": _sha256(input_jsonl),
         "record_count": len(records),
+        "unique_item_id_count": len(set(item_ids)),
+        "item_ids_unique": len(item_ids) == len(set(item_ids)),
+        "both_arm_score_contract_pass": score_contract_pass,
         "aggregates": aggregates,
     }
     output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +170,24 @@ def run_capped_diagnostic_eval(
     source_model = ctx.tp.get_model(source_node)
     target_model = ctx.tp.get_model(target_node)
     manifest = json.loads(data_manifest.read_text(encoding="utf-8"))
+    if manifest.get("schema") != DIAGNOSTIC_DATA_SCHEMA:
+        raise RuntimeError("Modified-MoT diagnostic manifest schema mismatch")
+    declared_content_sha = manifest.get("manifest_content_sha256")
+    manifest_without_sha = dict(manifest)
+    manifest_without_sha.pop("manifest_content_sha256", None)
+    actual_content_sha = _canonical_sha256(manifest_without_sha)
+    if (
+        declared_content_sha != actual_content_sha
+        or actual_content_sha != FROZEN_DIAGNOSTIC_CONTENT_SHA256
+    ):
+        raise RuntimeError("Modified-MoT diagnostic manifest content is not admitted")
+    expected_item_ids = [
+        str(item["item_id"])
+        for cohort in manifest["evaluation"].values()
+        for item in cohort["items"]
+    ]
+    if len(expected_item_ids) != 500 or len(set(expected_item_ids)) != 500:
+        raise RuntimeError("Frozen evaluation IDs must contain 500 unique items")
     task_specs = {
         "boolq": eval_util.get_boolq_dataset_spec(),
         "pubmedqa": eval_util.get_pubmedqa_dataset_spec(),
@@ -155,11 +202,23 @@ def run_capped_diagnostic_eval(
     scorer_hash = hashlib.sha256(
         (Path(eval_util.__file__).read_bytes() + Path(__file__).read_bytes())
     ).hexdigest()
+    selected_channels = [
+        {
+            "src_layer_idx": int(channel.src_layer_idx),
+            "tgt_layer_idx": int(channel.dst_layer_idx),
+        }
+        for channel in ctx.cm.get_channels(edge.id)
+    ]
     run_manifest = {
         "schema": "knlp_mot_capped_diagnostic_run_v1",
         "label": "modified_mot_capped_diagnostic_not_paper_reproduction",
         "source_commit": code_commit,
+        "attention_backend": str(ctx.config.attention_backend),
+        "attention_backend_source_sha256": _sha256(source / "alg/mot/train.py"),
+        "selected_channels": selected_channels,
         "data_manifest_sha256": _sha256(data_manifest),
+        "data_manifest_content_sha256": actual_content_sha,
+        "expected_item_ids_sha256": _canonical_sha256(sorted(expected_item_ids)),
         "checkpoint_tree_sha256": checkpoint_sha256,
         "scorer_sha256": scorer_hash,
         "generation": {"method": "greedy", "max_new_tokens": 64},
@@ -324,13 +383,52 @@ def run_capped_diagnostic_eval(
                 records.append(record)
 
     aggregates = aggregate_paired_records(records)
+    replay = replay_paired_jsonl(raw_path, output / "REPLAY.json")
+    observed_item_ids = [str(record["item_id"]) for record in records]
+    observed_counts = {
+        item_id: observed_item_ids.count(item_id) for item_id in set(observed_item_ids)
+    }
+    id_completeness = (
+        len(observed_item_ids) == 500
+        and set(observed_item_ids) == set(expected_item_ids)
+        and all(count == 1 for count in observed_counts.values())
+    )
+    arm_score_contract = all(
+        record["operational_error"] is None
+        and isinstance(record[arm].get("score"), (int, float))
+        and math.isfinite(float(record[arm]["score"]))
+        and 0.0 <= float(record[arm]["score"]) <= 1.0
+        for record in records
+        for arm in ("candidate", "native")
+    )
+    expected_truncations = sum(
+        bool(item["token_ledgers"]["target"]["was_truncated"])
+        for cohort in manifest["evaluation"].values()
+        for item in cohort["items"]
+    )
+    observed_truncations = sum(bool(record["truncation_status"]) for record in records)
+    offline_replay_matches = replay["aggregates"] == aggregates
+    operational_complete = (
+        id_completeness
+        and arm_score_contract
+        and expected_truncations == observed_truncations
+        and offline_replay_matches
+    )
     summary = {
         "schema": "knlp_mot_capped_diagnostic_summary_v1",
         "record_count": len(records),
         "expected_record_count": 500,
-        "operational_complete": len(records) == 500 and all(
-            record["operational_error"] is None for record in records
-        ),
+        "operational_complete": operational_complete,
+        "integrity": {
+            "expected_item_count": 500,
+            "observed_item_count": len(observed_item_ids),
+            "unique_item_id_count": len(set(observed_item_ids)),
+            "expected_ids_exactly_once": id_completeness,
+            "both_arms_finite_and_in_range": arm_score_contract,
+            "expected_truncation_count": expected_truncations,
+            "observed_truncation_count": observed_truncations,
+            "offline_replay_matches": offline_replay_matches,
+        },
         "raw_records_sha256": _sha256(raw_path),
         "run_manifest_sha256": run_manifest_sha256,
         "elapsed_seconds": time.monotonic() - started,
@@ -338,5 +436,4 @@ def run_capped_diagnostic_eval(
     }
     summary_path = output / "SUMMARY.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    replay_paired_jsonl(raw_path, output / "REPLAY.json")
     return summary

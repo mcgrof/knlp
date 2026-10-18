@@ -13,10 +13,11 @@ MODIFIED_MOT_COMMITS = (
     "29b5b638b7ab343c553d9c1f18563c2c9b9d39a1",
     "bf13548f0fa2c13c7308ef0e7c3e2cf755bcbdf8",
     "98ae69ee1b0fa74841963ffb7262eefe922c2fb8",
+    "663b0e865abcd23fd543f306aaa8e9f6a9f340d2",
 )
 MODIFIED_MOT_SHA = MODIFIED_MOT_COMMITS[-1]
 MODIFIED_MOT_TRAIN_SHA256 = (
-    "5da35b31bed430756bed66f58d855ca76f9d2857aae1a11ec15eca0fd9ef1e28"
+    "07a3d37d74f47717e57730b936f4cdeb0debbc967c037b3b70cb94b808b36a81"
 )
 
 MODEL_REVISIONS = {
@@ -33,6 +34,10 @@ DATASET_REVISIONS = {
     "gabrieltorresgamez/newsqa": "f26b00ef528914415cbc2013180ce52ec0831fc2",
 }
 
+FROZEN_DIAGNOSTIC_CONTENT_SHA256 = (
+    "919f6ea78f021a8807a52b7f5cecfdbebacca568c09bb20cc3e60c651da107f7"
+)
+
 UPSTREAM_FILE_SHA256 = {
     "LICENSE": "28b7c8dfe3fca5af8d4faec8b413f4b5a09ac37111d09e9e1fcc855ab5cdfef2",
     "README.md": "d4963b2871291c80bcf5339bca68a8ee0283d1b2f5ade4452a77535a0cf7e2ce",
@@ -44,7 +49,7 @@ UPSTREAM_FILE_SHA256 = {
 
 MODIFIED_MOT_UPSTREAM_FILE_SHA256 = {
     **UPSTREAM_FILE_SHA256,
-    "configs/train_mot.json": "d07ecc601e18ddbaf92de132baafd205933432f75cc2b359307cfaddf86d26f8",
+    "configs/train_mot.json": "e9ff8f051c4fa769286a5759bfe0d72eeab0fdd15f1380f31547affbd71a8bfa",
 }
 
 
@@ -91,6 +96,7 @@ def build_train_config(
         "mot_top_k": 1,
         "topk_sparse_attn": 128,
         "num_bottom_full_attn": 2,
+        "attention_backend": "dense_selected",
         "require_identity_token_ledgers": True,
     }
 
@@ -143,6 +149,7 @@ mechanics baseline. It is generated before model execution.
 | Router | Top-1 of two translators | Top-1 of two | Unchanged author behavior |
 | Channel map | Depth ratio, ratio 0.3 | Depth ratio | Same |
 | Sparse replay | Top-S, two full bottom layers | Top-128, two layers | Same |
+| Attention backend | Not specified | Gathered selected keys | Dense selected-key correctness path |
 | Evaluation | F1 0.34 in Table 8 | Five datasets, 100-item cap | Same author evaluator |
 | Source work | Source context cache | KV prefill plus attention-guidance forward | Count both |
 | Receiver work | Context replay | Complete target stack replay | Count all layers |
@@ -150,4 +157,6 @@ mechanics baseline. It is generated before model execution.
 The paper does not specify enough detail to treat the Table 8 F1 value as an
 exact reproduction target. The first run is therefore an author-code mechanics baseline.
 It includes the matched native target path from the author evaluator.
+The dense selected-key backend preserves the selection policy but uses
+quadratic working storage; it makes no sparse-compute or serving-speed claim.
 """

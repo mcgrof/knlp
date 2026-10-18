@@ -7,11 +7,12 @@ unchanged. The author code uses the PolyForm Noncommercial License. It is not
 copied into knlp.
 
 The bounded diagnostic uses an isolated modified-MoT chain ending at
-`98ae69ee1b0fa74841963ffb7262eefe922c2fb8`. It preserves exact token IDs for
+`663b0e865abcd23fd543f306aaa8e9f6a9f340d2`. It preserves exact token IDs for
 the verified GPT-2 tokenizer pair, applies that identity contract in channel
-profiling, validates reduced Top-S replay, consumes frozen token rows offline,
-and writes step-level training records. This is a corrected diagnostic, not an
-unchanged-author or paper-reproduction result.
+profiling, and uses a dense selected-key correctness backend for reduced Top-S
+replay. It consumes frozen token rows offline and writes step-level training
+records. This is a corrected diagnostic, not an unchanged-author or
+paper-reproduction result.
 
 The first target is a GPT-2 to GPT-2-medium mechanics baseline. It uses the
 paper's shared 500-step OpenWebText training recipe, bfloat16 precision, two
@@ -59,11 +60,12 @@ This preflight does not train a translator and cannot test the unequal-token-
 grid alignment path. Its thresholds are numerical-parity checks, not model-
 quality gates.
 
-The targeted mechanics preflight forces the full-key sparse and injected-KV
-branches at 20 and 64 tokens. It also records real GPT-2 byte-token spans,
-same-grid alignment, a Unicode prefix-integrity check, complete model-file
-hashes, and the known unequal-grid witness. Run the unchanged author source
-and the pinned modified-MoT source into separate output directories:
+The unchanged-author mechanics preflight forces the full-key sparse and
+injected-KV branches at 20 and 64 tokens. The modified preflight reuses those
+frozen controls and tests the 160-token, Top-S=128 dense selected-key backend
+against an independent masked reference. It also runs an FP64 operator oracle,
+malformed-selection rejection, and a four-pair mixed injected/recomputed
+window. Run the two source variants into separate output directories:
 
 ```bash
 make defconfig-mot-author-mechanics
@@ -82,10 +84,11 @@ make mot-author-mechanics-preflight \
   MOT_TARGET_MODEL=/path/to/pinned-gpt2-medium
 ```
 
-Modified MoT adds native GPT-2 scaling for reduced sparse selections, uses
-the native attention operator for complete key coverage, and preserves an
-identity map only when token IDs, decoded text, and token spans agree. It does
-not correct or admit unequal-token-grid execution.
+Modified MoT preserves the failed gathered backend as a compatibility path.
+The admitted quality pilot uses `attention_backend=dense_selected`: it forms
+the exact selected causal mask and calls native GPT-2 attention math. This is
+a correctness backend with quadratic working storage, not a sparse-compute or
+serving-speed result. Unequal-token-grid execution remains unadmitted.
 
 After both mechanics controls pass, freeze the reserved training-only batch
 from the pinned OpenWebText revision. This CPU step saves the exact 32 x
