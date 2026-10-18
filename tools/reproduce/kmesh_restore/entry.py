@@ -11,7 +11,13 @@ from pathlib import Path
 import subprocess
 import sys
 
-from restore_common import CHUNK_BYTES, CHUNKS, LMCACHE_COMMIT, VLLM_COMMIT
+from restore_common import (
+    CHUNK_BYTES,
+    CHUNKS,
+    LMCACHE_COMMIT,
+    SINGLEFLIGHT_COMMIT,
+    VLLM_COMMIT,
+)
 
 HERE = Path(__file__).resolve().parent
 FIELDS = (
@@ -56,6 +62,9 @@ def command(config: dict) -> list[str]:
         "SECTION": "section",
     }
     result = [sys.executable, str(HERE / "run.py")]
+    if config["SECTION"] == "singleflight":
+        result = [sys.executable, str(HERE / "singleflight.py")]
+        flags.pop("SECTION")
     for key, flag in flags.items():
         result.extend(["--" + flag, config.get(key, "")])
     if config["SECTION"] == "coldburst":
@@ -78,17 +87,23 @@ def main() -> None:
             json.dumps(
                 {
                     "vllm_commit": VLLM_COMMIT,
-                    "lmcache_commit": LMCACHE_COMMIT,
+                    "lmcache_commit": (
+                        SINGLEFLIGHT_COMMIT
+                        if config["SECTION"] == "singleflight"
+                        else LMCACHE_COMMIT
+                    ),
                     "ancestor_bytes": CHUNK_BYTES * CHUNKS,
-                    "rounds": 1 if config["SECTION"] == "coldburst" else 4,
+                    "rounds": (
+                        1 if config["SECTION"] in ("coldburst", "singleflight") else 4
+                    ),
                     "section": config["SECTION"],
                     "adapter_samples_per_round": (
-                        0 if config["SECTION"] == "coldburst" else 100
+                        0 if config["SECTION"] in ("coldburst", "singleflight") else 100
                     ),
                     "serving_families_per_fanout_per_round": (
                         3
                         if config["SECTION"] == "coldburst"
-                        else (20 if config["SECTION"] == "all" else 0)
+                        else (20 if config["SECTION"] in ("all", "singleflight") else 0)
                     ),
                     "command": command(config),
                     "missing_inputs": missing,
@@ -96,6 +111,17 @@ def main() -> None:
                 },
                 indent=2,
             )
+        )
+    elif args.action == "verify" and config["SECTION"] == "singleflight":
+        subprocess.run(
+            [
+                sys.executable,
+                str(HERE / "singleflight.py"),
+                "--verify",
+                "--output",
+                config["OUTPUT"],
+            ],
+            check=True,
         )
     elif args.action == "verify":
         subprocess.run(

@@ -181,6 +181,9 @@ def main(config: dict, role: str) -> None:
                 "lmcache.mp.host": "tcp://127.0.0.1",
                 "lmcache.mp.port": config["mq_port"],
                 "lmcache.mp.isolated_ipc": True,
+                "lmcache.mp.external_singleflight": config.get(
+                    "external_singleflight", False
+                ),
                 "lmcache.mp.mq_timeout": 30.0,
                 "lmcache.mp.heartbeat_interval": 1.0,
             },
@@ -316,6 +319,12 @@ def main(config: dict, role: str) -> None:
                         before["l2_adapters"][0]["core"],
                         after["l2_adapters"][0]["core"],
                     )
+                sf_stats = None
+                if role == "consumer" and "external_singleflight" in config:
+                    connector = (
+                        llm.llm_engine.engine_core.engine_core.scheduler.connector
+                    )
+                    sf_stats = connector.get_singleflight_stats()
                 records.append(
                     {
                         "fanout": fanout,
@@ -326,6 +335,7 @@ def main(config: dict, role: str) -> None:
                         "before": before,
                         "after": after,
                         "live_prefix": live,
+                        "singleflight": sf_stats,
                     }
                 )
     finally:

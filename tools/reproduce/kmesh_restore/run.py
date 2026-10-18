@@ -18,6 +18,7 @@ import time
 
 from restore_common import (
     LMCACHE_COMMIT,
+    SINGLEFLIGHT_COMMIT,
     VLLM_COMMIT,
     cold_l1,
     create_media,
@@ -131,7 +132,10 @@ def main(args: argparse.Namespace) -> None:
     )
     source = {
         "vllm": source_identity(args.vllm_source, VLLM_COMMIT),
-        "lmcache": source_identity(args.lmcache_source, LMCACHE_COMMIT),
+        "lmcache": source_identity(
+            args.lmcache_source,
+            SINGLEFLIGHT_COMMIT if args.singleflight_control else LMCACHE_COMMIT,
+        ),
     }
     model_files = json.loads((HERE / "model-files.json").read_text())
     for name, expected in model_files.items():
@@ -176,6 +180,8 @@ def main(args: argparse.Namespace) -> None:
         },
     )
     config = {"model": str(args.model), "gpu_provider": args.gpu_provider}
+    if args.singleflight_control:
+        config["external_singleflight"] = args.singleflight_control == "on"
     write_json(
         args.output / "plan.json",
         {
@@ -183,6 +189,7 @@ def main(args: argparse.Namespace) -> None:
             "adapter_samples": args.adapter_samples,
             "serving_samples": args.serving_samples if args.section != "adapter" else 0,
             "section": args.section,
+            "singleflight_control": args.singleflight_control,
             "fanouts": [2, 4, 8] if args.section == "coldburst" else [1, 5],
             "mode_order": [
                 list(("staged", "direct") if i % 2 == 0 else ("direct", "staged"))
@@ -315,7 +322,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--section", choices=("adapter", "all", "coldburst"), default="all"
     )
+    parser.add_argument(
+        "--singleflight-control",
+        choices=("off", "on"),
+        help="use the pinned coalescing source with the gate disabled or enabled",
+    )
     args = parser.parse_args()
+    if args.singleflight_control and args.section != "coldburst":
+        parser.error("singleflight controls require the coldburst section")
     if min(args.adapter_samples, args.serving_samples, args.rounds) <= 0:
         parser.error("sample and round counts must be positive")
     main(args)

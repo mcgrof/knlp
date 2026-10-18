@@ -104,13 +104,15 @@ config KNLP_KMESH_RESTORE_GPU_PROVIDER
 	  Use native only after qualifying CUDA DMA-BUF export on the host.
 
 config KNLP_KMESH_RESTORE_SECTION
-	string "Scope: adapter, all, or coldburst (arrival controls)"
+	string "Scope: adapter, all, coldburst, or singleflight"
 	default "adapter"
 	help
 	  Adapter reproduces the qualified transport comparison. All also
 	  runs the serving gate, which can reject cold-burst recomputation.
 	  Coldburst compares simultaneous arrivals with a completed leader,
 	  recording backend reads and live ancestor destination blocks.
+	  Singleflight compares disabled and enabled exact-prefix load gates
+	  on their separately pinned LMCache source, including backend reads.
 
 endif
 

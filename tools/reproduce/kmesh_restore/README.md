@@ -312,3 +312,30 @@ Percentiles use linear interpolation at `(n - 1) * p / 100`. First-token samples
 from siblings in one burst share a scheduling episode; they are not independent
 families. Report sample counts and paired-round variation with any latency
 claim, and keep failed attempts separate from accepted timing.
+
+## Exact-prefix load coalescing
+
+`make defconfig-kmesh-singleflight-cuda` selects a separate, pinned LMCache
+branch with the original external-load singleflight gate. Singleflight means
+one request loads an ancestor while compatible followers wait for an ordinary
+vLLM local prefix-cache hit. vLLM remains at the serving-replay pin. The gate
+is disabled by default outside this profile.
+
+Set the same `KMESH_RESTORE_*` input paths as the cold-arrival profile, pointing
+LMCache at `2026-10-17-feature-kmesh-external-singleflight`. Run
+`make kmesh-restore-plan`, then run `make kmesh-restore` with
+the prepared runtime. Use `make kmesh-restore-verify` for a GPU-free replay of the
+saved evidence. The profile runs disabled and enabled controls with identical
+sources, native binaries and model artifacts, twenty retained families plus
+three warmups per case, burst fanout 2/4/8 and a completed-leader fanout 4.
+
+Both controls retain all eight generated tokens and chosen-token log
+probabilities against recomputation, producer/restored model-KV checksums,
+native route and byte receipts, and live block ownership. The enabled arm
+must show one external engine load and one ready ancestor per family, local
+hits for the followers, no remaining registry state, and at least one actual
+singleflight join. A run without joins does not qualify the mechanism.
+
+This gate follows LOOKUP, which starts NVMe prefetch before subtracting local
+engine hits. Backend reads are still reported independently; sharing one GPU
+ancestor does not establish fewer NVMe reads or lower serving latency.
