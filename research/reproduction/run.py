@@ -26,6 +26,7 @@ STUDIES = (
     "gsm8k",
     "beta",
     "time-budget",
+    "routing-audit",
 )
 
 
@@ -54,6 +55,10 @@ def configuration(path, overrides=()):
             "TIME_CARD",
             "TIME_RESOURCE",
             "TIME_ACTION",
+            "AUDIT_INPUTS",
+            "AUDIT_ACTION",
+            "AUDIT_RESULT",
+            "AUDIT_PROPOSAL",
         }
         if name not in allowed:
             raise ValueError("Unknown configuration override: " + name)
@@ -80,14 +85,21 @@ def configuration(path, overrides=()):
         "time_card": get("TIME_CARD", ""),
         "time_resource": get("TIME_RESOURCE", ""),
         "time_action": get("TIME_ACTION", "qualify"),
+        "audit_inputs": get("AUDIT_INPUTS", ""),
+        "audit_action": get("AUDIT_ACTION", "audit"),
+        "audit_result": get("AUDIT_RESULT", ""),
+        "audit_proposal": get("AUDIT_PROPOSAL", ""),
     }
     if result["study"] not in STUDIES or result["device"] not in ("cpu", "cuda"):
         raise ValueError("Unknown study or device")
     if result["max_seconds"] < 0 or not 1 <= result["cpu_threads"] <= 64:
         raise ValueError("Invalid resource limit")
-    if result["study"] in ("beta", "time-budget") and result["max_seconds"] == 0:
+    if (
+        result["study"] in ("beta", "time-budget", "routing-audit")
+        and result["max_seconds"] == 0
+    ):
         raise ValueError(
-            "The beta and time-budget studies require a finite elapsed-time limit"
+            "The beta, time-budget and routing studies require a finite elapsed-time limit"
         )
     if result["seeds"] and result["study"] not in ("null", "layerrope"):
         raise ValueError("Aggregate and confirmation seed sets cannot be replaced")
@@ -105,7 +117,7 @@ def plan(config):
         "effective_config": config,
         "scope": "smoke" if config["smoke"] else "scientific reproduction",
         "scientific_confirmation_allowed": not config["smoke"]
-        and config["study"] not in ("beta", "time-budget"),
+        and config["study"] not in ("beta", "time-budget", "routing-audit"),
         "full_gain_beta": {
             "beta_initializations": [-1.0, -0.5, 0.0],
             "language_depth": 32,
@@ -261,6 +273,48 @@ class Runner:
             "--root",
             self.root / "time-budget",
         )
+
+    def routing_audit(self):
+        module = "research.layerrope_beta.time_budget.routing_audit"
+        pilot = "research.layerrope_beta.time_budget.routing_pilot"
+        if self.config["smoke"]:
+            self.command(
+                module,
+                "--smoke",
+                "--out",
+                self.root / "routing-audit.json",
+                "--device",
+                self.config["device"],
+            )
+            self.command(pilot, "--smoke", "--out", self.root / "routing-pilot")
+        elif self.config["audit_action"] == "audit" and self.config["audit_inputs"]:
+            self.command(
+                module,
+                "--inputs",
+                self.config["audit_inputs"],
+                "--out",
+                self.root / "routing-audit",
+                "--device",
+                self.config["device"],
+            )
+        elif (
+            self.config["audit_action"] == "pilot"
+            and self.config["audit_result"]
+            and self.config["audit_proposal"]
+        ):
+            self.command(
+                pilot,
+                "--proposal",
+                self.config["audit_proposal"],
+                "--audit",
+                self.config["audit_result"],
+                "--out",
+                self.root / "routing-pilot",
+            )
+        else:
+            raise ValueError(
+                "Set routing audit inputs, or a completed audit and pilot proposal"
+            )
 
     def mnist(self):
         study, smoke = self.config["study"], self.config["smoke"]
@@ -568,12 +622,14 @@ def execute(config):
             runner.beta()
         elif config["study"] == "time-budget":
             runner.time_budget()
+        elif config["study"] == "routing-audit":
+            runner.routing_audit()
         else:
             runner.tinystories()
         report["status"] = "complete"
         report["scientific_confirmation_allowed"] = not config["smoke"] and config[
             "study"
-        ] not in ("cache", "gsm8k", "beta", "time-budget")
+        ] not in ("cache", "gsm8k", "beta", "time-budget", "routing-audit")
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise

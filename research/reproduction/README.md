@@ -35,6 +35,8 @@ and reporting order. A failed qualification prevents measured training.
 | `layerrope-mhc-beta-smoke` | Synthetic CPU training, checkpoint, observer and FP4/FP8 evaluation checks |
 | `layerrope-mhc-time-budget` | Four fresh model families at equal training time; explicit qualification and frozen run card |
 | `layerrope-mhc-time-budget-smoke` | Synthetic CPU checks for equal-time training, resume and reduced precision evaluation |
+| `layerrope-mhc-routing-audit` | Saved-input finite routing replay, then a separately gated paired training pilot |
+| `layerrope-mhc-routing-audit-smoke` | CPU normalization, gradient, capture and common-update checkpoint checks |
 
 For example:
 
@@ -68,6 +70,9 @@ input preparation, seed-audit and bounded hardware decisions. Its own
 supervisor qualifies two H100 GPUs before accepting the final matrix.
 Unlike the earlier routes, its landmark checkpoints live inside the
 configured output run so that each receipt and retained state stay together.
+The [routing audit](../layerrope_beta/time_budget/ROUTING_AUDIT.md) preserves
+the original finite operator and requires numerical replay before a small
+fixed-rate training pilot. It does not reopen the full quantization study.
 
 MNIST is downloaded by torchvision. TinyStories preparation downloads the
 pinned `roneneldan/TinyStories` Parquet shards and GPT-2 tokenizer, scans all

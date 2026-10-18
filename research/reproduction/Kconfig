@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta, time-budget"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta, time-budget, routing-audit"
 	default "mnist"
 
 config RESIDUAL_SMOKE
@@ -85,6 +85,22 @@ config RESIDUAL_TIME_RESOURCE
 config RESIDUAL_TIME_ACTION
 	string "Equal-time action: qualify or run"
 	default "qualify"
+
+config RESIDUAL_AUDIT_INPUTS
+	string "Frozen routing replay inputs (JSON)"
+	default ""
+
+config RESIDUAL_AUDIT_ACTION
+	string "Routing follow-up: audit or pilot"
+	default "audit"
+
+config RESIDUAL_AUDIT_RESULT
+	string "Completed routing audit result for a conditional pilot"
+	default ""
+
+config RESIDUAL_AUDIT_PROPOSAL
+	string "Frozen pilot proposal with fresh-seed provenance"
+	default ""
 
 endif
 endmenu

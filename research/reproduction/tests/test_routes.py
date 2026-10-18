@@ -25,6 +25,8 @@ PRESETS = (
     "layerrope-mhc-beta-smoke",
     "layerrope-mhc-time-budget",
     "layerrope-mhc-time-budget-smoke",
+    "layerrope-mhc-routing-audit",
+    "layerrope-mhc-routing-audit-smoke",
 )
 
 
