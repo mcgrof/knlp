@@ -261,14 +261,11 @@
     <h2 class="panel-title">Earlier R&amp;D — Fusion Principle Proof (Custom INT4 Triton Kernel)</h2>
   </div>
   <p class="panel-body">
-    The asymmetric FlashInfer result above rests on a structural claim: kernel fusion — dequantizing
-    KV inside the attention loop instead of materializing an intermediate FP16 buffer — is what turns
-    KV compression into real decode throughput. That claim was first established by a custom fused
-    INT4 Triton kernel before this study integrated the asymmetric FlashInfer serving path. It remains
-    on the repository as a controlled experiment and is now demoted to R&amp;D/appendix status; the
-    paper's main result is the FlashInfer path (the
-    <a href="#asym-k16v8" style="color:var(--cyan);">headline asymmetric section</a> and the
-    per-model throughput above).
+    Earlier custom INT4 Triton experiments compare reconstruction into an intermediate FP16 buffer
+    with dequantization inside the attention loop. They illustrate the cost of extra memory traffic
+    in decode. The <a href="#october-followup-checks">current serving result</a> also depends on
+    prefill routing: a bounded shared reconstruction workspace helps prefill, while decode continues
+    to consume compressed values. These are different operations and measured recipes.
   </p>
 
   <div class="pipeline-grid">
@@ -424,7 +421,7 @@
   <div class="panel-header"><span class="panel-id">Hardware scope</span><h2>Carry the method across GPUs. Refit the curve.</h2></div>
   <p class="panel-body">The wider study includes W7900, A100, H100, B200, H200, and MI300X experiments,
     with different subsets used for memory-traffic characterization, long-context capacity, and dtype comparisons.
-    They are not one matched end-to-end serving matrix. The H100 serving tables above and standalone attention
+    They are not one matched end-to-end serving matrix. The H100 serving tables and standalone attention
     microbenchmarks measure different scopes; their token rates should not share an unlabeled leaderboard.</p>
   <p class="panel-body">Use sustained bandwidth and measured latency at the target shape. Peak HBM bandwidth
     alone does not determine decode speed. Kernel dispatch, cache residency, launch overhead, parallelism,
@@ -835,7 +832,7 @@
   </div>
 
   <p class="panel-body">For the current qualified serving implementation, use the
-    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md">October reproduction configuration</a>
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-routing-d64-followup-2026.md">current routing reproduction method</a>
     and its immutable source pins. That Qwen3 recipe is separate from the historical Qwen2.5
     measurements above and does not recover their original runtime. The July 2 decode-only
     links are not an end-to-end reproduction command.</p>
@@ -843,7 +840,7 @@
 
 <section class="panel-section" id="asym-k16v8">
   <div class="panel-header">
-    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">HEADLINE</span>
+    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">Earlier kernel and quality evidence</span>
     <h2 class="panel-title">K16/V8 — A Qualified Option for Fragile Keys</h2>
   </div>
   <p class="panel-body">
@@ -948,7 +945,7 @@
     not qualify every cell in this table. An equal-memory capacity test answers a different question.</div>
   <div class="citation-block">Historical evidence identifier: <code>24d34902e272a293409f0b9f90d362344252f342</code>,
     <code>h100_throughput_sweep.json</code>. The printed later branch pins are not attested as the source
-    of these April rows. The new matched study will retain this table and report its own workload and provenance.</div>
+    of these April rows. The <a href="#october-b32-findings">completed October matrix</a> retains this table and reports its own workload and provenance.</div>
 </section>
   </details>
 </section>
