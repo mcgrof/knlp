@@ -275,6 +275,18 @@ optional eager-prefetch flag is off. Storage reads and GPU destinations must
 therefore be assessed separately. See the
 [per-family results](https://knlp.io/kmesh.html#coldburst).
 
+The larger twenty-family repeat also passes: all 828 continuations and 6,624
+chosen-token log probabilities match recomputation exactly, including warmups.
+Every family still reads an ancestor per child at the backend. Ready engine
+copies range from one to four in concurrent bursts; both leader-first arms
+share one copy in all twenty retained families. These are conditioned samples
+from one engine per mode/arrival, not a general race-rate or latency result.
+The page retains both sample sets and their limits. To reproduce the larger
+set, invoke `run.py` in the same queued wrapper with `--section coldburst
+--rounds 1 --adapter-samples 1 --serving-samples 20`, alongside the prepared
+model, source, provider and fresh output arguments. The defconfig retains its
+three-family default.
+
 ## Recheck the evidence
 
 Raw provenance includes exact source commits, model artifact hashes, native

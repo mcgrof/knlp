@@ -867,6 +867,32 @@ warm. The historical host-RAM tier is not retested. The
 <a href="data/kmesh-coldburst-20261017.json">sanitized evidence</a> retains
 each family's backend counts, live destinations, local-hit/load counts and
 source/model/native hashes.</p>
+<h3>Twenty-family repeat</h3>
+<p>A larger repeat on the same RTX 4090 and frozen sources retains 20 families
+per case, again after three warmups. It passes all strict gates:
+<strong>828 continuations and 6,624 chosen-token log probabilities</strong>
+match recomputation exactly, including warmups. Every retained family still
+reads the ancestor once per child at the backend. The ready GPU-copy counts
+vary as follows; each histogram contains twenty retained families.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Case</th><th scope="col">Host-staged ready ancestor copies</th><th scope="col">DMA-BUF ready ancestor copies</th></tr>
+<tr><td class="hi">Two-child burst</td><td>1 copy: 19; 2 copies: 1</td><td>1 copy: 20</td></tr>
+<tr><td class="hi">Four-child burst</td><td>1 copy: 20</td><td>1 copy: 17; 2 copies: 2; 4 copies: 1</td></tr>
+<tr><td class="hi">Eight-child burst</td><td>1 copy: 15; 2 copies: 5</td><td>1 copy: 14; 3 copies: 4; 4 copies: 2</td></tr>
+<tr><td class="hi">Leader, then three followers</td><td>1 copy: 20</td><td>1 copy: 20</td></tr>
+</table>
+</div>
+<p>The leader-first control always shares one GPU ancestor while still reading
+192 MiB at the backend for the 48 MiB ancestor. Concurrent bursts occasionally
+need additional engine loads, including four-copy cases in the direct path.
+These observations strengthen the separation between repeated storage reads
+and the remaining admission race. Each mode/arrival combination uses one engine;
+the families are not independent process-paired trials and do not establish
+a general race rate or a difference in race probability between paths.
+The <a href="data/kmesh-coldburst-repeat20-20261017.json">repeat record</a>
+preserves the histograms and unchanged source/model/native identities.
+No coalescing change or latency qualification is included.</p>
 <h3>Reproduce the arrival controls</h3>
 <pre><code>make defconfig-kmesh-coldburst-cuda
 make kmesh-restore-plan
