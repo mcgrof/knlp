@@ -61,6 +61,10 @@ def run_diagnostic_controls(
         raise RuntimeError("Modified-MoT diagnostic manifest content hash mismatch")
     if actual_manifest_sha != FROZEN_DIAGNOSTIC_CONTENT_SHA256:
         raise RuntimeError("Modified-MoT diagnostic is not the frozen admitted data")
+    tokenizer_fingerprint_matches = (
+        common._frozen_data_tokenizer_sha256(target_tokenizer)
+        == manifest.get("tokenizer_sha256")
+    )
 
     scan_rows = []
     mismatch_item_ids = []
@@ -188,6 +192,7 @@ def run_diagnostic_controls(
         all_identity
         and document_overlap_empty
         and unequal_grid_blocked
+        and tokenizer_fingerprint_matches
         and partial_boundary["production_exact_transfer_preserves_ids"]
         and partial_boundary["future_source_weight_max"] == 0.0
     )
@@ -210,6 +215,7 @@ def run_diagnostic_controls(
         "partial_unicode_boundary": partial_boundary,
         "unequal_grid_blocked": unequal_grid_blocked,
         "document_overlap_empty": document_overlap_empty,
+        "runtime_tokenizer_fingerprint_matches_frozen_data": tokenizer_fingerprint_matches,
         "decision": {
             "identity_contract_pass": all_identity,
             "frozen_data_contract_pass": document_overlap_empty,

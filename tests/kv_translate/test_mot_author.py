@@ -118,7 +118,7 @@ def test_model_snapshot_requires_exact_revision(tmp_path: Path) -> None:
 
 
 def test_modified_mot_commit_chain_is_explicit() -> None:
-    assert len(MODIFIED_MOT_COMMITS) == 5
+    assert len(MODIFIED_MOT_COMMITS) == 6
     assert MODIFIED_MOT_SHA == MODIFIED_MOT_COMMITS[-1]
     assert all(len(commit) == 40 for commit in MODIFIED_MOT_COMMITS)
 

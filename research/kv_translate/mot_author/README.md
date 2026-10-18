@@ -7,7 +7,7 @@ unchanged. The author code uses the PolyForm Noncommercial License. It is not
 copied into knlp.
 
 The bounded diagnostic uses an isolated modified-MoT chain ending at
-`663b0e865abcd23fd543f306aaa8e9f6a9f340d2`. It preserves exact token IDs for
+`94c7f53c7498e765eaa7aea74f937493b8ed21fa`. It preserves exact token IDs for
 the verified GPT-2 tokenizer pair, applies that identity contract in channel
 profiling, and uses a dense selected-key correctness backend for reduced Top-S
 replay. It consumes frozen token rows offline and writes step-level training
