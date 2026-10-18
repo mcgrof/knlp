@@ -14,6 +14,7 @@ import sys
 from restore_common import (
     CHUNK_BYTES,
     CHUNKS,
+    FAMILY_PREFETCH_COMMIT,
     LMCACHE_COMMIT,
     SINGLEFLIGHT_COMMIT,
     VLLM_COMMIT,
@@ -67,9 +68,16 @@ def command(config: dict) -> list[str]:
         flags.pop("SECTION")
     for key, flag in flags.items():
         result.extend(["--" + flag, config.get(key, "")])
-    if config["SECTION"] == "coldburst":
+    if config["SECTION"] in ("coldburst", "family"):
         result.extend(
-            ["--rounds", "1", "--serving-samples", "3", "--adapter-samples", "1"]
+            [
+                "--rounds",
+                "1",
+                "--serving-samples",
+                "5" if config["SECTION"] == "family" else "3",
+                "--adapter-samples",
+                "1",
+            ]
         )
     return result
 
@@ -88,22 +96,38 @@ def main() -> None:
                 {
                     "vllm_commit": VLLM_COMMIT,
                     "lmcache_commit": (
-                        SINGLEFLIGHT_COMMIT
-                        if config["SECTION"] == "singleflight"
-                        else LMCACHE_COMMIT
+                        FAMILY_PREFETCH_COMMIT
+                        if config["SECTION"] == "family"
+                        else (
+                            SINGLEFLIGHT_COMMIT
+                            if config["SECTION"] == "singleflight"
+                            else LMCACHE_COMMIT
+                        )
                     ),
                     "ancestor_bytes": CHUNK_BYTES * CHUNKS,
                     "rounds": (
-                        1 if config["SECTION"] in ("coldburst", "singleflight") else 4
+                        1
+                        if config["SECTION"] in ("coldburst", "singleflight", "family")
+                        else 4
                     ),
                     "section": config["SECTION"],
                     "adapter_samples_per_round": (
-                        0 if config["SECTION"] in ("coldburst", "singleflight") else 100
+                        0
+                        if config["SECTION"] in ("coldburst", "singleflight", "family")
+                        else 100
                     ),
                     "serving_families_per_fanout_per_round": (
-                        3
-                        if config["SECTION"] == "coldburst"
-                        else (20 if config["SECTION"] in ("all", "singleflight") else 0)
+                        5
+                        if config["SECTION"] == "family"
+                        else (
+                            3
+                            if config["SECTION"] == "coldburst"
+                            else (
+                                20
+                                if config["SECTION"] in ("all", "singleflight")
+                                else 0
+                            )
+                        )
                     ),
                     "command": command(config),
                     "missing_inputs": missing,

@@ -104,7 +104,7 @@ config KNLP_KMESH_RESTORE_GPU_PROVIDER
 	  Use native only after qualifying CUDA DMA-BUF export on the host.
 
 config KNLP_KMESH_RESTORE_SECTION
-	string "Scope: adapter, all, coldburst, or singleflight"
+	string "Scope: adapter, all, coldburst, singleflight, or family"
 	default "adapter"
 	help
 	  Adapter reproduces the qualified transport comparison. All also
@@ -113,6 +113,8 @@ config KNLP_KMESH_RESTORE_SECTION
 	  recording backend reads and live ancestor destination blocks.
 	  Singleflight compares disabled and enabled exact-prefix load gates
 	  on their separately pinned LMCache source, including backend reads.
+	  Family releases children during a declared ancestor preload, against
+	  reactive coalescing and a fully warm control, with unused-work checks.
 
 endif
 

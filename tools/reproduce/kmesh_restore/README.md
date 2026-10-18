@@ -339,3 +339,47 @@ singleflight join. A run without joins does not qualify the mechanism.
 This gate follows LOOKUP, which starts NVMe prefetch before subtracting local
 engine hits. Backend reads are still reported independently; sharing one GPU
 ancestor does not establish fewer NVMe reads or lower serving latency.
+
+## Actual fork-gap ancestor preloading
+
+`make defconfig-kmesh-family-prefetch-cuda` selects LMCache
+`2026-10-17-feature-kmesh-family-prefetch` at the separately pinned declaration
+implementation. It keeps vLLM unchanged. The same prepared inputs and
+`make kmesh-restore-plan`, direct execution and `make kmesh-restore-verify` flow
+apply. This profile retains five families after three warmups per case.
+
+The public engine loop submits a one-token warm request for the ancestor,
+then adds children when the measured clock reaches the requested fork gap.
+No background thread calls `LLM.generate`. Children can actually arrive before
+the warm request finishes. Requested gaps are 0, 10, 25 and 100 milliseconds;
+a synchronous engine step may delay admission, so records retain the attained
+gap and observed warm-completion time. Child latency is measured from actual
+arrival, with no calculated unfinished-restore term added to it.
+
+Compare fanouts four and eight on staged and DMA-BUF storage against reactive
+singleflight and a control that waits for warming to complete before releasing
+children. All controls use the same source, engine driver, fixed model seed,
+512 MiB engine KV pool and 512 MiB external arena. Nine maximum sequences
+allow eight children and their warm request to enter the engine. All families
+start with empty local engine and external L1 caches; the NVMe index stays warm.
+
+The declaration records intent; the harness performs the actual warm request.
+Matching children with insufficient local coverage defer before LOOKUP while
+the declared warm request is active. They retry after its completion or
+cancellation; expiry bounds the wait. This avoids a child prefetch racing the
+warm request's L1 write reservations. Lazy LOOKUP is required. Local child
+reuse is credited when allocation admits the request, independently of an
+external lookup hit or miss.
+Its internal request ID is excluded from child attribution even if it becomes
+a local-hit follower. A separate unused-preload control performs the warm work,
+releases no children, and must record one wasted declaration and its actual
+backend reads. Declaration bytes are logical accounting, not storage savings.
+
+Every child and warm request passes token/logprob checks against recomputation
+or the producer, with native route/byte/ownership checks on every family. The
+first warmup of each case also records live ancestor ownership and compares
+restored model-KV checksums. Retained timing samples have those observation
+hooks removed. Each fanout uses a fresh storage owner and engine so the full native I/O
+audit stays within its bounded history; no evidence eviction is accepted.
+Cases use fixed order and one engine per path/fanout; results do not
+establish a general production speedup or independent process-level confidence.

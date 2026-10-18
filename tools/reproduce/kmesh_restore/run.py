@@ -17,6 +17,7 @@ import sys
 import time
 
 from restore_common import (
+    FAMILY_PREFETCH_COMMIT,
     LMCACHE_COMMIT,
     SINGLEFLIGHT_COMMIT,
     VLLM_COMMIT,
@@ -72,7 +73,9 @@ def execute(script: str, arguments: list[str], log: Path) -> None:
         stop(process)
 
 
-def serving(config: dict, destination: Path, samples: int) -> None:
+def serving(
+    config: dict, destination: Path, samples: int, consumer_script: str = "worker.py"
+) -> None:
     """Prime one storage owner and use a fresh consumer engine for each arm."""
     destination.mkdir()
     cfg = config | {
@@ -101,7 +104,15 @@ def serving(config: dict, destination: Path, samples: int) -> None:
         else:
             raise TimeoutError("storage server health check timed out")
         execute("worker.py", [str(path), "producer"], destination / "producer.log")
-        execute("worker.py", [str(path), "consumer"], destination / "consumer.log")
+        execute(
+            consumer_script,
+            (
+                [str(path)]
+                if consumer_script == "family_worker.py"
+                else [str(path), "consumer"]
+            ),
+            destination / "consumer.log",
+        )
         cold_l1(cfg["http_port"])
         write_json(destination / "terminal.json", http(cfg["http_port"], "status"))
     finally:
@@ -134,7 +145,13 @@ def main(args: argparse.Namespace) -> None:
         "vllm": source_identity(args.vllm_source, VLLM_COMMIT),
         "lmcache": source_identity(
             args.lmcache_source,
-            SINGLEFLIGHT_COMMIT if args.singleflight_control else LMCACHE_COMMIT,
+            (
+                FAMILY_PREFETCH_COMMIT
+                if args.section == "family"
+                else (
+                    SINGLEFLIGHT_COMMIT if args.singleflight_control else LMCACHE_COMMIT
+                )
+            ),
         ),
     }
     model_files = json.loads((HERE / "model-files.json").read_text())
@@ -190,7 +207,11 @@ def main(args: argparse.Namespace) -> None:
             "serving_samples": args.serving_samples if args.section != "adapter" else 0,
             "section": args.section,
             "singleflight_control": args.singleflight_control,
-            "fanouts": [2, 4, 8] if args.section == "coldburst" else [1, 5],
+            "fanouts": (
+                [4, 8]
+                if args.section == "family"
+                else ([2, 4, 8] if args.section == "coldburst" else [1, 5])
+            ),
             "mode_order": [
                 list(("staged", "direct") if i % 2 == 0 else ("direct", "staged"))
                 for i in range(args.rounds)
@@ -225,6 +246,37 @@ def main(args: argparse.Namespace) -> None:
             args.output / ("corruption-" + mode + "-rejected.json"),
             {"returncode": code, "expected_payload_rejection": True},
         )
+    if args.section == "family":
+        config |= {
+            "fanouts": [4, 8],
+            "arena_bytes": 512 << 20,
+            "decode_tokens": 8,
+            "external_singleflight": True,
+            "family_prefetch": True,
+            "max_num_seqs": 8 + 1,
+        }
+        oracle = args.output / "oracle"
+        oracle.mkdir()
+        oracle_config = oracle / "config.json"
+        write_json(
+            oracle_config, config | {"output": str(oracle), "serving_samples": 1}
+        )
+        execute("worker.py", [str(oracle_config), "oracle"], oracle / "oracle.log")
+        for mode in ("staged", "direct"):
+            for fanout in (4, 8):
+                serving(
+                    config | {"mode": mode, "fanouts": [fanout]},
+                    args.output / f"{mode}-n{fanout}",
+                    args.serving_samples,
+                    "family_worker.py",
+                )
+                print("COMPLETE", mode, "family", fanout, flush=True)
+        execute(
+            "verify.py",
+            [str(args.output), "--section", "family"],
+            args.output / "family-verify.log",
+        )
+        return
     if args.section == "coldburst":
         config |= {
             "fanouts": [2, 4, 8],
@@ -320,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument("--serving-samples", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument(
-        "--section", choices=("adapter", "all", "coldburst"), default="all"
+        "--section", choices=("adapter", "all", "coldburst", "family"), default="all"
     )
     parser.add_argument(
         "--singleflight-control",

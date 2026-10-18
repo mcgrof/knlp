@@ -291,10 +291,17 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("--stage", choices=("smoke", "measured"), default="measured")
     parser.add_argument(
-        "--section", choices=("all", "adapter", "serving", "coldburst"), default="all"
+        "--section",
+        choices=("all", "adapter", "serving", "coldburst", "family"),
+        default="all",
     )
     args = parser.parse_args()
-    if args.section == "coldburst":
+    if args.section == "family":
+        from family_verify import verify_family
+
+        result = verify_family(args.root)
+        write_json(args.root / "family-verified.json", result)
+    elif args.section == "coldburst":
         from coldburst_verify import verify_coldburst
 
         result = verify_coldburst(args.root)

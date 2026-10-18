@@ -145,16 +145,11 @@ def record_live_prefix_blocks(llm):
         connector.get_num_new_matched_tokens = lookup
 
 
-def main(config: dict, role: str) -> None:
-    """Store the ancestor or measure cold requests with an empty engine cache."""
-    # Latency comparisons observe allocations only in the integrity control.
-    # The cold-burst profile also records live destinations, without a speed claim.
+def create_llm(config: dict, role: str):
+    """Build the same pinned engine for arrival, coalescing and preload replays."""
     os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
-    from vllm import LLM, SamplingParams
+    from vllm import LLM
 
-    output = Path(config["output"])
-    fanouts = config.get("fanouts", [1, 5])
-    ancestor, children = prompts(max(fanouts))
     kwargs = dict(
         model=config["model"],
         revision=REVISION,
@@ -164,7 +159,7 @@ def main(config: dict, role: str) -> None:
         gpu_memory_utilization=0.5,
         kv_cache_memory_bytes=512 << 20,
         max_model_len=8192,
-        max_num_seqs=8,
+        max_num_seqs=config.get("max_num_seqs", 8),
         max_num_batched_tokens=8192,
         enable_chunked_prefill=True,
         disable_log_stats=False,
@@ -181,6 +176,7 @@ def main(config: dict, role: str) -> None:
                 "lmcache.mp.host": "tcp://127.0.0.1",
                 "lmcache.mp.port": config["mq_port"],
                 "lmcache.mp.isolated_ipc": True,
+                "lmcache.mp.family_prefetch": config.get("family_prefetch", False),
                 "lmcache.mp.external_singleflight": config.get(
                     "external_singleflight", False
                 ),
@@ -188,7 +184,51 @@ def main(config: dict, role: str) -> None:
                 "lmcache.mp.heartbeat_interval": 1.0,
             },
         }
-    llm = LLM(**kwargs)
+    return LLM(**kwargs)
+
+
+def result_rows(results, decode_tokens: int) -> list[dict]:
+    """Retain bounded generated tokens, chosen logprobs and engine cache receipts."""
+    rows = []
+    for result in results:
+        sequence = result.outputs[0]
+        if (
+            sequence.finish_reason == "error"
+            or len(sequence.token_ids) != decode_tokens
+        ):
+            raise RuntimeError("vLLM failed to produce the bounded continuation")
+        if result.metrics is None or result.metrics.first_token_latency <= 0:
+            raise RuntimeError("vLLM did not return a first-token latency")
+        rows.append(
+            {
+                "request_id": result.request_id,
+                "token_ids": sequence.token_ids,
+                "logprob": sequence.logprobs[0][sequence.token_ids[0]].logprob,
+                "chosen_logprobs": [
+                    scores[token].logprob
+                    for scores, token in zip(
+                        sequence.logprobs, sequence.token_ids, strict=True
+                    )
+                ],
+                "ttft_ms": result.metrics.first_token_latency * 1000,
+                "kv_transfer_params": getattr(result, "kv_transfer_params", None),
+                "num_cached_tokens": result.num_cached_tokens,
+            }
+        )
+    return rows
+
+
+def main(config: dict, role: str) -> None:
+    """Store the ancestor or measure cold requests with an empty engine cache."""
+    # Latency comparisons observe allocations only in the integrity control.
+    # The cold-burst profile also records live destinations, without a speed claim.
+    os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+    from vllm import SamplingParams
+
+    output = Path(config["output"])
+    fanouts = config.get("fanouts", [1, 5])
+    ancestor, children = prompts(max(fanouts))
+    llm = create_llm(config, role)
     params = SamplingParams(
         temperature=0,
         max_tokens=config.get("decode_tokens", 1),
@@ -208,31 +248,7 @@ def main(config: dict, role: str) -> None:
             [{"prompt_token_ids": p} for p in batch], params, use_tqdm=False
         )
         elapsed = (time.perf_counter_ns() - start) / 1e6
-        rows = []
-        for result in results:
-            sequence = result.outputs[0]
-            if sequence.finish_reason == "error" or len(
-                sequence.token_ids
-            ) != config.get("decode_tokens", 1):
-                raise RuntimeError("vLLM failed to produce the bounded continuation")
-            if result.metrics is None or result.metrics.first_token_latency <= 0:
-                raise RuntimeError("vLLM did not return a first-token latency")
-            rows.append(
-                {
-                    "request_id": result.request_id,
-                    "token_ids": sequence.token_ids,
-                    "logprob": sequence.logprobs[0][sequence.token_ids[0]].logprob,
-                    "chosen_logprobs": [
-                        scores[token].logprob
-                        for scores, token in zip(
-                            sequence.logprobs, sequence.token_ids, strict=True
-                        )
-                    ],
-                    "ttft_ms": result.metrics.first_token_latency * 1000,
-                    "kv_transfer_params": getattr(result, "kv_transfer_params", None),
-                    "num_cached_tokens": result.num_cached_tokens,
-                }
-            )
+        rows = result_rows(results, config.get("decode_tokens", 1))
         return rows, elapsed
 
     records = []
