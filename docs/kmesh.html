@@ -138,7 +138,8 @@ footer a { color: var(--muted); }
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
   <a href="#singleflight">14. Can one loader remove duplicate GPU ancestors?</a>
   <a href="#preload">15. What does an early ancestor declaration buy?</a>
-  <a href="#papers">16. Papers</a>
+  <a href="#retained">16. Can external L1 keep the shared ancestor off NVMe?</a>
+  <a href="#papers">17. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -1054,14 +1055,98 @@ python tools/reproduce/kmesh_restore/publish_family.py /path/to/results \
   --output public-results.json
 python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
   --output preload.svg</code></pre>
-<p>The next control uses LMCache's existing retained L2-to-L1 warm operation
-before the engine preload. It asks whether keeping those chunks in external
-L1 removes repeated NVMe reads while preserving longer-prefix discovery. Its
-HTTP work and extra residency must be counted separately from GPU sharing.</p>
+<p>The following control uses LMCache's existing retained L2-to-L1 warm
+operation before the engine preload, asking whether external-L1 residency
+removes repeated NVMe reads. It counts HTTP work and extra residency
+separately from GPU sharing.</p>
+</section>
+
+<section id="retained">
+<h2>16. Can external L1 keep the shared ancestor off NVMe?</h2>
+<p><strong>GPU sharing and storage residency solve separate problems.</strong>
+An ordinary engine preload makes one ancestor reusable in vLLM, but each
+child's LOOKUP can still read its chunks from NVMe. This control first uses
+LMCache's existing warm-prefetch API to retain those chunks in external L1,
+then submits the same one-token engine warm request. The HTTP operation
+makes chunks resident in LMCache; the engine request makes its own ancestor
+ready for automatic prefix sharing.</p>
+<pre><code>Engine preload: NVMe -&gt; temporary external L1 -&gt; shared vLLM ancestor
+Retained preload: NVMe -&gt; retained external L1 -&gt; shared vLLM ancestor
+Later child LOOKUP: external-L1 hit instead of another NVMe read</code></pre>
+<p>Measured on October 17, 2026, on RTX 4090, both arms use the same
+declaration and singleflight code, start with empty
+resident caches, and preserve the NVMe index. The synthetic fork gap is
+250 ms. The clock starts before HTTP submission
+and completion polling, so that work consumes the supplied lead time.
+The verifier requires both preloads to complete before child release.
+This tests an adequately-warm ancestor; it does not locate the minimum useful
+lead time. Arms alternate within each paired sample. Attained gaps in the
+retained samples range from 250.004 to 250.117 ms.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path / children</th><th scope="col">Engine preload: NVMe MiB</th><th scope="col">Retained preload: NVMe MiB</th><th scope="col">Engine: child TTFT ms</th><th scope="col">Retained: child TTFT ms</th><th scope="col">Engine: L1 MiB resident</th><th scope="col">Retained: L1 MiB resident</th></tr>
+<tr><td class="hi">Host staged / 4</td><td>240</td><td>48</td><td>62.939</td><td>22.050</td><td>0</td><td>48</td></tr><tr><td class="hi">Host staged / 8</td><td>432</td><td>48</td><td>40.792</td><td>40.578</td><td>0</td><td>48</td></tr><tr><td class="hi">DMA-BUF / 4</td><td>240</td><td>48</td><td>71.071</td><td>82.974</td><td>0</td><td>48</td></tr><tr><td class="hi">DMA-BUF / 8</td><td>192–432</td><td>48</td><td>124.600</td><td>136.622</td><td>0</td><td>48</td></tr>
+</table></div>
+<p>NVMe payload and external-L1 allocator use show the observed range across
+5 retained families per arm after three warmups. Latency is the median
+for the first submitted child, measured from its actual engine arrival.
+The whole retained family, including HTTP prefetch and engine warming, must
+read exactly sixteen 3 MiB chunks: one 48 MiB ancestor. Every child must then
+use its local ancestor, with no additional external engine load.
+<a href="data/kmesh-retained-prefetch-20261017.json">All retained samples
+and verification counts</a> are available separately.</p>
+<p>The read reduction is consistent across the retained arm's samples.
+Child latency is mixed: the staged four-child median improves, staged eight
+is nearly unchanged, and both DMA-BUF medians are higher with retention.
+This establishes fewer backend reads at a measured residency cost, rather
+than a general child-latency improvement.</p>
+<p><strong>Retained chunks have a memory cost.</strong> The same 512 MiB
+external arena is configured in both arms, and the table reports used
+allocator bytes inside it. Staged external L1 lives in host RAM; DMA-BUF
+external L1 lives in GPU memory. In the direct arm, its retained ancestor
+is a separate copy from the one shared inside vLLM's 512 MiB KV pool.
+Resident external objects have no read locks, write locks, staging state or
+external I/O leases. This workload has no eviction pressure; it does not
+qualify a residency priority or a lease policy.</p>
+<p>All 384 child and
+68 warm continuations, including warmups
+and unused controls, match their references. All
+3,140 chosen-token log probabilities
+match exactly, maximum delta 0.0. Instrumented warmups check restored model-KV digests and one
+ready engine ancestor. Every family's native registered route, bytes and
+drained ownership pass with no I/O evidence eviction. Four unused retained
+preloads each incur sixteen backend reads and one wasted declaration,
+without a child credit. Terminal cleanup empties external L1.</p>
+<p>These are synthetic exact-prefix requests on RTX 4090, with fanouts four
+and eight, distinct 512-token tails, eight greedy child tokens, one warm
+token, batch-invariant arithmetic and two CPU threads. Each path/fanout uses
+one fresh storage owner and engine. Retained timing samples omit allocation
+observation hooks. Paired alternating arms improve the comparison, but five
+samples from one engine do not establish a general serving throughput gain
+or a causal latency difference between storage paths. Backend payload reads
+are not physical NVMe command counts.</p>
+<h3>Reproduce retained external-L1 prefetch</h3>
+<p>This uses the same pinned LMCache declaration branch and unchanged vLLM
+source as the preceding replay; the retained warm operation already exists
+there. No new kernel or driver interface is required. Use the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">prepared runtime and source instructions</a>.</p>
+<pre><code>make defconfig-kmesh-retained-prefetch-cuda
+make kmesh-restore-plan
+
+# Set prepared model/source/interpreter paths as described in the README.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=retained KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify
+python tools/reproduce/kmesh_restore/publish_retained.py /path/to/results \
+  --output public-results.json</code></pre>
+<p>Further residency work must count displaced cache hits and unused holds
+under trace-supported competing workloads. This control answers the storage
+read question with enough lead time; it does not answer that pressure question
+or establish cross-engine sharing.</p>
 </section>
 
 <section id="papers">
-<h2>16. Papers</h2>
+<h2>17. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>

@@ -437,7 +437,21 @@ still incur sixteen chunk reads and one wasted declaration. Terminal cleanup
 must empty L1. All token, chosen-logprob, model-KV, native-route, byte-count,
 corruption and ownership gates still apply; no audit-history eviction passes.
 
-This profile is implemented and has CPU verifier/driver coverage. Its GPU
-qualification and measured findings are reported separately on the KMesh page.
-It does not qualify eviction pressure, retained-object priority, GPU-memory
-leases, cross-engine sharing, or a general serving latency improvement.
+The RTX 4090 replay passes all numerical, model-KV, native-route and ownership
+gates: 384 child and 68 warm continuations, with 3,140 exact chosen-token
+logprobs. Every retained family reads one 48 MiB ancestor, including its HTTP
+work, and leaves 48 MiB resident in external L1. The ordinary engine preload
+reads 240 MiB for four children and 192–432 MiB for eight in retained samples.
+Staged L1 uses host RAM; DMA-BUF L1 uses GPU memory in addition to vLLM's copy.
+
+Latency remains mixed. The staged four-child median improves, staged eight
+is nearly unchanged, and both direct medians are higher with retention.
+This is read suppression at a measured residency cost. It does not establish
+a general latency gain, eviction-pressure behavior, retained-object priority,
+GPU-memory leases or cross-engine sharing. The public page reports each
+case and its limits. Export an independently verified capture on CPU with:
+
+```sh
+python tools/reproduce/kmesh_restore/publish_retained.py /path/to/results \
+  --output public-results.json
+```
