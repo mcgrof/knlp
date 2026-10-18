@@ -32,7 +32,7 @@ def main(config: dict) -> None:
     from lmcache.v1.multiprocess.http_server import run_http_server
 
     memory = L1MemoryManagerConfig(
-        ARENA_BYTES,
+        config.get("arena_bytes", ARENA_BYTES),
         False,
         shm_name="",
         buffer_registration="fixed" if config["mode"] == "staged" else "none",

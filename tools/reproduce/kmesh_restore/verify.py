@@ -291,7 +291,14 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("--stage", choices=("smoke", "measured"), default="measured")
     parser.add_argument(
-        "--section", choices=("all", "adapter", "serving"), default="all"
+        "--section", choices=("all", "adapter", "serving", "coldburst"), default="all"
     )
     args = parser.parse_args()
-    print(json.dumps(verify(args.root, args.stage, args.section), indent=2))
+    if args.section == "coldburst":
+        from coldburst_verify import verify_coldburst
+
+        result = verify_coldburst(args.root)
+        write_json(args.root / "coldburst-verified.json", result)
+    else:
+        result = verify(args.root, args.stage, args.section)
+    print(json.dumps(result, indent=2))

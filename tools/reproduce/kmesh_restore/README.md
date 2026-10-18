@@ -223,6 +223,47 @@ benefits or prefetch gains. The existing TokenDance shifted-span profile stays
 CPU-backed. This harness imports no family-prefetch or external-singleflight
 implementation.
 
+## Cold external-cache arrival controls
+
+`make defconfig-kmesh-coldburst-cuda` selects the original simultaneous
+arrival versus completed-leader experiment on the current NVMe paths.
+Use the same prepared runtime, source and model inputs above, then inspect
+`make kmesh-restore-plan` and run `make kmesh-restore` with the prepared
+interpreter on an available GPU. The preset selects `KMESH_RESTORE_SECTION=coldburst`, three retained
+families after three excluded warmups per case, bursts of 2, 4 and 8 children,
+and a four-child staggered control. The leader-first call completes before
+the other three requests are submitted. Both host staging and GPU DMA-BUF
+use fresh storage owners with identical settings.
+
+This profile retains the current seed 20260805, 4,096-token ancestor,
+512-token tails and eight-token numerical controls. It does not reproduce the
+historical host-RAM tier or historical wall times.
+The server arena is 512 MiB in each arm so eight outstanding private restores
+are not constrained by the transport comparison's 256 MiB arena. The engine
+KV pool remains 512 MiB, sufficient for eight 48 MiB ancestors and tails.
+The engine prefix cache and external L1 are emptied before each family;
+the owned NVMe file and its ancestor index remain. The staggered control
+does not clear caches between leader completion and follower arrival.
+
+Allocation/free hooks retain each simultaneously referenced ancestor block
+table, request status and computed-token count. Reserved destinations are
+reported separately from running/completed requests whose ancestors are
+ready. This avoids inferring simultaneous sharing from a block ID reused
+after a request finishes. Backend receipts independently count complete
+chunk reads and bytes on the required native path. They are not physical
+NVMe command traces or HBM-bandwidth counters. Scheduler connector calls also
+retain the local-hit count and the newly required external-token count, so
+backend reads need not be mistaken for transfers into new engine pages.
+These instrumented eight-token
+samples do not qualify serving latency or general model quality.
+
+The same token, chosen-logprob, restored-KV, native-route and drained-ownership
+checks apply. No singleflight, family prefetch or new allocator is enabled.
+Recheck with `KMESH_RESTORE_SECTION=coldburst KMESH_RESTORE_OUTPUT=/path/to/results
+make kmesh-restore-verify`. CPU tests in `tests/test_kmesh_coldburst.py` reject
+null blocks, undrained requests and confusion between later reuse and live
+sharing.
+
 ## Recheck the evidence
 
 Raw provenance includes exact source commits, model artifact hashes, native

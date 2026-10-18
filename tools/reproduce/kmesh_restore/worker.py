@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
@@ -76,15 +76,85 @@ def prefix_checksums(config, tables, producer_ids=()):
     }
 
 
+@contextmanager
+def record_live_prefix_blocks(llm):
+    """Retain simultaneous ancestor destinations at allocation/free boundaries."""
+    manager = llm.llm_engine.engine_core.engine_core.scheduler.kv_cache_manager
+    allocate, free = manager.allocate_slots, manager.free
+    active = {}
+    connector = llm.llm_engine.engine_core.engine_core.scheduler.connector
+    lookup = connector.get_num_new_matched_tokens
+    evidence = {
+        "null_block_id": manager.block_pool.null_block.block_id,
+        "total_blocks": len(manager.block_pool.blocks),
+        "events": [],
+        "lookups": [],
+    }
+
+    def observe(action):
+        tables, statuses, computed = {}, {}, {}
+        for name, request in active.items():
+            groups = manager.get_block_ids(name)
+            if len(groups) != 1:
+                raise RuntimeError("live-prefix observation needs one KV group")
+            if len(groups[0]) >= ANCESTOR // 16:
+                tables[name] = list(groups[0][: ANCESTOR // 16])
+                statuses[name] = request.status.name
+                computed[name] = request.num_computed_tokens
+        evidence["events"].append(
+            {
+                "action": action,
+                "tables": tables,
+                "statuses": statuses,
+                "computed_tokens": computed,
+            }
+        )
+
+    def on_allocate(request, *args, **kwargs):
+        result = allocate(request, *args, **kwargs)
+        if result is not None:
+            active[request.request_id] = request
+            observe("allocate")
+        return result
+
+    def on_free(request):
+        observe("before_free")
+        result = free(request)
+        active.pop(request.request_id, None)
+        observe("free")
+        return result
+
+    def on_lookup(request, num_computed_tokens):
+        result = lookup(request, num_computed_tokens)
+        evidence["lookups"].append(
+            {
+                "request_id": request.request_id,
+                "local_tokens": num_computed_tokens,
+                "external_new_tokens": result[0],
+                "async": result[1],
+            }
+        )
+        return result
+
+    manager.allocate_slots, manager.free = on_allocate, on_free
+    connector.get_num_new_matched_tokens = on_lookup
+    try:
+        yield evidence
+    finally:
+        manager.allocate_slots, manager.free = allocate, free
+        connector.get_num_new_matched_tokens = lookup
+
+
 def main(config: dict, role: str) -> None:
     """Store the ancestor or measure cold requests with an empty engine cache."""
-    # Keep allocator metadata in this process only for the separate integrity
-    # control. Measured requests have no allocation hook or checksum call.
+    # Latency comparisons observe allocations only in the integrity control.
+    # The cold-burst profile also records live destinations, without a speed claim.
     os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
     from vllm import LLM, SamplingParams
 
     output = Path(config["output"])
-    ancestor, children = prompts()
+    fanouts = config.get("fanouts", [1, 5])
+    ancestor, children = prompts(max(fanouts))
     kwargs = dict(
         model=config["model"],
         revision=REVISION,
@@ -118,7 +188,7 @@ def main(config: dict, role: str) -> None:
     llm = LLM(**kwargs)
     params = SamplingParams(
         temperature=0,
-        max_tokens=1,
+        max_tokens=config.get("decode_tokens", 1),
         ignore_eos=True,
         seed=0,
         logprobs=1,
@@ -138,7 +208,9 @@ def main(config: dict, role: str) -> None:
         rows = []
         for result in results:
             sequence = result.outputs[0]
-            if sequence.finish_reason == "error" or len(sequence.token_ids) != 1:
+            if sequence.finish_reason == "error" or len(
+                sequence.token_ids
+            ) != config.get("decode_tokens", 1):
                 raise RuntimeError("vLLM failed to produce the bounded continuation")
             if result.metrics is None or result.metrics.first_token_latency <= 0:
                 raise RuntimeError("vLLM did not return a first-token latency")
@@ -147,6 +219,12 @@ def main(config: dict, role: str) -> None:
                     "request_id": result.request_id,
                     "token_ids": sequence.token_ids,
                     "logprob": sequence.logprobs[0][sequence.token_ids[0]].logprob,
+                    "chosen_logprobs": [
+                        scores[token].logprob
+                        for scores, token in zip(
+                            sequence.logprobs, sequence.token_ids, strict=True
+                        )
+                    ],
                     "ttft_ms": result.metrics.first_token_latency * 1000,
                     "kv_transfer_params": getattr(result, "kv_transfer_params", None),
                     "num_cached_tokens": result.num_cached_tokens,
@@ -182,14 +260,32 @@ def main(config: dict, role: str) -> None:
                     return
                 time.sleep(0.02)
             raise TimeoutError("ancestor did not reach the NVMe-backed index")
-        for fanout in (1, 5):
+
+        def generate_family(fanout):
+            if config.get("arrival", "burst") == "burst":
+                return generate(children[:fanout])
+            start = time.perf_counter_ns()
+            leader, _ = generate(children[:1])
+            followers, _ = generate(children[1:fanout])
+            return leader + followers, (time.perf_counter_ns() - start) / 1e6
+
+        for fanout in fanouts:
             for sample in range(config["serving_samples"] + 3):
                 if not llm.reset_prefix_cache():
                     raise RuntimeError("engine prefix-cache reset was refused")
                 before = None if role == "oracle" else cold_l1(config["http_port"])
+                observation = (
+                    record_live_prefix_blocks(llm)
+                    if config.get("observe_live") and role == "consumer"
+                    else nullcontext(None)
+                )
+                with observation as live:
+                    if role == "consumer" and sample == 0:
+                        with record_prefix_blocks(llm) as tables:
+                            rows, elapsed = generate_family(fanout)
+                    else:
+                        rows, elapsed = generate_family(fanout)
                 if role == "consumer" and sample == 0:
-                    with record_prefix_blocks(llm) as tables:
-                        rows, elapsed = generate(children[:fanout])
                     producer = json.loads((output / "producer-prefix.json").read_text())
                     checksums = prefix_checksums(
                         config, tables, [producer["instance_id"]]
@@ -207,8 +303,6 @@ def main(config: dict, role: str) -> None:
                             "restored model KV differs from the producer ancestor"
                         )
                     write_json(output / f"consumer-prefix-n{fanout}.json", checksums)
-                else:
-                    rows, elapsed = generate(children[:fanout])
                 after = (
                     None
                     if role == "oracle"
@@ -231,6 +325,7 @@ def main(config: dict, role: str) -> None:
                         "batch_wall_ms": elapsed,
                         "before": before,
                         "after": after,
+                        "live_prefix": live,
                     }
                 )
     finally:

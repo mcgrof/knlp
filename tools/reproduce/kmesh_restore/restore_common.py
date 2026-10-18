@@ -85,12 +85,12 @@ def compact_core_pair(before: dict, after: dict) -> tuple[dict, dict]:
     return compact(before, []), compact(after, new)
 
 
-def prompts() -> tuple[list[int], list[list[int]]]:
-    """Generate the same synthetic ancestor and five private tails as the replay."""
+def prompts(fanout: int = 5) -> tuple[list[int], list[list[int]]]:
+    """Generate the replay's synthetic ancestor and a prefix-stable tail list."""
     rng = random.Random(20260805)
     ancestor = [rng.randrange(4, 50000) for _ in range(ANCESTOR)]
     return ancestor, [
-        ancestor + [rng.randrange(4, 50000) for _ in range(TAIL)] for _ in range(5)
+        ancestor + [rng.randrange(4, 50000) for _ in range(TAIL)] for _ in range(fanout)
     ]
 
 

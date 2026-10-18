@@ -181,9 +181,9 @@ def main(args: argparse.Namespace) -> None:
         {
             "rounds": args.rounds,
             "adapter_samples": args.adapter_samples,
-            "serving_samples": args.serving_samples if args.section == "all" else 0,
+            "serving_samples": args.serving_samples if args.section != "adapter" else 0,
             "section": args.section,
-            "fanouts": [1, 5],
+            "fanouts": [2, 4, 8] if args.section == "coldburst" else [1, 5],
             "mode_order": [
                 list(("staged", "direct") if i % 2 == 0 else ("direct", "staged"))
                 for i in range(args.rounds)
@@ -218,6 +218,39 @@ def main(args: argparse.Namespace) -> None:
             args.output / ("corruption-" + mode + "-rejected.json"),
             {"returncode": code, "expected_payload_rejection": True},
         )
+    if args.section == "coldburst":
+        config |= {
+            "fanouts": [2, 4, 8],
+            "arena_bytes": 512 << 20,
+            "observe_live": True,
+            "decode_tokens": 8,
+        }
+        oracle = args.output / "oracle"
+        oracle.mkdir()
+        oracle_config = oracle / "config.json"
+        write_json(
+            oracle_config, config | {"output": str(oracle), "serving_samples": 1}
+        )
+        execute("worker.py", [str(oracle_config), "oracle"], oracle / "oracle.log")
+        for mode in ("staged", "direct"):
+            for arrival in ("burst", "stagger"):
+                serving(
+                    config
+                    | {
+                        "mode": mode,
+                        "arrival": arrival,
+                        "fanouts": [2, 4, 8] if arrival == "burst" else [4],
+                    },
+                    args.output / (mode + "-" + arrival),
+                    args.serving_samples,
+                )
+                print("COMPLETE", mode, arrival, flush=True)
+        execute(
+            "verify.py",
+            [str(args.output), "--section", "coldburst"],
+            args.output / "coldburst-verify.log",
+        )
+        return
     sections = ("adapter",) if args.section == "adapter" else ("adapter", "serving")
     for section in sections:
         if section == "serving":
@@ -279,7 +312,9 @@ if __name__ == "__main__":
     parser.add_argument("--adapter-samples", type=int, default=100)
     parser.add_argument("--serving-samples", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=4)
-    parser.add_argument("--section", choices=("adapter", "all"), default="all")
+    parser.add_argument(
+        "--section", choices=("adapter", "all", "coldburst"), default="all"
+    )
     args = parser.parse_args()
     if min(args.adapter_samples, args.serving_samples, args.rounds) <= 0:
         parser.error("sample and round counts must be positive")

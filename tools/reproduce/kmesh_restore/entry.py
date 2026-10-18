@@ -58,6 +58,10 @@ def command(config: dict) -> list[str]:
     result = [sys.executable, str(HERE / "run.py")]
     for key, flag in flags.items():
         result.extend(["--" + flag, config.get(key, "")])
+    if config["SECTION"] == "coldburst":
+        result.extend(
+            ["--rounds", "1", "--serving-samples", "3", "--adapter-samples", "1"]
+        )
     return result
 
 
@@ -76,11 +80,15 @@ def main() -> None:
                     "vllm_commit": VLLM_COMMIT,
                     "lmcache_commit": LMCACHE_COMMIT,
                     "ancestor_bytes": CHUNK_BYTES * CHUNKS,
-                    "rounds": 4,
+                    "rounds": 1 if config["SECTION"] == "coldburst" else 4,
                     "section": config["SECTION"],
-                    "adapter_samples_per_round": 100,
+                    "adapter_samples_per_round": (
+                        0 if config["SECTION"] == "coldburst" else 100
+                    ),
                     "serving_families_per_fanout_per_round": (
-                        20 if config["SECTION"] == "all" else 0
+                        3
+                        if config["SECTION"] == "coldburst"
+                        else (20 if config["SECTION"] == "all" else 0)
                     ),
                     "command": command(config),
                     "missing_inputs": missing,
