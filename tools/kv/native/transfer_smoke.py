@@ -37,6 +37,14 @@ def main():
     p.add_argument("--length", type=int, choices=(1024, 8192), required=True)
     p.add_argument("--batch", type=int, choices=(16, 32), required=True)
     p.add_argument("--cache-bytes", type=int, required=True)
+    p.add_argument(
+        "--rotation-diagnostic",
+        action="store_true",
+        help=(
+            "Require exact repetition of the original order; retain rotation "
+            "as a separate diagnostic. Freeze this policy before execution."
+        ),
+    )
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     protocol = json.loads((args.inputs / "protocol.json").read_text())
@@ -75,10 +83,14 @@ def main():
     )
     llm.apply_model(instrument.require_finite)
     graphs, generations, oracle_summaries = [], [], []
+    orders = [prompts, prompts[1:] + prompts[:1]]
+    if args.rotation_diagnostic:
+        orders.append(prompts)
+    labels = [f"transfer-{i}" for i in range(len(orders))]
     old = CudaGraphManager.run_fullgraph
 
     def replay(manager, desc):
-        if schedule._label in ("transfer-0", "transfer-1"):
+        if schedule._label in labels:
             values = {
                 name: getattr(runner.input_buffers, name)[: args.batch].cpu().tolist()
                 for name in ("input_ids", "positions", "seq_lens")
@@ -102,7 +114,7 @@ def main():
         with ExitStack() as outer:
             if geometry is not None:
                 outer.enter_context(observe_routes(args.output / "routes.jsonl"))
-            for index, selected in enumerate((prompts, prompts[1:] + prompts[:1])):
+            for index, selected in enumerate(orders):
                 schedule.label(f"transfer-{index}")
                 with ExitStack() as checks:
                     if geometry is not None:
@@ -134,6 +146,12 @@ def main():
                     for x in outputs
                 ]
                 instrument.save(args.output / f"generation-{index}.json", generation)
+                if len(generation) != len(selected) or any(
+                    row["prompt_token_ids"] != prompt["prompt_token_ids"]
+                    or len(row["output_token_ids"]) != 128
+                    for row, prompt in zip(generation, selected)
+                ):
+                    raise RuntimeError("generation coverage or prompt identity differs")
                 generations.append(
                     {
                         tuple(x["prompt_token_ids"]): x["output_token_ids"]
@@ -141,6 +159,10 @@ def main():
                     }
                 )
             order_exact = generations[0] == generations[1]
+            repeat_exact = (
+                generations[0] == generations[2] if args.rotation_diagnostic else None
+            )
+            deterministic = repeat_exact if args.rotation_diagnostic else order_exact
             differences = []
             for prompt, first in generations[0].items():
                 second = generations[1][prompt]
@@ -173,9 +195,11 @@ def main():
                     "exact": order_exact,
                     "cases": len(generations[0]),
                     "differences": differences,
+                    "same_order_repeat_exact": repeat_exact,
+                    "rotation_is_diagnostic": args.rotation_diagnostic,
                 },
             )
-            for label in ("transfer-0", "transfer-1"):
+            for label in labels:
                 selected = [r for r in graphs if r["label"] == label]
                 if len(selected) < 32 or len({r["sha256"] for r in selected}) < 3:
                     raise RuntimeError("changing graph replay coverage missing")
@@ -231,9 +255,15 @@ def main():
             instrument.save(
                 args.output / "DONE.json",
                 {
-                    "production_smoke_passed": order_exact,
+                    "production_smoke_passed": deterministic,
                     "evidence_capture_complete": True,
                     "greedy_order_exact": order_exact,
+                    "same_order_repeat_exact": repeat_exact,
+                    "determinism_policy": (
+                        "same_order_repeat_rotation_diagnostic"
+                        if args.rotation_diagnostic
+                        else "order_invariance"
+                    ),
                     "scored_quality_complete": False,
                     "performance_complete": False,
                     "geometry": shape,
@@ -241,11 +271,10 @@ def main():
                     "batch": args.batch,
                 },
             )
-            # Keep graph, allocation and dispatch evidence when a native
-            # control is itself sensitive to prefill cohort order. This does
-            # not turn an order mismatch into a passing qualification.
-            if not order_exact:
-                raise RuntimeError("greedy output changed with request order")
+            # A policy change never rewrites the outcome of an earlier smoke.
+            # Rotation differences stay explicit even under the repeat policy.
+            if not deterministic:
+                raise RuntimeError("greedy output failed the frozen determinism policy")
     finally:
         CudaGraphManager.run_fullgraph = old
         schedule.label(None)

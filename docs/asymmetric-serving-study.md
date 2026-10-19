@@ -96,3 +96,17 @@ uses a 32 GiB pool. The independent quality reader accepts the same length
 and cache budget and rejects mismatched captures. `--prefix` selects an
 artifact-name prefix when retaining multiple context-length studies.
 These options do not qualify 1K performance or reuse 8K quality by themselves.
+
+For conventional-model transfer checks, `transfer_smoke --rotation-diagnostic`
+is an explicit alternative determinism policy that must be frozen before the
+run. It runs the original order, a rotation, then the original order again.
+Exact original-order repetition is required. Rotation differences remain in
+`order-comparison.json` and the completion receipt. Every order still requires
+changing graph inputs, and every candidate order still requires the full
+routing and output-placement oracle. Storage and dispatch checks also remain.
+
+This policy tests repeatability at the declared request order. It does not
+promise greedy-token invariance under a different prefill batching pattern.
+The default smoke retains the stricter order-invariance gate. Selecting a
+new policy does not turn an earlier failed smoke into a pass, qualify a
+quality task, or authorize a timing claim without its other frozen gates.
