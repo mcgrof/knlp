@@ -312,12 +312,26 @@ def run(root, planpath, prefix="fp16-8k"):
     assert design["output_tokens"] == 128
     rows = []
     descriptive = {}
+    failed_launches, pending = [], []
     allvalid = True
     for block in list(range(design["blocks"])) + ["descriptive"]:
         order = design["arms"] if block == "descriptive" else design["orders"][block]
         arms = {}
         for arm in order:
             base = root / f"{prefix}-{block}-{arm}"
+            if not (base / "DONE.json").exists():
+                records = list(
+                    (root / "jobs").glob(f"*-{prefix}-{block}-{arm}-result.json")
+                )
+                assert len(records) <= 1
+                if records and read(records[0])["passed"] is False:
+                    failed_launches.append(
+                        {"block": block, "arm": arm, "receipt": read(records[0])}
+                    )
+                else:
+                    pending.append({"block": block, "arm": arm})
+                allvalid = False
+                continue
             assert read(base / "DONE.json")["complete"]
             expected = read(planpath / f"plan-{block}-{arm}.json")
             assert read(base / "plan.json") == expected and expected[
@@ -434,7 +448,8 @@ def run(root, planpath, prefix="fp16-8k"):
         else:
             rows.append({"block": block, "order": order, "arms": arms})
     family = []
-    for h in design["primary_family"]:
+    complete_primary = all(len(b["arms"]) == len(design["arms"]) for b in rows)
+    for h in design["primary_family"] if complete_primary else []:
         label = h["cell"]
         metric = h["metric"]
         baseline = h["baseline"]
@@ -462,12 +477,14 @@ def run(root, planpath, prefix="fp16-8k"):
         )
         family.append(effect)
     return {
-        "complete": True,
+        "complete": not pending,
+        "failed_launches": failed_launches,
+        "pending": pending,
         "design_sha256": sha(planpath / "DESIGN.json"),
         "source_sha": design["source_sha"],
         "blocks": rows,
         "descriptive": descriptive,
-        "primary_family": holm(family),
+        "primary_family": holm(family) if family else [],
         "all_blocks_valid_and_complete": allvalid,
         "pilot_pooled": False,
         "no_operational_SLO_or_goodput_claim": True,

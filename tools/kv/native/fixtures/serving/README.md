@@ -56,3 +56,10 @@ These are the records of a particular execution. A new replication must
 derive its qualification from its own valid production and quality
 evidence; copying a historical success receipt does not qualify a changed
 model, scale file, implementation or engine policy.
+
+
+A missing HTTP arm stays pending until its original job receipt records a
+failure. Failed launches remain explicit in the final summary. Primary
+inference requires every arm in all ten blocks; the reader never silently
+substitutes a smaller successful subset. Completed captures still retain
+all failed requests beside latency conditioned on valid completion.

@@ -6,6 +6,7 @@ import pytest
 from tools.kv.native.serving_confirmation import (
     backlog,
     memory_observations,
+    run,
     stream_gaps,
 )
 from tools.kv.native.serving_storage_audit import storage
@@ -137,3 +138,37 @@ def test_startup_driver_observation_cannot_be_hidden_by_later_smaller_values(tmp
     assert result["maximum_recorded_torch_reserved_peak_bytes"] == 10
     assert not result["driver_envelope_passed_at_observation_points"]
     assert not result["torch_envelope_passed_at_observation_points"]
+
+
+def test_failed_http_launches_remain_closed_without_reduced_family(tmp_path):
+    root, plan = tmp_path / "captures", tmp_path / "plan"
+    plan.mkdir()
+    (root / "jobs").mkdir(parents=True)
+    arms = ["candidate", "native_fi", "native_fa3"]
+    (plan / "DESIGN.json").write_text(
+        json.dumps(
+            {
+                "format": "fp16",
+                "length": 8192,
+                "output_tokens": 128,
+                "blocks": 10,
+                "arms": arms,
+                "orders": [arms] * 10,
+                "source_sha": "synthetic",
+                "primary_family": [{"id": "must-not-be-analyzed"}],
+            }
+        )
+    )
+    missing = run(root, plan)
+    assert not missing["complete"] and len(missing["pending"]) == 33
+    assert missing["primary_family"] == []
+    for block in list(range(10)) + ["descriptive"]:
+        for arm in arms:
+            (root / "jobs" / f"000-fp16-8k-{block}-{arm}-result.json").write_text(
+                json.dumps({"passed": False, "error": "synthetic startup failure"})
+            )
+    failed = run(root, plan)
+    assert failed["complete"] and not failed["pending"]
+    assert len(failed["failed_launches"]) == 33
+    assert not failed["all_blocks_valid_and_complete"]
+    assert failed["primary_family"] == []
