@@ -60,3 +60,9 @@ Qwen3 default and accept explicit conventional-attention geometry for Phi-4.
 Their synthetic checks cover page remapping, K/V gathers, output placement,
 stale maps and shifted outputs. Scored quality and fresh performance tests
 remain required before any model or hardware is advertised as supported.
+
+`serving_statistics` computes paired effects across independent run blocks.
+It reports an exact sign test, a distribution-free median interval with its
+actual coverage, and Holm correction across the full declared primary family.
+A practical median-effect screen is distinct from an interval-bound claim.
+A comparison with incomplete or failed blocks cannot pass its superiority gate.
