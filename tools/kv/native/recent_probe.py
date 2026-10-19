@@ -14,6 +14,20 @@ import os
 from pathlib import Path
 
 
+def valid_native_logits(logits, suppressed_ids):
+    """Permit only the checkpoint's explicit negative-infinity token mask."""
+    import torch
+
+    if len(set(suppressed_ids)) != len(suppressed_ids) or any(
+        not isinstance(i, int) or i < 0 or i >= logits.shape[-1] for i in suppressed_ids
+    ):
+        raise ValueError("invalid native suppression inventory")
+    valid = torch.isfinite(logits)
+    if suppressed_ids:
+        valid[..., suppressed_ids] = torch.isneginf(logits[..., suppressed_ids])
+    return bool(valid.all())
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inputs", type=Path, required=True)
@@ -99,10 +113,36 @@ def main():
     runner = llm.collective_rpc(lambda worker: worker.model_runner)[0]
     model = runner.get_model()
     original_logits = model.compute_logits
+    suppressed_ids = list(getattr(model, "_suppress_token_ids", None) or [])
+    if suppressed_ids:
+        from huggingface_hub import hf_hub_download
+
+        config_path = Path(
+            hf_hub_download(
+                manifest["model"],
+                "generation_config.json",
+                revision=manifest["model_revision"],
+            )
+        )
+        if suppressed_ids != json.loads(config_path.read_text()).get("suppress_tokens"):
+            raise RuntimeError(
+                "native token suppression differs from pinned checkpoint"
+            )
+        save(
+            args.output / "native-logit-mask.json",
+            {
+                "suppressed_token_ids": suppressed_ids,
+                "generation_config_sha256": hashlib.sha256(
+                    config_path.read_bytes()
+                ).hexdigest(),
+                "model_revision": manifest["model_revision"],
+                "policy": "require negative infinity exactly at declared suppressed IDs; finite everywhere else",
+            },
+        )
 
     def finite_logits(*a, **kw):
         logits = original_logits(*a, **kw)
-        if not bool(torch.isfinite(logits).all()):
+        if not valid_native_logits(logits, suppressed_ids):
             save(
                 args.output / "nonfinite-logits.json",
                 {
