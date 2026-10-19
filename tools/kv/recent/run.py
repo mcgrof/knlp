@@ -251,8 +251,9 @@ def main():
                     for r in data["samples"]
                     if r["kind"] == "retrieval" and r["length"] == length
                 ]
-                for index in range(0, len(retrieval), args.batch):
-                    batch = retrieval[index : index + args.batch]
+                retrieval_batch = min(args.batch, 2) if length >= 8192 else args.batch
+                for index in range(0, len(retrieval), retrieval_batch):
+                    batch = retrieval[index : index + retrieval_batch]
                     outputs, audit = generate(batch, mode, 128)
                     for row, result in zip(batch, outputs):
                         answer, _ = parse_final(
