@@ -51,6 +51,14 @@ def recipe_pins(recipe):
                 "276305b29e0d11f95ada503ba76323ab24992e59",
             ),
         }
+    if recipe == "recent-transfer":
+        return {
+            **PINS,
+            "vllm": (
+                "2026-10-19-feature-asymmetric-geometry-transfer",
+                "a74386bbdf700e3cfd90a7bbfc9f37026afa652e",
+            ),
+        }
     raise ValueError("unknown installation recipe: " + recipe)
 
 
@@ -72,7 +80,7 @@ def main():
     parser.add_argument("root", type=Path)
     parser.add_argument(
         "--recipe",
-        choices=("historical-compact", "current"),
+        choices=("historical-compact", "current", "recent-transfer"),
         default="historical-compact",
     )
     args = parser.parse_args()
@@ -83,6 +91,13 @@ def main():
     if env.exists():
         raise ValueError("use a fresh installation directory")
     constraints = Path(__file__).with_name("october-constraints.txt")
+    transformers_version = "5.10.4" if args.recipe == "recent-transfer" else "5.5.3"
+    if args.recipe == "recent-transfer":
+        values = constraints.read_text().replace(
+            "transformers==5.5.3\n", "transformers==5.10.4\n"
+        )
+        constraints = root / "recent-transfer-constraints.txt"
+        constraints.write_text(values)
     install_constraints = root / "vllm-install-constraints.txt"
     install_constraints.write_text(
         "\n".join(
@@ -193,7 +208,7 @@ def main():
         "torchaudio==2.11.0",
     )
     pip(
-        "transformers==5.5.3",
+        "transformers==" + transformers_version,
         "apache-tvm-ffi==0.1.14.post1",
         "nvidia-cutlass-dsl==4.5.2",
         "cuda-python==12.9.4",
@@ -236,6 +251,7 @@ def main():
         json.dumps(
             {
                 "recipe": args.recipe,
+                "transformers": transformers_version,
                 "sources": pins,
                 "compiled_base": BASE,
                 "wheel_sha256": WHEEL_SHA,
