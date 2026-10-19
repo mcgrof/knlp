@@ -1,0 +1,6 @@
+# Frozen GPT-2 -> GPT-2-medium modified-MoT four-arm attribution diagnostic.
+# Execution is inference-only and explicit. Outputs belong outside this tree.
+CONFIG_MOT_AUTHOR_BASELINE=y
+CONFIG_MOT_AUTHOR_PYTHON="python"
+CONFIG_MOT_AUTHOR_SOURCE=""
+CONFIG_MOT_AUTHOR_OUTPUT_DIR="mot-modified-attribution-output"

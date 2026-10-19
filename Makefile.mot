@@ -17,6 +17,7 @@ MOT_AUTHOR_MODEL_ARGS := \
 	mot-author-freeze-diagnostic-data \
 	mot-author-diagnostic-controls \
 	mot-author-diagnostic-eval mot-author-replay-diagnostic \
+	mot-author-attribution-eval mot-author-replay-attribution \
 	mot-author-training-smoke \
 	mot-author-train mot-author-eval
 
@@ -148,6 +149,32 @@ mot-author-replay-diagnostic: mot-author-conflicts
 		$(MOT_AUTHOR_BASE_ARGS) replay-diagnostic \
 		--input-jsonl $(MOT_RAW_RECORDS) \
 		--output-json $(MOT_AUTHOR_OUTPUT)/capped_evaluation/REPLAY_OFFLINE.json
+
+# Frozen inference-only controls. This target does not train or profile.
+mot-author-attribution-eval: mot-author-conflicts
+	@test -n "$(MOT_CHECKPOINT)" || \
+		{ echo "Set MOT_CHECKPOINT=/path/to/frozen/run"; exit 1; }
+	@test -n "$(MOT_CHECKPOINT_SHA256)" || \
+		{ echo "Set MOT_CHECKPOINT_SHA256 to the translator file SHA-256"; exit 1; }
+	@test -n "$(MOT_DATA_MANIFEST)" || \
+		{ echo "Set MOT_DATA_MANIFEST=/path/to/private/diagnostic.json"; exit 1; }
+	@test -n "$(MOT_ANCHOR_RECORDS)" || \
+		{ echo "Set MOT_ANCHOR_RECORDS=/path/to/PAIRED_RECORDS.jsonl[.zst]"; exit 1; }
+	@PYTHONPATH=. TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+		$(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) attribution-eval \
+		--checkpoint $(MOT_CHECKPOINT) \
+		--checkpoint-file-sha256 $(MOT_CHECKPOINT_SHA256) \
+		--data-manifest $(MOT_DATA_MANIFEST) \
+		--anchor-records $(MOT_ANCHOR_RECORDS)
+
+mot-author-replay-attribution: mot-author-conflicts
+	@test -n "$(MOT_RAW_RECORDS)" || \
+		{ echo "Set MOT_RAW_RECORDS=/path/to/ATTRIBUTION_RECORDS.jsonl"; exit 1; }
+	@PYTHONPATH=. $(MOT_AUTHOR_PYTHON) -m $(MOT_AUTHOR_MOD) \
+		$(MOT_AUTHOR_BASE_ARGS) replay-attribution \
+		--input-jsonl $(MOT_RAW_RECORDS) \
+		--output-json $(MOT_AUTHOR_OUTPUT)/attribution_evaluation/REPLAY_OFFLINE.json
 
 # GPU allocation is external. Give the payload a scheduler-neutral run identity.
 mot-author-training-smoke: mot-author-conflicts

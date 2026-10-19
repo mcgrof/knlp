@@ -12,6 +12,7 @@ import sys
 from typing import Any
 
 from .audit import run_runtime_audit
+from .attribution_eval import replay_attribution_jsonl, run_attribution_eval
 from .data import freeze_smoke_manifest
 from .diagnostic_data import freeze_diagnostic_manifest
 from .controls import run_diagnostic_controls
@@ -330,6 +331,27 @@ def command_replay_diagnostic(args) -> int:
     return 0
 
 
+def command_attribution_eval(args) -> int:
+    result = run_attribution_eval(
+        source=_source_from_args(args),
+        checkpoint=Path(args.checkpoint),
+        checkpoint_file_sha256=args.checkpoint_file_sha256,
+        data_manifest=Path(args.data_manifest),
+        anchor_records=Path(args.anchor_records),
+        output=_output_from_args(args) / "attribution_evaluation",
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["operational_complete"] else 1
+
+
+def command_replay_attribution(args) -> int:
+    result = replay_attribution_jsonl(
+        Path(args.input_jsonl), Path(args.output_json)
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _render(args) -> dict[str, Path]:
     source = _source_from_args(args)
     source_receipt = inspect_source(source)
@@ -529,6 +551,18 @@ def build_parser() -> argparse.ArgumentParser:
     replay_diagnostic.add_argument("--input-jsonl", required=True)
     replay_diagnostic.add_argument("--output-json", required=True)
     replay_diagnostic.set_defaults(func=command_replay_diagnostic)
+
+    attribution_eval = subparsers.add_parser("attribution-eval")
+    attribution_eval.add_argument("--checkpoint", required=True)
+    attribution_eval.add_argument("--checkpoint-file-sha256", required=True)
+    attribution_eval.add_argument("--data-manifest", required=True)
+    attribution_eval.add_argument("--anchor-records", required=True)
+    attribution_eval.set_defaults(func=command_attribution_eval)
+
+    replay_attribution = subparsers.add_parser("replay-attribution")
+    replay_attribution.add_argument("--input-jsonl", required=True)
+    replay_attribution.add_argument("--output-json", required=True)
+    replay_attribution.set_defaults(func=command_replay_attribution)
 
     for name, function in (
         ("render", command_render),

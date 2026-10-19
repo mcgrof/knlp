@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from research.kv_translate.mot_author.recipe import (
     FROZEN_DIAGNOSTIC_CONTENT_SHA256,
@@ -34,6 +35,11 @@ from research.kv_translate.mot_author.preflight import (
 )
 from research.kv_translate.mot_author.mechanics import inspect_mechanics_source
 from research.kv_translate.mot_author.diagnostic_eval import replay_paired_jsonl
+from research.kv_translate.mot_author.attribution_eval import (
+    ARMS,
+    PAIRS,
+    build_attribution_pasts,
+)
 from research.kv_translate.mot_author.recipe import (
     MODIFIED_MOT_COMMITS,
     MODIFIED_MOT_SHA,
@@ -118,7 +124,7 @@ def test_model_snapshot_requires_exact_revision(tmp_path: Path) -> None:
 
 
 def test_modified_mot_commit_chain_is_explicit() -> None:
-    assert len(MODIFIED_MOT_COMMITS) == 6
+    assert len(MODIFIED_MOT_COMMITS) == 7
     assert MODIFIED_MOT_SHA == MODIFIED_MOT_COMMITS[-1]
     assert all(len(commit) == 40 for commit in MODIFIED_MOT_COMMITS)
 
@@ -155,6 +161,93 @@ def test_diagnostic_replay_reports_id_and_score_contracts(tmp_path: Path) -> Non
     assert result["unique_item_id_count"] == 2
     assert result["item_ids_unique"] is True
     assert result["both_arm_score_contract_pass"] is True
+
+
+def test_attribution_controls_reuse_selection_and_route_native_window() -> None:
+    selections = [object() for _ in range(24)]
+    calls: dict[str, list] = {"select": [], "translate": [], "replay": []}
+
+    class FakeTrain:
+        @staticmethod
+        def build_extrapolated_sparse_attention_indices(*args, **kwargs):
+            calls["select"].append((args, kwargs))
+            return selections
+
+        @staticmethod
+        def build_replayed_target_past(*args, **kwargs):
+            calls["translate"].append((args, kwargs))
+            return "translated-past", "translated-window"
+
+        @staticmethod
+        def replay_target_prefill_with_injected_window(**kwargs):
+            calls["replay"].append(kwargs)
+            return "recomputed-past" if not kwargs["target_layer_indices"] else "oracle-past"
+
+    class FakeCommon:
+        @staticmethod
+        def past_key_values_to_blocks(window):
+            assert window == ("native-17", "native-19", "native-21", "native-23")
+            return "native-key", "native-value"
+
+    channels = SimpleNamespace(
+        get_src_layer_indices=lambda edge: [8, 9, 10, 11],
+        get_tgt_layer_indices=lambda edge: [17, 19, 21, 23],
+    )
+    ctx = SimpleNamespace(
+        cm=channels,
+        edges=[SimpleNamespace(id="source_to_target")],
+        config=SimpleNamespace(
+            topk_sparse_attn=128,
+            num_bottom_full_attn=2,
+            attention_backend="dense_selected",
+        ),
+    )
+    source_model = SimpleNamespace(id="source")
+    target_model = SimpleNamespace(id="target")
+    source_spec = SimpleNamespace(num_layers=12)
+    target_spec = SimpleNamespace(num_layers=24)
+    native_past = tuple(f"native-{index}" for index in range(24))
+
+    pasts, observed_selections, timings = build_attribution_pasts(
+        mot_train=FakeTrain,
+        common=FakeCommon,
+        ctx=ctx,
+        source_model=source_model,
+        target_model=target_model,
+        source_node="source",
+        target_node="target",
+        source_spec=source_spec,
+        target_spec=target_spec,
+        source_context="source-context",
+        target_context="target-context",
+        source_past="source-past",
+        native_past=native_past,
+    )
+
+    assert tuple(ARMS) == ("N", "T", "R", "O")
+    assert tuple(PAIRS) == (("T", "R"), ("T", "O"), ("R", "N"), ("O", "R"))
+    assert observed_selections is selections
+    assert len(calls["select"]) == 1
+    assert len(calls["translate"]) == 1
+    assert calls["translate"][0][1]["sparse_attention_indices_override"] is selections
+    assert len(calls["replay"]) == 2
+    recompute = calls["replay"][0]
+    assert recompute["target_layer_indices"] == []
+    assert recompute["injected_key_block"] is None
+    assert recompute["injected_value_block"] is None
+    assert recompute["sparse_attention_indices"] is selections
+    oracle = calls["replay"][1]
+    assert oracle["target_layer_indices"] == [17, 19, 21, 23]
+    assert oracle["injected_key_block"] == "native-key"
+    assert oracle["injected_value_block"] == "native-value"
+    assert oracle["sparse_attention_indices"] is selections
+    assert pasts == {
+        "N": native_past,
+        "T": "translated-past",
+        "R": "recomputed-past",
+        "O": "oracle-past",
+    }
+    assert set(timings) == {"source_selection", "T_replay", "R_replay", "O_replay"}
 
 
 def test_training_smoke_recipe_is_bounded_and_frozen() -> None:

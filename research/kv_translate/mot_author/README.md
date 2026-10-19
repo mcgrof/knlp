@@ -169,3 +169,26 @@ Set `MOT_FROZEN_DATA_MANIFEST` to that manifest for `mot-author-train`. After
 training, `mot-author-diagnostic-eval` runs only the five frozen cohorts and
 writes 500 paired JSONL records. `mot-author-replay-diagnostic` rebuilds every
 per-task aggregate and paired 95% bootstrap interval without models.
+
+The inference-only attribution diagnostic keeps that checkpoint and cohort
+fixed. It evaluates four arms: exact native receiver cache (N), translated-KV
+selected replay (T), selected replay with no injection (R), and selected replay
+with native receiver K/V injected at the same target layers (O). It computes
+the source-derived selected indices once per item and reuses the same tensors
+for T, R, and O. N and T must reproduce the retained token-level anchors.
+
+```bash
+make defconfig-mot-modified-attribution
+make mot-author-attribution-eval \
+  MOT_SOURCE=/path/to/pinned-modified-MoT \
+  MOT_CHECKPOINT=/path/to/frozen/checkpoint \
+  MOT_CHECKPOINT_SHA256=<translator-file-sha256> \
+  MOT_DATA_MANIFEST=/path/to/private/DIAGNOSTIC_DATA.json \
+  MOT_ANCHOR_RECORDS=/path/to/private/PAIRED_RECORDS.jsonl.zst \
+  MOT_OUTPUT=/path/to/results
+```
+
+The target writes 500 records and 2,000 scored arm outputs. It reports T-R,
+T-O, R-N, and O-R paired differences. SQuAD uncertainty groups by the executed
+context-token digest; MMLU groups by subject. This is an attribution diagnostic,
+not a speed benchmark or a paper reproduction.
