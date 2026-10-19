@@ -36,7 +36,7 @@ The trace inventory is not itself a performance result.
 
 The [8K replication procedure](../REPRODUCE.md) also describes the same
 qualification and replay tools used here. Its CPU-tools pin
-`e96be2f076547e66cdf9ca0b586b84897b6d28d4` contains both context catalogs
+`749a566aed06bb7d642087f310bdcb9bb73d926e` contains both context catalogs
 and the scheduler-admission supplement. Use a separate worktree for the measured source.
 For this 1K design, use its measured
 harness above, `--length 1024`, `--cache-bytes 34359738368`, this catalog and
