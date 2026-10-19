@@ -42,7 +42,10 @@ def decision(evidence, expected):
                     assert row["lse_sha256"] == row["trusted_lse_sha256"]
         memory = evidence["clean_memory"]
         assert memory["oracle_buffers_present"] is False
-        assert memory["pool_bytes"] == 48 * 2**30
+        # Older AWQ protocols use 48 GiB; dense protocols freeze 40 GiB.
+        pool_bytes = expected.get("pool_bytes", 48 * 2**30)
+        assert type(pool_bytes) is int and pool_bytes > 0
+        assert memory["pool_bytes"] == pool_bytes
         assert (
             memory["payload_bytes"] == 256 * 2**20
             and memory["payload_allocations"] == 1

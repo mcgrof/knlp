@@ -83,6 +83,23 @@ def test_complete_receipts_promote():
     assert decision(e, p)["unlocked_speed_claim"]
 
 
+@pytest.mark.parametrize("pool_gib", [40, 48])
+def test_explicit_protocol_pool_promotes_only_matching_receipt(pool_gib):
+    e, p = fixture()
+    p["pool_bytes"] = pool_gib * 2**30
+    e["clean_memory"]["pool_bytes"] = p["pool_bytes"]
+    assert decision(e, p)["unlocked_speed_claim"]
+    e["clean_memory"]["pool_bytes"] = (48 if pool_gib == 40 else 40) * 2**30
+    assert not decision(e, p)["unlocked_speed_claim"]
+
+
+@pytest.mark.parametrize("pool_bytes", [None, True, 0, -1, "42949672960"])
+def test_invalid_expected_pool_cannot_promote(pool_bytes):
+    e, p = fixture()
+    p["pool_bytes"] = e["clean_memory"]["pool_bytes"] = pool_bytes
+    assert not decision(e, p)["unlocked_speed_claim"]
+
+
 @pytest.mark.parametrize(
     "field",
     [
