@@ -71,8 +71,11 @@ supervisor qualifies two H100 GPUs before accepting the final matrix.
 Unlike the earlier routes, its landmark checkpoints live inside the
 configured output run so that each receipt and retained state stay together.
 The [routing audit](../layerrope_beta/time_budget/ROUTING_AUDIT.md) preserves
-the original finite operator and requires numerical replay before a small
-fixed-rate training pilot. It does not reopen the full quantization study.
+the original finite operator. Its input generator accepts your own recorded
+qualification checkpoints or adapts the public TinyStories data for explicitly
+invoked qualification training. It generates a hashed audit manifest without
+private artifacts. The completed numerical screen admitted no training pilot;
+the separate conditional interface is never invoked by the audit preset.
 
 MNIST is downloaded by torchvision. TinyStories preparation downloads the
 pinned `roneneldan/TinyStories` Parquet shards and GPT-2 tokenizer, scans all

@@ -26,12 +26,66 @@ make CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/audit-smoke \
      CONFIG_RESIDUAL_CPU_PYTHON=/path/to/python
 ```
 
+### Generate inputs from your own checkpoints
+
+The manifest generator accepts the `RESULT.json` files written by the
+[time-budget trainer](train.py). It verifies data, recorded source,
+checkpoint file and model hashes, identity, clock landmarks and recorded
+validation coverage before writing an external input card. It does not
+recompute losses or replace the original validation reference.
+
+For existing qualification runs, supply one complete M result and one ML
+result, paired by seed, at learning rate 0.001. Each must retain the 0, 200
+and 787-second checkpoints. Checkpoint paths may retain their original
+locations; after a move, files can instead sit beside their `RESULT.json`
+with their original filenames. The forward-source bundle must match.
+
+```sh
+python -m research.layerrope_beta.time_budget.routing_inputs manifest \
+    --data /path/to/training \
+    --result /path/to/M/RESULT.json --result /path/to/ML/RESULT.json \
+    --out /path/to/AUDIT-INPUTS.json
+```
+
+To regenerate the diagnostic experiment, first prepare the pinned public
+TinyStories arrays with the [data preparer](../../tinystories_depth/data.py).
+The adapter copies its training and curve arrays into a training capability;
+it does not read or copy the separate final array. Choose your own seed.
+The following commands explicitly train two new qualification trajectories
+on an existing suitable GPU; they do not allocate a machine.
+
+```sh
+python -m research.tinystories_depth.data /path/to/public-data
+python -m research.layerrope_beta.time_budget.routing_inputs training-data \
+    --dataset /path/to/public-data --out /path/to/training
+python -m research.layerrope_beta.time_budget.routing_inputs jobs \
+    --seed 81234 --out /path/to/jobs
+for row in M ML; do
+    python -m research.layerrope_beta.time_budget.train \
+        --data /path/to/training --job /path/to/jobs/$row.json \
+        --out /path/to/$row --device cuda
+done
+```
+
+Then generate the manifest above and run the Make audit below. This is a
+new experiment on regenerated checkpoint bytes. The adapter reuses the
+public curve partition, whereas the measured equal-time study separately
+excluded predecessor evaluation documents. To retain those exclusions,
+use the training capability from the [equal-time preparation route](README.md)
+instead. Neither route requires access to an experiment owner's artifacts.
+
+Exact saved-byte replay and regeneration are different operations. The
+audit requires the original per-window losses to agree within 1e-6. Another
+hardware/software runtime may fail this fidelity guard. Run regenerated
+training and replay on the same runtime; do not silently replace reference
+losses or promise bit-identical historical results across machines.
+
 The full audit uses an existing GPU allocation and external checkpoint/data
 receipts. It never rents compute or downloads private artifacts. Keep the
 original executed source and state receipts before diagnosing a saved run.
 Generated tensors, JSON and checkpoints belong outside this checkout.
 
-Prepare an external input card containing:
+The generator emits schema `finite-routing-audit-inputs.v1` containing:
 
 - `source`: the current `time_budget.train.source_identity()` dictionary.
 - `executed_forward_source`: relative forward-path filenames and their
@@ -47,6 +101,17 @@ Prepare an external input card containing:
   Include `validation` with the original same-shape `ce` and `window_ce`
   values. Replay requires identical coverage and absolute differences at
   most 1e-6, with TF32 disabled as in the recorded training recipe.
+
+The generated `provenance` list also records the two result-file hashes and
+their model, seed, rate and trajectory recipes. Validation contains 32,768
+predicted tokens in 128 windows. All six checkpoint receipts are required;
+an illustrative receipt has this shape (hashes and values are generated):
+
+```text
+path, sha256, model_sha256, identity_sha256
+row: M or ML; seed; step; training_seconds; target_seconds
+validation: {ce: scalar, window_ce: 128 recorded window losses}
+```
 
 ```sh
 make defconfig-layerrope-mhc-routing-audit
@@ -85,6 +150,11 @@ the original bounds on those changed forward states. This measures inference
 sensitivity, not the effect of training with that operator.
 
 ## Conditional training pilot
+
+The completed saved-input audit selected no passing candidate. Its pilot
+was not admitted, and no changed-operator training outcome was measured.
+The explicit interface below remains available for reproducibility; an
+audit invocation never starts it automatically.
 
 The pilot requires a completed `AUDIT.json` with `candidate_qualified` status
 and a frozen proposal. That proposal contains `source`, a hashed
