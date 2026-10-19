@@ -25,6 +25,34 @@ config KNLP_KMESH_TRACE_MODE
 
 endif
 
+config KNLP_REPRODUCE_KMESH_RESIDENCY
+	bool "Qualify bounded family references through vLLM"
+	default n
+	help
+	  Compare a bounded ancestor hold with stock prefix caching under a
+	  controlled synthetic request order. Use CPU allocator metadata or
+	  synchronous model capture. This does not replay a production trace.
+
+if KNLP_REPRODUCE_KMESH_RESIDENCY
+
+config KNLP_KMESH_RESIDENCY_MODE
+	string "Qualification mode: cpu or serving"
+	default "cpu"
+
+config KNLP_KMESH_RESIDENCY_SOURCE
+	string "Clean qualified vLLM source directory"
+	default ""
+
+config KNLP_KMESH_RESIDENCY_MODEL
+	string "Local model snapshot for serving capture"
+	default ""
+
+config KNLP_KMESH_RESIDENCY_OUTPUT
+	string "Fresh qualification output directory"
+	default "results/kmesh-family-residency"
+
+endif
+
 config KNLP_REPRODUCE_KMESH_FORK
 	bool "Enable the real vLLM CPU allocator experiment"
 	default n

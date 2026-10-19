@@ -1,0 +1,6 @@
+# Controlled synchronous serving capture; requires the prepared CUDA runtime.
+CONFIG_KNLP_REPRODUCE_KMESH_RESIDENCY=y
+CONFIG_KNLP_KMESH_RESIDENCY_MODE="serving"
+CONFIG_KNLP_KMESH_RESIDENCY_SOURCE=""
+CONFIG_KNLP_KMESH_RESIDENCY_MODEL=""
+CONFIG_KNLP_KMESH_RESIDENCY_OUTPUT="results/kmesh-family-residency-cuda"

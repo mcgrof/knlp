@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-KMESH_SELECTED := $(strip $(foreach v,TRACE FORK SERVING RESTORE CASCADE,\
+KMESH_SELECTED := $(strip $(foreach v,TRACE RESIDENCY FORK SERVING RESTORE CASCADE,\
 	$(if $(filter y,$(CONFIG_KNLP_REPRODUCE_KMESH_$(v))),$(v))))
 ifneq ($(word 2,$(KMESH_SELECTED)),)
 $(error Select one KMesh workload: $(KMESH_SELECTED))
@@ -17,6 +17,18 @@ kmesh-trace-test:
 
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_TRACE),y)
 .DEFAULT_GOAL := kmesh-trace-audit
+endif
+
+KMESH_RESIDENCY_PY ?= $(PYTHON)
+.PHONY: kmesh-residency kmesh-residency-plan kmesh-residency-test
+kmesh-residency kmesh-residency-plan:
+	@"$(KMESH_RESIDENCY_PY)" -m tools.reproduce.kmesh_residency.run --config "$(CONFIG_FILE)" $(if $(filter kmesh-residency-plan,$@),--plan,)
+
+kmesh-residency-test:
+	@"$(KMESH_RESIDENCY_PY)" -m unittest discover -s tests -p test_kmesh_residency.py -v
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_RESIDENCY),y)
+.DEFAULT_GOAL := kmesh-residency
 endif
 
 KMESH_FORK_PY ?= $(PYTHON)
