@@ -12,7 +12,7 @@ GPU entry points from their measured source, in a clean separate worktree:
 
 ```sh
 git fetch origin
-git checkout --detach 749a566aed06bb7d642087f310bdcb9bb73d926e
+git checkout --detach 5cb60f69d68a390f139a268b5160db3de57ea275
 TOOLS_SOURCE="$PWD"
 STACK="$PWD/stack"                    # Existing validated installation
 MEASURED_SOURCE="$PWD/../knlp-http-measured"
