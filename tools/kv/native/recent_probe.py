@@ -19,6 +19,9 @@ def main():
     p.add_argument("--inputs", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--cache-bytes", type=int, default=16 * 2**30)
+    p.add_argument(
+        "--backend", choices=("FLASHINFER", "TRITON_ATTN"), default="FLASHINFER"
+    )
     args = p.parse_args()
     if os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING") != "0":
         raise ValueError("native calibration requires the explicit in-process mode")
@@ -30,6 +33,7 @@ def main():
     import transformers
     from vllm import LLM, SamplingParams
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
+    from vllm.v1.attention.backends.triton_attn import TritonAttentionImpl
     from .october import VARIANTS
     from .instrument import native_memory_state, require_finite, save, tensor_inventory
     from .current import save as update
@@ -70,7 +74,7 @@ def main():
         "enable_prefix_caching": False,
         "enable_chunked_prefill": False,
         "calculate_kv_scales": False,
-        "attention_config": {"backend": "FLASHINFER", "use_trtllm_attention": False},
+        "attention_config": {"backend": args.backend, "use_trtllm_attention": False},
         "distributed_executor_backend": "uni",
         "seed": 20261019,
         "language_model_only": True,
@@ -137,7 +141,15 @@ def main():
     if not attention:
         raise RuntimeError("native probe found no full/sliding attention layers")
     maxima, writes = {}, []
-    original = FlashInferImpl.do_kv_cache_update
+    implementation = {
+        "FLASHINFER": FlashInferImpl,
+        "TRITON_ATTN": TritonAttentionImpl,
+    }[args.backend]
+    if any(row["impl"] != implementation.__name__ for row in attention.values()):
+        raise RuntimeError(
+            "actual attention implementation differs from the requested backend"
+        )
+    original = implementation.do_kv_cache_update
     sample_id = None
 
     def observe(impl, layer, key, value, cache, slots):
@@ -160,7 +172,7 @@ def main():
                 )
         return original(impl, layer, key, value, cache, slots)
 
-    FlashInferImpl.do_kv_cache_update = observe
+    implementation.do_kv_cache_update = observe
     cases = [s for s in manifest["samples"] if s["kind"] == "calibration"]
     try:
         for case in cases:
@@ -182,7 +194,7 @@ def main():
                 {"sample_id": sample_id, "scales_seen": len(maxima)},
             )
     finally:
-        FlashInferImpl.do_kv_cache_update = original
+        implementation.do_kv_cache_update = original
         save(args.output / "write-maxima.json", writes)
     if len(maxima) != 2 * len(attention):
         raise RuntimeError("native writer calibration coverage incomplete")
