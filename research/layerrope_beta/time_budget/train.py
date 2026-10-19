@@ -44,6 +44,9 @@ def source_identity():
             "defconfigs/layerrope-mhc-time-budget-smoke",
             "defconfigs/layerrope-mhc-routing-audit",
             "defconfigs/layerrope-mhc-routing-audit-smoke",
+            "defconfigs/layerrope-mhc-qknorm",
+            "defconfigs/layerrope-mhc-qknorm-smoke",
+            "defconfigs/layerrope-mhc-qknorm-kv-cache",
         )
     )
     return {str(p.relative_to(base)): sha(p) for p in sorted(paths) if p.is_file()}
@@ -72,9 +75,11 @@ def train(
     resume_sha=None,
     stop_after_updates=None,
     on_update=None,
-    smoke=False
+    smoke=False,
+    contract=None,
+    diagnostic=None,
 ):
-    protocol = freeze()
+    protocol = freeze() if contract is None else contract
     data = Path(data)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
@@ -116,9 +121,19 @@ def train(
         job["seed"],
         beta=0.0,
         vocab=job.get("vocab", 50257),
+        qknorm=job.get("qknorm", False),
     ).to(device)
+    parameters = model.parameters()
+    if contract is not None:
+        gains = [p for n, p in model.named_parameters() if n.endswith("qknorm_gain")]
+        other = [
+            p for n, p in model.named_parameters() if not n.endswith("qknorm_gain")
+        ]
+        parameters = [dict(params=other, weight_decay=0.0, name="existing")]
+        if gains:
+            parameters.append(dict(params=gains, weight_decay=0.0, name="qknorm_gain"))
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=job["lr"], betas=(0.9, 0.95), eps=1e-8, weight_decay=0.0
+        parameters, lr=job["lr"], betas=(0.9, 0.95), eps=1e-8, weight_decay=0.0
     )
     stream = DataCursor(
         tokens, job["seed"], job.get("window", 256), job.get("batch_size", 8)
@@ -132,6 +147,9 @@ def train(
     clock = TrainingClock(device)
     step = 0
     history = dict(updates=[], landmarks=[], routing=[], attempts=[])
+    if contract is not None:
+        history["update_landmarks"] = []
+    initial_parameter_hashes = {n: state_hash(p) for n, p in model.state_dict().items()}
     if resume:
         state = restore(resume, model, optimizer, stream, identity, device, resume_sha)
         step = state["step"]
@@ -139,7 +157,7 @@ def train(
         history = state["history"]
         # A landmark snapshot cannot contain its own file hash. Rebuild its
         # receipt from the verified resume input rather than losing that point.
-        for record in history["landmarks"]:
+        for record in history["landmarks"] + history.get("update_landmarks", []):
             if "checkpoint" not in record:
                 if (
                     record["step"] != step
@@ -168,6 +186,7 @@ def train(
         status="running",
         identity=identity,
         common_initial_weights=model.common_hashes,
+        initial_parameter_hashes=initial_parameter_hashes,
         history=history,
         scientific_results=False if smoke or job["stage"] == "qualification" else None,
     )
@@ -201,11 +220,15 @@ def train(
         write(out / (label + "-receipt.json"), receipt)
         return receipt
 
-    def landmark(target, preceding):
+    def landmark(target, preceding, *, update_endpoint=False):
         from research.layerrope_beta.time_budget.state import landmark_valid
 
-        valid = landmark_valid(
-            target, clock.seconds, preceding, clock.last_update_seconds
+        valid = (
+            (step == protocol["equal_token_updates"])
+            if update_endpoint
+            else landmark_valid(
+                target, clock.seconds, preceding, clock.last_update_seconds
+            )
         )
         if not valid:
             raise RuntimeError("Training-clock landmark overshoot violation")
@@ -247,10 +270,29 @@ def train(
             offline_validation_seconds=time.monotonic() - offline,
             routing=route,
         )
-        history["landmarks"].append(record)
-        done.add(target)
+        if diagnostic is not None and (
+            update_endpoint or target in (0.0, protocol["primary_seconds"])
+        ):
+            diagnostic_started = time.monotonic()
+            record["attention_diagnostics"] = diagnostic(model, ids, device)
+            synchronize(device)
+            record["offline_attention_diagnostic_seconds"] = (
+                time.monotonic() - diagnostic_started
+            )
+        records = (
+            history["update_landmarks"] if update_endpoint else history["landmarks"]
+        )
+        records.append(record)
+        if not update_endpoint:
+            done.add(target)
         model.train()
-        record["checkpoint"] = checkpoint("time-" + str(target))
+        if (
+            contract is None
+            or update_endpoint
+            or target in (0.0, protocol["primary_seconds"])
+        ):
+            label = "update-" + str(step) if update_endpoint else "time-" + str(target)
+            record["checkpoint"] = checkpoint(label)
         write(out / "RESULT.json", result)
 
     try:
@@ -279,6 +321,16 @@ def train(
                 if not torch.isfinite(objective).item():
                     raise FloatingPointError("Nonfinite objective")
                 objective.backward()
+                gradient_norm = None
+                if contract is not None:
+                    gradients = [
+                        p.grad for p in model.parameters() if p.grad is not None
+                    ]
+                    gradient_norm = torch.linalg.vector_norm(
+                        torch.stack(torch._foreach_norm(gradients))
+                    ).item()
+                    if not math.isfinite(gradient_norm):
+                        raise FloatingPointError("Nonfinite gradient norm")
                 optimizer.step()
                 if next_step == 1 or next_step % protocol["finite_cadence"] == 0:
                     finite(model, optimizer)
@@ -290,6 +342,14 @@ def train(
                     if not observed_route["finite"]:
                         raise FloatingPointError("Nonfinite trained routing")
                 ce = objective.item()
+                loss_spike = False
+                if contract is not None:
+                    previous = [u["ce"] for u in history["updates"][-100:]]
+                    loss_spike = bool(
+                        next_step > 100
+                        and len(previous) == 100
+                        and ce > float(np.median(previous)) + 1.0
+                    )
                 step = next_step
                 stream.advance()
             history["updates"].append(
@@ -301,6 +361,16 @@ def train(
                     lr=optimizer.param_groups[0]["lr"],
                 )
             )
+            if contract is not None:
+                record = history["updates"][-1]
+                record.update(
+                    gradient_norm_before_clipping=gradient_norm,
+                    clipped=False,
+                    optimizer_skipped=False,
+                    loss_spike=loss_spike,
+                )
+                if step == protocol["equal_token_updates"]:
+                    landmark(clock.seconds, preceding, update_endpoint=True)
             for target in targets:
                 if target not in done and clock.seconds >= target:
                     landmark(target, preceding)
@@ -333,6 +403,11 @@ def train(
             training_seconds=clock.seconds,
             cursor=stream.identity(),
             attempt_process_seconds=time.monotonic() - started,
+            peak_allocated_bytes=(
+                torch.cuda.max_memory_allocated(device)
+                if str(device).startswith("cuda")
+                else None
+            ),
         )
         history["attempts"][-1]["process_seconds"] = result["attempt_process_seconds"]
         write(out / "RESULT.json", result)

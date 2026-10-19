@@ -98,11 +98,22 @@ def qualify(device):
             q = attn._shape(attn.q_proj(hidden), 7, 2)
             k = attn._shape(attn.k_proj(hidden), 7, 2)
             v = attn._shape(attn.v_proj(hidden), 7, 2)
+            gain = getattr(attn, "qknorm_gain", None)
+            if gain is not None:
+                q = (
+                    q.float() / q.float().norm(dim=-1, keepdim=True).clamp_min(1e-12)
+                ).to(q.dtype)
+                k = (
+                    k.float() / k.float().norm(dim=-1, keepdim=True).clamp_min(1e-12)
+                ).to(k.dtype)
             cos, sin = attn.rotary_emb(v, seq_len=7)
             q, k = author.apply_rotary_pos_emb(q, k, cos, sin, positions)
             k, v = fakequant(k, kb, method), fakequant(v, vb, method)
             with torch.autocast(device_type=device, enabled=False):
-                scores = q.float() @ k.float().transpose(-2, -1) / math.sqrt(64)
+                query = q if gain is None else q * gain.to(q.dtype)
+                scores = query.float() @ k.float().transpose(-2, -1)
+                if gain is None:
+                    scores = scores / math.sqrt(64)
                 mask = torch.ones(7, 7, device=device, dtype=torch.bool).triu(1)
                 scores.masked_fill_(mask, float("-inf"))
                 oracle = (scores.softmax(-1) @ v.float()).to(v.dtype)

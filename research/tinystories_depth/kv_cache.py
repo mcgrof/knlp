@@ -9,8 +9,6 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from .model import author
-
 
 def fakequant(x, bits, method="symmetric"):
     """One FP32 scale per [batch, head, token]; no future-token statistics.
@@ -65,49 +63,17 @@ def cache_forward(
     output_attentions=False,
     use_cache=False,
 ):
-    """Original author attention order, adding Q/DQ at the cache write.
+    from .attention import forward
 
-    The original attention always uses is_causal=True, which is incorrect
-    for offset single-token decode. This adapter uses an offset mask only
-    for cached decode. All measured full-window calls keep the author's
-    original is_causal=True path, RoPE, SDPA and projection order.
-    """
-    if output_attentions:
-        raise ValueError("Unpadded causal evaluation only")
-    bsz, q_len, _ = hidden_states.size()
-    q = self._shape(self.q_proj(hidden_states), q_len, bsz)
-    k = self._shape(self.k_proj(hidden_states), q_len, bsz)
-    v = self._shape(self.v_proj(hidden_states), q_len, bsz)
-    past_len = 0 if past_key_value is None else past_key_value[0].shape[-2]
-    cos, sin = self.rotary_emb(v, seq_len=past_len + q_len)
-    q, k = author.apply_rotary_pos_emb(q, k, cos, sin, position_ids)
-    if attention_mask is not None and attention_mask.shape != (
-        bsz,
-        1,
-        q_len,
-        past_len + q_len,
-    ):
-        raise ValueError("Unexpected author mask shape")
-    # As in the author path, the prebuilt mask is ignored and SDPA applies
-    # causality. This experiment supplies unpadded token windows only.
-    policy = self._kv_policy
-    k = fakequant(k, policy.k_bits, policy.method)
-    v = fakequant(v, policy.v_bits, policy.method)
-    policy.calls += 1
-    if past_key_value is not None:
-        # The saved values already went through Q/DQ exactly once on write.
-        k = torch.cat((past_key_value[0], k), dim=2)
-        v = torch.cat((past_key_value[1], v), dim=2)
-    cache = (k, v) if use_cache else None
-    if past_len:
-        mask = torch.arange(k.shape[-2], device=q.device).unsqueeze(0) <= (
-            past_len + torch.arange(q_len, device=q.device).unsqueeze(1)
-        )
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0)
-    else:
-        out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True)
-    out = out.transpose(1, 2).reshape(bsz, q_len, self.hidden_size)
-    return self.o_proj(out), None, cache
+    return forward(
+        self,
+        hidden_states,
+        attention_mask,
+        position_ids,
+        past_key_value,
+        output_attentions,
+        use_cache,
+    )
 
 
 @contextlib.contextmanager

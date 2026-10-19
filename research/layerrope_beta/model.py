@@ -8,7 +8,7 @@ from research.tinystories_depth.float_quant import scaled_float
 
 
 class Model(Backbone):
-    def __init__(self, arm, depth, seed, beta=-0.5, vocab=50257):
+    def __init__(self, arm, depth, seed, beta=-0.5, vocab=50257, qknorm=False):
         if arm not in ("R", "L", "M", "ML"):
             raise ValueError(
                 "This study supports residual, full LayerRoPE, mHC and their combination"
@@ -21,6 +21,11 @@ class Model(Backbone):
                 for site in rope.sites:
                     getattr(rope, site + "_beta").fill_(beta)
                     getattr(rope, site + "_beta_rot").fill_(beta)
+        self.qknorm = bool(qknorm)
+        if self.qknorm:
+            from research.tinystories_depth.attention import enable
+
+            enable(self)
         self.observer = None
         self.residual_bits = None
         self.routing_observation = None
