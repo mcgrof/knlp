@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asymmetric KV Cache Quantization — knlp</title>
-<meta name="description" content="Keep keys in FP16 and values in FP8: 25% less KV payload, with qualified 8K Qwen3-8B serving results and a pinned installation recipe.">
+<meta name="description" content="Keep keys in FP16 and values in FP8: 25% less KV payload, with qualified 8K Qwen3-8B in-process batch results and a pinned installation recipe.">
 <link rel="canonical" href="https://knlp.io/paper_memory_decode.html">
 <link rel="stylesheet" href="assets/asymmetric-guide.css">
 <script src="assets/asymmetric-guide.js" defer></script>
@@ -18,19 +18,19 @@
 <h1 id="page-title">Asymmetric KV<br>Cache Quantization</h1>
 <p class="lead">Keep keys in <strong>FP16</strong> and store values in <strong>FP8</strong>.
 This K16/V8 layout saves <strong>25% of persistent KV payload</strong> at equal token capacity.
-On the tested 8K workload, complete-request throughput improves
+On the tested 8K in-process batch, complete-request throughput improves
 <strong>3.45% with packed INT4 AWQ</strong> and <strong>3.55% with dense FP16</strong>
 Qwen3-8B weights.</p>
 <div class="hero-actions"><a class="button" href="#install">Install and try <span aria-hidden="true">↗</span></a><a href="#results">See the measured results ↓</a></div>
 <p class="muted">Last checked October 19, 2026 · One model architecture, two weight formats</p>
 </section>
 <section id="results" aria-labelledby="results-title">
-<p class="eyebrow">Measured results</p><h2 id="results-title">Smaller cache. A qualified serving gain.</h2>
-<p>Both rows use one H100 SXM 80 GB, 8,192 input tokens, batch 32 and 128 forced
+<p class="eyebrow">Measured results</p><h2 id="results-title">Smaller cache. Measured batch-throughput gains.</h2>
+<p>Both rows use one H100 SXM 80 GB, 8,192 input tokens, in-process batch 32 and 128 forced
 output tokens. Each compares K16/V8 with its own native FP16 K/V control using
 FlashInfer and FP16 compute. Throughput includes prefill, scheduling and decode.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Functional and performance results"><table>
-<caption>Qwen3-8B · matched workload and KV byte pool within each comparison</caption>
+<caption>Qwen3-8B · in-process execution · matched workload and KV byte pool within each comparison</caption>
 <thead><tr><th scope="col">Weight format</th><th scope="col">Request throughput</th><th scope="col">Task quality</th><th scope="col">KV pool / arm</th></tr></thead>
 <tbody><tr><th scope="row">Packed INT4 AWQ</th><td class="gain">+3.45%</td><td>All gates pass<br><span class="muted">GSM8K: 1,201 vs 1,199 / 1,319</span></td><td>48 GiB</td></tr>
 <tr><th scope="row">Dense FP16</th><td class="gain">+3.55%</td><td>All gates pass<br><span class="muted">GSM8K: 1,178 vs 1,177 / 1,319</span></td><td>40 GiB</td></tr></tbody></table></div>
@@ -38,6 +38,11 @@ FlashInfer and FP16 compute. Throughput includes prefill, scheduling and decode.
 prediction-loss, retrieval and full GSM8K paired-loss gates. The counts above
 show correct answers, with asymmetric first; aggregate accuracy alone is not
 the preservation test. <a href="asymmetric-methods.html">Read the thresholds, sample sizes and uncertainty</a>.</p>
+<aside class="callout"><strong>HTTP quality has a separate result.</strong>
+The AWQ HTTP worker did not establish GSM8K preservation against native FlashInfer
+or native FA3: its loss upper bounds were 2.196% and 2.373%, above the frozen 2%
+limit. No AWQ HTTP performance confirmation was run.
+<a href="asymmetric-methods.html#awq-http-quality">Read the paired losses, gains and uncertainty</a>.</aside>
 <aside class="callout"><strong>25% less KV payload at equal token slots.</strong>
 At a fixed byte pool, K16/V8 provides one third more token slots. Total GPU memory
 also includes weights, staging and other buffers. These results do not measure a
@@ -59,14 +64,14 @@ the same K16/V8 cache layout. The persistent values remain compressed during dec
 <figcaption id="flow-caption">One worker reuses the staging workspace across layers. Casting stored FP8
 values back to FP16 preserves their quantization error.</figcaption>
 </figure>
-<p>The serving gain comes with vLLM routing fresh whole prompts through compact prefill
+<p>The measured batch gain comes with vLLM routing fresh whole prompts through compact prefill
 even when other requests in the batch are decoding. FlashInfer is unchanged across
 each speed comparison. The reported gain is a request-level result, not a decode-kernel
 speedup. <a href="asymmetric-history.html#prefill-routing">Detailed routing and fallback diagram →</a></p>
 </section>
 <section id="install" aria-labelledby="install-title">
 <p class="eyebrow">Install and run</p><h2 id="install-title">Start with the AWQ recipe.</h2>
-<aside class="support"><strong>Validated serving scope</strong><p>H100 / SM90, FP16 compute, one worker (TP1),
+<aside class="support"><strong>Validated feature scope</strong><p>H100 / SM90, FP16 compute, one worker (TP1),
 Qwen3-8B geometry and fresh whole prompts. Automatic prefix caching and chunked prefill
 are disabled. Other models and modes are outside this recipe.</p></aside>
 <p>Use Linux x86-64, a CUDA 12.9 development environment, at least 100 GB system RAM

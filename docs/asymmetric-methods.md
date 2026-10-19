@@ -1,9 +1,10 @@
 # Asymmetric KV: methods and results
 
-The supported result is an 8K/batch-32 Qwen3-8B serving improvement with
+The supported result is an 8K/batch-32 Qwen3-8B in-process throughput improvement with
 FP16 keys and FP8 values. It holds for the two tested weight formats under
 their matched controls. A separate dense 1K test does not meet the confirmed
-gain criteria. This page preserves both outcomes and the conditions behind
+gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
+preserves these outcomes and the conditions behind
 quality, memory and throughput claims.
 
 [Current guide](paper_memory_decode.html) · [Install](asymmetric-install.md) ·
@@ -42,6 +43,29 @@ the preceding implementation uses it for the first eight only. This is
 not evidence of a faster decode kernel. The three-block batch-8 engineering
 screens are separate, descriptive protection checks, not statistical
 noninferiority results or new batch-8 performance claims.
+
+## AWQ HTTP quality
+
+The actual AWQ HTTP worker does not establish quality preservation. It scored
+1,195/1,319 strict GSM8K answers correct, versus 1,198 for native FlashInfer
+and 1,202 for native FA3. The candidate lost 20 and gained 17 answers against
+FlashInfer, and lost 22 and gained 15 against FA3. One-sided exact 95%
+loss-probability upper bounds are 2.196% and 2.373%, above the frozen 2% limit.
+The denominator is all 1,319 paired questions; this is not a bound on net
+accuracy change. Both paired net-change confidence intervals include zero.
+
+This separate test uses the same Qwen3-8B AWQ revision, packed INT4 weights,
+FP16 compute, original calibrated scales and a 48 GiB KV pool on H100 80 GB.
+HTTP quality concurrency is 32, which is not a fixed GPU batch size.
+NLL and retrieval preservation pass at 8K context, and all three arms match
+serial in-process outputs for 32 prompts in both reference orders. Full
+GSM8K uses natural question lengths and natural completion. Earlier batched
+quality was not substituted for actual HTTP quality.
+
+No AWQ HTTP performance confirmation was run. Excluded pilot timings are
+not confirmed HTTP gains. The earlier batch-throughput results retain their
+own execution scope. [Full report](https://github.com/mcgrof/knlp/blob/dc4cce41c1541bac943aa3776f71c2e3bcfd3832/docs/asymmetric-awq-http-quality.md) ·
+[Exact identities, intervals and evidence hashes](data/asymmetric-awq-http-quality-20261019.json).
 
 ## What “quality passes” means
 

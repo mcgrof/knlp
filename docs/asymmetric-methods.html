@@ -8,10 +8,11 @@
 <header><a class="brand" href="./">knlp<span> / inference</span></a>
 <nav aria-label="Reference navigation"><a href="paper_memory_decode.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
 <main id="main" class="reference"><h1 id="asymmetric-kv-methods-and-results">Asymmetric KV: methods and results</h1>
-<p>The supported result is an 8K/batch-32 Qwen3-8B serving improvement with
+<p>The supported result is an 8K/batch-32 Qwen3-8B in-process throughput improvement with
 FP16 keys and FP8 values. It holds for the two tested weight formats under
 their matched controls. A separate dense 1K test does not meet the confirmed
-gain criteria. This page preserves both outcomes and the conditions behind
+gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
+preserves these outcomes and the conditions behind
 quality, memory and throughput claims.</p>
 <p><a href="paper_memory_decode.html">Current guide</a> · <a href="asymmetric-install.html">Install</a> ·
 <a href="asymmetric-history.html">Historical results and failure record</a></p>
@@ -66,6 +67,25 @@ the preceding implementation uses it for the first eight only. This is
 not evidence of a faster decode kernel. The three-block batch-8 engineering
 screens are separate, descriptive protection checks, not statistical
 noninferiority results or new batch-8 performance claims.</p>
+<h2 id="awq-http-quality">AWQ HTTP quality</h2>
+<p>The actual AWQ HTTP worker does not establish quality preservation. It scored
+1,195/1,319 strict GSM8K answers correct, versus 1,198 for native FlashInfer
+and 1,202 for native FA3. The candidate lost 20 and gained 17 answers against
+FlashInfer, and lost 22 and gained 15 against FA3. One-sided exact 95%
+loss-probability upper bounds are 2.196% and 2.373%, above the frozen 2% limit.
+The denominator is all 1,319 paired questions; this is not a bound on net
+accuracy change. Both paired net-change confidence intervals include zero.</p>
+<p>This separate test uses the same Qwen3-8B AWQ revision, packed INT4 weights,
+FP16 compute, original calibrated scales and a 48 GiB KV pool on H100 80 GB.
+HTTP quality concurrency is 32, which is not a fixed GPU batch size.
+NLL and retrieval preservation pass at 8K context, and all three arms match
+serial in-process outputs for 32 prompts in both reference orders. Full
+GSM8K uses natural question lengths and natural completion. Earlier batched
+quality was not substituted for actual HTTP quality.</p>
+<p>No AWQ HTTP performance confirmation was run. Excluded pilot timings are
+not confirmed HTTP gains. The earlier batch-throughput results retain their
+own execution scope. <a href="https://github.com/mcgrof/knlp/blob/dc4cce41c1541bac943aa3776f71c2e3bcfd3832/docs/asymmetric-awq-http-quality.md">Full report</a> ·
+<a href="data/asymmetric-awq-http-quality-20261019.json">Exact identities, intervals and evidence hashes</a>.</p>
 <h2 id="what-quality-passes-means">What “quality passes” means</h2>
 <p>Negative log likelihood (NLL) measures prediction loss. Each study uses
 32 independent document windows and 128 scored cached-decode targets per
