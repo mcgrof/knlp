@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LayerRoPE and mHC: quality, time and precision | knlp</title>
-<meta name="description" content="Understand LayerRoPE's magnitude, rotation and input/output gains. Compare equal-token and equal-training-time TinyStories results, separate quantized quality from rounding damage, and reproduce the finite-routing audit.">
+<meta name="description" content="Understand LayerRoPE's magnitude, rotation and input/output gains. Compare equal-token and equal-training-time TinyStories results, separate quantized quality from rounding damage, and reproduce the QKNorm and finite-routing comparisons.">
 <style>
 :root{color-scheme:dark;--bg:#070b09;--panel:#101914;--panel2:#0c1410;--line:#293c31;--text:#e2ece5;--muted:#a4b7aa;--green:#2ae6a3;--cyan:#62dce5;--amber:#f0b65c;--violet:#b6a1ff;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 80% 0,rgba(42,230,163,.07),transparent 32rem),var(--bg);color:var(--text);font:16px/1.7 var(--sans)}
@@ -17,6 +17,7 @@ h1{font-size:clamp(40px,6.8vw,75px);line-height:1.05;letter-spacing:-.045em;max-
 figure{margin:24px 0;padding:18px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}figure svg{display:block;width:100%;height:auto}figcaption{margin-top:13px}.flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.flow .node{position:relative;padding:17px 12px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:14px;text-align:center}.flow .node:not(:last-child):after{content:'→';position:absolute;right:-13px;top:38%;color:var(--green);z-index:1}.node.gain{border-color:#367963;color:var(--green)}.node em{display:block;font-style:normal;font-size:12px;color:var(--muted)}.bypass{margin:0 4px 11px;border:1px solid #577165;border-bottom:0;padding:8px 12px;text-align:center;font:12px var(--mono);color:var(--muted)}
 .lab{margin-top:25px}.sliders{display:grid;gap:17px;margin:20px 0}.slider-label{display:flex;justify-content:space-between;gap:12px;font-size:14px}input[type=range]{display:block;width:100%;accent-color:var(--green);margin:10px 0}output{font-family:var(--mono);color:var(--cyan)}.presets{display:flex;gap:8px;flex-wrap:wrap}button{font:13px var(--mono);color:var(--text);background:var(--panel2);padding:9px 12px;border:1px solid #526c5d;border-radius:6px;cursor:pointer}button:hover{border-color:var(--green)}button[aria-pressed=true]{border-color:var(--green);background:#153728;color:var(--green)}.readout{font:14px/1.9 var(--mono);padding:13px;border:1px solid var(--line);border-radius:6px}.readout span{display:block}.legend{display:flex;flex-wrap:wrap;gap:17px;color:var(--muted);font-size:13px}.legend .dot:before{content:'●';color:var(--green);margin-right:7px}.legend .dot.base:before{color:#a4b7aa}.lab svg{background:#0a120e;border-radius:7px}.svg-text{font-family:var(--sans);fill:var(--muted);font-size:12px}
 .scroll{overflow:auto;max-width:100%;margin:22px 0;border-radius:8px}table{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line);font-variant-numeric:tabular-nums;font-size:14px}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}thead th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}tbody th{font-size:13px;min-width:130px;font-weight:650}td{color:var(--muted)}caption{text-align:left;padding:0 0 13px;max-width:min(980px,calc(100vw - 90px))}details{padding:17px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);margin:16px 0}summary{cursor:pointer;color:var(--cyan);font-weight:650}details[open]>summary{margin-bottom:17px}.formula,pre{font:13px/1.9 var(--mono);padding:18px;border:1px solid var(--line);border-left:3px solid var(--violet);background:var(--bg);overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}code{font:.93em var(--mono);color:#c8b6ff}ol,ul{padding-left:24px}li{margin:9px 0}.refs li{overflow-wrap:anywhere}footer{border-top:1px solid var(--line);padding:24px;color:var(--muted);font:11px/1.7 var(--mono)}[hidden]{display:none!important}
+.qk-bar-row{display:grid;grid-template-columns:32px minmax(0,1fr) 57px;gap:10px;align-items:center;font:13px/1.8 var(--mono);margin:12px 0}.qk-track{display:block;height:13px;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden}.qk-bar{display:block;height:100%}.qk-bar-off{background:var(--muted)}.qk-bar-on{background:var(--green)}.qk-card .qk-card-delta{font-family:var(--mono);font-size:12px}.qk-card h3{margin-top:0}
 @media(max-width:850px){.grid2,.grid3{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.flow .node:not(:last-child):after{content:'↓';right:calc(50% - 6px);top:auto;bottom:-18px}.bypass{border-bottom:1px solid #577165}.lab figure{max-width:500px;margin:0 auto}}
 @media(max-width:600px){header{position:static}nav{gap:12px;padding:12px 18px}main{padding:35px 18px 50px}h1{font-size:43px}h2{font-size:26px}.lead{font-size:18px}section{padding:34px 0;scroll-margin-top:15px}figure{padding:10px}.card{padding:17px}th,td{padding:10px}.formula,pre{font-size:12px}.decision,.note{padding:15px}.flow .node{padding:12px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -25,18 +26,18 @@ figure{margin:24px 0;padding:18px;background:var(--panel2);border:1px solid var(
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<header><nav aria-label="Page sections"><a class="logo" href="https://knlp.io/">knlp</a><a href="#depth-controls">LayerRoPE</a><a href="#learning">equal tokens</a><a href="#budget">equal time</a><a href="#routing-audit">routing audit</a><a href="#kv-cache">KV cache</a><a href="#floating">FP4 / FP8</a><a href="#reproduce">reproduce</a></nav></header>
+<header><nav aria-label="Page sections"><a class="logo" href="https://knlp.io/">knlp</a><a href="#depth-controls">LayerRoPE</a><a href="#learning">equal tokens</a><a href="#budget">equal time</a><a href="#qknorm">QKNorm</a><a href="#routing-audit">routing audit</a><a href="#kv-cache">KV cache</a><a href="#floating">FP4 / FP8</a><a href="#reproduce">reproduce</a></nav></header>
 <main id="main">
 <div class="hero">
 <div class="eyebrow">TinyStories · Depth-dependent gains · Residual routing</div>
 <h1>LayerRoPE and mHC.<br>Quality, time and precision.</h1>
-<p class="lead">LayerRoPE controls how each layer reads and writes. mHC controls how information moves between residual streams. <strong>The combination has the lowest mean loss in the three-seed equal-token screen. Ordinary residual has the lowest mean clean and absolute quantized loss in the eight-seed equal-training-time comparison.</strong> Neither experiment establishes a universal architecture ranking.</p>
+<p class="lead">LayerRoPE controls how each layer reads and writes. mHC controls how information moves between residual streams. <strong>The combination has the lowest mean loss in the three-seed equal-token screen. Ordinary residual has the lowest mean clean and absolute quantized loss in the eight-seed equal-training-time comparison.</strong> A separate QKNorm screen improves mHC at equal time, while residual remains ahead. These experiments do not establish a universal architecture ranking.</p>
 <div class="grid3">
 <div class="card"><div class="kicker">Measured · equal tokens</div><div class="metric">24 models</div><p>Eight configurations, three fresh paired seeds each. All train from scratch for 2,000 updates, then receive quantization evaluations.</p></div>
 <div class="card"><div class="kicker">Measured · equal training time</div><div class="metric">787 seconds</div><p>Four configurations, eight paired final seeds each. Residual achieves the lowest mean held-out clean and K3/V2 loss in this portable implementation.</p></div>
-<div class="card"><div class="kicker">Measured · cache precision</div><div class="metric">Same floor</div><p>Every tested family reaches 3,072 ideal cache bytes per token within its cohort’s stated tolerance. Lower rounding damage and lower absolute loss remain separate results.</p></div>
+<div class="card"><div class="kicker">Measured · cache precision</div><div class="metric">Same floor</div><p>The own-clean tolerance stays at 3,072 ideal bytes per token across QKNorm off/on. A shared absolute-quality target gives a different answer at equal updates.</p></div>
 </div>
-<p class="byline">32-layer, roughly 20M-parameter story models · separate three-seed equal-token and eight-seed equal-time cohorts · simulated quantization · updated 18 October 2026</p>
+<p class="byline">32-layer, roughly 20M-parameter story models · separate fixed-token, equal-time and QKNorm cohorts · simulated quantization · updated 19 October 2026</p>
 </div>
 
 <section id="depth-controls">
@@ -1277,6 +1278,88 @@ L 379.609135 51.900443
 <p class="note">All 16 mHC-containing final trajectories had at least one recorded routing-tolerance miss, with finite values. Every seed and its empirical loss remain in the result. The diagnostic below examines those finite-normalization errors; it does not invalidate the measured equal-time comparison or establish a causal explanation for the loss gap.</p>
 </section>
 
+<section id="qknorm">
+<h2>QKNorm helps mHC here; residual still leads at equal time</h2>
+<p><strong>Query-Key Normalization (QKNorm) improves mHC clean loss in all three paired seeds at 787 seconds, from 2.722623 to 2.653771 nats on average.</strong> Ordinary residual without QKNorm remains best at the same time budget, at 2.280066. This is a new, separate three-seed screen: all 24 models trained from scratch, with QKNorm off/on for each architecture. It does not continue or pool the earlier eight-seed experiment.</p>
+<p><a href="https://aclanthology.org/2020.findings-emnlp.379/">QKNorm</a> normalizes each query and key vector to unit length, then learns a scalar that controls attention-score strength. Values stay unchanged. This changes how attention matches tokens. LayerRoPE changes depth-dependent gains, and mHC changes residual-stream routing; these are separate controls.</p>
+<figure aria-labelledby="qknorm-flow-caption">
+<div class="flow"><div class="node">Project Q and K<em>split into attention heads</em></div><div class="node gain">Normalize Q and K<em>use vector direction</em></div><div class="node">Positional RoPE<em>encode token position</em></div><div class="node gain">Learn score strength<em>one scalar per layer</em></div><div class="node">Attention over V<em>values stay unchanged</em></div></div>
+<figcaption id="qknorm-flow-caption">This diagram describes the QKNorm-on path. The scalar multiplies Q before the attention dot product. New cache entries store the normalized, position-rotated K and unchanged V, then apply the selected rounding once. Existing cached entries are not normalized or rounded again.</figcaption>
+</figure>
+<h3>Switch the budget to see the ranking change</h3>
+<p>Cross-entropy (CE) measures held-out next-token prediction loss on TinyStories; lower is better. Perplexity is exp(CE). Both endpoints predict the same 131,072 final targets. The 1,000-update checkpoint contains 2,048,000 training targets and is evaluated separately from each model’s 787-second checkpoint.</p>
+<div class="presets" id="qk-budget-controls" role="group" aria-label="QKNorm comparison endpoint" hidden><button type="button" data-qk-budget="time" aria-pressed="true">787 training seconds</button><button type="button" data-qk-budget="tokens" aria-pressed="false">1,000 updates</button></div>
+<p class="small" id="qk-endpoint-label" role="status" aria-live="polite">787 training seconds · mean clean CE · QKNorm off versus on</p>
+<div class="grid2" id="qk-comparison"><div class="card qk-card" data-qk-card="R"><h3>Residual</h3>
+<div class="qk-bar-row"><span>Off</span><span class="qk-track"><span class="qk-bar qk-bar-off" style="width:71.252%"></span></span><span class="qk-value-off">2.280</span></div>
+<div class="qk-bar-row"><span>On</span><span class="qk-track"><span class="qk-bar qk-bar-on" style="width:71.622%"></span></span><span class="qk-value-on">2.292</span></div>
+<p class="qk-card-delta small">On minus off: +0.011829 nats</p></div>
+<div class="card qk-card" data-qk-card="L"><h3>LayerRoPE</h3>
+<div class="qk-bar-row"><span>Off</span><span class="qk-track"><span class="qk-bar qk-bar-off" style="width:76.282%"></span></span><span class="qk-value-off">2.441</span></div>
+<div class="qk-bar-row"><span>On</span><span class="qk-track"><span class="qk-bar qk-bar-on" style="width:76.020%"></span></span><span class="qk-value-on">2.433</span></div>
+<p class="qk-card-delta small">On minus off: −0.008396 nats</p></div>
+<div class="card qk-card" data-qk-card="M"><h3>mHC</h3>
+<div class="qk-bar-row"><span>Off</span><span class="qk-track"><span class="qk-bar qk-bar-off" style="width:85.082%"></span></span><span class="qk-value-off">2.723</span></div>
+<div class="qk-bar-row"><span>On</span><span class="qk-track"><span class="qk-bar qk-bar-on" style="width:82.930%"></span></span><span class="qk-value-on">2.654</span></div>
+<p class="qk-card-delta small">On minus off: −0.068852 nats</p></div>
+<div class="card qk-card" data-qk-card="ML"><h3>mHC + LayerRoPE</h3>
+<div class="qk-bar-row"><span>Off</span><span class="qk-track"><span class="qk-bar qk-bar-off" style="width:86.443%"></span></span><span class="qk-value-off">2.766</span></div>
+<div class="qk-bar-row"><span>On</span><span class="qk-track"><span class="qk-bar qk-bar-on" style="width:86.397%"></span></span><span class="qk-value-on">2.765</span></div>
+<p class="qk-card-delta small">On minus off: −0.001448 nats</p></div></div>
+<p class="fine">All bars use the same zero-based 0–3.2 nat scale. The full table below remains available without JavaScript. Means and paired ranges describe these three seeds; ranges are not confidence intervals.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="QKNorm paired clean loss at both endpoints"><table><caption>Three paired seeds, 77811–77813. Delta is QKNorm on minus off; negative favors QKNorm. LayerRoPE uses full input/output magnitude and rotation, with both beta slopes initialized to zero and trainable. The learning rates are inherited from the QKNorm-off study, with no equal tuning claim.</caption><thead><tr><th scope="col">Endpoint</th><th scope="col">Architecture</th><th scope="col">Off clean CE</th><th scope="col">On clean CE</th><th scope="col">Mean delta</th><th scope="col">Paired delta range</th></tr></thead><tbody>
+<tr data-qk-endpoint="time" data-qk-arm="R"><td>787 seconds</td><th scope="row">Residual</th><td class="qk-off">2.280066</td><td class="qk-on">2.291895</td><td class="qk-delta">+0.011829</td><td>+0.001674 to +0.018557</td></tr>
+<tr data-qk-endpoint="time" data-qk-arm="L"><td>787 seconds</td><th scope="row">LayerRoPE</th><td class="qk-off">2.441022</td><td class="qk-on">2.432625</td><td class="qk-delta">−0.008396</td><td>−0.018279 to +0.004146</td></tr>
+<tr data-qk-endpoint="time" data-qk-arm="M"><td>787 seconds</td><th scope="row">mHC</th><td class="qk-off">2.722623</td><td class="qk-on">2.653771</td><td class="qk-delta">−0.068852</td><td>−0.085912 to −0.057450</td></tr>
+<tr data-qk-endpoint="time" data-qk-arm="ML"><td>787 seconds</td><th scope="row">mHC + LayerRoPE</th><td class="qk-off">2.766167</td><td class="qk-on">2.764719</td><td class="qk-delta">−0.001448</td><td>−0.023085 to +0.012058</td></tr>
+<tr data-qk-endpoint="tokens" data-qk-arm="R"><td>1,000 updates</td><th scope="row">Residual</th><td class="qk-off">3.039782</td><td class="qk-on">2.991183</td><td class="qk-delta">−0.048599</td><td>−0.059928 to −0.036639</td></tr>
+<tr data-qk-endpoint="tokens" data-qk-arm="L"><td>1,000 updates</td><th scope="row">LayerRoPE</th><td class="qk-off">2.960515</td><td class="qk-on">2.938223</td><td class="qk-delta">−0.022292</td><td>−0.033617 to −0.005758</td></tr>
+<tr data-qk-endpoint="tokens" data-qk-arm="M"><td>1,000 updates</td><th scope="row">mHC</th><td class="qk-off">2.938937</td><td class="qk-on">2.886090</td><td class="qk-delta">−0.052847</td><td>−0.069344 to −0.021662</td></tr>
+<tr data-qk-endpoint="tokens" data-qk-arm="ML"><td>1,000 updates</td><th scope="row">mHC + LayerRoPE</th><td class="qk-off">2.917502</td><td class="qk-on">2.912387</td><td class="qk-delta">−0.005116</td><td>−0.039031 to +0.024791</td></tr>
+</tbody></table></div>
+<p><strong>Equal updates and equal time answer different questions.</strong> At 1,000 updates, QKNorm lowers clean CE in every paired seed for residual, LayerRoPE and mHC. mHC with QKNorm has the lowest mean CE there, 2.886090. At 787 seconds, residual with QKNorm completes only 8,276–8,922 updates versus 9,999–11,371 without it, and its clean loss worsens in every pair. LayerRoPE and the combined model have mixed-sign effects at equal time. These short endpoints do not establish long-run convergence rates.</p>
+<h3>Does it enable stronger cache quantization?</h3>
+<p><strong>No smaller usable cache format emerges at equal training time.</strong> The own-clean rule permits at most 0.1 nat extra CE relative to that checkpoint’s clean loss. Its minimum ideal cache cost remains 3,072 bytes per cached token for every architecture, off or on, at both endpoints. A pass allows this stated damage; it does not mean unchanged quality.</p>
+<p>The common-quality rule instead compares every architecture with the same paired residual/off clean reference, plus 0.1 nat, at the same endpoint. One fixed policy must pass all three seeds. That gives the following minimum ideal costs:</p>
+<div class="scroll" tabindex="0" role="region" aria-label="QKNorm common quality cache floors"><table><caption>Ideal bytes per cached token, including scales and offsets. Each arrow is QKNorm off → on. “None” means no tested policy qualifies, including clean. Actual cache tensors remain BF16; these are not measured serving-memory savings.</caption><thead><tr><th scope="col">Architecture</th><th scope="col">787 seconds</th><th scope="col">1,000 updates</th></tr></thead><tbody>
+<tr><th scope="row">Residual</th><td>3,072 → 3,072</td><td>3,072 → 3,072</td></tr>
+<tr><th scope="row">LayerRoPE</th><td>None → None</td><td>2,560 → 2,560</td></tr>
+<tr><th scope="row">mHC</th><td>None → None</td><td>3,072 → 2,560</td></tr>
+<tr><th scope="row">mHC + LayerRoPE</th><td>None → None</td><td>2,560 → 2,560</td></tr>
+</tbody></table></div>
+<p>At 1,000 updates, mHC with QKNorm passes the common-quality rule with signed K2/V2: 16.7% fewer ideal bytes than its QKNorm-off floor. Its own-clean floor stays unchanged, so this gain includes improved clean-model quality and does not establish better rounding tolerance alone. LayerRoPE and the combination already pass at 2,560 bytes with QKNorm off. At equal time, neither meets the common-quality rule even before rounding.</p>
+<details><summary>K3/V3 versus K3/V2: inspect both endpoints</summary>
+<p>K3/V3 is the reference for lowering V alone from three to two bits while holding K at three. Both use the same signed codebook rule; unequal K/V widths are a separate choice from signed versus affine quantization. K3/V3 costs 3,584 ideal bytes per token and K3/V2 costs 3,072.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="QKNorm K3 V3 and K3 V2 loss"><table><caption>Means over the same three seeds, all 32 attention layers rounded. Added CE is K3/V2 minus K3/V3; lower means less added damage from reducing V precision. Absolute CE and this damage measure have different baselines.</caption><thead><tr><th scope="col">Endpoint</th><th scope="col">Architecture</th><th scope="col">QKNorm</th><th scope="col">K3/V3 CE</th><th scope="col">K3/V2 CE</th><th scope="col">Added CE: V3 → V2</th></tr></thead><tbody>
+<tr><td>787 seconds</td><th scope="row">Residual</th><td>off</td><td>2.307041</td><td>2.371075</td><td>0.064035</td></tr>
+<tr><td>787 seconds</td><th scope="row">Residual</th><td>on</td><td>2.314419</td><td>2.368250</td><td>0.053832</td></tr>
+<tr><td>787 seconds</td><th scope="row">LayerRoPE</th><td>off</td><td>2.455527</td><td>2.488803</td><td>0.033276</td></tr>
+<tr><td>787 seconds</td><th scope="row">LayerRoPE</th><td>on</td><td>2.446882</td><td>2.474013</td><td>0.027131</td></tr>
+<tr><td>787 seconds</td><th scope="row">mHC</th><td>off</td><td>2.737210</td><td>2.769360</td><td>0.032151</td></tr>
+<tr><td>787 seconds</td><th scope="row">mHC</th><td>on</td><td>2.665257</td><td>2.690940</td><td>0.025683</td></tr>
+<tr><td>787 seconds</td><th scope="row">mHC + LayerRoPE</th><td>off</td><td>2.775536</td><td>2.803514</td><td>0.027978</td></tr>
+<tr><td>787 seconds</td><th scope="row">mHC + LayerRoPE</th><td>on</td><td>2.774611</td><td>2.799791</td><td>0.025181</td></tr>
+<tr><td>1,000 updates</td><th scope="row">Residual</th><td>off</td><td>3.045760</td><td>3.068173</td><td>0.022413</td></tr>
+<tr><td>1,000 updates</td><th scope="row">Residual</th><td>on</td><td>3.001959</td><td>3.027109</td><td>0.025150</td></tr>
+<tr><td>1,000 updates</td><th scope="row">LayerRoPE</th><td>off</td><td>2.967212</td><td>2.985526</td><td>0.018314</td></tr>
+<tr><td>1,000 updates</td><th scope="row">LayerRoPE</th><td>on</td><td>2.946600</td><td>2.961727</td><td>0.015127</td></tr>
+<tr><td>1,000 updates</td><th scope="row">mHC</th><td>off</td><td>2.948465</td><td>2.972336</td><td>0.023871</td></tr>
+<tr><td>1,000 updates</td><th scope="row">mHC</th><td>on</td><td>2.894533</td><td>2.913341</td><td>0.018808</td></tr>
+<tr><td>1,000 updates</td><th scope="row">mHC + LayerRoPE</th><td>off</td><td>2.924327</td><td>2.948294</td><td>0.023966</td></tr>
+<tr><td>1,000 updates</td><th scope="row">mHC + LayerRoPE</th><td>on</td><td>2.920748</td><td>2.941780</td><td>0.021032</td></tr>
+</tbody></table></div>
+<p>At 787 seconds, each architecture’s mean added V-bit damage decreases with QKNorm. At 1,000 updates it decreases for LayerRoPE, mHC and the combination, while residual’s mean increases. These descriptive differences do not by themselves establish a new precision floor or a mechanism.</p>
+</details>
+<details><summary>Screen method, runtime and limits</summary>
+<p>The model has 32 layers, width 128, two 64-channel attention heads, feed-forward width 352, context length 256 and the GPT-2 vocabulary. Rates for residual, LayerRoPE, mHC and the combination are 0.001, 0.01, 0.003 and 0.01. Off/on pairs share common initial weights and token order. AdamW uses (0.9, 0.95), epsilon 10<sup>−8</sup>, zero decay and no clipping; warmup lasts 100 updates, then the rate stays constant.</p>
+<p>One 80GB CUDA GPU runs one worker at a time, using Python 3.12.11, PyTorch 2.9.1+cu128, FlashAttention and four CPU threads. Master parameters, normalization, routing and optimizer state are FP32; matrix operations use BF16. TF32 and compilation are disabled. QKNorm accumulates norms in FP32 with epsilon 10<sup>−12</sup>. One unconstrained FP32 scalar per attention module is shared across heads, initialized to log<sub>2</sub>(256²−256), cast to the query dtype and multiplied into Q; attention uses scale 1.</p>
+<p>The training clock includes batch preparation, transfers, forward/backward, optimization and scheduled checks. Setup, offline validation, attention diagnostics and checkpoint writes have separate clocks. Fresh validation and final documents exclude 184,656 recorded exact-text predecessor hashes. Validation has 32,768 targets; the final holdout has 131,072. Exclusion does not detect paraphrases. The final holdout opens only after all training statuses close.</p>
+<p>All 24 trajectories and 480 cache cells completed, with no numerical failures. Ninety-six scientific checkpoints retain model, optimizer, random-number-generator, cursor and clock states; exports were hash-verified before compute teardown. The ten frozen policies are clean K16/V16, signed K3/V16, K2/V16, K16/V3, K16/V2, K3/V3, K3/V2, K2/V3, K2/V2, and affine K2/V2. K16/V16 leaves the BF16 cache unchanged. Rounding is token-local, once on write; no packed cache or quantization-aware training ran.</p>
+<p>mHC keeps its original 20 finite Sinkhorn iterations, epsilon, precision and operation order. Completion does not clear the separate routing-tolerance findings. Offline attention statistics reconstruct FP32 reference scores and do not expose bit-exact fused BF16 internals. Three seeds, inherited rates, narrow width and short context limit the finding; no population winner, equivalence or causal explanation is established.</p>
+<p>Screen source: <a href="https://github.com/mcgrof/knlp/tree/54ef527d8aede91725c7c4de45d6403c01eb986f">knlp 54ef527d</a>. The experiment source files match the frozen training capture. The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/qknorm/README.md">QKNorm guide</a> documents data preparation, qualification, checkpoints and the three Make presets.</p>
+</details>
+</section>
+
 <section id="routing-audit">
 <h2>Does tighter finite normalization justify another training run?</h2>
 <p><strong>No candidate passed the declared numerical screen.</strong> A saved-checkpoint replay compared 20, 40, 80, 160 and 320 normalization iterations in FP32 and FP64, using identical captured FP32 router logits. The original per-window validation losses replayed exactly, capture left logits unchanged, and the 20-step calculation reproduced the actual carry matrices.</p>
@@ -1351,7 +1434,7 @@ Negative favors the candidate’s tolerance to lowering value precision.</div>
 </section>
 
 <section id="reproduce">
-<h2>Reproduce this fixed-token experiment</h2>
+<h2>Reproduce the comparisons</h2>
 <p>The standard Make presets run the fresh beta matrix and its post-training evaluations. The CPU smoke checks the actual gain, checkpoint and quantization paths on synthetic inputs; it cannot produce a scientific result.</p>
 <pre><code>make defconfig-layerrope-mhc-beta-smoke
 make</code></pre>
@@ -1369,6 +1452,27 @@ make defconfig-layerrope-mhc-time-budget
 make CONFIG_RESIDUAL_TIME_CARD=/path/to/CARD.json \
      CONFIG_RESIDUAL_TIME_RESOURCE=/path/to/RESOURCE.json \
      CONFIG_RESIDUAL_TIME_ACTION=qualify</code></pre>
+<h3>QKNorm: training and saved-checkpoint evaluation</h3>
+<p>The three QKNorm presets use the same standard Make flow. The CPU smoke runs all eight architecture/off/on arms and all ten cache policies on synthetic tokens. It checks attention, gradients, pairing, exact resume and cache parity; it does not produce scientific results.</p>
+<pre><code>make defconfig-layerrope-mhc-qknorm-smoke
+make CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/qknorm-smoke</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/qknorm/README.md">QKNorm reproduction guide</a> explains how to prepare document-excluding training/validation data, the separate final holdout, a hashed seed audit and the frozen run card. Full training requires one existing CUDA GPU and explicit finite resource limits. Qualification uses validation data; it does not open final targets or rent compute.</p>
+<pre><code>make defconfig-layerrope-mhc-qknorm
+make CONFIG_RESIDUAL_TIME_ACTION=qualify \
+     CONFIG_RESIDUAL_TIME_CARD=/path/to/CARD.json \
+     CONFIG_RESIDUAL_TIME_RESOURCE=/path/to/QUALIFY-RESOURCE.json \
+     CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/qualification
+make CONFIG_RESIDUAL_TIME_ACTION=run \
+     CONFIG_RESIDUAL_TIME_CARD=/path/to/CARD.json \
+     CONFIG_RESIDUAL_TIME_RESOURCE=/path/to/RUN-RESOURCE.json \
+     CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/results</code></pre>
+<p>The run resource names the successful qualification receipt and its hash. Training retains exact 1,000-update and 787-second endpoints, with complete state for explicit resume. To evaluate retained models without training again, point the cache preset at the existing <code>qknorm/</code> directory containing <code>training/</code> and <code>evaluation/</code>. Verified completed cells are reused and missing cells are evaluated:</p>
+<pre><code>make defconfig-layerrope-mhc-qknorm-kv-cache
+make CONFIG_RESIDUAL_TIME_CARD=/path/to/CARD.json \
+     CONFIG_RESIDUAL_TIME_RESOURCE=/path/to/CACHE-RESOURCE.json \
+     CONFIG_RESIDUAL_CHECKPOINT_DIR=/path/to/existing/qknorm \
+     CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/cache-receipts</code></pre>
+<p>The external reports separate absolute CE/perplexity, own-clean damage, key-only damage, K3/V2-minus-K3/V3 sensitivity and common-quality floors. All generated JSON, logs, arrays, plots and checkpoints remain outside the source checkout.</p>
 <h3>Finite-routing replay</h3>
 <p>The CPU smoke uses synthetic inputs and produces no scientific finding. Exact replay requires six recorded qualification checkpoints and a generated input manifest. The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/time_budget/ROUTING_AUDIT.md">routing-input guide</a> provides the schema, public data preparation, explicit qualification commands and an executable manifest generator for your own checkpoints. Regeneration creates a new experiment; another runtime may reject the strict original-loss fidelity check.</p>
 <pre><code>make defconfig-layerrope-mhc-routing-audit-smoke
@@ -1387,12 +1491,13 @@ make CONFIG_RESIDUAL_AUDIT_INPUTS=/path/to/AUDIT-INPUTS.json</code></pre>
 <ul class="refs">
 <li><a href="https://arxiv.org/html/2610.09179v1">LayerRoPE: Dynamic Depth-wise Magnitude &amp; Angular Superposition</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>, <a href="https://podcast.do-not-panic.com/viz/2026-10-09-layerrope-treating-transformer-depth-growth-as-a-positional-code-2a065a.html">Visualization</a>) — depth-conditioned gains and their construction.</li>
 <li><a href="https://arxiv.org/abs/2512.24880">mHC: Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/mhc-manifold-constrained-hyper-connections-stabilize-wider-residual-streams/">Audio Summary</a>) — finite constrained routing of multiple residual streams.</li>
+<li><a href="https://aclanthology.org/2020.findings-emnlp.379/">Query-Key Normalization for Transformers</a> — per-head query/key normalization with learned attention-score strength.</li>
 <li><a href="https://github.com/mcgrof/knlp/tree/main/research/layerrope_beta">Training and evaluation code</a> — the measured beta matrix and fake-quantization policies.</li>
 <li><a href="subliminal-learning-mnist.html">MNIST transfer study</a> — background on the separate teacher/student experiment.</li>
 </ul>
 </section>
 </main>
-<footer>knlp · Depth-dependent gains, residual routing and numerical precision. Equal-token and equal-training-time results measure different tradeoffs. The bounded routing audit admitted no new training pilot.</footer>
+<footer>knlp · Depth-dependent gains, residual routing and numerical precision. Equal-token and equal-training-time results measure different tradeoffs. The QKNorm screen and bounded routing audit are separate interventions.</footer>
 <script>
 (() => {
   'use strict';
@@ -1432,6 +1537,27 @@ make CONFIG_RESIDUAL_AUDIT_INPUTS=/path/to/AUDIT-INPUTS.json</code></pre>
     update();
   }));
   update();
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+  const buttons = [...document.querySelectorAll('[data-qk-budget]')];
+  document.getElementById('qk-budget-controls').hidden = false;
+  function showEndpoint(endpoint) {
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.qkBudget === endpoint)));
+    document.querySelectorAll('[data-qk-card]').forEach(card => {
+      const row = document.querySelector(`[data-qk-endpoint="${endpoint}"][data-qk-arm="${card.dataset.qkCard}"]`);
+      ['off', 'on'].forEach(state => {
+        const value = Number(row.querySelector(`.qk-${state}`).textContent);
+        card.querySelector(`.qk-value-${state}`).textContent = value.toFixed(3);
+        card.querySelector(`.qk-bar-${state}`).style.width = `${100 * value / 3.2}%`;
+      });
+      card.querySelector('.qk-card-delta').textContent = `On minus off: ${row.querySelector('.qk-delta').textContent} nats`;
+    });
+    document.getElementById('qk-endpoint-label').textContent = `${endpoint === 'time' ? '787 training seconds' : '1,000 updates (2,048,000 training targets)'} · mean clean CE · QKNorm off versus on`;
+  }
+  buttons.forEach(button => button.addEventListener('click', () => showEndpoint(button.dataset.qkBudget)));
 })();
 </script>
 </body>
