@@ -25,8 +25,10 @@ def reference(inputs, output, variant, cache_bytes, length, sequential=False):
     samples = [
         s
         for s in manifest["samples"]
-        if s["kind"] == "nll" and s["length"] == 8192 and not s.get("reserve")
+        if s["kind"] == "nll" and s["length"] == length and not s.get("reserve")
     ]
+    if len(samples) != 32:
+        raise ValueError("reference requires the frozen panel at the selected length")
     prompts = [{"prompt_token_ids": s["token_ids"][:length]} for s in samples]
     save(output / "provenance.json", engine._study_provenance)
     for order, selected in enumerate((prompts, prompts[1:] + prompts[:1])):

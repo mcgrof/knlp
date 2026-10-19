@@ -10,6 +10,26 @@ import pytest
 from tools.kv.native.serving_client import replay
 from tools.kv.native.serving_events import SSEDecoder, request_metrics, summarize
 from tools.kv.native.serving_verify import verify
+from tools.kv.native.serving_trace import trace
+
+
+def test_requested_context_uses_its_own_frozen_panel():
+    samples = [
+        {"kind": "nll", "length": length, "token_ids": [length + i] * length}
+        for length in (1024, 8192)
+        for i in range(32)
+    ]
+    for length in (1024, 8192):
+        result = trace({"samples": samples}, length=length, count=32, concurrency=32)
+        assert [r["prompt_token_ids"][0] for r in result["requests"]] == list(
+            range(length, length + 32)
+        )
+        assert all(len(r["prompt_token_ids"]) == length for r in result["requests"])
+    with pytest.raises(ValueError, match="32-document panel"):
+        trace({"samples": samples[32:]}, length=1024, count=32, rate=1)
+    samples[0]["token_ids"] = [1]
+    with pytest.raises(ValueError, match="shorter"):
+        trace({"samples": samples}, length=1024, count=32, rate=1)
 
 
 def event(ms, tokens=None, text="", finish=None):

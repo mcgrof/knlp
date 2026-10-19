@@ -240,6 +240,7 @@ def main():
         "--arm", choices=("candidate", "native_fi", "native_fa3"), required=True
     )
     p.add_argument("--length", type=int, choices=(1024, 8192), default=8192)
+    p.add_argument("--cache-bytes", type=int)
     p.add_argument(
         "--stage", choices=("all", "parity", "nll", "retrieval", "gsm8k"), default="all"
     )
@@ -258,6 +259,8 @@ def main():
         "--arm",
         args.arm,
     ]
+    if args.cache_bytes is not None:
+        argv.extend(["--cache-bytes", str(args.cache_bytes)])
     save(
         args.output / "command.json",
         {

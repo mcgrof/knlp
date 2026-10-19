@@ -22,10 +22,12 @@ def trace(
     samples = [
         s
         for s in manifest["samples"]
-        if s["kind"] == "nll" and s["length"] == 8192 and not s.get("reserve")
+        if s["kind"] == "nll" and s["length"] == length and not s.get("reserve")
     ]
     if len(samples) != 32 or length not in (1024, 8192):
         raise ValueError("expected the frozen 32-document panel and 1K/8K length")
+    if any(len(sample["token_ids"]) < length for sample in samples):
+        raise ValueError("frozen prompt is shorter than its declared length")
     if (concurrency is None) == (rate is None) or count < 1:
         raise ValueError("choose closed concurrency or an open arrival rate")
     rng, offset, requests = random.Random(seed), 0.0, []

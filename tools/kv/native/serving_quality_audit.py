@@ -257,29 +257,41 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--format", choices=("awq", "fp16"), required=True)
+    p.add_argument("--prefix", help="Artifact name prefix; defaults to weight format")
+    p.add_argument("--length", type=int, choices=(1024, 8192), default=8192)
+    p.add_argument("--cache-bytes", type=int)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     arms = {}
     audit = {}
     for arm in ["candidate", "native_fi", "native_fa3"]:
-        root = a.root / f"{a.format}-{arm}-http-quality"
+        prefix = a.prefix or a.format
+        root = a.root / f"{prefix}-{arm}-http-quality"
+        command = json.load(open(root / "command.json"))
+        require(command["length"] == a.length, "Captured quality length differs")
         require(
             json.load(open(root / "DONE.json"))["capture_complete"],
             "HTTP quality evidence failed: json.load(open(root / 'DONE.json'))['capture_complete']",
         )
         inputs = root / "server/inputs"
+        protocol = json.load(open(inputs / "protocol.json"))
+        if a.cache_bytes is not None:
+            require(
+                protocol["engine"]["kv_cache_memory_bytes"] == a.cache_bytes,
+                "Captured quality cache budget differs",
+            )
         manifest = json.loads(gzip.decompress((inputs / "qwen.json.gz").read_bytes()))
         task = json.load(open(inputs / "gsm8k-frozen.json"))
         nll = [
             s
             for s in manifest["samples"]
-            if s["kind"] == "nll" and s["length"] == 8192 and (not s.get("reserve"))
+            if s["kind"] == "nll" and s["length"] == a.length and (not s.get("reserve"))
         ]
         ret = [
             s
             for s in manifest["samples"]
             if s["kind"] == "retrieval"
-            and s["length"] == 8192
+            and s["length"] == a.length
             and (not s.get("reserve"))
         ]
         require(
@@ -293,7 +305,7 @@ def main():
         nn, na = teacher(root, nll)
         rr, ra = natural(root, "retrieval", ret)
         gg, ga = natural(root, "gsm8k", task["samples"])
-        pa = parity(root, a.root / f"{a.format}-{arm}-sequential-reference", nll)
+        pa = parity(root, a.root / f"{prefix}-{arm}-sequential-reference", nll)
         arms[arm] = {"nll": nn, "retrieval": rr, "gsm8k": gg}
         audit[arm] = {
             "nll": na,
@@ -327,6 +339,7 @@ def main():
         }
     result = {
         "format": a.format,
+        "length": a.length,
         "audit": audit,
         "comparisons": comparisons,
         "quality_passed": all((x["preservation_passed"] for x in comparisons.values())),

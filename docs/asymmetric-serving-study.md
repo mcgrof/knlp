@@ -87,3 +87,12 @@ It reports an exact sign test, a distribution-free median interval with its
 actual coverage, and Holm correction across the full declared primary family.
 A practical median-effect screen is distinct from an interval-bound claim.
 A comparison with incomplete or failed blocks cannot pass its superiority gate.
+
+For a new 1K HTTP study, select the frozen 1K document panel explicitly.
+The trace, serial reference and quality capture use that same panel; they
+do not truncate the 8K panel. Pass `--length 1024 --cache-bytes 34359738368`
+to the pilot, quality capture and reference commands when the frozen plan
+uses a 32 GiB pool. The independent quality reader accepts the same length
+and cache budget and rejects mismatched captures. `--prefix` selects an
+artifact-name prefix when retaining multiple context-length studies.
+These options do not qualify 1K performance or reuse 8K quality by themselves.
