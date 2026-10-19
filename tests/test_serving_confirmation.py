@@ -3,7 +3,11 @@ import json
 
 import pytest
 
-from tools.kv.native.serving_confirmation import backlog, stream_gaps
+from tools.kv.native.serving_confirmation import (
+    backlog,
+    memory_observations,
+    stream_gaps,
+)
 from tools.kv.native.serving_storage_audit import storage
 
 
@@ -110,3 +114,26 @@ def test_physical_storage_rejects_overlap_and_false_element_size():
         changed["layers"][0]["V"][field] = value
         with pytest.raises(AssertionError):
             storage(changed, True, geometry)
+
+
+def test_startup_driver_observation_cannot_be_hidden_by_later_smaller_values(tmp_path):
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server/allocation.jsonl").write_text(
+        json.dumps(
+            {
+                "phase": "device_initialized_before_model_load",
+                "driver_device_used_bytes": 100,
+            }
+        )
+        + "\n"
+    )
+    result = memory_observations(
+        tmp_path,
+        [{"sampled_driver_used_bytes": 10, "allocator_peak_bytes": 5}] * 2,
+        {"open-near": {"sampled_driver_bytes": 20, "peak_reserved_bytes": 10}},
+        {"total_driver_envelope_bytes": 90, "torch_allocator_reserved_cap_bytes": 9},
+    )
+    assert result["maximum_observed_driver_used_bytes"] == 100
+    assert result["maximum_recorded_torch_reserved_peak_bytes"] == 10
+    assert not result["driver_envelope_passed_at_observation_points"]
+    assert not result["torch_envelope_passed_at_observation_points"]

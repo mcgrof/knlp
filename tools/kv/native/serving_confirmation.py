@@ -267,6 +267,44 @@ def cell(root, label, expected, *, expected_mode="timing"):
     }
 
 
+def memory_observations(base, inventories, cells, protocol):
+    startup = [
+        json.loads(line)
+        for line in (base / "server/allocation.jsonl").read_text().splitlines()
+    ]
+    assert startup and startup[0]["phase"] == "device_initialized_before_model_load"
+    observations = [
+        {"phase": row["phase"], "driver_used_bytes": row["driver_device_used_bytes"]}
+        for row in startup
+    ]
+    observations.extend(
+        {
+            "phase": label + "_timing",
+            "driver_used_bytes": row["sampled_driver_used_bytes"],
+        }
+        for label, row in zip(("before", "after"), inventories)
+    )
+    observations.extend(
+        {"phase": label + "_end", "driver_used_bytes": row["sampled_driver_bytes"]}
+        for label, row in cells.items()
+    )
+    peak = max(row["driver_used_bytes"] for row in observations)
+    torch_peak = max(
+        [row["allocator_peak_bytes"] for row in inventories]
+        + [row["peak_reserved_bytes"] for row in cells.values()]
+    )
+    return {
+        "driver_observations": observations,
+        "maximum_observed_driver_used_bytes": peak,
+        "driver_envelope_passed_at_observation_points": peak
+        <= protocol["total_driver_envelope_bytes"],
+        "maximum_recorded_torch_reserved_peak_bytes": torch_peak,
+        "torch_envelope_passed_at_observation_points": torch_peak
+        <= protocol["torch_allocator_reserved_cap_bytes"],
+        "scope": "Driver maximum over startup allocation and timing boundary snapshots; not continuous peak monitoring. Torch values are reported peaks since their worker reset, not a guaranteed uninterrupted startup peak.",
+    }
+
+
 def run(root, planpath, prefix="fp16-8k"):
     design = read(planpath / "DESIGN.json")
     assert design["format"] == "fp16" and design["length"] in (1024, 8192)
@@ -380,9 +418,15 @@ def run(root, planpath, prefix="fp16-8k"):
                     cells[c["label"]]["all_offered_completed_validly"]
                     and cells[c["label"]]["memory_envelope_passed"]
                 )
+            memory = memory_observations(base, inventories, cells, p)
+            allvalid &= (
+                memory["driver_envelope_passed_at_observation_points"]
+                and memory["torch_envelope_passed_at_observation_points"]
+            )
             arms[arm] = {
                 "cells": cells,
                 "physical_storage_before_and_after": inventories,
+                "memory_observations": memory,
                 "protocol_sha256": sha(base / "server/inputs/protocol.json"),
             }
         if block == "descriptive":
