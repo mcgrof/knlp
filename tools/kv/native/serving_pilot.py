@@ -18,6 +18,7 @@ from .current import FIXTURES, save
 from .serving_client import replay
 from .serving_trace import trace
 from .serving_verify import verify
+from .serving_telemetry import MetricSampler
 
 URL = "http://127.0.0.1:8000"
 
@@ -42,7 +43,9 @@ def run_trace(plan, output, label, mode="timing"):
     save(output / (label + "-trace.json"), plan)
     rpc("study_begin", label, mode)
     try:
-        result = asyncio.run(replay(plan, URL))
+        with MetricSampler(URL) as metrics:
+            result = asyncio.run(replay(plan, URL))
+        save(output / (label + "-server-metrics.json"), metrics.rows)
         result["plan"] = plan
         save(output / (label + "-client.json"), result)
         audit = verify(result)

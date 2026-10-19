@@ -103,7 +103,7 @@ def prepare(install, output, weight_format, arm, cache_bytes=None):
         manifest["tokenizer_revision"],
         "--kv-cache-dtype",
         "auto,fp8_e4m3" if arm == "candidate" else "auto",
-        "--disable-log-requests",
+        "--no-enable-log-requests",
     ]
     for key, value in engine.items():
         flag = key.replace("_", "-")

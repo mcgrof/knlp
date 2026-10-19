@@ -144,6 +144,9 @@ class ServingWorker(ObservedWorker):
                             scheduler_output.scheduled_cached_reqs.resumed_req_ids
                         ),
                         "finished_request_ids": list(scheduler_output.finished_req_ids),
+                        "preempted_request_ids": sorted(
+                            scheduler_output.preempted_req_ids or []
+                        ),
                     }
                 )
         return super().execute_model(scheduler_output)
@@ -242,6 +245,9 @@ class ServingWorker(ObservedWorker):
             "label": self.study_label,
             "mode": self.study_mode,
             "steps": len(self.study_rows),
+            "preemption_events": sum(
+                len(row["preempted_request_ids"]) for row in self.study_rows
+            ),
             "oracle_checks": len(self.study_checks),
             "memory": instrument.native_memory_state(self),
         }

@@ -40,6 +40,7 @@ IMPLEMENTATION = (
     "serving_events.py",
     "serving_verify.py",
     "serving_pilot.py",
+    "serving_telemetry.py",
     "instrument.py",
     "memory_worker.py",
     "october.py",
