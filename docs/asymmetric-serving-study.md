@@ -2,6 +2,8 @@
 
 This is an experimental measurement path. Its CPU recorder tests pass;
 GPU worker qualification and serving comparisons are separate gates.
+The completed [dense 1K and 8K HTTP studies](asymmetric-serving-methods.html)
+include those gates, the fixed comparisons and all observed failures.
 The existing [installation](asymmetric-install.md) and
 [measured results](asymmetric-quantization.html) retain their original scope.
 

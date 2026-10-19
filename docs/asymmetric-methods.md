@@ -2,10 +2,13 @@
 
 The supported result is an 8K/batch-32 Qwen3-8B in-process throughput improvement with
 FP16 keys and FP8 values. It holds for the two tested weight formats under
-their matched controls. A separate dense 1K test does not meet the confirmed
+their matched controls. A separate dense 1K/batch-32 in-process test does not meet the confirmed
 gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
 preserves these outcomes and the conditions behind
 quality, memory and throughput claims.
+
+The separate [dense 1K and 8K HTTP studies](asymmetric-serving-methods.html)
+report client-visible latency, throughput, failures and model qualification.
 
 [Current guide](asymmetric-quantization.html) · [Install](asymmetric-install.md) ·
 [Historical results and failure record](asymmetric-history.html)

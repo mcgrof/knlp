@@ -10,10 +10,11 @@
 <main id="main" class="reference"><h1 id="asymmetric-kv-methods-and-results">Asymmetric KV: methods and results</h1>
 <p>The supported result is an 8K/batch-32 Qwen3-8B in-process throughput improvement with
 FP16 keys and FP8 values. It holds for the two tested weight formats under
-their matched controls. A separate dense 1K test does not meet the confirmed
+their matched controls. A separate dense 1K/batch-32 in-process test does not meet the confirmed
 gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
 preserves these outcomes and the conditions behind
 quality, memory and throughput claims.</p>
+<p>The separate <a href="asymmetric-serving-methods.html">dense 1K and 8K HTTP studies</a> report client-visible latency, throughput, failures and model qualification.</p>
 <p><a href="asymmetric-quantization.html">Current guide</a> · <a href="asymmetric-install.html">Install</a> ·
 <a href="asymmetric-history.html">Historical results and failure record</a></p>
 <h2 id="current-8k-results">Current 8K results</h2>

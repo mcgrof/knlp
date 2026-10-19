@@ -4,7 +4,7 @@
 <title>Asymmetric KV Cache Quantization — knlp</title>
 <meta name="description" content="FP16 keys, FP8 values: 25% less KV payload. Measured Qwen3 inference gains, model qualification, installation and upstream status.">
 <link rel="canonical" href="https://knlp.io/asymmetric-quantization.html">
-<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019b">
+<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019c">
 <script src="assets/asymmetric-guide.js?v=20261019b" defer></script>
 </head><body>
 <a class="skip" href="#main">Skip to content</a>
@@ -13,26 +13,24 @@
 <section class="hero" aria-labelledby="page-title">
 <p class="eyebrow">Inference · asymmetric precision</p>
 <h1 id="page-title">Asymmetric KV<br>Cache Quantization</h1>
-<p class="lead">Keep keys precise. Store values smaller.<br><strong>FP16 keys + FP8 values</strong> save <strong>25% of persistent KV payload</strong>. The tested Qwen3-8B batch workloads also complete faster.</p>
+<p class="lead">Keep keys precise. Store values smaller.<br><strong>FP16 keys + FP8 values</strong> save <strong>25% of persistent KV payload</strong>. Speed depends on the model, backend and request pattern.</p>
 <div class="hero-actions"><a class="button" href="#install">Install and try <span aria-hidden="true">↗</span></a><a href="#results">Explore the measurements ↓</a></div>
 <div class="metric-grid" aria-label="Key measured results">
 <div><strong>25%</strong><span>less KV payload<br>at equal token slots</span></div>
-<div><strong>+3.45%</strong><span>Qwen3-8B · INT4 AWQ<br>batch throughput</span></div>
-<div><strong>+3.55%</strong><span>Qwen3-8B · dense FP16<br>batch throughput</span></div>
+<div><strong>+3.55%</strong><span>Qwen3-8B · dense FP16<br>earlier batch throughput</span></div>
+<div><strong>1K / 8K</strong><span>HTTP requests tested<br>against two native backends</span></div>
 </div>
-<p class="muted">H100 · 8K input · batch 32 · 128 output tokens · native FlashInfer baseline<br>In-process results. Two weight formats of one architecture. Checked October 19, 2026.</p>
+<p class="muted">H100 · FP16 compute. The +3.55% result is 8K input / batch 32 / 128 output tokens versus native FlashInfer, in process. HTTP results have their own quality, latency and reliability checks. Checked October 19, 2026.</p>
 </section>
 <section id="results" aria-labelledby="results-title">
-<p class="eyebrow">Measured value</p><h2 id="results-title">Fewer cache bytes. Faster complete requests.</h2>
-<p>Model-weight precision and KV-cache precision are separate. <strong>AWQ means activation-aware weight quantization</strong>: these weights stay packed INT4. The dense weights stay FP16. Both tested recipes use FP16 compute and physical K16/V8 storage.</p>
+<p class="eyebrow">Measured value</p><h2 id="results-title">Smaller cache. Workload-dependent speed.</h2>
+<p>Dense Qwen3-8B passes the actual HTTP worker’s quality checks at both 1K and 8K input. The speed comparison uses FP16 weights and compute on an H100, physical K16/V8 storage, and matched native FP16 K/V FlashInfer and FA3 controls.</p>
 <div class="chart-grid">
-<figure class="metric-chart" aria-labelledby="throughput-title" aria-describedby="throughput-caption">
-<h3 id="throughput-title">Complete-request throughput gain</h3>
-<p class="chart-subtitle">Relative to each recipe’s native FP16 K/V FlashInfer control</p>
-<div class="gain-row"><div class="bar-label"><span>Qwen3-8B · INT4 AWQ</span><strong>+3.45%</strong></div><div class="gain-track"><span style="width:86.206605%"></span></div></div>
-<div class="gain-row"><div class="bar-label"><span>Qwen3-8B · dense FP16</span><strong>+3.55%</strong></div><div class="gain-track"><span class="blue" style="width:88.6442125%"></span></div></div>
-<div class="chart-axis" aria-hidden="true"><span>0%</span><span>1%</span><span>2%</span><span>3%</span><span>4%</span></div>
-<figcaption id="throughput-caption">Median paired gain, ten fresh blocks per recipe. Includes prefill, scheduling and decode. 8,192 input / batch 32 / 128 output, H100 SXM 80 GB. <a href="asymmetric-results.html#throughput">Data and test limits →</a></figcaption>
+<figure class="metric-chart" aria-labelledby="serving-chart-title" aria-describedby="serving-chart-caption">
+<h3 id="serving-chart-title">Serving throughput and tail latency</h3>
+<p class="chart-subtitle">Qwen3-8B · dense FP16 · 8K input · 128 output tokens</p>
+<img class="serving-plot" src="assets/asymmetric-http-8k-20261019.svg" width="400" height="460" alt="Open-loop completed request throughput versus completed-request arrival-to-end-of-stream p95 latency for K16/V8, native FlashInfer and native FA3.">
+<figcaption id="serving-chart-caption">Same offered loads for every arm. Hollow points: one low/moderate run; filled points: ten-run near-load medians, with individual runs faintly shown. Throughput includes drain. Latency conditions on valid completion; failures remain explicit. Reported percentage changes use paired-block ratios, not ratios of these plotted medians. <a href="asymmetric-serving-methods.html">Numbers, uncertainty and full matrix →</a></figcaption>
 </figure>
 <figure class="metric-chart" aria-labelledby="storage-title" aria-describedby="storage-caption">
 <h3 id="storage-title">Persistent KV payload</h3>
@@ -43,22 +41,24 @@
 <figcaption id="storage-caption">Verified physical cache layout. The ratio excludes weights and other buffers. Equal KV bytes instead provide about <strong>one third more token slots</strong>, not a measured one-third increase in resident requests.</figcaption>
 </figure>
 </div>
-<p class="scope">These are qualified batch results, not a general HTTP latency claim. Dense Qwen3 at 1K/batch 32 met no confirmed-gain criterion against native FlashInfer or FA3. <a href="asymmetric-results.html">All results and baselines →</a></p>
+<p>At 8K input, closed-concurrency-32 throughput changes <strong>+3.56%</strong> versus FlashInfer and <strong>+1.65%</strong> versus FA3. At the shared near load of 2.9 requests/s, arrival-to-end-of-stream p95 latency changes <strong>+4.34%</strong> and <strong>+12.65%</strong> respectively (positive latency change means slower).</p>
+<p>At 1K, closed-32 throughput is +1.01% versus FlashInfer and -0.26% versus FA3. At 14.9 offered requests/s, p95 latency is +0.19% and +5.83% respectively. The small FlashInfer throughput gain comes with no demonstrated tail-latency gain.</p>
+<p class="scope"><strong>Frozen-rule outcome:</strong> 8K — No unqualified serving gain established. 1K — closed-32 throughput gain versus FlashInfer. 8K retains 12 failed primary requests; the frozen validity rule blocks an unqualified gain claim. <a href="asymmetric-serving-methods.html">Inspect the paired comparisons and failures →</a></p>
+<p>Earlier 8K/batch-32 in-process throughput improved by <strong>3.45% for packed INT4 AWQ weights</strong> and <strong>3.55% for dense FP16 weights</strong> versus each recipe’s native FlashInfer control. Weight quantization and KV-cache precision are separate; these batch results retain their original scope. <a href="asymmetric-results.html#throughput">Batch evidence →</a></p>
 </section>
 <section id="models" aria-labelledby="models-title">
 <p class="eyebrow">Model qualification</p><h2 id="models-title">What is demonstrated for each model?</h2>
-<p>A smaller cache is useful only if task quality survives. “Pass” below means the tested prediction-loss, retrieval and full GSM8K preservation gates pass; it does not mean zero error or universal quality.</p>
+<p>A smaller cache is useful only if task quality survives. A pass means the tested prediction-loss, retrieval and full GSM8K preservation gates pass; it does not establish universal accuracy.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Model qualification"><table>
-<caption>Each row keeps its own execution scope. Unconfirmed gains are not shown as speed measurements.</caption>
-<thead><tr><th scope="col">Model / weights</th><th scope="col">Quality</th><th scope="col">Performance evidence</th></tr></thead>
-<tbody>
-<tr><th scope="row">Qwen3-8B · INT4 AWQ</th><td><span class="status-pass">Pass · in process</span></td><td>+3.45% at 8K/batch 32</td></tr>
-<tr><th scope="row">Qwen3-8B · FP16</th><td><span class="status-pass">Pass · in process</span></td><td>+3.55% at 8K/batch 32</td></tr>
-<tr><th scope="row"><a href="asymmetric-phi4-quality.html">Phi-4 · FP16</a></th><td><span class="status-pass">Pass · model transfer</span></td><td>No confirmed speed gain</td></tr>
-<tr><th scope="row"><a href="asymmetric-ministral-quality.html">Ministral 3 8B · FP16</a></th><td>Preservation not established</td><td>No performance confirmation</td></tr>
+<caption>Execution paths have separate qualification. Unsupported models are not measured quality failures.</caption>
+<thead><tr><th scope="col">Model / weights</th><th scope="col">Quality</th><th scope="col">Performance evidence</th></tr></thead><tbody>
+<tr><th scope="row">Qwen3-8B · dense FP16</th><td><span class="status-pass">Pass · batch and HTTP</span></td><td>+3.55% at 8K/batch 32 versus FlashInfer. <a href="asymmetric-serving-methods.html">HTTP comparisons and tradeoffs</a>.</td></tr>
+<tr><th scope="row">Qwen3-8B · INT4 AWQ</th><td>Batch pass; HTTP preservation not established</td><td>+3.45% at 8K/batch 32 versus FlashInfer; no HTTP confirmation</td></tr>
+<tr><th scope="row"><a href="asymmetric-phi4-quality.html">Phi-4 · FP16</a></th><td><span class="status-pass">Pass · model transfer</span></td><td>Performance studies incomplete; no confirmed speed claim</td></tr>
+<tr><th scope="row"><a href="asymmetric-ministral-quality.html">Ministral 3 8B · FP16</a></th><td>Primary preservation not established; parsing-sensitive secondary evidence retained</td><td>No performance confirmation</td></tr>
 <tr><th scope="row"><a href="asymmetric-recent-models.html">Qwen3.5-9B / Gemma 4 12B</a></th><td>Asymmetric layout unsupported</td><td>Native capability checks only</td></tr>
 </tbody></table></div>
-<aside class="callout"><strong>HTTP serving has separate qualification.</strong> Qwen3 AWQ did not establish GSM8K preservation through the actual HTTP worker against either native control. No AWQ HTTP performance confirmation followed. <a href="asymmetric-results.html#http">Read the serving evidence</a>.</aside>
+<p class="scope">The independent Phi-4 family validates the geometry and quality transfer, while its incomplete timing studies do not establish a speed result. Newer models expose different limits: Ministral’s task scoring needs careful interpretation; Qwen3.5 and Gemma 4 need further runtime support.</p>
 </section>
 <section id="operation" aria-labelledby="operation-title">
 <p class="eyebrow">How it works</p><h2 id="operation-title">Keep the compressed cache through decode.</h2>
@@ -68,7 +68,7 @@
 <div class="flow"><div><span aria-hidden="true">↓</span><h4>Fresh prefill</h4><p>Gather eligible pages into bounded FP16 staging.<br>Run native FA3 prefill.</p></div><div><span aria-hidden="true">↓</span><h4>Decode</h4><p>Read FP16 keys and FP8 values directly.<br>Apply frozen value scales.</p></div></div>
 <figcaption id="flow-caption">Staging is reused across layers. Casting values back to FP16 preserves quantization error; it does not recover discarded precision.</figcaption>
 </figure>
-<p>The optimized vLLM route also handles fresh whole prompts when other requests are decoding. This improves complete-request throughput in the measured workload; it is not a measured decode-kernel gain. <a href="asymmetric-history.html#prefill-routing">Routing diagram and fallback details →</a></p>
+<p>The optimized vLLM route also handles fresh whole prompts when other requests are decoding. This improves complete-request throughput in the earlier 8K batch workloads; it is not a measured decode-kernel gain. <a href="asymmetric-history.html#prefill-routing">Routing diagram and fallback details →</a></p>
 </section>
 <section id="install" aria-labelledby="install-title">
 <p class="eyebrow">Install and run</p><h2 id="install-title">Install the tested batch recipe.</h2>
@@ -121,7 +121,7 @@ optional authentication uses <code>hf auth login</code>.</p>
 </section>
 <section id="details" aria-labelledby="details-title">
 <p class="eyebrow">Inspect and reproduce</p><h2 id="details-title">The evidence, one level deeper.</h2>
-<div class="detail-links"><a href="asymmetric-results.html">Results by model, full data and comparison limits <span>→</span></a><a href="asymmetric-methods.html">Methods, quality gates and source identities <span>→</span></a><a href="asymmetric-install.html">Full installation and compatibility <span>→</span></a><a href="asymmetric-upstream.html">Upstream dependencies, LMCache PR series and fixes <span>→</span></a><a href="bias-aware-kv-quantization.html">Bias-aware symmetric KV: repair and negative serving result <span>→</span></a><a href="asymmetric-history.html">Historical measurements and paper references <span>→</span></a></div>
+<div class="detail-links"><a href="asymmetric-serving-methods.html">HTTP latency, throughput, reliability and exact reproduction <span>→</span></a><a href="asymmetric-results.html">Results by model, full data and comparison limits <span>→</span></a><a href="asymmetric-methods.html">Methods, quality gates and source identities <span>→</span></a><a href="asymmetric-install.html">Full installation and compatibility <span>→</span></a><a href="asymmetric-upstream.html">Upstream dependencies, LMCache PR series and fixes <span>→</span></a><a href="bias-aware-kv-quantization.html">Bias-aware symmetric KV: repair and negative serving result <span>→</span></a><a href="asymmetric-history.html">Historical measurements and paper references <span>→</span></a></div>
 </section>
 <noscript><p>Earlier section links are preserved in the <a href="asymmetric-history.html">historical reference</a>.</p></noscript>
 </main><footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp">Source</a></footer>

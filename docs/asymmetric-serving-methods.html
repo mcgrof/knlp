@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dense
+Qwen3 HTTP serving: latency, throughput and reliability — knlp</title>
+<meta name="description" content="Dense Qwen3 HTTP latency, throughput, reliability, quality, memory and reproducible paired comparisons against native FlashInfer and FA3.">
+<link rel="canonical" href="https://knlp.io/asymmetric-serving-methods.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019c">
+</head><body><a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="./">knlp<span> / inference</span></a>
+<nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-results.html">Results</a><a href="asymmetric-install.html">Install</a></nav></header>
+<main id="main" class="reference http-methods"><h1 id="page-title">Dense
+Qwen3 HTTP serving: latency, throughput and reliability</h1>
+<p>Supported comparisons: 1K closed-32 throughput versus Native
+FlashInfer. The 8K study fails the all-requests/all-observations
+validity requirement; failures remain part of the result.</p>
+<div aria-label="Primary comparisons — table 1" class="table-wrap" role="region" tabindex="0"><table><caption>Primary comparisons — table 1</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Primary metric</th>
+<th scope="col">Native control</th>
+<th scope="col">Median improvement</th>
+<th scope="col">Median interval</th>
+<th scope="col">Holm p</th>
+<th scope="col">Frozen-rule result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>Closed-32 throughput</td>
+<td>Native FlashInfer</td>
+<td>+3.562%</td>
+<td>[+3.297%, +3.840%]</td>
+<td>0.00390625</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Near-load arrival p95 reduction</td>
+<td>Native FlashInfer</td>
+<td>-4.336%</td>
+<td>[-14.896%, -2.812%]</td>
+<td>1</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Closed-32 throughput</td>
+<td>Native FA3</td>
+<td>+1.647%</td>
+<td>[+1.520%, +3.682%]</td>
+<td>0.00390625</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Near-load arrival p95 reduction</td>
+<td>Native FA3</td>
+<td>-12.649%</td>
+<td>[-24.011%, -9.021%]</td>
+<td>1</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Closed-32 throughput</td>
+<td>Native FlashInfer</td>
+<td>+1.013%</td>
+<td>[+0.254%, +1.193%]</td>
+<td>0.0429688</td>
+<td>Supported</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Near-load arrival p95 reduction</td>
+<td>Native FlashInfer</td>
+<td>-0.191%</td>
+<td>[-1.073%, +0.293%]</td>
+<td>1</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Closed-32 throughput</td>
+<td>Native FA3</td>
+<td>-0.262%</td>
+<td>[-1.020%, +0.614%]</td>
+<td>1</td>
+<td>Not supported</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Near-load arrival p95 reduction</td>
+<td>Native FA3</td>
+<td>-5.830%</td>
+<td>[-7.210%, -4.948%]</td>
+<td>1</td>
+<td>Not supported</td>
+</tr>
+</tbody>
+</table></div>
+<p>Positive effects mean improvement; negative latency effects mean
+worse p95. Intervals reflect matched-block variation. The four
+hypotheses are corrected together within each context study; the two
+contexts are separately frozen experiments. Any failed request blocks an
+unqualified superiority claim. A failed rule is not an equivalence
+test.</p>
+<p><img alt="Dense Qwen3 8K completed throughput versus arrival p95 latency" src="assets/asymmetric-http-8k-20261019.svg"/></p>
+<p>Open-loop throughput includes drain; latency is conditional on valid
+completion. Hollow low/moderate points have one run per arm. Near-load
+faint points show all ten runs and filled points show their medians.
+Percentage effects use paired-block ratios, not ratios of these plotted
+medians. These are finite-load tradeoffs, not maximum sustainable-rate
+estimates. The matching <a href="assets/asymmetric-http-1k-20261019.svg">1K plot</a> and complete
+per-cell data are linked below.</p>
+<p>This study measures the client-visible cost of complete requests. All
+paths use dense FP16 Qwen3-8B weights and FP16 compute on one H100 SXM
+80 GB per context study. K16/V8 means FP16 keys and E4M3 FP8 values. The
+controls store FP16 keys and values and use either native FlashInfer or
+verified native FlashAttention 3 (FA3). These are pinned experimental
+sources, not a claim about the latest released vLLM.</p>
+<p><a href="asymmetric-quantization.html">Current guide</a> · <a href="asymmetric-install.html">Installation</a> · <a href="asymmetric-methods.html">Earlier batched results</a> · <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving">Exact
+public arrival traces</a></p>
+<h2 id="qualification-before-timing">Qualification before timing</h2>
+<p>The 8K actual HTTP worker passes production qualification,
+prediction-loss (NLL), retrieval and the full GSM8K preservation gate
+against both controls. It also matches serial in-process outputs for 32
+frozen prompts in both reference orders. The candidate scores
+1,179/1,319 strict GSM8K answers correct, versus 1,175 for each native
+control. Each paired comparison has 12 losses and 16 gains; its
+one-sided 95% gross-loss upper bound is 1.470%, below the frozen 2%
+limit. This bound concerns loss transitions across all questions, not
+net accuracy change. Retrieval scores are 96/100 in all three paths. NLL
+upper bounds are +0.000758 and +0.000640, below <code>ln(1.01)</code>.
+The full GSM8K task uses natural question lengths and natural
+completion.</p>
+<p>The worker loads the original effective scales before warmup and
+graph capture. Qualification checks physical FP16 K/FP8 V storage
+without a full FP16 V shadow, weight dispatch, actual FA3 dispatch,
+changing graph inputs, output placement, fresh-prefill routing and
+idle/mixed admission. Heavy numerical checks and profiling are outside
+primary timing. Native controls use unit value scales because their
+values are unquantized.</p>
+<p>The separate 1K HTTP qualification also passes all three quality
+gates and 32-prompt serial parity in both reference orders. Strict GSM8K
+counts are 1,179/1,319 for the candidate, 1,176 for FlashInfer and 1,173
+for FA3. The paired losses/gains are 11/14 and 8/14, with one-sided 95%
+gross-loss upper bounds of 1.377% and 1.092%. Retrieval is 100/100 for
+every arm; the NLL upper bounds are +0.001240 and +0.001278.</p>
+<p>Quality preservation here means passing these finite, frozen paired
+tests. It is not mathematical equivalence or a universal accuracy
+guarantee. The strict GSM8K extractor has its disclosed terminal-dot
+limitation. AWQ HTTP has a separate <a href="asymmetric-methods.html#awq-http-quality">failed preservation
+result</a>, so it has no HTTP performance confirmation in this
+study.</p>
+<h2 id="fixed-workloads-and-decision-rules">Fixed workloads and decision
+rules</h2>
+<p>All timing requests have exactly 1,024 or 8,192 input tokens and 128
+forced output tokens. The public prompt panels contain 32 fixed
+documents per context. Output EOS is ignored only for these
+forced-length timing requests. The model, tokenizer, calibrated scales,
+sampling, prompts and arrival schedule are identical across arms within
+a comparison. There is one GPU worker, tensor parallelism one, 22 CPU
+threads, page size 16 and NHD layout. Automatic prefix caching and
+chunked prefill are disabled. The engine has
+<code>max_num_seqs=96</code>, <code>max_num_batched_tokens=65536</code>
+and <code>FULL_DECODE_ONLY</code> graph policy. HTTP streaming requests
+interval one and returns token IDs.</p>
+<p>The 8K persistent KV budget is 40 GiB per arm. The 1K study uses 32
+GiB. The two context studies use different physical H100s, with
+effective CPU quotas of 31.45 and 23.8 cores respectively. Both preserve
+22 Torch threads. Cross-context rates therefore are not paired
+measurements on the same physical system. Within each study all three
+paths share one GPU and CPU allocation, with no overlapping GPU
+experiments.</p>
+<div aria-label="Fixed workloads and decision
+rules — table 2" class="table-wrap" role="region" tabindex="0"><table><caption>Fixed workloads and decision
+rules — table 2</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Cell</th>
+<th scope="col">Offered load / policy</th>
+<th scope="col">Requests / cell / arm</th>
+<th scope="col">Replications</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>Open low / moderate</td>
+<td>0.8 / 1.6 req/s</td>
+<td>128 each</td>
+<td>1 descriptive run / arm</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Open near</td>
+<td>2.9 req/s</td>
+<td>512</td>
+<td>10 blocks / arm</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Closed concurrency 32</td>
+<td>Up to 32 in flight</td>
+<td>512</td>
+<td>10 blocks / arm</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Open low / moderate</td>
+<td>3.7 / 8.1 req/s</td>
+<td>128 each</td>
+<td>1 descriptive run / arm</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Open near</td>
+<td>14.9 req/s</td>
+<td>768</td>
+<td>10 blocks / arm</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Closed concurrency 32</td>
+<td>Up to 32 in flight</td>
+<td>768</td>
+<td>10 blocks / arm</td>
+</tr>
+</tbody>
+</table></div>
+<p>Each context also has one descriptive isolated cell with eight
+requests five seconds apart and one closed-concurrency-8 cell with 128
+requests per arm. Every study has 33 fresh server invocations: 30
+confirmation and three descriptive.</p>
+<p>For 1K, the excluded native closed-32 pilots measure 16.6504 and
+16.8997 requests/s. The same 90%-of-slower-native formula gives 14.9
+offered requests/s. Low/moderate loads are 25%/55% of that rate, rounded
+down to tenths. The count is at least 512 and approximately 45 seconds
+at the faster native pilot, rounded up to a multiple of 32: 768
+requests. Candidate outcomes do not select rates or counts.</p>
+<p>For 8K, the excluded native closed-loop pilots measure 3.2635 and
+3.3398 completed requests/s. The fixed near load is
+<code>floor(10 * 0.9 * min(rate)) / 10</code>, or 2.9 offered
+requests/s. Candidate timing does not select the load. The low and
+moderate offered loads are 0.8 and 1.6 requests/s. A Poisson trace
+specifies explicit nanosecond offsets; the realized finite arrival rate
+need not equal its generating rate exactly. Every arm gets identical
+offsets.</p>
+<p>Each context's confirmation has ten fresh, counterbalanced blocks.
+Each arm starts a new server and warms with one non-streaming batched
+API call containing 32 prompts, each generating 128 forced tokens. The
+warmup file supplies those prompts; its concurrency field is not used to
+issue separate HTTP calls. Latency measurements begin after server
+startup and warmup. Each measured cell follows a two-second settling
+interval. The order of closed concurrency 32 and open near-load cells
+alternates across blocks. One separate run per arm covers the
+descriptive isolated, closed concurrency 8, low and moderate cells.
+Descriptive cells and excluded pilots do not enter primary tests.</p>
+<p>The primary family has four hypotheses: closed-loop completed
+throughput and near-load intended-arrival p95 latency against each of
+the two native controls. The exact one-sided sign test uses independent
+matched blocks; ties count as nonwins. Holm correction includes all four
+hypotheses at 0.05. Throughput needs a 1% median improvement, and
+latency needs 5%. These median screens are separate from the uncertainty
+interval. With ten blocks, the distribution-free median interval uses
+the second and ninth ordered effects, attaining at least 97.8516%
+coverage under the stated independent-block model. These are pointwise
+intervals; Holm adjustment applies to the four sign tests. Requests and
+tokens are not extra replicates.</p>
+<p>All ten blocks are fixed before confirmation. There is no optional
+stop, replacement block or addition until a result passes. Request and
+drain timeouts are 300 seconds, with zero retries. A failed request
+prevents an unqualified benefit claim under the frozen rule. The full
+matrix retains failures alongside conditional latency, even when
+statistical throughput or median screens pass.</p>
+<h2 id="what-each-latency-and-throughput-measure-means">What each
+latency and throughput measure means</h2>
+<p>The client and server run on the same host and communicate over
+loopback. All client measurements use one monotonic clock. Intended
+arrival, dispatch, semaphore admission, HTTP send, response headers,
+each received stream event, last token-bearing event and end-of-stream
+are retained. Server times are not subtracted from client times.</p>
+<ul>
+<li><strong>TTFT:</strong> time to the first token-bearing event, from
+HTTP send or from intended arrival. Protocol-only empty chunks do not
+count as tokens. Token-bearing events can have no visible text.</li>
+<li><strong>TPOT:</strong> each request's time from first to last
+token-bearing event, divided by output tokens minus one. Report p50/p95
+across those per-request averages. This is not a percentile of
+individual token gaps.</li>
+<li><strong>End-to-end latency:</strong> time to the single
+<code>[DONE]</code> end-of-stream marker, from HTTP send or intended
+arrival. Last content and stream completion are separate endpoints.</li>
+<li><strong>Stream gaps:</strong> intervals between actual token-bearing
+event timestamps. A multi-token chunk does not reveal its internal token
+times. Network or event-loop coalescing can give zero visible gaps.
+Empty and multi-token event counts remain explicit.</li>
+<li><strong>Finite throughput:</strong> valid completed requests or
+their output tokens divided by the complete observation interval,
+including final drain. Below saturation, equal offered load can produce
+nearly equal completed rates even when latency differs
+substantially.</li>
+</ul>
+<p>Open-loop clients have neither a concurrency semaphore nor a
+connector limit. Closed-loop clients retain concurrency 8 or 32. All
+closed-loop requests are intended at the initial timestamp, so
+intended-arrival latency includes waiting for that client semaphore;
+send-based latency removes that wait. Client concurrency is not GPU
+batch size. The raw worker records supply actual fresh admissions,
+scheduled request counts and preemptions.</p>
+<p>The excluded observer checks compare lightweight recording with its
+step metadata disabled. Their dense-8K throughput differences are
++0.134%, +0.061% and +0.179% for candidate, FlashInfer and FA3
+respectively. These single descriptive checks do not establish zero
+observer effect. All confirmation arms use the same recorder. The
+separate 1K observer checks give −0.740%, +0.510% and +0.644%
+respectively; they likewise do not prove zero overhead. Dispatch lag,
+admission waits and server metric errors remain available for every
+final cell.</p>
+<h3 id="reliability-and-secondary-measurements">Reliability and
+secondary measurements</h3>
+<div aria-label="Reliability and
+secondary measurements — table 3" class="table-wrap" role="region" tabindex="0"><table><caption>Reliability and
+secondary measurements — table 3</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Offered</th>
+<th scope="col">Completed</th>
+<th scope="col">Errors</th>
+<th scope="col">Timeouts</th>
+<th scope="col">Cancelled</th>
+<th scope="col">Unfinished</th>
+<th scope="col">Invalid</th>
+<th scope="col">Preemptions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>10632</td>
+<td>10628</td>
+<td>4</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>29</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>10632</td>
+<td>10629</td>
+<td>3</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>10632</td>
+<td>10627</td>
+<td>5</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>15752</td>
+<td>15752</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>15752</td>
+<td>15752</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>15752</td>
+<td>15752</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table></div>
+<p>Counts include confirmation and descriptive cells, excluding warmup
+and pilots. Failed launches are separate from offered-request
+failures.</p>
+<p>The twelve 8K failures all occur before response headers, stream
+events or worker admission: eleven server disconnects and one connection
+reset. Their cause is unproven. No request was retried. All descriptive
+cells complete without failures.</p>
+<ul>
+<li>8K, block 0, K16/V8, open-near: <code>trace-2026101900-00346</code>;
+status <code>error</code>, worker admitted False, headers False,
+received events 0.</li>
+<li>8K, block 2, K16/V8, open-near: <code>trace-2026101902-00264</code>;
+status <code>error</code>, worker admitted False, headers False,
+received events 0.</li>
+<li>8K, block 2, K16/V8, open-near: <code>trace-2026101902-00468</code>;
+status <code>error</code>, worker admitted False, headers False,
+received events 0.</li>
+<li>8K, block 3, Native FA3, open-near:
+<code>trace-2026101903-00292</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 3, Native FA3, open-near:
+<code>trace-2026101903-00301</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 6, Native FlashInfer, open-near:
+<code>trace-2026101906-00108</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 6, Native FA3, open-near:
+<code>trace-2026101906-00483</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 7, Native FA3, open-near:
+<code>trace-2026101907-00490</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 7, K16/V8, open-near: <code>trace-2026101907-00159</code>;
+status <code>error</code>, worker admitted False, headers False,
+received events 0.</li>
+<li>8K, block 8, Native FA3, open-near:
+<code>trace-2026101908-00421</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 8, Native FlashInfer, open-near:
+<code>trace-2026101908-00091</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+<li>8K, block 8, Native FlashInfer, open-near:
+<code>trace-2026101908-00429</code>; status <code>error</code>, worker
+admitted False, headers False, received events 0.</li>
+</ul>
+<div aria-label="Reliability and
+secondary measurements — table 4" class="table-wrap" role="region" tabindex="0"><table><caption>Reliability and
+secondary measurements — table 4</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Completed req/s</th>
+<th scope="col">TTFT p50 ms</th>
+<th scope="col">TTFT p95 ms</th>
+<th scope="col">TPOT p50 ms</th>
+<th scope="col">TPOT p95 ms</th>
+<th scope="col">Arrival-to-EOS p50 ms</th>
+<th scope="col">Arrival-to-EOS p95 ms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>2.8930</td>
+<td>567.82</td>
+<td>2056.74</td>
+<td>46.43</td>
+<td>97.14</td>
+<td>6620.08</td>
+<td>13808.56</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>2.8967</td>
+<td>684.36</td>
+<td>3021.97</td>
+<td>51.46</td>
+<td>81.77</td>
+<td>7803.07</td>
+<td>12204.97</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>2.8960</td>
+<td>589.85</td>
+<td>2446.98</td>
+<td>46.26</td>
+<td>79.02</td>
+<td>6689.60</td>
+<td>11266.50</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>14.3911</td>
+<td>64.35</td>
+<td>114.29</td>
+<td>12.16</td>
+<td>15.43</td>
+<td>1610.04</td>
+<td>2041.99</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>14.3917</td>
+<td>60.84</td>
+<td>111.82</td>
+<td>12.12</td>
+<td>15.47</td>
+<td>1604.22</td>
+<td>2039.23</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>14.3970</td>
+<td>52.12</td>
+<td>103.56</td>
+<td>11.65</td>
+<td>14.50</td>
+<td>1539.72</td>
+<td>1916.98</td>
+</tr>
+</tbody>
+</table></div>
+<p>These are medians across the ten near-load block summaries. TTFT is
+from intended arrival; all latency columns condition on valid
+completion. They do not pool requests across blocks.</p>
+<div aria-label="Reliability and
+secondary measurements — table 5" class="table-wrap" role="region" tabindex="0"><table><caption>Reliability and
+secondary measurements — table 5</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Completed near-load requests</th>
+<th scope="col">Token-bearing events</th>
+<th scope="col">Multi-token events</th>
+<th scope="col">Event-gap p50 ms</th>
+<th scope="col">Event-gap p95 ms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>5116</td>
+<td>654746</td>
+<td>60</td>
+<td>15.343</td>
+<td>236.867</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>5117</td>
+<td>654841</td>
+<td>94</td>
+<td>18.166</td>
+<td>240.201</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>5115</td>
+<td>654661</td>
+<td>59</td>
+<td>15.983</td>
+<td>246.752</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>7680</td>
+<td>983040</td>
+<td>0</td>
+<td>8.725</td>
+<td>28.604</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>7680</td>
+<td>983018</td>
+<td>22</td>
+<td>8.844</td>
+<td>27.831</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>7680</td>
+<td>983000</td>
+<td>40</td>
+<td>8.674</td>
+<td>25.536</td>
+</tr>
+</tbody>
+</table></div>
+<p>Event counts sum all ten near-load captures; gap columns are medians
+of their per-capture quantiles. Actual multi-token events occur despite
+requesting stream interval one. Their interior token times are
+unobserved, so these distributions are client-visible event gaps, not
+token-level tail latency.</p>
+<div aria-label="Reliability and
+secondary measurements — table 6" class="table-wrap" role="region" tabindex="0"><table><caption>Reliability and
+secondary measurements — table 6</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Dispatch lag p95 ms</th>
+<th scope="col">Admission wait p95 ms</th>
+<th scope="col">Peak outstanding</th>
+<th scope="col">Outstanding at arrival end</th>
+<th scope="col">Drain seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>1.811</td>
+<td>0.024</td>
+<td>55.5</td>
+<td>14.5</td>
+<td>1.885</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>1.806</td>
+<td>0.023</td>
+<td>48.5</td>
+<td>19.0</td>
+<td>1.935</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>1.809</td>
+<td>0.024</td>
+<td>47.0</td>
+<td>14.5</td>
+<td>1.878</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>1.323</td>
+<td>0.021</td>
+<td>46.5</td>
+<td>21.5</td>
+<td>1.071</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>1.322</td>
+<td>0.021</td>
+<td>46.0</td>
+<td>21.5</td>
+<td>1.060</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>1.325</td>
+<td>0.021</td>
+<td>43.5</td>
+<td>21.0</td>
+<td>1.032</td>
+</tr>
+</tbody>
+</table></div>
+<p>Queue columns are medians of the ten near-load block summaries; the
+CSV and JSON retain every value. Lightweight recording and loopback
+remove neither host work nor observer effects. Actual GPU scheduler
+cohort histograms and stream-event multiplicities remain in JSON.</p>
+<div aria-label="Reliability and
+secondary measurements — table 7" class="table-wrap" role="region" tabindex="0"><table><caption>Reliability and
+secondary measurements — table 7</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">New-admission steps</th>
+<th scope="col">Also decoding</th>
+<th scope="col">Mixed share</th>
+<th scope="col">Most common fresh cohort</th>
+<th scope="col">Largest fresh cohort</th>
+<th scope="col">Resumed events</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>3823</td>
+<td>3767</td>
+<td>98.54%</td>
+<td>1</td>
+<td>7</td>
+<td>29</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>3866</td>
+<td>3818</td>
+<td>98.76%</td>
+<td>1</td>
+<td>7</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>3811</td>
+<td>3753</td>
+<td>98.48%</td>
+<td>1</td>
+<td>7</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>6775</td>
+<td>6765</td>
+<td>99.85%</td>
+<td>1</td>
+<td>5</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>6813</td>
+<td>6803</td>
+<td>99.85%</td>
+<td>1</td>
+<td>6</td>
+<td>0</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>6837</td>
+<td>6827</td>
+<td>99.85%</td>
+<td>1</td>
+<td>5</td>
+<td>0</td>
+</tr>
+</tbody>
+</table></div>
+<p>These diagnostic counts sum the ten near-load captures per arm; steps
+are not independent statistical replicates. Fresh means a newly admitted
+request, separate from recomputation after preemption. The complete
+histogram supplement also records closed-loop and descriptive cells.
+Scheduling evidence alone does not attest kernel dispatch or CUDA graph
+replay.</p>
+<h3 id="matched-profiles-outside-confirmation">Matched profiles outside
+confirmation</h3>
+<p>The completed studies trigger the predeclared near-load p95
+regression diagnostic. Each context gets exactly one profile per arm,
+after the full first-block closed-32 prelude, using the first 64
+original open arrivals. All 64 requests complete in each profile. The
+independent reader verifies the exact parent result, frozen plan,
+source, dense weights and unchanged per-arm protocol before reading
+traces. These profiles are excluded from confirmation and do not add
+statistical replicates.</p>
+<div aria-label="Matched profiles outside
+confirmation — table 8" class="table-wrap" role="region" tabindex="0"><table><caption>Matched profiles outside
+confirmation — table 8</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Scheduler steps</th>
+<th scope="col">Matrix ms</th>
+<th scope="col">Attention / merge ms</th>
+<th scope="col">Cache writer ms</th>
+<th scope="col">Gather / cast ms</th>
+<th scope="col">Graph launches</th>
+<th scope="col">Unmatched kernels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>509</td>
+<td>12543.57</td>
+<td>5900.20</td>
+<td>81.05</td>
+<td>43.53</td>
+<td>462</td>
+<td>5577</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>469</td>
+<td>12365.40</td>
+<td>6438.46</td>
+<td>166.22</td>
+<td>0.00</td>
+<td>419</td>
+<td>5137</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>522</td>
+<td>12834.81</td>
+<td>5991.49</td>
+<td>173.15</td>
+<td>0.00</td>
+<td>470</td>
+<td>5720</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>353</td>
+<td>2927.06</td>
+<td>673.23</td>
+<td>26.74</td>
+<td>5.86</td>
+<td>300</td>
+<td>3861</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>363</td>
+<td>2974.58</td>
+<td>700.24</td>
+<td>43.24</td>
+<td>0.00</td>
+<td>310</td>
+<td>3971</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>396</td>
+<td>3167.80</td>
+<td>714.30</td>
+<td>46.29</td>
+<td>0.00</td>
+<td>341</td>
+<td>4334</td>
+</tr>
+</tbody>
+</table></div>
+<p>Durations are sums over GPU kernels classified by name, including
+kernels outside matched phase ranges. Their units are milliseconds
+across the whole capture, not per-request latency. CUDA correlations
+join matched kernels to actual scheduler metadata; unmatched kernels
+remain explicit. The linked JSON separates prefill/mixed and decode
+work, all kernel names, host execute ranges and CUDA API calls.
+Different scheduler-step counts mean the arms realize different
+schedules under the same offered trace. Host execute ranges can overlap
+and include waits or asynchronous work; their sums are not pure CPU
+compute or a causal latency decomposition.</p>
+<p>At 1K, matrix multiplication is about 72% of candidate summed kernel
+time. Gather including fused value casting is only 5.86 ms, about 0.14%.
+The candidate's summed GPU kernel duration is lower than FA3's in this
+capture, while its client p95 is worse. That observation does not
+isolate a kernel fix for the tail regression. Graph launches remain
+visible in all three paths. Captured graphs can bypass Python wrappers,
+so missing wrapper rows do not establish fallback or missing attention.
+In particular, native FA3 does not use the instrumented FlashInfer
+Python wrapper.</p>
+<p>At 8K, candidate gather/cast is 43.53 ms, about 0.21% of its 20.65
+seconds of summed kernel time. The native sums are 20.92 seconds for
+FlashInfer and 21.01 seconds for FA3. FA3 has shorter recorded host
+execute ranges and better client p95 despite its slightly larger GPU
+sum. The profile does not isolate a safely removable host cost. All
+three short captures have zero preemption; they do not reproduce the 29
+candidate preemptions in seven longer primary traces. Those events
+remain explicit in the full scheduler and reliability evidence.</p>
+<p>Client dispatch, client admission waits, sampled server queues,
+actual admissions and preemptions are retained separately. Coarse queue
+scrapes cannot exclude short waits. Profiling adds overhead and changes
+realized schedules, so these six diagnostic captures do not replace the
+unprofiled paired measurements. No bounded implementation defect is
+established and no post-result kernel search or extra confirmation
+blocks are added.</p>
+<p>No production latency objective was supplied. No goodput target is
+selected after seeing results. Backlog quarters, peak outstanding work,
+queue area, server waiting/running gauges and final drain describe a
+finite trace. They do not establish queue stability at a maximum
+sustainable rate.</p>
+<h2 id="memory-and-source-scope">Memory and source scope</h2>
+<p>Physical backing bytes and logical token slots are checked before and
+after each arm's timing. K16/V8 saves 25% persistent payload at equal
+token slots; a fixed byte pool instead gives approximately one third
+more slots. The candidate adds 256 MiB of prefill staging plus its other
+workspaces. There is no maximum request-residency sweep or 25%
+total-GPU-memory claim.</p>
+<p>Torch memory values are peaks since each measurement reset. The
+common HTTP driver audit uses snapshots at recorded observation points,
+not a continuous startup-to-shutdown peak. Server Prometheus gauges are
+sampled once per second; sampled maxima can miss shorter events. Exact
+per-cell preemption counts come from worker receipts.</p>
+<div aria-label="Memory and source scope — table 9" class="table-wrap" role="region" tabindex="0"><table><caption>Memory and source scope — table 9</caption>
+<thead>
+<tr>
+<th scope="col">Input</th>
+<th scope="col">Arm</th>
+<th scope="col">Physical KV bytes</th>
+<th scope="col">Token slots / layer</th>
+<th scope="col">Staging MiB</th>
+<th scope="col">Maximum recorded Torch reserved peak GiB</th>
+<th scope="col">Maximum observed driver GiB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K</th>
+<td>K16/V8</td>
+<td>42,948,624,384</td>
+<td>388,352</td>
+<td>256</td>
+<td>67.084</td>
+<td>67.833</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FlashInfer</td>
+<td>42,948,624,384</td>
+<td>291,264</td>
+<td>0</td>
+<td>66.803</td>
+<td>67.550</td>
+</tr>
+<tr>
+<th scope="row">8K</th>
+<td>Native FA3</td>
+<td>42,948,624,384</td>
+<td>291,264</td>
+<td>0</td>
+<td>66.957</td>
+<td>67.704</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>K16/V8</td>
+<td>34,359,607,296</td>
+<td>310,688</td>
+<td>256</td>
+<td>56.537</td>
+<td>54.268</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FlashInfer</td>
+<td>34,358,427,648</td>
+<td>233,008</td>
+<td>0</td>
+<td>56.256</td>
+<td>54.241</td>
+</tr>
+<tr>
+<th scope="row">1K</th>
+<td>Native FA3</td>
+<td>34,358,427,648</td>
+<td>233,008</td>
+<td>0</td>
+<td>56.254</td>
+<td>53.786</td>
+</tr>
+</tbody>
+</table></div>
+<p>Memory maxima here are across the captured arm invocations at their
+documented observation points. Their different scopes must not be
+treated as simultaneous allocations or subtracted to infer an unmeasured
+component. Logical slots are not a measured maximum resident request
+count.</p>
+<p>The separate <a href="data/asymmetric-dense-1k-http-driver-20261019.json">1K driver
+sample supplement</a> covers all 33 full command windows, including
+startup and shutdown. Its observed maxima are 57.276, 56.995 and 56.993
+GiB for K16/V8, FlashInfer and FA3. All windows meet the stated
+sampling-coverage flag and every observed value remains inside its
+driver envelope. These one-second observations can miss shorter peaks.
+The 8K sampler did not cover confirmation; its boundary observations
+above do not establish a continuous driver peak.</p>
+<div aria-label="Memory and source scope — table 10" class="table-wrap" role="region" tabindex="0"><table><caption>Memory and source scope — table 10</caption>
+<thead>
+<tr>
+<th scope="col">Component</th>
+<th scope="col">Exact revision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">8K harness</th>
+<td>0e34f048a82420a3a7b7a5d6d27254d4cd7692b8</td>
+</tr>
+<tr>
+<th scope="row">1K harness</th>
+<td>9a531755ae4da676bd6965d68b9c1af70f6966b2</td>
+</tr>
+<tr>
+<th scope="row">Candidate vLLM</th>
+<td>276305b29e0d11f95ada503ba76323ab24992e59</td>
+</tr>
+<tr>
+<th scope="row">Native vLLM (both controls)</th>
+<td>c21c0878210695db7b108cdc285aaf0cf890190a</td>
+</tr>
+<tr>
+<th scope="row">FlashInfer</th>
+<td>800a550f8b736e49f8cfa136b82bfaf6d9d32711</td>
+</tr>
+<tr>
+<th scope="row">Qwen3-8B model/tokenizer</th>
+<td>b968826d9c46dd6066d109eabc6255188de91218</td>
+</tr>
+<tr>
+<th scope="row">CPU audit, replay and profile tools</th>
+<td>5b0f39f28107babcdbbd1f7efded1c690b4f6eb2</td>
+</tr>
+</tbody>
+</table></div>
+<p>Python 3.12.11, Torch 2.11.0+cu129, Transformers 5.5.3, NumPy 1.26.4.
+The full model snapshot was verified before the 1K study, which uses
+offline loading; 8K retained its original online startup environment.
+Per-arm protocol hashes and physical memory inventories are retained in
+the data.</p>
+<ul>
+<li><strong>8K:</strong> <a href="data/asymmetric-dense-8k-http-20261019.json">full independent
+evidence JSON</a>, <a href="data/asymmetric-dense-8k-http-matrix-20261019.csv">unpooled matrix
+CSV</a>, <a href="data/asymmetric-dense-8k-http-admission-20261019.json">scheduler
+admission JSON</a>, <a href="data/asymmetric-dense-8k-http-profiles-20261019.json">matched
+profile JSON</a>, <a href="assets/asymmetric-http-8k-20261019.svg">plot
+SVG</a>.</li>
+<li><strong>1K:</strong> <a href="data/asymmetric-dense-1k-http-20261019.json">full independent
+evidence JSON</a>, <a href="data/asymmetric-dense-1k-http-matrix-20261019.csv">unpooled matrix
+CSV</a>, <a href="data/asymmetric-dense-1k-http-admission-20261019.json">scheduler
+admission JSON</a>, <a href="data/asymmetric-dense-1k-http-profiles-20261019.json">matched
+profile JSON</a>, <a href="assets/asymmetric-http-1k-20261019.svg">plot
+SVG</a>.</li>
+</ul>
+<p>The <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving">CPU
+evidence tools</a> independently replay raw clients, worker admission
+and source/input hashes. The public trace catalog restores every
+original byte and rejects changed inputs. Two CPU reader corrections
+validate the measured structured FP16 weight inventory and distinguish
+resumed requests that the pinned V2 scheduler sends through its
+new-request field. Neither correction changes GPU execution or the
+statistical rule. The <a href="data/asymmetric-http-analysis-audit-20261019.json">complete 1K
+replay check</a> reproduces every result field except the reader's own
+hash; its original profile parent is retained. A new execution is a
+replication, with its own qualification and frozen plan; historical
+success receipts do not qualify changed code.</p>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/serving/REPRODUCE.md">complete
+public replication procedure</a> provides the exact source checkout,
+full-snapshot preparation, all three production/quality/reference
+commands, fixed design and independent result reader. Its CPU plan
+builder reruns both evidence audits before emitting plans.</p>
+</main>
+<footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp/blob/main/docs/asymmetric-serving-methods.md">Markdown source</a></footer>
+</body></html>
