@@ -2,16 +2,21 @@
 
 This entry point selects the mixed fresh-prefill route measured at 8K/batch 32.
 It keeps model-weight precision separate from K16/V8 cache storage. The older
-[October replication](decode-october-2026.md) and `make defconfig-decode`
+[October replication](https://github.com/mcgrof/knlp/blob/main/docs/decode-october-2026.md) and `make defconfig-decode`
 retain their historical sources. Do not use them as the current quick start.
 
-**Validation status:** the current installer is awaiting a cold H100 check.
-The existing quality and performance results qualify the pinned serving
-sources; they do not yet certify this new packaging path.
+**Validation status:** a fresh H100 installation passed on October 19, 2026.
+AWQ and dense FP16 ran sequentially through the commands below at installer
+`5a3d9d74edc87ce763e741859dfc32bd01d452d4`. Both passed 360 numerical routing
+checks, physical storage and calibrated-scale checks, changing decode graphs,
+clean memory caps, actual weight dispatch and finite deterministic generation.
+The existing statistical quality and throughput results remain separate.
 
 Use Linux x86-64, one H100 SXM 80 GB (SM90), at least 100 GB system RAM,
 100 GB free disk, a CUDA 12.9 toolkit with `nvcc`, a compatible NVIDIA driver,
 Git, a C/C++ compiler, and `uv` 0.8.17. Python 3.12.11 is installed by `uv`.
+The checked platform is Ubuntu 22.04.5 with NVIDIA driver 580.126.09.
+Its CUDA development image is pinned below.
 For an Ubuntu CUDA development image, install the host tools first:
 
 ```sh
@@ -25,6 +30,8 @@ export OMP_NUM_THREADS=22 MKL_NUM_THREADS=22
 
 git clone https://github.com/mcgrof/knlp.git
 cd knlp
+git checkout --detach 5a3d9d74edc87ce763e741859dfc32bd01d452d4
+export FLASHINFER_WORKSPACE_BASE="$PWD/stack/jit"
 uv run --python 3.12.11 --no-project -m tools.kv.native.october_setup \
   "$PWD/stack" --recipe current
 stack/env/bin/python -m tools.kv.native.current download \
@@ -60,9 +67,38 @@ PASS: physical K16/V8; calibrated scales; mixed fresh-prefill route; changing de
 ```
 
 This is an installation and route check, not a new throughput or statistical
-quality result. First-use compilation and validation can take several minutes.
+quality result. On the checked host, setup took 3.5 minutes and the two complete checks
+took 18.2 and 12.0 minutes; see the stage breakdown below.
 A failed check retains its output; use a fresh output directory after correcting
 the cause. Unsupported inherited settings fail before model loading.
+
+## Verified installation
+
+The installation began with empty package, model and FlashInfer caches.
+All sources and inputs came from public repositories. Dense reused the
+same installation and compiled kernels after the AWQ process exited;
+this was one cold installation, with two sequential model selections.
+Both short generations produced `2 + 2 equals 4.` twice, with identical
+token IDs and finite logits. No manual source edit was required.
+
+Setup took 209.9 seconds, including the first Python bootstrap. Model
+commands below include process startup and the public checkpoint download.
+
+| Format | Model-download command | Geometry and first-use JIT | Serving validation |
+| --- | ---: | ---: | ---: |
+| AWQ | 10.6 s | 143.5 s | 950.4 s |
+| Dense FP16 | 16.2 s | 11.7 s | 710.7 s |
+
+The four recorded FlashInfer Ninja build/link spans total 293.6 seconds.
+They occur inside the check commands, so do not add them to the table.
+Serving validation includes engine setup, remaining first-use compilation,
+numerical instrumentation and profiling. These elapsed times describe this
+installation; they are not throughput benchmarks or portable runtime promises.
+
+The [compact install receipt](data/asymmetric-install-20261019.json) records
+source and binary hashes, package-lock identity, storage, workspace buffers,
+clean memory, both generations and stage timings. The full performance and
+quality evidence is in the [methods](asymmetric-methods.md).
 
 ## Exact recipe
 
@@ -70,15 +106,19 @@ the cause. Unsupported inherited settings fail before model loading.
 | --- | --- |
 | vLLM | `276305b29e0d11f95ada503ba76323ab24992e59` |
 | FlashInfer | `800a550f8b736e49f8cfa136b82bfaf6d9d32711` |
+| Installer / smoke harness | `5a3d9d74edc87ce763e741859dfc32bd01d452d4` |
+| Validation image | `nvcr.io/nvidia/cuda@sha256:38804006c937a83f28f63a959abcee688042072319c8614ad57b350958a30bd3` |
 | Torch | `2.11.0+cu129` |
 | Transformers | `5.5.3` |
 | Qwen3-8B-AWQ | `4da05a8edb55c6046cce958586c33b61da07bb79` |
 | Qwen3-8B | `b968826d9c46dd6066d109eabc6255188de91218` |
 
 The installer checks the upstream vLLM wheel SHA256 and compiled-source
-compatibility before installing editable Python. It removes prebuilt
-FlashInfer caches, keeps the [package constraints](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/october-constraints.txt),
-and saves the resolved lock. The smoke records actually loaded libraries and
+compatibility before installing editable Python. It uninstalls prebuilt
+FlashInfer cache packages, keeps the [package constraints](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/october-constraints.txt),
+and saves the resolved lock. Use a fresh installation directory; its dedicated
+JIT cache avoids reusing kernels compiled from another checkout. The smoke
+records actually loaded libraries and
 retains their bytes. An installed package's version string alone is insufficient.
 
 The complete engine configurations are in the
@@ -107,6 +147,6 @@ and effective scales, so it needs no private repository, local cache or manual
 source edit. The bundled manifests disclose export hashes and original hashes.
 It does not produce the published performance table. Full replay requires the
 original measured harness pins, controls, quality gates and fresh counterbalanced
-blocks described in the [reproduction reference](decode-october-2026.md). The quick start records
+blocks described in the [methods and reproduction reference](asymmetric-methods.md). The quick start records
 its new source identity separately. Generating new prompts or calibrating new
 scales creates a new replication that needs its own qualification.
