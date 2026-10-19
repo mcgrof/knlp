@@ -4,7 +4,10 @@
 from .instrument import tensor_inventory, native_memory_state
 
 
-def inventory(worker, arm):
+def inventory(worker, arm, *, geometry=None):
+    # The default preserves the established Qwen3 recipe. Transfer callers must
+    # supply their independently pinned conventional-attention geometry.
+    geometry = geometry or {"layers": 36, "kv_heads": 8, "head_dim": 128}
     model = worker.model_runner.get_model()
     layers = []
     storages = {}
@@ -24,7 +27,11 @@ def inventory(worker, arm):
         assert ki["dtype"] == "torch.float16" and vi["dtype"] == (
             "torch.float16" if arm == "k16_v16" else "torch.float8_e4m3fn"
         )
-        assert ki["shape"] == vi["shape"] and ki["shape"][1:] == [16, 8, 128]
+        assert ki["shape"] == vi["shape"] and ki["shape"][1:] == [
+            16,
+            geometry["kv_heads"],
+            geometry["head_dim"],
+        ]
         for plane in [ki, vi]:
             key = (plane["device"], plane["storage_pointer"])
             assert key not in storages or storages[key] == plane["storage_bytes"]
@@ -44,7 +51,7 @@ def inventory(worker, arm):
                 scale_buffers=scale,
             )
         )
-    assert len(layers) == 36
+    assert len(layers) == geometry["layers"]
     state = native_memory_state(worker)
     metadata = {}
 
@@ -67,7 +74,9 @@ def inventory(worker, arm):
     if arm == "k16_v16":
         assert workspace is None
     else:
-        assert workspace_receipt["payload_capacity_bytes"] == 256 * 2**20
+        assert workspace_receipt["payload_capacity_bytes"] == (
+            4096 * 16 * geometry["kv_heads"] * geometry["head_dim"] * 4
+        )
     kv_total = sum(storages.values())
     K = sum(r["K"]["logical_bytes"] for r in layers)
     V = sum(r["V"]["logical_bytes"] for r in layers)

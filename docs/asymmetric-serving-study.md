@@ -53,3 +53,10 @@ fixes warmup, cell order, request traces and settling intervals. It rejects
 retries. The caller must freeze the complete counterbalanced block order,
 primary comparisons and analysis family before confirmation; the runner
 never selects loads or adds blocks from observed results.
+
+The `mixed_transfer` variant and `transfer_smoke` entry point are experimental
+qualification tools for additional head geometries. They retain the original
+Qwen3 default and accept explicit conventional-attention geometry for Phi-4.
+Their synthetic checks cover page remapping, K/V gathers, output placement,
+stale maps and shifted outputs. Scored quality and fresh performance tests
+remain required before any model or hardware is advertised as supported.

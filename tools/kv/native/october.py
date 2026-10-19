@@ -25,6 +25,11 @@ VARIANTS = {
         True,
         True,
     ),
+    "mixed_transfer": ExecutionVariant(
+        {"vllm": "a74386bbdf700e3cfd90a7bbfc9f37026afa652e", "flashinfer": FLASHINFER},
+        True,
+        True,
+    ),
     "mixed_prefill": ExecutionVariant(
         {"vllm": "276305b29e0d11f95ada503ba76323ab24992e59", "flashinfer": FLASHINFER},
         True,
@@ -46,7 +51,7 @@ def check_protocol(protocol, variant, environment):
     definition = resolve_variant(variant, VARIANTS)
     definition.verify_environment(environment)
     if environment.get("VLLM_COMPACT_PREFILL") != str(
-        int(variant in ("compact", "mixed_prefill"))
+        int(variant in ("compact", "mixed_prefill", "mixed_transfer"))
     ):
         raise ValueError("compact flag differs from the selected variant")
     if protocol["backend_sources"] != dict(definition.sources):
@@ -77,7 +82,16 @@ def check_scales(record, geometry):
             "serving requires calibrated scales, not a native-only placeholder"
         )
     scales = record["scales"]
-    for layer in range(geometry["layers"]):
+    indices = geometry.get("attention_layer_indices", list(range(geometry["layers"])))
+    if len(indices) != geometry["layers"] or len(set(indices)) != len(indices):
+        raise ValueError("attention layer index inventory is incomplete")
+    if any(not isinstance(index, int) or index < 0 for index in indices):
+        raise ValueError("attention layer indices must be nonnegative integers")
+    if "attention_layer_indices" in record and sorted(
+        record["attention_layer_indices"]
+    ) != sorted(indices):
+        raise ValueError("calibration and model attention layer indices differ")
+    for layer in indices:
         for component in ("k", "v"):
             value = scales.get(f"{layer}.{component}")
             if (
@@ -201,7 +215,7 @@ def main():
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--variant", choices=VARIANTS, required=True)
-    parser.add_argument("--batch", type=int, choices=(8, 32), default=8)
+    parser.add_argument("--batch", type=int, choices=(8, 16, 32), default=8)
     parser.add_argument("--length", type=int, choices=(1024, 2048, 8192), default=8192)
     parser.add_argument("--cache-bytes", type=int, required=True)
     parser.add_argument("--qualification", type=Path)

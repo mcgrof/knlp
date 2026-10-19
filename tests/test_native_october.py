@@ -120,10 +120,14 @@ def test_quick_start_rejects_inherited_incompatible_flags(key, value):
 def test_exact_variant_and_capture(variant):
     env = {
         **VARIANTS[variant].environment({}),
-        "VLLM_COMPACT_PREFILL": str(int(variant in ("compact", "mixed_prefill"))),
+        "VLLM_COMPACT_PREFILL": str(
+            int(variant in ("compact", "mixed_prefill", "mixed_transfer"))
+        ),
     }
     assert check_protocol(protocol(variant), variant, env) is VARIANTS[variant]
-    env["VLLM_COMPACT_PREFILL"] = str(int(variant not in ("compact", "mixed_prefill")))
+    env["VLLM_COMPACT_PREFILL"] = str(
+        int(variant not in ("compact", "mixed_prefill", "mixed_transfer"))
+    )
     with pytest.raises(ValueError, match="compact flag"):
         check_protocol(protocol(variant), variant, env)
 
@@ -170,3 +174,19 @@ def test_timing_requires_exact_complete_quality_and_workload(tmp_path):
     source.write_text(source.read_text() + "\n")
     with pytest.raises(ValueError, match="exact protocol"):
         check_qualification(gate, source, length=8192, batch=8)
+
+
+def test_sparse_attention_calibration_requires_the_model_indices():
+    geometry = {"layers": 2, "attention_layer_indices": [3, 7]}
+    record = {
+        "method": "max_abs_div_448_float32_once",
+        "attention_layer_indices": [3, 7],
+        "scales": {"3.k": 1.0, "3.v": 0.125, "7.k": 1.0, "7.v": 0.25},
+    }
+    assert check_scales(record, geometry) is record["scales"]
+    with pytest.raises(ValueError, match="indices differ"):
+        check_scales({**record, "attention_layer_indices": [0, 1]}, geometry)
+    with pytest.raises(ValueError, match="inventory"):
+        check_scales(record, {"layers": 2, "attention_layer_indices": [3, 3]})
+    with pytest.raises(ValueError, match="incomplete or invalid"):
+        check_scales({**record, "scales": {"3.k": 1.0, "3.v": 0.125}}, geometry)

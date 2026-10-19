@@ -29,7 +29,11 @@ def qualify(inputs, output, *, dtype=torch.float16, geometry=None):
         if (
             min(layers, query_heads, heads) <= 0
             or query_heads % heads
-            or dim not in (64, 128)
+            or dim not in (64, 128, 256)
+            or (
+                dim == 256
+                and (dtype != torch.float16 or (query_heads, heads) != (16, 4))
+            )
         ):
             raise ValueError("unsupported qualification geometry")
     tests = Path(inputs) / "vllm/tests/v1/worker/test_asym_kv_cache_allocation.py"

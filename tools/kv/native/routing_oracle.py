@@ -50,7 +50,7 @@ def require_equal(actual, expected, what):
 
 
 @contextmanager
-def validate_routing_layers(destination):
+def validate_routing_layers(destination, *, geometry=None):
     """Use an independent workspace and preserve the live plan identity."""
     from vllm.v1.attention.backends.compact_prefill import CompactPrefillWorkspace
     from vllm.v1.attention.backends.compact_prefill_metadata import CompactPagePlan
@@ -67,7 +67,11 @@ def validate_routing_layers(destination):
         CompactPrefillWorkspace.run,
     )
     accepted_run = inspect.unwrap(old_run)
-    oracle = CompactPrefillWorkspace("cuda")
+    oracle = (
+        CompactPrefillWorkspace("cuda")
+        if geometry is None
+        else CompactPrefillWorkspace("cuda", geometry)
+    )
     current, rows = [], []
 
     def build(builder, common_prefix_len, common_attn_metadata, fast_build=False):
@@ -348,7 +352,7 @@ def require_placement(query, output, full_query, full_output, offset):
         raise RuntimeError("routing equivalence failed: output suffix placement")
 
 
-def validate_routing_fixture(destination):
+def validate_routing_fixture(destination, *, geometry=None):
     """Exercise independent maps, production gather, guards and four faults."""
     from vllm.v1.attention.backends.compact_prefill import CompactPrefillWorkspace
     from vllm.v1.attention.backends.compact_prefill_metadata import (
@@ -358,17 +362,33 @@ def validate_routing_fixture(destination):
 
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    workspace, oracle = CompactPrefillWorkspace("cuda"), CompactPrefillWorkspace("cuda")
-    pos = torch.arange(8 * 16 * 8 * 128, device="cuda", dtype=torch.float32).reshape(
-        8, 16, 8, 128
-    )
+    if geometry is None:
+        query_heads, kv_heads, dim = 32, 8, 128
+        workspace, oracle = CompactPrefillWorkspace("cuda"), CompactPrefillWorkspace(
+            "cuda"
+        )
+    else:
+        query_heads, kv_heads, dim = (
+            geometry.query_heads,
+            geometry.kv_heads,
+            geometry.head_dim,
+        )
+        workspace, oracle = CompactPrefillWorkspace(
+            "cuda", geometry
+        ), CompactPrefillWorkspace("cuda", geometry)
+    pos = torch.arange(
+        8 * 16 * kv_heads * dim, device="cuda", dtype=torch.float32
+    ).reshape(8, 16, kv_heads, dim)
     cache = (
         torch.sin(pos / 83).half(),
         (16 * torch.cos(pos / 31)).to(torch.float8_e4m3fn),
     )
     q = (
-        torch.sin(torch.arange(52 * 32 * 128, device="cuda", dtype=torch.float32) / 71)
-        .reshape(52, 32, 128)
+        torch.sin(
+            torch.arange(52 * query_heads * dim, device="cuda", dtype=torch.float32)
+            / 71
+        )
+        .reshape(52, query_heads, dim)
         .half()
     )
     checks, faults = [], []
@@ -407,7 +427,7 @@ def validate_routing_fixture(destination):
                 torch.tensor(expected["query_indptr"], dtype=torch.int32),
                 torch.tensor(expected["page_indptr"], dtype=torch.int32),
                 torch.tensor(expected["tails"], dtype=torch.int32),
-                sm_scale=128**-0.5,
+                sm_scale=dim**-0.5,
                 window_left=-1,
                 logits_soft_cap=0.0,
                 fixed_split_size=None,
