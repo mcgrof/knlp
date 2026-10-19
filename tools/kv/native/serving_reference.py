@@ -13,7 +13,7 @@ from .current import save
 from .serving_server import prepare
 
 
-def reference(inputs, output, variant, cache_bytes, length):
+def reference(inputs, output, variant, cache_bytes, length, sequential=False):
     from vllm import SamplingParams
     from .october import build_engine
 
@@ -30,13 +30,12 @@ def reference(inputs, output, variant, cache_bytes, length):
     prompts = [{"prompt_token_ids": s["token_ids"][:length]} for s in samples]
     save(output / "provenance.json", engine._study_provenance)
     for order, selected in enumerate((prompts, prompts[1:] + prompts[:1])):
-        values = engine.generate(
-            selected,
-            SamplingParams(
-                temperature=0, seed=20261019, max_tokens=128, ignore_eos=True
-            ),
-            use_tqdm=False,
+        params = SamplingParams(
+            temperature=0, seed=20261019, max_tokens=128, ignore_eos=True
         )
+        values = []
+        for group in ([p] for p in selected) if sequential else [selected]:
+            values.extend(engine.generate(group, params, use_tqdm=False))
         save(
             output / f"generation-{order}.json",
             [
@@ -62,12 +61,18 @@ def main():
     )
     p.add_argument("--length", type=int, choices=(1024, 8192), default=8192)
     p.add_argument("--cache-bytes", type=int)
+    p.add_argument("--sequential-reference", action="store_true")
     args = p.parse_args()
     variant = "mixed_prefill" if args.arm == "candidate" else "native"
     inputs = args.output.resolve() / "inputs"
     if args.stage == "child":
         reference(
-            inputs, args.output / "generation", variant, args.cache_bytes, args.length
+            inputs,
+            args.output / "generation",
+            variant,
+            args.cache_bytes,
+            args.length,
+            args.sequential_reference,
         )
         return
     _, env = prepare(
@@ -117,6 +122,8 @@ def main():
             "--cache-bytes",
             budget,
         ]
+        if args.sequential_reference:
+            argv.append("--sequential-reference")
     else:
         argv = [
             sys.executable,

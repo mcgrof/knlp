@@ -126,6 +126,15 @@ class ServingWorker(ObservedWorker):
         return result
 
     def execute_model(self, scheduler_output):
+        if getattr(self, "study_teacher_pending", None) is not None:
+            from .serving_quality import register_teacher_requests
+
+            register_teacher_requests(
+                self.study_teacher_pending,
+                self.model_runner._batch_quality_state,
+                self.study_teacher_seen,
+                scheduler_output.scheduled_new_reqs,
+            )
         # CPU metadata only, buffered. No synchronization or CUDA event in timing.
         if hasattr(self, "study_sequence"):
             scheduler_output._knlp_batch_id = self.study_sequence
@@ -150,6 +159,58 @@ class ServingWorker(ObservedWorker):
                     }
                 )
         return super().execute_model(scheduler_output)
+
+    def study_teacher_begin(self, label, requests):
+        from tools.kv import native_batch_quality as teacher
+
+        if getattr(self, "study_teacher_pending", None) is not None:
+            raise RuntimeError("HTTP teacher is already installed")
+        if not label or Path(label).name != label or not requests:
+            raise ValueError("invalid HTTP teacher cohort")
+        if len({r["sample_id"] for r in requests.values()}) != len(requests):
+            raise ValueError("duplicate HTTP teacher sample")
+        if any(len(r["teacher"]) != 129 for r in requests.values()):
+            raise ValueError("HTTP teacher requires 129 frozen targets")
+        receipt = {
+            "requests": requests,
+            "teacher_sha256": hashlib.sha256(
+                Path(teacher.__file__).read_bytes()
+            ).hexdigest(),
+            "worker_pid": os.getpid(),
+        }
+        path = self.study_output / (label + "-teacher.json")
+        instrument.save(path, receipt)
+        teacher.install(self)
+        teacher.stage(
+            self,
+            {},
+            str(self.study_output / (label + "-teacher.jsonl")),
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+        self.study_teacher_pending = requests
+        self.study_teacher_seen = set()
+        return {"registered_samples": len(requests)}
+
+    def study_teacher_end(self):
+        from tools.kv import native_batch_quality as teacher
+
+        if getattr(self, "study_teacher_pending", None) is None:
+            raise RuntimeError("HTTP teacher is not installed")
+        state = self.model_runner._batch_quality_state
+        receipt = {
+            "expected_samples": len(self.study_teacher_pending),
+            "seen_samples": sorted(self.study_teacher_seen),
+            "counts": dict(state["counts"]),
+        }
+        receipt["complete"] = (
+            len(receipt["seen_samples"]) == receipt["expected_samples"]
+            and len(receipt["counts"]) == receipt["expected_samples"]
+            and all(n == 129 for n in receipt["counts"].values())
+        )
+        teacher.finish(self)
+        self.study_teacher_pending = None
+        self.study_teacher_seen = set()
+        return receipt
 
     def study_begin(self, label, mode="timing"):
         from . import schedule
