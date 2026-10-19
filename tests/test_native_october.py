@@ -14,6 +14,8 @@ from tools.kv.native.october import (
     digest,
 )
 from tools.kv.native.completion import request_metrics
+from tools.kv.native.current import environment, validate_install
+from tools.kv.native.october_setup import recipe_pins
 
 
 def test_scored_serving_rejects_native_calibration_placeholder():
@@ -73,6 +75,45 @@ def protocol(variant):
             "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
         },
     }
+
+
+def test_installer_selected_recipe_must_satisfy_serving_contract():
+    """Catch a real stale install before importing CUDA or loading weights."""
+    current = {
+        "recipe": "current",
+        "sources": {name: list(pin) for name, pin in recipe_pins("current").items()},
+    }
+    env = environment({})
+    validate_install(current, protocol("mixed_prefill"), env)
+    historical = {
+        "recipe": "historical-compact",
+        "sources": {
+            name: list(pin) for name, pin in recipe_pins("historical-compact").items()
+        },
+    }
+    with pytest.raises(ValueError, match="historical compact"):
+        validate_install(historical, protocol("mixed_prefill"), env)
+    # Changing the label alone must not admit the old Python checkout.
+    historical["recipe"] = "current"
+    with pytest.raises(ValueError, match="historical compact"):
+        validate_install(historical, protocol("mixed_prefill"), env)
+    with pytest.raises(ValueError, match="protocol source"):
+        validate_install(current, protocol("compact"), env)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("VLLM_COMPACT_PREFILL", "0"),
+        ("VLLM_ASYM_SINGLE_WRITER", "0"),
+        ("FLASHINFER_ASYM_FP8_PV", "1"),
+        ("FLASHINFER_FUSE_V_SCALE", "0"),
+        ("VLLM_KV_CACHE_LAYOUT", "HND"),
+    ],
+)
+def test_quick_start_rejects_inherited_incompatible_flags(key, value):
+    with pytest.raises(ValueError, match="unsupported inherited setting"):
+        environment({key: value})
 
 
 @pytest.mark.parametrize("variant", VARIANTS)

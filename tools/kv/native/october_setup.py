@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 import urllib.request
 
 PINS = {
@@ -38,14 +39,44 @@ COMPILED = [
 ]
 
 
+def recipe_pins(recipe):
+    """Keep the historical install explicit and select current serving."""
+    if recipe == "historical-compact":
+        return dict(PINS)
+    if recipe == "current":
+        return {
+            **PINS,
+            "vllm": (
+                "2026-10-17-feature-mixed-fresh-prefill",
+                "276305b29e0d11f95ada503ba76323ab24992e59",
+            ),
+        }
+    raise ValueError("unknown installation recipe: " + recipe)
+
+
+EVENTS = []
+
+
 def run(*args, **kwargs):
-    subprocess.run(list(map(str, args)), check=True, **kwargs)
+    started = time.perf_counter()
+    try:
+        subprocess.run(list(map(str, args)), check=True, **kwargs)
+    finally:
+        EVENTS.append(
+            {"argv": list(map(str, args)), "seconds": time.perf_counter() - started}
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
+    parser.add_argument(
+        "--recipe",
+        choices=("historical-compact", "current"),
+        default="historical-compact",
+    )
     args = parser.parse_args()
+    pins = recipe_pins(args.recipe)
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     env = root / "env"
@@ -98,7 +129,7 @@ def main():
         "scipy",
         "numpy==1.26.4",
     )
-    for name, (branch, revision) in PINS.items():
+    for name, (branch, revision) in pins.items():
         checkout = root / name
         run(
             "git",
@@ -109,11 +140,13 @@ def main():
             "https://github.com/mcgrof/" + name + ".git",
             checkout,
         )
+        # A branch is a discovery hint; an immutable revision is the recipe.
+        run("git", "-C", checkout, "checkout", "--detach", revision)
         actual = subprocess.check_output(
             ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
         ).strip()
         if actual != revision:
-            raise RuntimeError("dated branch moved: " + name)
+            raise RuntimeError("source revision differs: " + name)
     run(
         "git",
         "-C",
@@ -121,12 +154,16 @@ def main():
         "diff",
         "--exit-code",
         BASE,
-        PINS["vllm"][1],
+        pins["vllm"][1],
         "--",
         *COMPILED,
     )
     wheel = root / "vllm-base.whl"
+    started = time.perf_counter()
     urllib.request.urlretrieve(WHEEL, wheel)
+    EVENTS.append(
+        {"download": "upstream vLLM wheel", "seconds": time.perf_counter() - started}
+    )
     if hashlib.file_digest(wheel.open("rb"), "sha256").hexdigest() != WHEEL_SHA:
         raise RuntimeError("upstream binary digest differs")
     build_env = {
@@ -197,7 +234,13 @@ def main():
         run("uv", "pip", "freeze", "--python", python, stdout=stream)
     (root / "setup.json").write_text(
         json.dumps(
-            {"sources": PINS, "compiled_base": BASE, "wheel_sha256": WHEEL_SHA},
+            {
+                "recipe": args.recipe,
+                "sources": pins,
+                "compiled_base": BASE,
+                "wheel_sha256": WHEEL_SHA,
+                "steps": EVENTS,
+            },
             indent=2,
         )
         + "\n"

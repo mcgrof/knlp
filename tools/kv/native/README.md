@@ -1,5 +1,7 @@
 # Native packed-cache evaluation
 
+For the current Qwen3-8B recipe, start with the [installation guide](../../../docs/asymmetric-install.md). `october_setup --recipe current` selects the measured mixed fresh-prefill route; the default `historical-compact` preserves the earlier stack. The current route accepts an eligible fresh-prefill suffix alongside decode. The historical fallback description below applies only to the preceding compact source.
+
 These tools evaluate a caller-supplied Qwen3-8B-AWQ checkpoint and native
 16-bit K/V, 16-bit K with FP8 V, and symmetric FP8 caches. They preserve the
 selected serving stack's attention, allocation and dispatch rules. They do
