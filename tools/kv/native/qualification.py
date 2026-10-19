@@ -2,7 +2,10 @@
 """Retain attention operands and numerical evidence before enforcing tolerances."""
 
 import hashlib
+import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 
 import torch
@@ -53,6 +56,9 @@ def record_attention_check(
     payload = directory / "tensors.pt"
     torch.save(artifact, payload)
     libraries = loaded_attention_libraries()
+    retained_libraries = snapshot_attention_libraries(
+        libraries, directory / "libraries"
+    )
     passed = all_finite and maximum <= 0.005 and mean <= 0.001
     receipt = {
         "passed": passed,
@@ -61,6 +67,7 @@ def record_attention_check(
         "use_tensor_cores": getattr(wrapper, "_use_tensor_cores", None),
         "cached_module": repr(getattr(wrapper, "_cached_module", None)),
         "loaded_flashinfer_libraries": libraries,
+        "retained_flashinfer_libraries": retained_libraries,
         "physical_cache_views": tensor_inventory(cache),
         "tensors_file": payload.name,
         "tensors_sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
@@ -77,6 +84,39 @@ def record_attention_check(
             f"{stage} differs from FP32 reference; retained {directory / 'check.json'}"
         )
     return receipt
+
+
+def snapshot_attention_libraries(libraries, directory):
+    """Retain each recorded binary before a later JIT build reuses its path.
+
+    Return filenames relative to directory. A recorded hash must match the
+    current source bytes and any existing retained object. Numerical callers
+    should invoke this when making the receipt, before further compilation.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    retained = []
+    for row in libraries:
+        digest = row["sha256"]
+        if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+            raise ValueError("invalid recorded library SHA-256")
+        data = Path(row["path"]).read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise RuntimeError("library changed after its hash was recorded")
+        target = directory / (digest + ".so")
+        if target.exists():
+            if target.read_bytes() != data:
+                raise RuntimeError("retained library differs from its recorded hash")
+        else:
+            with tempfile.NamedTemporaryFile(dir=directory, delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(data)
+            try:
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        retained.append({"sha256": digest, "file": target.name})
+    return retained
 
 
 def loaded_attention_libraries(maps_path=Path("/proc/self/maps")):
