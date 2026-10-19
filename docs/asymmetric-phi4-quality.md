@@ -1,10 +1,11 @@
-# Phi-4: quality and physical-storage transfer
+# Phi-4: quality transfer and interrupted throughput studies
 
 Phi-4 passes the frozen NLL, retrieval and full GSM8K preservation checks
 against native FlashInfer and actual FlashAttention 3 (FA3). The physical
 K16/V8 route also passes production qualification at 1K/batch 32 and
-8K/batch 16 on H100. These results establish the tested model transfer;
-performance and HTTP serving require separate evidence.
+8K/batch 16 on H100. These results establish the tested model transfer. Both fixed throughput
+studies have infrastructure failures and support no confirmed speed claim.
+HTTP serving is outside this Phi-4 study.
 
 All paths use the same pinned Phi-4 checkpoint, FP16 weights and compute,
 original model-specific scales, and a 32 GiB persistent KV budget. The
@@ -58,3 +59,57 @@ include the original scales, both context panels, complete GSM8K task,
 all six measured protocols, byte hashes and dataset attribution. This
 experimental transfer has its own geometry port and qualification; the
 [current Qwen installer](asymmetric-install.md) retains its stated scope.
+
+
+## Fixed throughput studies
+
+Both contexts planned ten fresh, counterbalanced blocks against the same
+native FlashInfer and native FA3 controls. The metric is complete-request
+output tokens divided by CUDA-synchronized host duration. It includes
+prefill, scheduling and decode. Each arm excludes two warmup cohorts,
+then measures ten cohorts at 1K/batch 32 or four at 8K/batch 16. All requests
+force 128 output tokens. The same 32 GiB KV pool and 22 CPU threads apply.
+
+**Neither fixed schedule completed successfully.** At 1K, a source-host
+DNS failure prevented all three arms of block 4 from launching. At 8K,
+an operator mistake enabled offline model loading after an incomplete
+preflight. The loader's earlier full-snapshot check required ancillary
+files absent from the cache, so ten subsequent launches failed before
+GPU model loading. The preceding stalled online launch recovered and
+completed unchanged. These are preparation failures, not measured
+quantization failures. Every failed attempt remains in the result.
+
+| Workload | Valid arm captures / planned | Complete blocks / planned | Observed paired median vs FlashInfer | Observed paired median vs FA3 |
+| --- | ---: | ---: | ---: | ---: |
+| 1K / batch 32 | 27 / 30 | 9 / 10 | −0.224% | −2.058% |
+| 8K / batch 16 | 20 / 30 | 6 / 10 | +1.246% | +1.411% |
+
+These effects describe only complete observed blocks. **No primary tests
+or confidence intervals are computed on either reduced set.** No failed
+block was replaced and no extra block was added. The frozen rule requires
+the full schedule, a 1% median gain screen and Holm correction over both
+native comparisons. A positive descriptive median does not pass that rule;
+an incomplete schedule does not prove absence of a benefit either.
+The [full performance record](data/asymmetric-phi4-performance-20261019.json)
+retains each valid arm, all failures, frozen designs and source hashes.
+The [independent CPU reader](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/cohort_confirmation.py)
+checks the raw completions, actual active decode batches and memory before
+any statistical inference.
+
+## Matched diagnostic profiles
+
+Separate qualified smoke profiles cover one complete cohort per arm and
+context. They are excluded from confirmation. At 1K, matrix operations
+account for about 79% of summed GPU kernel duration; attention and merge
+kernels total 434.4 ms for K16/V8, 444.6 ms for FlashInfer and 425.4 ms for
+FA3. The candidate also gathers values and writes the compressed cache.
+At 8K, matrix operations account for about 69–70%; attention and merge
+kernels total 1,973.1, 2,107.8 and 2,178.1 ms respectively. Actual fresh
+8K admissions are 8/7/1, followed by batch-16 decode.
+
+Kernel names classify components, and CUDA launch correlations join them
+to actual scheduler steps. These sums can overlap and include profiling
+overhead; they are not an additive wall-time explanation or an independent
+speed confirmation. The profiles show workload-dependent component costs.
+They identify no single established code defect that justifies claiming a
+repaired performance gain.

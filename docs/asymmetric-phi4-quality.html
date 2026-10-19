@@ -1,28 +1,30 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Phi-4: quality and
-physical-storage transfer — knlp</title>
+<title>Phi-4:
+quality transfer and interrupted throughput studies — knlp</title>
 <link rel="canonical" href="https://knlp.io/asymmetric-phi4-quality.html">
 <link rel="stylesheet" href="assets/asymmetric-guide.css">
 </head><body><a class="skip" href="#main">Skip to content</a>
 <header><a class="brand" href="./">knlp<span> / inference</span></a>
 <nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
-<main id="main" class="reference"><h1 id="page-title">Phi-4: quality and
-physical-storage transfer</h1>
+<main id="main" class="reference"><h1 id="page-title">Phi-4:
+quality transfer and interrupted throughput studies</h1>
 <p>Phi-4 passes the frozen NLL, retrieval and full GSM8K preservation
 checks against native FlashInfer and actual FlashAttention 3 (FA3). The
 physical K16/V8 route also passes production qualification at 1K/batch
 32 and 8K/batch 16 on H100. These results establish the tested model
-transfer; performance and HTTP serving require separate evidence.</p>
+transfer. Both fixed throughput studies have infrastructure failures and
+support no confirmed speed claim. HTTP serving is outside this Phi-4
+study.</p>
 <p>All paths use the same pinned Phi-4 checkpoint, FP16 weights and
 compute, original model-specific scales, and a 32 GiB persistent KV
 budget. The candidate stores FP16 keys and E4M3 FP8 values. Native
 controls store FP16 keys and values. The geometry has 40 attention
 layers, 40 query heads, ten KV heads and head dimension 128.</p>
-<div aria-label="Phi-4: quality and
-physical-storage transfer results table" class="table-wrap" role="region" tabindex="0"><table><caption>Phi-4: quality and
-physical-storage transfer — measured task results</caption>
+<div aria-label="Phi-4:
+quality transfer and interrupted throughput studies results table" class="table-wrap" role="region" tabindex="0"><table><caption>Phi-4:
+quality transfer and interrupted throughput studies — measured task results</caption>
 <thead>
 <tr>
 <th scope="col">Quality check</th>
@@ -108,6 +110,79 @@ complete GSM8K task, all six measured protocols, byte hashes and dataset
 attribution. This experimental transfer has its own geometry port and
 qualification; the <a href="asymmetric-install.html">current Qwen
 installer</a> retains its stated scope.</p>
+<h2 id="fixed-throughput-studies">Fixed throughput studies</h2>
+<p>Both contexts planned ten fresh, counterbalanced blocks against the
+same native FlashInfer and native FA3 controls. The metric is
+complete-request output tokens divided by CUDA-synchronized host
+duration. It includes prefill, scheduling and decode. Each arm excludes
+two warmup cohorts, then measures ten cohorts at 1K/batch 32 or four at
+8K/batch 16. All requests force 128 output tokens. The same 32 GiB KV
+pool and 22 CPU threads apply.</p>
+<p><strong>Neither fixed schedule completed successfully.</strong> At
+1K, a source-host DNS failure prevented all three arms of block 4 from
+launching. At 8K, an operator mistake enabled offline model loading
+after an incomplete preflight. The loader's earlier full-snapshot check
+required ancillary files absent from the cache, so ten subsequent
+launches failed before GPU model loading. The preceding stalled online
+launch recovered and completed unchanged. These are preparation
+failures, not measured quantization failures. Every failed attempt
+remains in the result.</p>
+<div aria-label="Phi-4:
+quality transfer and interrupted throughput studies results table" class="table-wrap" role="region" tabindex="0"><table><caption>Phi-4:
+quality transfer and interrupted throughput studies — measured task results</caption>
+<thead>
+<tr>
+<th scope="col">Workload</th>
+<th scope="col" style="text-align: right;">Valid arm captures / planned</th>
+<th scope="col" style="text-align: right;">Complete blocks / planned</th>
+<th scope="col" style="text-align: right;">Observed paired median vs FlashInfer</th>
+<th scope="col" style="text-align: right;">Observed paired median vs FA3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">1K / batch 32</th>
+<td style="text-align: right;">27 / 30</td>
+<td style="text-align: right;">9 / 10</td>
+<td style="text-align: right;">−0.224%</td>
+<td style="text-align: right;">−2.058%</td>
+</tr>
+<tr>
+<th scope="row">8K / batch 16</th>
+<td style="text-align: right;">20 / 30</td>
+<td style="text-align: right;">6 / 10</td>
+<td style="text-align: right;">+1.246%</td>
+<td style="text-align: right;">+1.411%</td>
+</tr>
+</tbody>
+</table></div>
+<p>These effects describe only complete observed blocks. <strong>No
+primary tests or confidence intervals are computed on either reduced
+set.</strong> No failed block was replaced and no extra block was added.
+The frozen rule requires the full schedule, a 1% median gain screen and
+Holm correction over both native comparisons. A positive descriptive
+median does not pass that rule; an incomplete schedule does not prove
+absence of a benefit either. The <a href="data/asymmetric-phi4-performance-20261019.json">full performance
+record</a> retains each valid arm, all failures, frozen designs and
+source hashes. The <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/cohort_confirmation.py">independent
+CPU reader</a> checks the raw completions, actual active decode batches
+and memory before any statistical inference.</p>
+<h2 id="matched-diagnostic-profiles">Matched diagnostic profiles</h2>
+<p>Separate qualified smoke profiles cover one complete cohort per arm
+and context. They are excluded from confirmation. At 1K, matrix
+operations account for about 79% of summed GPU kernel duration;
+attention and merge kernels total 434.4 ms for K16/V8, 444.6 ms for
+FlashInfer and 425.4 ms for FA3. The candidate also gathers values and
+writes the compressed cache. At 8K, matrix operations account for about
+69–70%; attention and merge kernels total 1,973.1, 2,107.8 and 2,178.1
+ms respectively. Actual fresh 8K admissions are 8/7/1, followed by
+batch-16 decode.</p>
+<p>Kernel names classify components, and CUDA launch correlations join
+them to actual scheduler steps. These sums can overlap and include
+profiling overhead; they are not an additive wall-time explanation or an
+independent speed confirmation. The profiles show workload-dependent
+component costs. They identify no single established code defect that
+justifies claiming a repaired performance gain.</p>
 </main>
 <footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp">Source</a></footer>
 </body></html>
