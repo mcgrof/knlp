@@ -139,7 +139,8 @@ footer a { color: var(--muted); }
   <a href="#singleflight">14. Can one loader remove duplicate GPU ancestors?</a>
   <a href="#preload">15. What does an early ancestor declaration buy?</a>
   <a href="#retained">16. Can external L1 keep the shared ancestor off NVMe?</a>
-  <a href="#papers">17. Papers</a>
+  <a href="#trace-audit">17. Can the traces qualify family retention?</a>
+  <a href="#papers">18. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -1145,8 +1146,45 @@ read question with enough lead time; it does not answer that pressure question
 or establish cross-engine sharing.</p>
 </section>
 
+<section id="trace-audit">
+<h2>17. Can the traces qualify family retention?</h2>
+<p>A family lease would protect vLLM's existing shared ancestor blocks between
+related requests. It would consume cache capacity that could serve other
+requests. The comparison must therefore count saved restoration or recomputation
+against displaced useful hits and unused holds. The external-L1 result above
+does not answer that engine-memory question.</p>
+<p>The October 18 CPU audit of the public
+<a href="https://github.com/LMCache/lmcache-agent-trace/tree/780bcc2979715150d8b9fd4737e026e625444cc9">LMCache agent-trace corpus at its pinned revision</a>
+finds <strong>78 JSONL files, 1,915 unique parseable records, two exact duplicate
+records and 20 malformed nonempty lines</strong>. The malformed lines are in
+the MemGPT file. The Claude Code directory has capture tooling but no captured
+JSONL records. The source README labels PyCodeAGI as a synthetic pipeline.</p>
+<p>None of the valid records supplies explicit parent links, invocation start
+and completion times, engine identity or physical cache events. There are
+<strong>zero observed invocation-lineage edges</strong>. Text-prefix overlap
+and spacing between record timestamps cannot establish fork gaps, simultaneous
+inference or eviction pressure. This audit therefore requires invocation
+capture before a trace-backed pressure comparison; it predicts no latency gain.
+The <a href="data/kmesh-trace-audit-20261018.json">complete derived audit</a>
+contains field coverage, counts and input hashes, without prompts or answers.</p>
+<h3>Reproduce the CPU audit</h3>
+<pre><code>git clone https://github.com/LMCache/lmcache-agent-trace.git /path/to/traces
+git -C /path/to/traces checkout 780bcc2979715150d8b9fd4737e026e625444cc9
+make defconfig-kmesh-trace-audit
+KMESH_TRACE_ROOT=/path/to/traces make kmesh-trace-plan
+KMESH_TRACE_ROOT=/path/to/traces make
+make kmesh-trace-test</code></pre>
+<p>Use Python 3.10 or later and a fresh output directory. No model or GPU is
+needed. The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_residency/README.md">capture contract</a>
+requires exact token IDs, explicit family and parent identities, terminal status
+and a shared clock domain. Even a complete invocation capture still needs
+physical block lifetimes, pool capacity, competing demand and eviction evidence.
+A controlled serving test can qualify a retention mechanism while leaving its
+production-workload benefit unresolved.</p>
+</section>
+
 <section id="papers">
-<h2>17. Papers</h2>
+<h2>18. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
