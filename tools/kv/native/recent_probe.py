@@ -22,6 +22,8 @@ def main():
     p.add_argument(
         "--backend", choices=("FLASHINFER", "TRITON_ATTN"), default="FLASHINFER"
     )
+    p.add_argument("--dtype", choices=("float16", "bfloat16"), default="float16")
+    p.add_argument("--diagnostic-one-case", action="store_true")
     args = p.parse_args()
     if os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING") != "0":
         raise ValueError("native calibration requires the explicit in-process mode")
@@ -35,7 +37,7 @@ def main():
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
     from vllm.v1.attention.backends.triton_attn import TritonAttentionImpl
     from .october import VARIANTS
-    from .instrument import native_memory_state, require_finite, save, tensor_inventory
+    from .instrument import native_memory_state, save, tensor_inventory
     from .current import save as update
 
     definition = VARIANTS["native"]
@@ -62,7 +64,7 @@ def main():
         "model": manifest["model"],
         "revision": manifest["model_revision"],
         "tokenizer_revision": manifest["tokenizer_revision"],
-        "dtype": "float16",
+        "dtype": args.dtype,
         "kv_cache_dtype": "auto",
         "tensor_parallel_size": 1,
         "max_model_len": 10240,
@@ -96,7 +98,27 @@ def main():
     llm = LLM(**policy)
     runner = llm.collective_rpc(lambda worker: worker.model_runner)[0]
     model = runner.get_model()
-    require_finite(model)
+    original_logits = model.compute_logits
+
+    def finite_logits(*a, **kw):
+        logits = original_logits(*a, **kw)
+        if not bool(torch.isfinite(logits).all()):
+            save(
+                args.output / "nonfinite-logits.json",
+                {
+                    "sample_id": sample_id,
+                    "shape": list(logits.shape),
+                    "dtype": str(logits.dtype),
+                    "nan_count": int(torch.isnan(logits).sum()),
+                    "positive_infinity_count": int(torch.isposinf(logits).sum()),
+                    "negative_infinity_count": int(torch.isneginf(logits).sum()),
+                    "finite_count": int(torch.isfinite(logits).sum()),
+                },
+            )
+            raise RuntimeError("nonfinite native generation logits")
+        return logits
+
+    model.compute_logits = finite_logits
     attention = {}
     modules = []
     for name, module in model.named_modules():
@@ -157,8 +179,12 @@ def main():
             record = attention[id(layer)]
             for component, tensor in (("k", key), ("v", value)):
                 live = tensor[: len(slots)][slots >= 0]
-                if live.dtype != torch.float16 or not bool(torch.isfinite(live).all()):
-                    raise RuntimeError("nonfinite or non-FP16 native cache write")
+                if live.dtype != getattr(torch, args.dtype) or not bool(
+                    torch.isfinite(live).all()
+                ):
+                    raise RuntimeError(
+                        "nonfinite or unexpected-dtype native cache write"
+                    )
                 maximum = float(live.float().abs().max())
                 field = f"{record['layer']}.{component}"
                 maxima[field] = max(maxima.get(field, 0.0), maximum)
@@ -174,6 +200,8 @@ def main():
 
     implementation.do_kv_cache_update = observe
     cases = [s for s in manifest["samples"] if s["kind"] == "calibration"]
+    if args.diagnostic_one_case:
+        cases = cases[:1]
     try:
         for case in cases:
             sample_id = case["id"]
@@ -198,6 +226,18 @@ def main():
         save(args.output / "write-maxima.json", writes)
     if len(maxima) != 2 * len(attention):
         raise RuntimeError("native writer calibration coverage incomplete")
+    if args.diagnostic_one_case:
+        save(
+            args.output / "DONE.json",
+            {
+                "native_single_case_diagnostic_passed": True,
+                "sample_id": cases[0]["id"],
+                "native_calibration_complete": False,
+                "asymmetric_qualified": False,
+                "scored_quality_complete": False,
+            },
+        )
+        return
     save(
         args.output / "scales.json",
         {
