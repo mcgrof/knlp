@@ -140,8 +140,41 @@ def main():
                         for x in generation
                     }
                 )
-            if generations[0] != generations[1]:
-                raise RuntimeError("greedy output changed with request order")
+            order_exact = generations[0] == generations[1]
+            differences = []
+            for prompt, first in generations[0].items():
+                second = generations[1][prompt]
+                if first != second:
+                    position = next(
+                        (
+                            i
+                            for i, pair in enumerate(zip(first, second))
+                            if pair[0] != pair[1]
+                        ),
+                        min(len(first), len(second)),
+                    )
+                    differences.append(
+                        {
+                            "prompt_sha256": hashlib.sha256(
+                                json.dumps(prompt).encode()
+                            ).hexdigest(),
+                            "first_different_position": position,
+                            "first_order_token": (
+                                first[position] if position < len(first) else None
+                            ),
+                            "second_order_token": (
+                                second[position] if position < len(second) else None
+                            ),
+                        }
+                    )
+            instrument.save(
+                args.output / "order-comparison.json",
+                {
+                    "exact": order_exact,
+                    "cases": len(generations[0]),
+                    "differences": differences,
+                },
+            )
             for label in ("transfer-0", "transfer-1"):
                 selected = [r for r in graphs if r["label"] == label]
                 if len(selected) < 32 or len({r["sha256"] for r in selected}) < 3:
@@ -198,7 +231,9 @@ def main():
             instrument.save(
                 args.output / "DONE.json",
                 {
-                    "production_smoke_passed": True,
+                    "production_smoke_passed": order_exact,
+                    "evidence_capture_complete": True,
+                    "greedy_order_exact": order_exact,
                     "scored_quality_complete": False,
                     "performance_complete": False,
                     "geometry": shape,
@@ -206,6 +241,11 @@ def main():
                     "batch": args.batch,
                 },
             )
+            # Keep graph, allocation and dispatch evidence when a native
+            # control is itself sensitive to prefill cohort order. This does
+            # not turn an order mismatch into a passing qualification.
+            if not order_exact:
+                raise RuntimeError("greedy output changed with request order")
     finally:
         CudaGraphManager.run_fullgraph = old
         schedule.label(None)
