@@ -1,4 +1,24 @@
 # SPDX-License-Identifier: MIT
+KMESH_SELECTED := $(strip $(foreach v,TRACE FORK SERVING RESTORE CASCADE,\
+	$(if $(filter y,$(CONFIG_KNLP_REPRODUCE_KMESH_$(v))),$(v))))
+ifneq ($(word 2,$(KMESH_SELECTED)),)
+$(error Select one KMesh workload: $(KMESH_SELECTED))
+endif
+
+KMESH_TRACE_PY ?= $(PYTHON)
+KMESH_TRACE_CONFIG ?= $(CONFIG_FILE)
+.PHONY: kmesh-trace-audit kmesh-trace-plan kmesh-trace-test
+
+kmesh-trace-audit kmesh-trace-plan:
+	@"$(KMESH_TRACE_PY)" -m tools.reproduce.kmesh_residency.audit --config "$(KMESH_TRACE_CONFIG)" $(if $(filter kmesh-trace-plan,$@),--plan,)
+
+kmesh-trace-test:
+	@"$(KMESH_TRACE_PY)" -m unittest discover -s tests -p test_kmesh_trace.py -v
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_TRACE),y)
+.DEFAULT_GOAL := kmesh-trace-audit
+endif
+
 KMESH_FORK_PY ?= $(PYTHON)
 KMESH_FORK_CONFIG ?= .config
 KMESH_FORK_DIR := tools/reproduce/kmesh_forks

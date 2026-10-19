@@ -1,6 +1,30 @@
 # SPDX-License-Identifier: MIT
 menu "Exact-prefix reasoning forks"
 
+config KNLP_REPRODUCE_KMESH_TRACE
+	bool "Audit trace evidence for family residency on CPU"
+	default n
+	help
+	  Measure input-text reuse and field coverage in pinned public traces.
+	  Keep record spacing separate from measured invocation and fork times.
+	  Missing lineage or cache observations cannot qualify a pressure result.
+
+if KNLP_REPRODUCE_KMESH_TRACE
+
+config KNLP_KMESH_TRACE_ROOT
+	string "Trace checkout or captured invocation directory"
+	default ""
+
+config KNLP_KMESH_TRACE_OUTPUT
+	string "Fresh audit output directory"
+	default "results/kmesh-trace-audit"
+
+config KNLP_KMESH_TRACE_MODE
+	string "Trace format: lmcache or invocations"
+	default "lmcache"
+
+endif
+
 config KNLP_REPRODUCE_KMESH_FORK
 	bool "Enable the real vLLM CPU allocator experiment"
 	default n

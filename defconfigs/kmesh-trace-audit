@@ -1,0 +1,5 @@
+# Audit public request records on CPU; no model or GPU is used.
+CONFIG_KNLP_REPRODUCE_KMESH_TRACE=y
+CONFIG_KNLP_KMESH_TRACE_ROOT=""
+CONFIG_KNLP_KMESH_TRACE_OUTPUT="results/kmesh-trace-audit"
+CONFIG_KNLP_KMESH_TRACE_MODE="lmcache"
