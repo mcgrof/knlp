@@ -28,11 +28,20 @@ def test_backlog_counts_terminal_failures_and_final_drain():
 
 
 def test_stream_gaps_preserve_empty_multitoken_and_invisible_events():
-    def event(ms, ids, text):
+    def event(ms, ids, text, finish=None):
         return {
             "at_ns": ms * 1_000_000,
             "data": json.dumps(
-                {"choices": [{"index": 0, "text": text, "token_ids": ids}]}
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "text": text,
+                            "token_ids": ids,
+                            "finish_reason": finish,
+                        }
+                    ]
+                }
             ),
         }
 
@@ -42,11 +51,15 @@ def test_stream_gaps_preserve_empty_multitoken_and_invisible_events():
             "events": [
                 event(1, [], ""),
                 event(2, [1, 2], ""),
-                event(5, [3], "a"),
+                event(5, [3], "a", "length"),
                 {"at_ns": 7_000_000, "data": "[DONE]"},
             ],
         },
         {"status": "timeout", "events": []},
+        {
+            "status": "completed",
+            "events": [event(8, [4], "b"), {"at_ns": 9_000_000, "data": "[DONE]"}],
+        },
     ]
     result = stream_gaps(rows)
     assert result["counts"]["completed_requests"] == 1

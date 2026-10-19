@@ -65,6 +65,21 @@ def server_gauges(scrapes):
     }
 
 
+def valid_completion(row):
+    """Match the independently checked completion inventory, including invalids."""
+    if row["status"] != "completed":
+        return False
+    done, tokens, finishes = 0, 0, 0
+    for event in row["events"]:
+        if event["data"] == "[DONE]":
+            done += 1
+            continue
+        for choice in json.loads(event["data"]).get("choices", []):
+            tokens += len(choice.get("token_ids", []))
+            finishes += choice.get("finish_reason") is not None
+    return done == 1 and tokens > 0 and finishes > 0
+
+
 def stream_gaps(requests):
     # These are client-visible token-bearing event gaps. A multi-token event
     # cannot disclose its internal token times; TCP coalescing can yield zeros.
@@ -73,7 +88,7 @@ def stream_gaps(requests):
     sizes = []
     per_request = []
     for row in requests:
-        if row["status"] != "completed":
+        if not valid_completion(row):
             continue
         times = []
         counts["completed_requests"] += 1
@@ -172,6 +187,7 @@ def cell(root, label, expected, *, expected_mode="timing"):
     assert x["plan"] == expected
     v = verify(x)
     s = x["summary"]
+    assert sum(valid_completion(r) for r in x["requests"]) == v["completed"]
     w = read(root / f"server/{label}/receipt.json")
     rows = read(root / f"server/{label}/steps.json")
     assert expected_mode in ("timing", "profile")
@@ -216,14 +232,14 @@ def cell(root, label, expected, *, expected_mode="timing"):
         "noncompletion_records": [
             {
                 "request_id": r["id"],
-                "status": r["status"],
+                "status": "invalid" if r["status"] == "completed" else r["status"],
                 "error": r.get("error"),
                 "worker_admitted": r["id"] in matched,
                 "received_headers": "headers_ns" in r,
                 "received_events": len(r["events"]),
             }
             for r in x["requests"]
-            if r["status"] != "completed"
+            if not valid_completion(r)
         ],
         "request_throughput_per_s": s["request_throughput_per_s"],
         "output_token_throughput_per_s": v["output_tokens"]
