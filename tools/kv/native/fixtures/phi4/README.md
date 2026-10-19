@@ -28,6 +28,25 @@ driver envelopes. At 8K, original-order repetition must match exactly;
 rotation is retained as a separate diagnostic. These are measurement
 records, not a replacement for the Qwen-only `current` installer.
 
+For retained complete-cohort captures and their frozen plan directory,
+the independent CPU reader checks input and source hashes, qualification,
+physical-memory envelopes, exact prompts and completions, scheduler
+activity, arm order, and the full two-control statistical family:
+
+```sh
+python -m tools.kv.native.cohort_confirmation \
+  --root CAPTURES --plan FROZEN_PLAN \
+  --prefix phi4-8k-confirmation --output confirmation.json
+```
+
+The plan directory supplies `PLAN.json`, the exact recorder and wrapper,
+and original job declarations. The capture directory supplies each arm's
+raw outputs, telemetry, command and completion receipts. A missing
+attempt remains pending; a failed attempt remains failed. The reader
+does not replace blocks or compute primary inference on a reduced set.
+Python assertions must remain enabled. These are in-process complete
+requests; the reader does not infer HTTP or per-step GPU latency.
+
 The manifest's historical `fixture_generation_source_sha` identifies the
 public fixture helper. The protocol identifies the executed harness;
 the complete file hashes identify the exact inputs. Do not substitute
