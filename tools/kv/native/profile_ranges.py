@@ -2,7 +2,9 @@
 """Tie attention CUDA events to actual scheduler batches and model layers."""
 
 import json
+from collections import defaultdict
 from contextlib import contextmanager
+from heapq import heappop, heappush
 from pathlib import Path
 
 
@@ -23,24 +25,38 @@ def join_cuda_events(trace):
         for e in events
         if e.get("ph") == "X" and e.get("name", "").startswith("knlp|")
     ]
-    launches = {}
-    groups = {}
-    for event in events:
-        if event.get("cat") not in (
+    # A full serving profile can contain many thousands of ranges and
+    # launches. Sweep each host thread once instead of comparing every
+    # launch with every range. The shortest containing range still wins;
+    # equal durations retain their original trace order.
+    thread_ranges, thread_launches = defaultdict(list), defaultdict(list)
+    for index, row in enumerate(ranges):
+        thread_ranges[(row.get("pid"), row.get("tid"))].append((index, row))
+    for index, event in enumerate(events):
+        if event.get("cat") in (
             "cuda_runtime",
             "cuda_driver",
-        ) or "correlation" not in event.get("args", {}):
+        ) and "correlation" in event.get("args", {}):
+            thread_launches[(event.get("pid"), event.get("tid"))].append((index, event))
+    selected_ranges = {}
+    for thread, pending in thread_launches.items():
+        ordered = sorted(thread_ranges[thread], key=lambda item: item[1]["ts"])
+        active, cursor = [], 0
+        for index, event in sorted(pending, key=lambda item: item[1]["ts"]):
+            while cursor < len(ordered) and ordered[cursor][1]["ts"] <= event["ts"]:
+                ordinal, row = ordered[cursor]
+                heappush(active, (row["dur"], ordinal, row["ts"] + row["dur"]))
+                cursor += 1
+            while active and active[0][2] <= event["ts"]:
+                heappop(active)
+            if active:
+                selected_ranges[index] = ranges[active[0][1]]
+    launches = {}
+    groups = {}
+    for index, event in enumerate(events):
+        if index not in selected_ranges:
             continue
-        found = [
-            r
-            for r in ranges
-            if r.get("pid") == event.get("pid")
-            and r.get("tid") == event.get("tid")
-            and r["ts"] <= event["ts"] < r["ts"] + r["dur"]
-        ]
-        if not found:
-            continue
-        selected = min(found, key=lambda x: x["dur"])
+        selected = selected_ranges[index]
         launches[event["args"]["correlation"]] = (event, selected)
     unmatched = 0
     for event in events:

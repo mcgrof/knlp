@@ -156,3 +156,65 @@ def test_compact_import_dependency_error_is_not_hidden(monkeypatch, tmp_path):
     with pytest.raises(ModuleNotFoundError, match="internal dependency"):
         with trace_attention_routes(tmp_path / "operations.json"):
             raise AssertionError("broken compact import was hidden")
+
+
+def test_sweep_matches_direct_interval_search_with_shuffled_threads():
+    import random
+
+    rng = random.Random(20261019)
+    ranges = [
+        {
+            "ph": "X",
+            "name": f"knlp|batch|{i}",
+            "pid": i % 2,
+            "tid": i % 3,
+            "ts": rng.randrange(100),
+            "dur": rng.randrange(40),
+        }
+        for i in range(200)
+    ]
+    events = ranges + [
+        {
+            "cat": "cuda_runtime",
+            "name": "launch",
+            "pid": i % 2,
+            "tid": i % 3,
+            "ts": i // 6,
+            "dur": 1,
+            "args": {"correlation": i},
+        }
+        for i in range(900)
+    ]
+    rng.shuffle(events)
+    original_ranges = [e for e in events if e.get("ph") == "X"]
+    expected = {}
+    for e in events:
+        if e.get("cat") != "cuda_runtime":
+            continue
+        containing = [
+            r
+            for r in original_ranges
+            if r["pid"] == e["pid"]
+            and r["tid"] == e["tid"]
+            and r["ts"] <= e["ts"] < r["ts"] + r["dur"]
+        ]
+        if containing:
+            expected[e["args"]["correlation"]] = min(
+                containing, key=lambda r: r["dur"]
+            )["name"]
+    events += [
+        {
+            "cat": "kernel",
+            "name": "attention",
+            "ts": 1000 + i,
+            "dur": 2,
+            "args": {"correlation": i},
+        }
+        for i in range(900)
+    ]
+    result = join_cuda_events({"traceEvents": events})
+    actual = {
+        k["correlation"]: g["tag"] for g in result["groups"] for k in g["kernels"]
+    }
+    assert actual == expected
+    assert result["unmatched_cuda_kernels"] == 900 - len(expected)
