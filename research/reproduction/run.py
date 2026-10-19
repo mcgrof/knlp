@@ -27,6 +27,8 @@ STUDIES = (
     "beta",
     "time-budget",
     "routing-audit",
+    "qknorm",
+    "qknorm-cache",
 )
 
 
@@ -95,7 +97,8 @@ def configuration(path, overrides=()):
     if result["max_seconds"] < 0 or not 1 <= result["cpu_threads"] <= 64:
         raise ValueError("Invalid resource limit")
     if (
-        result["study"] in ("beta", "time-budget", "routing-audit")
+        result["study"]
+        in ("beta", "time-budget", "routing-audit", "qknorm", "qknorm-cache")
         and result["max_seconds"] == 0
     ):
         raise ValueError(
@@ -111,13 +114,18 @@ def plan(config):
     from research.mo_variants.stage_c_common import ROWS, SEEDS
 
     from research.layerrope_beta.time_budget.protocol import freeze
+    from research.layerrope_beta.qknorm.protocol import freeze as qknorm_protocol
 
     return {
         "time_budget": freeze() if config["study"] == "time-budget" else None,
+        "qknorm": (
+            qknorm_protocol() if config["study"] in ("qknorm", "qknorm-cache") else None
+        ),
         "effective_config": config,
         "scope": "smoke" if config["smoke"] else "scientific reproduction",
         "scientific_confirmation_allowed": not config["smoke"]
-        and config["study"] not in ("beta", "time-budget", "routing-audit"),
+        and config["study"]
+        not in ("beta", "time-budget", "routing-audit", "qknorm", "qknorm-cache"),
         "full_gain_beta": {
             "beta_initializations": [-1.0, -0.5, 0.0],
             "language_depth": 32,
@@ -272,6 +280,38 @@ class Runner:
             self.config["time_resource"],
             "--root",
             self.root / "time-budget",
+        )
+
+    def qknorm(self):
+        module = "research.layerrope_beta.qknorm.run"
+        if self.config["smoke"]:
+            self.command(module, "smoke", "--root", self.root / "qknorm")
+            return
+        if not self.config["time_card"] or not self.config["time_resource"]:
+            raise ValueError("Set TIME_CARD and TIME_RESOURCE to frozen QKNorm inputs")
+        action = (
+            "cache"
+            if self.config["study"] == "qknorm-cache"
+            else self.config["time_action"]
+        )
+        root = self.root / "qknorm"
+        if action == "cache":
+            if not self.config["checkpoint_dir"]:
+                raise ValueError(
+                    "Cache evaluation needs CHECKPOINT_DIR for the existing QKNorm run"
+                )
+            root = Path(self.config["checkpoint_dir"]).expanduser().resolve()
+        if action not in ("qualify", "run", "cache"):
+            raise ValueError("QKNorm action must be qualify, run or cache")
+        self.command(
+            module,
+            action,
+            "--card",
+            self.config["time_card"],
+            "--resource",
+            self.config["time_resource"],
+            "--root",
+            root,
         )
 
     def routing_audit(self):
@@ -622,6 +662,8 @@ def execute(config):
             runner.beta()
         elif config["study"] == "time-budget":
             runner.time_budget()
+        elif config["study"] in ("qknorm", "qknorm-cache"):
+            runner.qknorm()
         elif config["study"] == "routing-audit":
             runner.routing_audit()
         else:
@@ -629,7 +671,15 @@ def execute(config):
         report["status"] = "complete"
         report["scientific_confirmation_allowed"] = not config["smoke"] and config[
             "study"
-        ] not in ("cache", "gsm8k", "beta", "time-budget", "routing-audit")
+        ] not in (
+            "cache",
+            "gsm8k",
+            "beta",
+            "time-budget",
+            "routing-audit",
+            "qknorm",
+            "qknorm-cache",
+        )
     except BaseException as error:
         report.update(status="incomplete", error=str(error))
         raise

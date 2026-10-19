@@ -8,7 +8,7 @@ config RESIDUAL_REPRODUCTION
 if RESIDUAL_REPRODUCTION
 
 config RESIDUAL_STUDY
-	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta, time-budget, routing-audit"
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation, cache, gsm8k, beta, time-budget, routing-audit, qknorm, qknorm-cache"
 	default "mnist"
 
 config RESIDUAL_SMOKE
@@ -75,7 +75,7 @@ config RESIDUAL_CACHE_CONFIRMATION_RUN
 	  Supply either saved cohort or both. Reports stay separate.
 
 config RESIDUAL_TIME_CARD
-	string "Frozen equal-time run card (JSON)"
+	string "Frozen equal-time or QKNorm run card (JSON)"
 	default ""
 
 config RESIDUAL_TIME_RESOURCE
@@ -83,7 +83,7 @@ config RESIDUAL_TIME_RESOURCE
 	default ""
 
 config RESIDUAL_TIME_ACTION
-	string "Equal-time action: qualify or run"
+	string "Training action: qualify, run or cache"
 	default "qualify"
 
 config RESIDUAL_AUDIT_INPUTS

@@ -37,6 +37,9 @@ and reporting order. A failed qualification prevents measured training.
 | `layerrope-mhc-time-budget-smoke` | Synthetic CPU checks for equal-time training, resume and reduced precision evaluation |
 | `layerrope-mhc-routing-audit` | Saved-input finite routing replay, then a separately gated paired training pilot |
 | `layerrope-mhc-routing-audit-smoke` | CPU normalization, gradient, capture and common-update checkpoint checks |
+| `layerrope-mhc-qknorm` | Query-Key Normalization off/on for four architectures; one GPU, three paired seeds, equal-time and equal-update endpoints |
+| `layerrope-mhc-qknorm-smoke` | CPU attention, gradients, cache parity, paired training and resume on synthetic tokens |
+| `layerrope-mhc-qknorm-kv-cache` | Resume the ten fixed cache policies on saved QKNorm checkpoints without retraining |
 
 For example:
 
@@ -76,6 +79,16 @@ qualification checkpoints or adapts the public TinyStories data for explicitly
 invoked qualification training. It generates a hashed audit manifest without
 private artifacts. The completed numerical screen admitted no training pilot;
 the separate conditional interface is never invoked by the audit preset.
+
+The [QKNorm route](../layerrope_beta/qknorm/README.md) compares Query-Key
+Normalization off and on for residual, full LayerRoPE, mHC and the
+combination. Each trajectory has a 787-second training budget and retains a
+separate checkpoint at exactly 1,000 updates. It qualifies one existing CUDA
+GPU and freezes data, source, seed and resource receipts before training.
+The cache-only preset verifies and reuses completed evaluations, and resumes
+missing cells without training. Its synthetic CPU preset needs no data
+manifests or GPU. Keep this three-seed screen separate from the earlier
+fixed-token and eight-seed equal-time cohorts.
 
 MNIST is downloaded by torchvision. TinyStories preparation downloads the
 pinned `roneneldan/TinyStories` Parquet shards and GPT-2 tokenizer, scans all
