@@ -45,3 +45,11 @@ Verify a raw client record independently:
 python -m tools.kv.native.serving_verify ./awq-http-pilot/closed-32-client.json
 python -m pytest -q tests/test_native_serving.py
 ```
+
+After independent qualification, `serving_trial` starts a fresh server for
+one arm of one frozen block. It verifies the plan hash, input trace hashes,
+qualified scope and serving implementation hashes before launch. The plan
+fixes warmup, cell order, request traces and settling intervals. It rejects
+retries. The caller must freeze the complete counterbalanced block order,
+primary comparisons and analysis family before confirmation; the runner
+never selects loads or adds blocks from observed results.
