@@ -516,14 +516,33 @@ def run_attribution_eval(
                         "bottom_full_attention_layers": int(
                             ctx.config.num_bottom_full_attn
                         ),
-                        "selected_replay_layers": max(
-                            0,
-                            target_spec.num_layers
-                            - int(ctx.config.num_bottom_full_attn),
+                        "reduced_selected_replay_layers": (
+                            max(
+                                0,
+                                target_spec.num_layers
+                                - int(ctx.config.num_bottom_full_attn),
+                            )
+                            if len(target_ledger["context_token_ids"])
+                            > int(ctx.config.topk_sparse_attn)
+                            else 0
+                        ),
+                        "full_key_replay_layers": (
+                            max(
+                                0,
+                                target_spec.num_layers
+                                - int(ctx.config.num_bottom_full_attn),
+                            )
+                            if len(target_ledger["context_token_ids"])
+                            <= int(ctx.config.topk_sparse_attn)
+                            else 0
                         ),
                         "translated_injection_layers": len(target_layers),
                         "recompute_only_injection_layers": 0,
                         "native_injection_layers": len(target_layers),
+                        "downstream_effective_injection_layers": sum(
+                            int(index) < target_spec.num_layers - 1
+                            for index in target_layers
+                        ),
                     },
                     "arms": {
                         arm: {"score": None, "parse_status": "operational_failure"}
