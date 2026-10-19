@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memory-Traffic Saturation in Autoregressive Transformer Decode</title>
-<meta name="description" content="Asymmetric K16/V8 KV caching delivers a qualified 3.45% batch-32 serving gain on Qwen3-8B-AWQ. Current source pins, quality checks, memory accounting and the next dense-model test.">
+<meta name="description" content="Asymmetric K16/V8 KV caching improves batch-32 serving throughput by 3.45% with AWQ and 3.55% with dense FP16 Qwen3-8B. Exact sources, quality and memory accounting.">
 <link rel="canonical" href="https://knlp.io/paper_memory_decode.html">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <link rel="stylesheet" href="assets/memory-decode.css">
@@ -15,7 +15,7 @@
 <header class="site-header"><div class="header-inner">
   <a class="site-logo" href="./">knlp</a>
   <nav class="site-nav" aria-label="Page navigation">
-    <a href="#october-followup-checks">current results</a><a href="#next-tests">next tests</a><a href="#saturation">saturation law</a>
+    <a href="#october-followup-checks">current results</a><a href="#next-tests">dense transfer</a><a href="#saturation">saturation law</a>
     <a href="#tiering">offloading</a><a href="#reproduce">reproduce</a>
     <a href="bias-aware-kv-quantization.html">KV policy</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
@@ -29,23 +29,24 @@
   <p class="hero-sub">Does asymmetric KV quantization still help when model weights already ship in INT4?
     <strong>Yes, in the qualified Qwen3-8B-AWQ recipe.</strong> Keeping keys in FP16 and values in FP8
     improves complete-request throughput by <strong>3.45% over native FP16 KV</strong> at batch 32.
-    Both arms keep the same packed INT4 weights and FP16 compute; native KV uses FlashInfer.</p>
+    Both arms keep the same packed INT4 weights and FP16 compute; native KV uses FlashInfer.
+    A separate dense FP16 test now confirms <strong>3.55% over native KV</strong> at the same input length and batch.</p>
   <div class="hero-decision"><b>October 2026 · current finding</b>
     Better prefill routing makes the smaller cache faster at the same batch.
-    Transfer to dense weights and other models is the next question.</div>
+    The gain now transfers to dense FP16 Qwen3-8B; other model and dtype tests remain separate.</div>
   <div class="tag-row"><span class="tag tag-green">8,192 INPUT TOKENS · BATCH 32 · 128 OUTPUTS</span>
     <span class="tag tag-cyan">1 × H100 SXM 80 GB</span>
     <span class="tag tag-amber">QUALITY GATES PASS</span></div>
   <div class="hero-links"><a href="#october-followup-checks">Read the current result ↓</a>
     <a href="#reproduce">Use the measured source pair ↓</a>
     <a href="#saturation">Explore capacity and throughput ↓</a></div>
-  <p class="fine" style="margin-top:22px">Updated October 18, 2026 · Results through October 17.
+  <p class="fine" style="margin-top:22px">Updated October 18, 2026 · Results through October 18.
     <a href="#earlier-measurements">Earlier measurements and their original limits</a> remain available.</p>
 </section>
 
 <section class="panel-section" id="october-followup-checks">
   <div class="panel-header"><span class="panel-id">Current serving result</span>
-    <h2>Asymmetric KV beats native KV at batch 32</h2></div>
+    <h2>AWQ weights: asymmetric KV beats native KV at batch 32</h2></div>
   <div class="preamble-grid">
     <div class="preamble-card"><div class="pc-label">Versus native FP16 K/V</div>
       <div class="pc-title">+3.45% throughput</div><div class="pc-desc">Same packed AWQ weights, workload and 48 GiB KV byte pool. Complete requests include prefill, scheduling and decode.</div></div>
@@ -103,7 +104,8 @@
   <p class="panel-body">The repaired paged FA2 path for 64-element heads passes its declared numerical
     fixtures. On the original failing fixture, maximum error falls from 0.0467 to 0.0000278 against
     the unchanged 0.005 limit. <strong>This repair is not part of the measured AWQ speed stack.</strong>
-    Full Qwen2.5-0.5B quality and throughput, and contiguous/ragged paths, remain unqualified.</p>
+    The <a href="#d64-model-outcome">new full-model check</a> unblocks production but fails the
+    frozen retrieval-quality rules. Throughput and contiguous/ragged paths remain unqualified.</p>
   <div class="warn-box"><div class="wr-label">Scope across models</div>
     The earlier standardized 1K/batch-32 study has two quality-eligible models and no confirmed
     throughput gain; five models fail a quality gate and one fails a production check.
@@ -113,21 +115,49 @@
 </section>
 
 <section class="panel-section" id="next-tests">
-  <div class="panel-header"><span class="panel-id">Next tests · unmeasured</span>
-    <h2>Does the routing gain transfer to dense weights?</h2></div>
-  <p class="panel-body">The next useful test is <strong>dense Qwen3-8B in FP16 at 8K input and batch 32</strong>.
-    It fits the new route's existing head geometry and dtype guard. Compare native KV, preceding compact
-    and the new route with the same FlashInfer revision and a matched 40 GiB pool. Fresh production
-    checks and task-quality gates precede ten new confirmation blocks. A pass would establish transfer
-    beyond INT4 weights; it would still not establish BF16 support or a gain for every model.</p>
-  <p class="panel-body">Separately, run the repaired D64 path through <strong>Qwen2.5-0.5B's original
-    production check and quality panel</strong>. Synthetic kernel correctness is the prerequisite;
-    model quality remains the question. Timing follows only after a valid model-quality pass and a
-    separately frozen performance plan.</p>
-  <p class="panel-body">These targeted tests are more informative than repeating every historical row.
-    Broader context, batch and backend tests follow successful transfer. Failed quality recipes need
-    a concrete numerical fix before another speed study. Exact April-to-current speedup deltas remain
-    unavailable because the historical workload and source provenance are incomplete.</p>
+  <div class="panel-header"><span class="panel-id">Dense transfer · measured October 18</span>
+    <h2>The routing gain transfers to dense FP16 weights</h2></div>
+  <p class="panel-body"><strong>Dense Qwen3-8B also passes at 8K input and batch 32.</strong>
+    Ten fresh confirmation blocks give median complete-request throughput gains of
+    <strong>3.55% over native FP16 K/V</strong> and <strong>4.73% over preceding compact</strong>.
+    Each comparison wins all ten blocks, with Holm-adjusted one-sided sign p = 0.001953.
+    All arms load actual dense FP16 weights and use the same 40 GiB KV byte pool.
+    Native uses FlashInfer FP16 K/V; the routing change uses the same FlashInfer revision.</p>
+  <div class="scroll"><table><caption>Separate dense FP16 transfer: Qwen3-8B, 8,192 input tokens, batch 32, 128 forced outputs, one H100 SXM 80 GB.</caption>
+    <thead><tr><th>Check</th><th>Measured outcome</th></tr></thead><tbody>
+    <tr><td>Production and graphs</td><td>All 360 routing-equivalence checks pass across 36 layers, five admission cohorts and two rotations. Four fixed faults are detected; actual decode-graph inputs change.</td></tr>
+    <tr><td>Task quality</td><td>NLL on 32 documents, 100 retrieval cases and all 1,319 GSM8K questions pass against both matched controls. Retrieval is 96/100; GSM8K is 1,178/1,319, versus native 1,177 and preceding compact 1,178.</td></tr>
+    <tr><td>Separate batch-8 guard</td><td>Three engineering blocks give median candidate/preceding compact 1.00207, above 0.99. This does not establish statistical noninferiority or a new batch-8 gain.</td></tr>
+    <tr><td>Physical storage</td><td>Native: 291,264 KV token slots per layer; both asymmetric arms: 388,352. Each has 42,948,624,384 deduplicated K/V backing bytes. The fixed pool has more slots; total GPU allocation does not fall by 25%.</td></tr>
+    <tr><td>Clean memory</td><td>One 256 MiB compact payload, separate scratch/index buffers, no full FP16 value shadow. Allocator peak 64.76 GiB; 19 driver observations at 500 ms reach 65.51 GiB. No capacity sweep was run.</td></tr>
+    </tbody></table></div>
+  <p class="panel-body">Matched profiles show the three seven-fresh mixed admissions falling from
+    about 497–502 ms to 307–309 ms for preceding versus candidate gather plus prefill.
+    These are device-operation duration sums, with correlated host launch cost and residual work
+    reported separately. The separate complete-request trials establish the serving gain.</p>
+  <p class="panel-body">The numerical contract remains routing equivalence to the accepted operation.
+    The unchanged ideal-FP32 diagnostic still fails 9 of 360 checks for both candidate and trusted
+    operation. Full-fallback output and log-normalizer checks pass all 360. This result does not
+    establish ideal arithmetic, BF16 support or new maximum resident-batch endpoints.</p>
+  <p class="panel-body"><a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-dense-d64-transfer-2026.md">Exact sources, quality rules, memory accounting and component measurements</a> ·
+    <a href="data/dense-fp16-routing-20261018.json">All dense confirmation ratios and sanitized measurements</a>.</p>
+  <h3 id="d64-model-outcome">D64 repair: production passes, retrieval blocks qualification</h3>
+  <p class="panel-body">The repaired paged path passes Qwen2.5-0.5B's original
+    production checks at 1K input, batch 32 and an 8 GiB pool, including physical bytes,
+    exhaustive writers and changing model graphs. <strong>It remains quality-ineligible.</strong>
+    NLL passes, but retrieval scores 41/100 for native and 43/100 for repaired.
+    The native control misses its 50% floor; two gross losses give a 6.16% upper bound,
+    above the 5% limit. This fails to establish preservation; it does not demonstrate quality harm.</p>
+  <p class="panel-body">The frozen pre-GSM stop rule gates off GSM8K, and no comparative timing follows.
+    A separate production-only validation retains exact loaded binaries by hash; the recorded
+    negative quality panel is never repeated or replaced. The original historical failure row
+    remains unchanged. <a href="data/d64-model-quality-20261018.json">D64 measurements and source identities</a> ·
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/decode-dense-d64-transfer-2026.md#separate-d64-model-outcome">Full method and limits</a>.</p>
+  <h3>What remains unmeasured?</h3>
+  <p class="panel-body">The next dense bridge is the original 1K/batch-32 workload under a separately
+    frozen plan. BF16, other model geometries, wider batch/context ranges and a combined routing-plus-D64
+    stack remain separate questions. The earlier eight-model matrix and dated video retain their
+    original sources, workload and limits.</p>
 </section>
 
 <section class="panel-section" id="saturation">

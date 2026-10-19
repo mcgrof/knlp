@@ -2,6 +2,10 @@
 
 Results measured October 17, 2026; presentation updated October 18.
 
+The [October 18 dense transfer and separate full-model D64 result](decode-dense-d64-transfer-2026.md)
+adds newer evidence. The measurements and limits below describe the
+October 17 recipes.
+
 The focused Qwen3-8B-AWQ routing test passes its production and task-quality
 gates. Ten fresh confirmation blocks give median throughput gains of
 4.8814% over accepted compact and 3.4483% over native.
