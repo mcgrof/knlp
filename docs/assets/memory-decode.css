@@ -103,6 +103,24 @@ details { border-top: 1px solid var(--border); margin-top: 28px; padding-top: 20
 footer { border-top: 1px solid var(--border); padding-top: 28px; padding-bottom: 32px; color: var(--text3); font-size: 13px; }
 .foot-links { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 16px; }
 .sep { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+.routing-figure { margin: 28px 0; padding: 28px; border: 1px solid var(--border2); border-radius: 12px; background: var(--surface); }
+.routing-figure h4 { margin: 0 0 24px; font-size: 21px; line-height: 1.4; letter-spacing: -.02em; }
+.routing-node { padding: 16px; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg3); text-align: center; }
+.routing-node strong { display: block; font-size: 16px; line-height: 1.4; }
+.routing-node span { display: block; margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--text2); }
+.routing-label { display: block; margin-bottom: 10px; font: 600 10px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--cyan); }
+.routing-start { max-width: 660px; margin: auto; border-color: var(--cyan); }
+.routing-arrow { min-height: 36px; text-align: center; font: 600 16px/36px var(--mono); color: var(--text3); }
+.routing-branches { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; border-top: 1px solid var(--border2); border-bottom: 1px solid var(--border2); padding: 24px 0; }
+.routing-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.routing-lane, .routing-prefill { min-width: 0; }
+.routing-decode { display: flex; flex-direction: column; justify-content: space-between; border-left: 2px solid var(--cyan); padding-left: 18px; }
+.routing-decode .routing-arrow { flex: 1; display: grid; place-items: center; }
+.routing-fast .routing-node { border-color: #2ae6a35c; background: #2ae6a308; }
+.routing-fast .routing-label, .routing-fast .routing-arrow { color: var(--green); }
+.routing-fallback .routing-node { border-color: #f0b65c5c; }
+.routing-fallback .routing-label, .routing-fallback .routing-arrow { color: var(--amber); }
+.routing-figure figcaption { margin-top: 22px; color: var(--text2); font-size: 13px; line-height: 1.7; }
 @media (max-width: 760px) {
   html { scroll-padding-top: 25px; }
   .site-header { position: relative; }.header-inner { align-items: flex-start; gap: 20px; }
@@ -113,6 +131,12 @@ footer { border-top: 1px solid var(--border); padding-top: 28px; padding-bottom:
   .definitions { grid-template-columns: 85px 1fr; gap: 12px; }.chart-wrap { padding: 16px 10px; }
   .hero-decision { padding: 18px; font-size: 17px; }.math-block { padding: 16px; }
   th, td { padding: 11px 12px !important; }
+  .routing-figure { padding: 18px; }
+  .routing-branches { grid-template-columns: 1fr; gap: 28px; }
+  .routing-decode { border-left-width: 3px; }
+  .routing-prefill { border-left: 3px solid var(--green); padding-left: 18px; }
+  .routing-options { grid-template-columns: 1fr; }
+  .routing-fallback { border-top: 1px dashed var(--border2); margin-top: 10px; }
 }
 @media (max-width: 420px) {
   .hero, .preamble, .panel-section, footer { padding-left: 18px; padding-right: 18px; }
@@ -120,3 +144,4 @@ footer { border-top: 1px solid var(--border); padding-top: 28px; padding-bottom:
   .asym-card { padding: 16px; }.asym-row { grid-template-columns: 106px 75px 1fr; gap: 6px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
