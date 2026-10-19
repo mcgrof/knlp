@@ -105,22 +105,23 @@ The quick-start check is not a benchmark. Public model downloads need no token;
 optional authentication uses <code>hf auth login</code>.</p>
 </section>
 <section id="upstream" aria-labelledby="upstream-title">
-<p class="eyebrow">Integration status</p><h2 id="upstream-title">The serving recipe requires forks.</h2>
-<p>The complete measured serving path requires the pinned public vLLM and FlashInfer forks. Status checked
-October 19, 2026.</p>
+<p class="eyebrow">Integration status</p><h2 id="upstream-title">FlashInfer first, then vLLM integration.</h2>
+<p>vLLM upstreaming waits for the FlashInfer asymmetric K/V capabilities it uses to merge. The tested recipe is available now through pinned public forks. LMCache storage work can proceed in parallel. Status checked October 19, 2026.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Upstream component status"><table>
-<caption>Required components and separate optional storage support</caption>
-<thead><tr><th scope="col">Component</th><th scope="col">Upstream state</th><th scope="col">Required source</th></tr></thead>
-<tbody><tr><th scope="row">vLLM serving integration</th><td>No PR found for this <a href="https://github.com/mcgrof/vllm/tree/2026-10-17-feature-mixed-fresh-prefill">exact head branch</a></td><td><a href="https://github.com/mcgrof/vllm/commit/276305b29e0d11f95ada503ba76323ab24992e59">Fork · 276305b</a></td></tr>
-<tr><th scope="row">FlashInfer serving kernels</th><td><a href="https://github.com/flashinfer-ai/flashinfer/pull/3812">PR #3812 open, unmerged</a><br><span class="muted">Partial CUDA-core decode proposal</span></td><td><a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">Fork · 800a550</a></td></tr>
-<tr><th scope="row">LMCache serialization</th><td><a href="https://github.com/LMCache/LMCache/pull/3277">PR #3277 merged June 16</a></td><td>Optional storage integration</td></tr></tbody></table></div>
-<p>The FlashInfer proposal covers part of the kernel support. LMCache's merged
-serialization change is separate from these serving results. The vLLM search covers
-the linked branch; related proposals may exist under other names.</p>
+<caption>Serving dependencies and the separate LMCache storage series</caption>
+<thead><tr><th scope="col">Component</th><th scope="col">Status / next dependency</th><th scope="col">Code and tracking</th></tr></thead>
+<tbody>
+<tr><th scope="row">FlashInfer attention kernels</th><td>Asymmetric K/V support is under review. The open decode PR covers part of the required support.</td><td><a href="https://github.com/flashinfer-ai/flashinfer/pull/3812">PR #3812</a> · <a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">tested fork</a></td></tr>
+<tr><th scope="row">vLLM serving integration</th><td>Waiting for the required FlashInfer support to merge before upstream integration.</td><td><a href="https://github.com/mcgrof/vllm/commit/276305b29e0d11f95ada503ba76323ab24992e59">Tested fork · 276305b</a></td></tr>
+<tr><th scope="row">LMCache split K/V SerDes</th><td>Merged June 16: separate key/value serialization and deserialization. This is the foundation, not full MP-mode placement.</td><td><a href="https://github.com/LMCache/LMCache/pull/3277">PR #3277</a></td></tr>
+<tr><th scope="row">LMCache multi-process (MP) support</th><td>Prerequisite fixes, then typed dispatch, split-tier placement and FP8 byte-through storage.</td><td><a href="https://github.com/LMCache/LMCache/issues/3710">Issue #3710</a> · <a href="https://github.com/LMCache/LMCache/pull/5502">fixes PR #5502</a></td></tr>
+</tbody></table></div>
+<p><a href="asymmetric-upstream.html">See the itemized PR series, seven fixes, branch links and dependencies →</a></p>
+<p class="scope">LMCache is optional for the current resident-GPU batch recipe. Full FP8 byte-through serving requires a matching vLLM/FlashInfer producer; the storage code can be reviewed independently.</p>
 </section>
 <section id="details" aria-labelledby="details-title">
 <p class="eyebrow">Inspect and reproduce</p><h2 id="details-title">The evidence, one level deeper.</h2>
-<div class="detail-links"><a href="asymmetric-results.html">Results by model, full data and comparison limits <span>→</span></a><a href="asymmetric-methods.html">Methods, quality gates and source identities <span>→</span></a><a href="asymmetric-install.html">Full installation and compatibility <span>→</span></a><a href="bias-aware-kv-quantization.html">Bias-aware symmetric KV: repair and negative serving result <span>→</span></a><a href="asymmetric-history.html">Historical measurements and paper references <span>→</span></a></div>
+<div class="detail-links"><a href="asymmetric-results.html">Results by model, full data and comparison limits <span>→</span></a><a href="asymmetric-methods.html">Methods, quality gates and source identities <span>→</span></a><a href="asymmetric-install.html">Full installation and compatibility <span>→</span></a><a href="asymmetric-upstream.html">Upstream dependencies, LMCache PR series and fixes <span>→</span></a><a href="bias-aware-kv-quantization.html">Bias-aware symmetric KV: repair and negative serving result <span>→</span></a><a href="asymmetric-history.html">Historical measurements and paper references <span>→</span></a></div>
 </section>
 <noscript><p>Earlier section links are preserved in the <a href="asymmetric-history.html">historical reference</a>.</p></noscript>
 </main><footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp">Source</a></footer>

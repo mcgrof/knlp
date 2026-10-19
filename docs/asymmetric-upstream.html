@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asymmetric KV: upstream dependencies and LMCache series — knlp</title>
+<meta name="description" content="FlashInfer and vLLM upstream dependencies, the merged LMCache split-SerDes foundation, MP-mode feature branches and prerequisite fixes.">
+<link rel="canonical" href="https://knlp.io/asymmetric-upstream.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019b">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="./">knlp<span> / integration</span></a><nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="#lmcache">LMCache series</a><a href="#fixes">Fixes</a></nav></header>
+<main id="main" class="reference">
+<h1>Upstream dependencies<br>and the LMCache series</h1>
+<p>vLLM upstream integration waits for the FlashInfer asymmetric K/V capabilities it uses to merge. LMCache has already merged the split serialization/deserialization foundation; multi-process storage support follows in a separate series. The current <a href="asymmetric-install.html">tested inference recipe</a> uses pinned public forks and does not require LMCache.</p>
+<p class="muted">Status checked October 19, 2026. A public feature branch, an open pull request and a merged change are different states.</p>
+
+<h2 id="serving">Serving: FlashInfer enables vLLM integration</h2>
+<p><a href="https://github.com/flashinfer-ai/flashinfer/pull/3812">FlashInfer PR #3812</a> is open and unmerged. It adds separate K/V cache dtypes for CUDA-core batch decode: 16-bit keys and FP8 values. It is one part of the serving support; it does not by itself upstream the full measured tensor-core and prefill path.</p>
+<p>The current tested sources are <a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">FlashInfer <code>800a550</code></a> and <a href="https://github.com/mcgrof/vllm/commit/276305b29e0d11f95ada503ba76323ab24992e59">vLLM <code>276305b</code></a>. The vLLM integration follows the relevant FlashInfer merges; it does not need unrelated FlashInfer changes to land first. LMCache storage review can proceed in parallel.</p>
+
+<h2 id="lmcache">LMCache: split SerDes first, MP-mode storage next</h2>
+<p><strong>SerDes means serialization and deserialization.</strong> <a href="https://github.com/LMCache/LMCache/pull/3277">PR #3277</a>, merged June 16, supplies the CPU-side multi-output interface and asymmetric K/V codec. That allows key and value data to be represented separately. It does not complete the multi-process (MP) storage path that places those components on different tiers.</p>
+<p><a href="https://github.com/LMCache/LMCache/issues/3710">Issue #3710</a> tracks that next step. Its <a href="https://github.com/LMCache/LMCache/issues/3710#issuecomment-6007480587">current submission map</a> starts with general correctness fixes, followed by three feature branches. The feature labels PR0, PR1 and PR3 identify planned slices, not numbered upstream pull requests. There is no separate PR2 in this revised series.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="LMCache upstream series"><table>
+<caption>Submission order; feature branches are cumulative, while the linked comparisons isolate each slice</caption>
+<thead><tr><th scope="col">Stage</th><th scope="col">What it adds</th><th scope="col">Current status and code</th></tr></thead>
+<tbody>
+<tr><th scope="row">Foundation</th><td>Multi-output K/V SerDes and the asymmetric codec.</td><td><a href="https://github.com/LMCache/LMCache/pull/3277">#3277 merged</a></td></tr>
+<tr><th scope="row">Prerequisite fixes · 7 commits</th><td>Safe transfer ownership and storage contracts in existing LMCache paths.</td><td><a href="https://github.com/LMCache/LMCache/pull/5502">#5502 open</a> · <a href="https://github.com/mcgrof/LMCache/tree/2026-10-02-fix-asym-storage-prerequisites">branch</a> · <a href="https://github.com/mcgrof/LMCache/compare/8c77a6f77b4029269199de39c6f509944294c968...824708980f2411bb29f8ea48a244381fedae1e61">fixes only</a></td></tr>
+<tr><th scope="row">Typed dispatch · PR0 · 3 commits</th><td>Route separate K/V outputs through MP L2 adapters, with component layouts and actual serialized lengths.</td><td>Published branch; queued after fixes · <a href="https://github.com/mcgrof/LMCache/tree/2026-10-02-feature-kv-multi-output">branch</a> · <a href="https://github.com/mcgrof/LMCache/compare/824708980f2411bb29f8ea48a244381fedae1e61...f0cb04511b73ee1dba70a7b97019d006f9fccaab">PR0 only</a></td></tr>
+<tr><th scope="row">Split-tier placement · PR1 · 7 commits</th><td>Keep K in CPU DRAM L1 and V in filesystem L2. Require both children for a cache hit; pair eviction and guard in-flight work.</td><td>Published branch; follows PR0 · <a href="https://github.com/mcgrof/LMCache/tree/2026-10-02-feature-kv-split-tier">branch</a> · <a href="https://github.com/mcgrof/LMCache/compare/f0cb04511b73ee1dba70a7b97019d006f9fccaab...79785404ec84644a42a561ad1a819471d1b13e95">PR1 only</a></td></tr>
+<tr><th scope="row">FP8 byte-through · PR3 · 3 commits</th><td>Preserve existing FP8 value codes without a full-precision round trip. Add RAW_UNIT/V2 format, provenance checks and key separation.</td><td>Published branch; follows PR1 · <a href="https://github.com/mcgrof/LMCache/tree/2026-10-02-feature-kv-byte-through">branch</a> · <a href="https://github.com/mcgrof/LMCache/compare/79785404ec84644a42a561ad1a819471d1b13e95...14cd32f7eb6759a2de57a612dd3b2f44ad8d69b1">PR3 only</a></td></tr>
+</tbody></table></div>
+<p>The three feature branches are prepared for review; they are not merged MP support. The reference base is <code>8c77a6f77</code>, and the four slices contain 7, 3, 7 and 3 commits respectively: 20 in the combined stack. Standalone fix-topic branches are reference copies, not additional PRs.</p>
+<p>A parallel contribution, <a href="https://github.com/LMCache/LMCache/pull/4504">PR #4504</a>, is an open multi-output MP contract-test proposal. It tests the codec/async processor boundary and records missing placement wiring as an expected failure. It is test coverage, not the implementation of the placement series.</p>
+
+<h2 id="fixes">The seven fixes in PR #5502</h2>
+<p>These repair existing shared paths and can benefit users who do not use asymmetric quantization. The central rule is that a timeout, failed heartbeat or exception does not prove an asynchronous copy has stopped. Its buffers must stay owned until completion is established.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Prerequisite fixes"><table>
+<caption>Each row links to its exact commit in the open fixes bundle</caption>
+<thead><tr><th scope="col">Fix</th><th scope="col">Failure it prevents</th><th scope="col">Commit</th></tr></thead>
+<tbody>
+<tr><th scope="row">Retain retrieve sources after partial submission</th><td>Earlier host-to-device copies reading buffers released after a later submission error.</td><td><a href="https://github.com/mcgrof/LMCache/commit/5cb27221ffa7c546ee1c98ffe1b005c94a793a20">5cb27221</a></td></tr>
+<tr><th scope="row">Retain submitted transfers across health loss</th><td>Pending work and IPC resources discarded while remote GPU work may still use them.</td><td><a href="https://github.com/mcgrof/LMCache/commit/cf093fab5be4e79c3524fdcabe5952d436efddda">cf093fab</a></td></tr>
+<tr><th scope="row">Require proven store completion</th><td>Preemption or shutdown reusing KV blocks still referenced by a transfer.</td><td><a href="https://github.com/mcgrof/LMCache/commit/5cf31f0075a7faa4d5d0328fd7b69d9788ad0e32">5cf31f00</a></td></tr>
+<tr><th scope="row">Drain filesystem I/O before release</th><td>Delayed unlink removing replacement files, or delayed reads writing into reused buffers.</td><td><a href="https://github.com/mcgrof/LMCache/commit/0dc0b7d205b6b1b31f1d0f0985061fcc1e40c69d">0dc0b7d2</a></td></tr>
+<tr><th scope="row">Refresh paged-allocation offsets</th><td>Recycled objects retaining byte offsets from an incompatible prior layout.</td><td><a href="https://github.com/mcgrof/LMCache/commit/9de30b8c45e91dc2d9d5338be1e9c523d3c27617">9de30b8c</a></td></tr>
+<tr><th scope="row">Reject negative encoded section lengths</th><td>Invalid K, V or scale boundaries accepted despite a matching payload size and checksum.</td><td><a href="https://github.com/mcgrof/LMCache/commit/0863f22d176a47fc8704cfce15e3fa5221fde687">0863f22d</a></td></tr>
+<tr><th scope="row">Batch stores by object group</th><td>One store batch mixing objects with different tensor layouts.</td><td><a href="https://github.com/mcgrof/LMCache/commit/824708980f2411bb29f8ea48a244381fedae1e61">82470898</a></td></tr>
+</tbody></table></div>
+
+<h2 id="scope">What the MP-mode series establishes</h2>
+<p>The admitted split-tier configuration uses CPU DRAM L1, one filesystem L2 adapter, one object group and one K/V pair per object. It composes with the existing asynchronous write-behind path. K and the manifest are process-local: value-only files cannot reconstruct a split-tier cache hit after restart.</p>
+<p>The October 5 report records 966 CPU tests passed with 45 skipped for the seven-fix boundary, and 2,392 passed with 147 skipped for the combined stack. The selections overlap and must not be added. The refresh is not a new exact-stack GPU run or full fused-serving qualification. Earlier GPU tests retain their original scope.</p>
+<p>Full byte-through serving needs a matching vLLM/FlashInfer producer and the codec’s scale/provenance contract. Ownership-preserving fixes can block preemption or shutdown when completion cannot be proven; a real two-process CUDA/vLLM restart test under in-flight reuse pressure remains a follow-up in the issue. Reduced stored bytes alone do not establish throughput, latency, quality or SSD-endurance gains.</p>
+<p><a href="https://github.com/LMCache/LMCache/issues/3710#issuecomment-6007480587">Read the maintainer-facing submission map and qualification record</a> · <a href="asymmetric-quantization.html">Return to the inference guide</a>.</p>
+</main><footer>knlp · Public implementation and explicit dependencies · <a href="https://github.com/mcgrof/knlp">Source</a></footer>
+</body></html>
