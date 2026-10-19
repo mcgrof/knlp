@@ -34,7 +34,13 @@ harness. All three GPU arms receive identical traces within each block.
 | Closed loop, descriptive | 1 | 128 | Concurrency 8 |
 | Open loop, descriptive | 2 | 128 | 0.8 and 1.6 offered requests/s |
 | Isolated requests | 1 | 8 | Five-second offsets |
-| Warmup | 1 | 32 | Concurrency 32; one repetition |
+| Warmup prompt inventory | 1 | 32 | One batched API call; one repetition |
+
+The warmup file supplies the 32 prompt token lists. The trial sends them
+together in one non-streaming `/v1/completions` call with 128 forced output
+tokens per prompt. It does not replay the warmup file as 32 separate HTTP
+requests. Its stored concurrency field does not control this batched call.
+The measured closed-loop cells do send separate streaming HTTP requests.
 
 Every request has exactly 8,192 input tokens and 128 forced output tokens.
 Request and drain timeouts are 300 seconds, with no retries. Timing,
