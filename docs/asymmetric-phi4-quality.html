@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phi-4: quality and
+physical-storage transfer — knlp</title>
+<link rel="canonical" href="https://knlp.io/asymmetric-phi4-quality.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css">
+</head><body><a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="./">knlp<span> / inference</span></a>
+<nav aria-label="Reference navigation"><a href="paper_memory_decode.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
+<main id="main" class="reference"><h1 id="page-title">Phi-4: quality and
+physical-storage transfer</h1>
+<p>Phi-4 passes the frozen NLL, retrieval and full GSM8K preservation
+checks against native FlashInfer and actual FlashAttention 3 (FA3). The
+physical K16/V8 route also passes production qualification at 1K/batch
+32 and 8K/batch 16 on H100. These results establish the tested model
+transfer; performance and HTTP serving require separate evidence.</p>
+<p>All paths use the same pinned Phi-4 checkpoint, FP16 weights and
+compute, original model-specific scales, and a 32 GiB persistent KV
+budget. The candidate stores FP16 keys and E4M3 FP8 values. Native
+controls store FP16 keys and values. The geometry has 40 attention
+layers, 40 query heads, ten KV heads and head dimension 128.</p>
+<div aria-label="Phi-4: quality and
+physical-storage transfer results table" class="table-wrap" role="region" tabindex="0"><table><caption>Phi-4: quality and
+physical-storage transfer — measured task results</caption>
+<thead>
+<tr>
+<th scope="col">Quality check</th>
+<th scope="col" style="text-align: right;">K16/V8</th>
+<th scope="col" style="text-align: right;">Native FlashInfer</th>
+<th scope="col" style="text-align: right;">Native FA3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">Full GSM8K strict correct / 1,319</th>
+<td style="text-align: right;">1,253</td>
+<td style="text-align: right;">1,253</td>
+<td style="text-align: right;">1,252</td>
+</tr>
+<tr>
+<th scope="row">Native-correct → candidate-wrong</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<th scope="row">Native-wrong → candidate-correct</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<th scope="row">GSM8K loss-probability upper bound</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">0.693%</td>
+<td style="text-align: right;">0.587%</td>
+</tr>
+<tr>
+<th scope="row">1K retrieval correct / 100</th>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+</tr>
+<tr>
+<th scope="row">8K retrieval correct / 100</th>
+<td style="text-align: right;">99</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+</tr>
+</tbody>
+</table></div>
+<p>Bounds are one-sided 95% exact bounds on the loss-transition
+probability, using all paired questions as the denominator. GSM8K
+requires an upper bound below 2%; retrieval requires below 5%. At 8K,
+one retrieval loss has an upper bound of 4.656%, so it passes this rule
+without establishing zero loss. The full GSM8K task uses natural
+question lengths and EOS; it is reused in both context summaries, not
+counted as two experiments. The frozen strict extractor's known
+terminal-dot limitation remains.</p>
+<p>NLL uses 32 documents per context and 128 cached target steps per
+document; prefill step zero is excluded. The 1K upper bounds on paired
+delta NLL are −0.000308 and −0.000238 against FlashInfer and FA3. The 8K
+bounds are +0.000510 and +0.000606. All are below the frozen
+<code>ln(1.01)</code> margin. The <a href="data/asymmetric-phi4-quality-20261019.json">machine-readable
+result</a> includes paired accuracy intervals, all task counts, source
+identities and raw evidence hashes. Passing these tasks is not a
+universal accuracy claim.</p>
+<p>Production checks verify calibrated scales inside the engine before
+graph capture, FP16 weight dispatch, actual FA3 dispatch, physical KV
+storage, output placement and independent candidate routing checks.
+Initial native 8K rotation checks failed. A separate, prospectively
+frozen check required exact original-order repetition and retained
+rotation as diagnostic. All three paths passed that check; the earlier
+failures remain failed.</p>
+<p>The allocated candidate pool has 223,696 token slots per layer,
+versus 167,760 for either native control. This is approximately one
+third more slots at the same byte budget, with page-rounding
+differences. The candidate also needs 320 MiB of staging. The measured
+pools do not prove a maximum request-residency gain or a 25% reduction
+in total GPU memory. The stated 74 GiB allocator and 78 GiB driver
+envelopes are larger than the persistent KV budget; production-profile
+peaks are labeled separately from startup-through-measurement
+telemetry.</p>
+<p>The <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/phi4">exact
+public inputs</a> include the original scales, both context panels,
+complete GSM8K task, all six measured protocols, byte hashes and dataset
+attribution. This experimental transfer has its own geometry port and
+qualification; the <a href="asymmetric-install.html">current Qwen
+installer</a> retains its stated scope.</p>
+</main>
+<footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp">Source</a></footer>
+</body></html>

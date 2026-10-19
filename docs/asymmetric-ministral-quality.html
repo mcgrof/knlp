@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ministral 3:
+quality preservation not established — knlp</title>
+<link rel="canonical" href="https://knlp.io/asymmetric-ministral-quality.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css">
+</head><body><a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="./">knlp<span> / inference</span></a>
+<nav aria-label="Reference navigation"><a href="paper_memory_decode.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
+<main id="main" class="reference"><h1 id="page-title">Ministral 3:
+quality preservation not established</h1>
+<p>Ministral-3-8B-Instruct did not pass the frozen quality-preservation
+rule against either native control. No performance confirmation
+followed. This result concerns two specified prompt-and-parser tasks; it
+does not establish a general loss of reasoning ability from KV
+quantization.</p>
+<p>The test used one H200, the BF16 checkpoint converted to FP16 weights
+and compute, and a fixed 40 GiB KV pool. K16/V8 stored FP16 keys and
+E4M3 FP8 values. Both native FlashInfer and actual FlashAttention 3
+(FA3) stored FP16 keys and values. All arms used the same checkpoint,
+tokenizer, original model-specific scales, scheduler, graphs and task
+inputs.</p>
+<p>The original GSM8K instruction produced bold answers that the frozen
+strict parser usually rejected. Strict scores were 8, 9 and 11 of 1,319
+for K16/V8, FlashInfer and FA3. Both native controls failed the required
+50% accuracy floor. These are task-format failures, not evidence that
+the model cannot solve the questions.</p>
+<p>One explicit plain-text instruction was then tested on 16 training
+questions with native FlashInfer: all 16 parsed, 14 were correct, and
+none failed or truncated. A separate full task was frozen before scoring
+all three arms. The questions, gold answers, parser, margins, model,
+scales, sampling and scheduler stayed fixed. The instruction was:</p>
+<blockquote>
+<p>The final sentence must have this exact plain-text form, without
+Markdown, currency symbols, units or LaTeX: The answer is
+&lt;number&gt;.</p>
+</blockquote>
+<div aria-label="Ministral 3:
+quality preservation not established results table" class="table-wrap" role="region" tabindex="0"><table><caption>Ministral 3:
+quality preservation not established — measured task results</caption>
+<thead>
+<tr>
+<th scope="col">Separate plain-text task</th>
+<th scope="col" style="text-align: right;">K16/V8</th>
+<th scope="col" style="text-align: right;">Native FlashInfer</th>
+<th scope="col" style="text-align: right;">Native FA3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">Strict correct / 1,319</th>
+<td style="text-align: right;">827</td>
+<td style="text-align: right;">839</td>
+<td style="text-align: right;">842</td>
+</tr>
+<tr>
+<th scope="row">Native-correct → candidate-wrong</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">31</td>
+</tr>
+<tr>
+<th scope="row">Native-wrong → candidate-correct</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<th scope="row">One-sided 95% loss-probability upper bound</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">2.986%</td>
+<td style="text-align: right;">3.159%</td>
+</tr>
+<tr>
+<th scope="row">Required upper bound</th>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">&lt;2%</td>
+<td style="text-align: right;">&lt;2%</td>
+</tr>
+</tbody>
+</table></div>
+<p>The loss probability uses all 1,319 paired questions as its
+denominator. It is not the net accuracy change. Net changes were −0.910
+percentage points against FlashInfer and −1.137 points against FA3.
+Paired-question bootstrap 95% intervals were [−1.895, +0.076] and
+[−2.125, −0.150] points. The JSON also reports wider exact bounds for
+the net difference. None of these estimates removes the task limitations
+below.</p>
+<p>The frozen strict regular expression ends in an unescaped dot. For a
+response ending in <code>The answer is 18</code> with no punctuation, it
+extracts <code>1</code>. This flaw remains visible in the retained
+scores. The separately recorded flexible extractor scored 875, 884 and
+887; it is diagnostic and does not replace the primary gate. The
+plain-text instruction also changed response behavior, so the difference
+from the original task cannot be attributed solely to extraction. No
+further prompt search or post-outcome parser change was used to admit a
+performance run.</p>
+<p>The already recorded flexible extractor gives a useful sensitivity
+check. On the original instruction it scores 1,235, 1,232 and 1,234 for
+K16/V8, FlashInfer and FA3. Paired loss counts are 10 and 11, with upper
+bounds of 1.283% and 1.377%. This secondary result argues against
+interpreting the original strict failure as broad quality harm. It does
+not replace the primary task or admit a performance claim. On the
+separate plain-text task, the same secondary extractor still has loss
+bounds of 2.637% and 2.812%. Thus the strict parser flaw alone does not
+explain that task's failed preservation result. All comparisons reuse
+the original outputs; no new generation or extractor selection is
+involved.</p>
+<p>The 1K production checks passed for all three paths, including
+physical storage, calibrated scales before graph capture, actual FA3
+dispatch and candidate routing. At both 1K and 8K, NLL and retrieval
+checks passed against both controls; all arms retrieved 100/100 answers.
+Those passing checks do not override the failed GSM8K preservation
+gate.</p>
+<p>The <a href="data/asymmetric-ministral-quality-20261019.json">complete
+machine-readable quality result</a> contains model and source pins,
+counts, intervals, protocol settings and raw evidence hashes. The <a href="asymmetric-serving-study.md">serving study</a> keeps quality,
+production qualification and performance evidence separate.</p>
+</main>
+<footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp">Source</a></footer>
+</body></html>
