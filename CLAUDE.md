@@ -928,6 +928,22 @@ compression checks, verification scripts, and known issues — is in
 You are not allowed to use the word "comprehensive". It is overused
 and does not explain anything. We prefer to be terse and to the point.
 
+## Asymmetric quantization pages
+
+The canonical feature and installation overview is
+`docs/asymmetric-quantization.html`. Edit this file for the current
+asymmetric KV results. `docs/paper_memory_decode.html` is a symlink to
+it; `docs/decode/index.html` redirects to the canonical URL. Preserve
+query strings and historical fragment routing when changing aliases.
+
+Keep the overview concise: measured inference value, model qualification,
+clear graphs, installation and upstream status. Detailed results and data
+belong in `docs/asymmetric-results.html` and the linked model/method pages.
+`docs/bias-aware-kv-quantization.html` is the separate closed pre-bias
+symmetric-FP8 repair study and its negative serving result. Do not put
+new asymmetric feature results or installation instructions on that page.
+Historical evidence stays in `docs/asymmetric-history.html`.
+
 ## Companion Repositories for paper-memory-decode
 
 The paper "Memory-Traffic Saturation in Autoregressive Transformer

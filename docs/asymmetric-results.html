@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asymmetric KV: results and data — knlp</title>
+<meta name="description" content="Asymmetric KV results by model and execution path: throughput, quality, physical memory and downloadable evidence.">
+<link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019b"></head>
+<body><a class="skip" href="#main">Skip to content</a><header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
+<main id="main" class="reference"><h1>Asymmetric KV:<br>results and data</h1>
+<p>The current positive throughput evidence is Qwen3-8B at 8K input and batch 32, in two weight formats. Other models and HTTP execution have separate qualification. This page collects the comparison scopes and machine-readable data without combining them into a single leaderboard.</p>
+<nav aria-label="Results sections"><a href="#throughput">Throughput</a><a href="#quality">Quality</a><a href="#http">HTTP</a><a href="#memory">Memory</a><a href="#data">Data</a></nav>
+<h2 id="throughput">Complete-request throughput</h2>
+<p>One H100 SXM 80 GB, FP16 compute, in-process execution, 128 forced output tokens. Native controls store FP16 K and V. The candidate physically stores FP16 K and E4M3 FP8 V. Each comparison matches its model, inputs, scheduler and KV byte budget.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Throughput results"><table><caption>Median paired throughput changes; the gain rule includes statistical and practical-effect gates</caption><thead><tr><th scope="col">Model / workload</th><th scope="col">Native FlashInfer</th><th scope="col">Native FA3</th><th scope="col">Verdict</th></tr></thead><tbody>
+<tr><th scope="row">Qwen3-8B AWQ · 8K / batch 32</th><td>+3.4483%</td><td>Not established by this study</td><td>Qualified versus FlashInfer</td></tr>
+<tr><th scope="row">Qwen3-8B FP16 · 8K / batch 32</th><td>+3.5458%</td><td>Not established by this study</td><td>Qualified versus FlashInfer</td></tr>
+<tr><th scope="row">Qwen3-8B FP16 · 1K / batch 32</th><td>+0.9657%</td><td>−0.3502%</td><td>No qualified gain</td></tr>
+</tbody></table></div>
+<p>Each 8K row has ten fresh confirmation blocks, all positive, with Holm-adjusted p = 0.001953125 and a median gain above 1%. The screen is a median-effect threshold, not a confidence-bound guarantee of at least 1%. AWQ uses a 48 GiB KV budget and dense 8K uses 40 GiB. Rows compare to their own controls, not to each other.</p>
+<p>The 1K study uses twelve confirmation blocks and a 32 GiB pool. Its FlashInfer sign test passes, but +0.9657% misses the 1% median screen. The FA3 comparison is negative. The strict CUDA-event reader failed; a disclosed host-endpoint replay supports this scoped request-throughput analysis, not per-step GPU latency. <a href="asymmetric-methods.html#dense-1k-result">Full comparisons and timing-audit limit</a>.</p>
+<p>The preceding compact route is an engineering comparison: current 8K routing improves AWQ by 4.88% and dense by 4.73%. FlashInfer is unchanged across those comparisons. The change routes eligible fresh-prefill subsets efficiently when decode requests are also present. At batched 1K, the preceding route already handles the entire fresh cohort.</p>
+<h2 id="quality">Quality and model coverage</h2>
+<p>Quality qualification checks prediction loss, retrieval and GSM8K. The preservation rule counts native-correct to candidate-wrong transitions; gains elsewhere do not cancel losses. A pass is specific to the task, model, scales and execution path.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Quality results"><table><caption>GSM8K counts are correct answers out of 1,319; candidate is K16/V8</caption><thead><tr><th scope="col">Tested path</th><th scope="col">Candidate</th><th scope="col">Native FlashInfer</th><th scope="col">Native FA3</th><th scope="col">Qualification</th></tr></thead><tbody>
+<tr><th scope="row">Qwen3 AWQ · in process</th><td>1,201</td><td>1,199</td><td>Separate study</td><td>Pass</td></tr>
+<tr><th scope="row">Qwen3 FP16 · in process</th><td>1,178</td><td>1,177</td><td>Separate study</td><td>Pass</td></tr>
+<tr><th scope="row">Phi-4 FP16 · model transfer</th><td>1,253</td><td>1,253</td><td>1,252</td><td>Pass against both</td></tr>
+<tr><th scope="row">Ministral 3 8B · plain-text task</th><td>827</td><td>839</td><td>842</td><td>Preservation not established</td></tr>
+</tbody></table></div>
+<p><a href="asymmetric-phi4-quality.html">Phi-4</a> passes production and quality at 1K/batch 32 and 8K/batch 16 with its own geometry port, scales and 32 GiB pool. It has no confirmed speed gain to advertise. The source and installation differ from the Qwen3 quick start. Exact original-order repetition passes; the earlier native rotation failures remain disclosed.</p>
+<p><a href="asymmetric-ministral-quality.html">Ministral 3</a> passes production, prediction-loss and retrieval checks, but its frozen GSM8K plain-text task exceeds the 2% loss-bound limit against both controls. Prompt formatting and the frozen parser limit interpretation. Secondary scores are retained and do not replace the failed gate. No performance confirmation follows.</p>
+<p><a href="asymmetric-recent-models.html">Qwen3.5-9B and Gemma 4 12B</a> pass their tested native calibration paths, not an asymmetric transfer. Qwen3.5 shares cache backing across recurrent and attention layers. Gemma 4 combines sliding/global attention, larger head dimensions and soft-capped logits. Their current asymmetric configurations are unsupported, not measured quality failures.</p>
+<h2 id="http">HTTP serving is a distinct execution path</h2>
+<p>The tested Qwen3 AWQ HTTP worker passes prediction-loss and retrieval checks but does not establish GSM8K preservation. The one-sided 95% upper bounds on correct-to-wrong loss probability are 2.196% versus native FlashInfer and 2.373% versus native FA3, above the frozen 2% limit. No AWQ HTTP performance confirmation was run. This does not invalidate the separately qualified in-process batch result.</p>
+<p><a href="asymmetric-awq-http-quality.md">Read the AWQ HTTP task and paired losses</a>. The <a href="asymmetric-serving-study.md">HTTP measurement implementation</a> records client arrivals, stream events, queue waits and failures. In-process throughput does not establish HTTP TTFT, TPOT or tail-latency improvement. Other HTTP arms must be reported from their own completed quality and performance evidence.</p>
+<h2 id="memory">Physical memory, not simulated compression</h2>
+<p>K16/V16 needs four payload bytes per key/value element pair; K16/V8 needs three. For equal token slots, the persistent payload falls 25%. At equal KV bytes, available slots grow by about one third, subject to page rounding. The layout does not allocate a full FP16 shadow value cache.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Physical cache capacity"><table><caption>Allocated token slots per layer at each study’s fixed persistent KV budget</caption><thead><tr><th scope="col">Model / budget</th><th scope="col">Native K16/V16</th><th scope="col">K16/V8</th><th scope="col">Extra staging</th></tr></thead><tbody>
+<tr><th scope="row">Qwen3 dense · 40 GiB</th><td>291,264</td><td>388,352</td><td>256 MiB payload</td></tr>
+<tr><th scope="row">Phi-4 · 32 GiB</th><td>167,760</td><td>223,696</td><td>320 MiB payload</td></tr>
+</tbody></table></div>
+<p>Weights, wrapper buffers, staging, metadata, graphs and allocator overhead remain. These slot counts do not establish a new maximum resident request batch or a 25% total-GPU-memory reduction. <a href="asymmetric-methods.html">Full memory accounting</a> and the <a href="asymmetric-install.html#verified-installation">clean installation receipt</a> retain actual allocation and driver measurements.</p>
+<p>The <a href="asymmetric-history.html#asym-k16v8">historical kernel comparison</a> also retains a different finding: ordinary symmetric K8/V8 was 16–19% faster than K16/V8 at the tested bandwidth-bound shapes within one SM90 Tensor Core family, with a batch-one reversal. That is a standalone kernel comparison, not the current complete-request throughput result. Quality qualification still determines whether symmetric storage is usable.</p>
+<h2 id="integration">Capacity planning and related integrations</h2>
+<p>For equal-sized K and V tensors, raw payload ratios are 4:3:2 for K16/V16, K16/V8 and K8/V8. The symmetric K8/V8 option still needs its own quality and performance qualification. Byte arithmetic is not evidence that a representation is faster or safe.</p>
+<p>The public <a href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2">aiconfigurator byte-accounting branch</a> and <a href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2">InferenceX dtype-provenance branch</a> keep representation explicit in planning and records. They are separate integration work, not additional serving benchmarks. <a href="cartridge-asymmetric-quantization.html">Asymmetric cartridge KV</a> has its own learned-prefix quality and sharing results.</p>
+<h2 id="data">Data, methods and source identities</h2>
+<div class="detail-links">
+<a href="data/mixed-fresh-prefill-20261017.json">Qwen3 AWQ 8K: raw blocks and qualification <span>JSON ↗</span></a>
+<a href="data/dense-fp16-routing-20261018.json">Qwen3 dense 8K: raw blocks and physical bytes <span>JSON ↗</span></a>
+<a href="data/dense-1k-routing-20261019.json">Qwen3 dense 1K: all three comparisons <span>JSON ↗</span></a>
+<a href="data/asymmetric-awq-http-quality-20261019.json">AWQ HTTP: task-quality evidence <span>JSON ↗</span></a>
+<a href="data/asymmetric-phi4-quality-20261019.json">Phi-4: quality and storage transfer <span>JSON ↗</span></a>
+<a href="data/asymmetric-ministral-quality-20261019.json">Ministral 3: tasks and preserved failures <span>JSON ↗</span></a>
+<a href="data/asymmetric-recent-models-20261019.json">Recent models: native capability and layout limits <span>JSON ↗</span></a>
+<a href="asymmetric-methods.html">Frozen gates, source pins and numerical contracts <span>→</span></a>
+<a href="asymmetric-history.html">Historical model matrix and earlier experiments <span>→</span></a>
+<a href="bias-aware-kv-quantization.html">Separate bias-aware symmetric-KV repair study <span>→</span></a>
+</div>
+</main><footer>knlp · Open research, measured claims · <a href="asymmetric-quantization.html">Asymmetric quantization overview</a></footer></body></html>

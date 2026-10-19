@@ -7,7 +7,7 @@ gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
 preserves these outcomes and the conditions behind
 quality, memory and throughput claims.
 
-[Current guide](paper_memory_decode.html) · [Install](asymmetric-install.md) ·
+[Current guide](asymmetric-quantization.html) · [Install](asymmetric-install.md) ·
 [Historical results and failure record](asymmetric-history.html)
 
 ## Current 8K results

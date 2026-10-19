@@ -1,3 +1,7 @@
+// The old paper URL is a Git symlink to the canonical guide.
+if (location.pathname.endsWith('/paper_memory_decode.html')) {
+  location.replace('asymmetric-quantization.html' + location.search + location.hash);
+}
 // Preserve historical result identities when following old fragment links.
 const archivedAnchors = new Set([
   "october-followup-checks",

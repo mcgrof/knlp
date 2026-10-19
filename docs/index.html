@@ -40,11 +40,11 @@
       <div class="site-grid">
         <article class="site-card">
           <div class="site-card-kicker">LMCache · vLLM · FlashInfer</div>
-          <h3><a href="bias-aware-kv-quantization.html">Asymmetric quantization</a></h3>
+          <h3><a href="asymmetric-quantization.html">Asymmetric quantization</a></h3>
           <div class="site-stage"><span class="site-stage-badge upstream">Upstreaming</span><span>KV precision · serving &amp; storage</span></div>
           <p>Separate key and value precision across serving and cache storage. Protect sensitive keys, compress values, and qualify each model.</p>
-          <p class="site-card-progress"><strong>Current focus</strong>Stabilization and kernel optimization. The vLLM integration is staged, waiting for FlashInfer ecosystem integration.</p>
-          <div class="site-card-links"><a href="https://github.com/LMCache/LMCache/issues/3710">LMCache issue #3710</a><a href="https://github.com/LMCache/LMCache/pull/5502">LMCache fixes PR #5502</a><a href="https://github.com/flashinfer-ai/flashinfer/pull/3812">FlashInfer PR #3812</a><a href="https://github.com/mcgrof/vllm/tree/20260706-k16fp8-asym-prefill">vLLM staged branch</a></div>
+          <p class="site-card-progress"><strong>Current focus</strong>25% less persistent KV payload and qualified Qwen3 batch-throughput gains. The tested installation uses pinned public vLLM and FlashInfer forks.</p>
+          <div class="site-card-links"><a href="asymmetric-quantization.html#results">Results &amp; graphs</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-quantization.html#upstream">Upstream status</a></div>
         </article>
         <article class="site-card">
           <div class="site-card-kicker">LMCache · vLLM</div>
@@ -101,7 +101,7 @@
           <div class="site-stage"><span class="site-stage-badge tooling">R&amp;D complete</span><span>Why symmetric FP8 can fail</span></div>
           <p>Why does symmetric KV quantization catastrophically break some models? The atlas traces FP8 key failures to learned key bias and incompatible subspace distributions, with controls across model families.</p>
           <p class="site-card-progress"><strong>Finding</strong>Key and value precision need separate qualification. Retaining BF16 keys is the conservative fallback for fragile models; robust models can still use symmetric FP8.</p>
-          <div class="site-card-links"><a href="fp8-kv-failure-atlas.html">Mechanisms &amp; evidence</a><a href="bias-aware-kv-quantization.html">Deployment policy</a></div>
+          <div class="site-card-links"><a href="fp8-kv-failure-atlas.html">Mechanisms &amp; evidence</a><a href="bias-aware-kv-quantization.html">Bias-aware repair: negative serving result</a></div>
         </article>
         <article class="site-card featured">
           <div class="site-card-kicker">Learned prefixes · asymmetric precision</div>
@@ -185,7 +185,7 @@
         <summary>More studies &amp; experiments</summary>
         <div class="site-link-list">
           <a href="code_reason.html">Code reasoning: certificates &amp; controls ↗</a>
-          <a href="paper_memory_decode.html">Asymmetric KV cache quantization ↗</a>
+          <a href="asymmetric-quantization.html">Asymmetric KV cache quantization ↗</a>
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">Fused KV kernel documentation ↗</a>
           <a href="subliminal-learning-mnist.html">Subliminal transfer on MNIST ↗</a>
           <a href="layerrope-mhc-quantization.html">LayerRoPE, mHC &amp; weight quantization ↗</a>

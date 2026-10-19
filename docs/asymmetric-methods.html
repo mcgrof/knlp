@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="assets/asymmetric-guide.css">
 </head><body><a class="skip" href="#main">Skip to content</a>
 <header><a class="brand" href="./">knlp<span> / inference</span></a>
-<nav aria-label="Reference navigation"><a href="paper_memory_decode.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
+<nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
 <main id="main" class="reference"><h1 id="asymmetric-kv-methods-and-results">Asymmetric KV: methods and results</h1>
 <p>The supported result is an 8K/batch-32 Qwen3-8B in-process throughput improvement with
 FP16 keys and FP8 values. It holds for the two tested weight formats under
@@ -14,7 +14,7 @@ their matched controls. A separate dense 1K test does not meet the confirmed
 gain criteria. Actual AWQ HTTP quality fails its preservation gate. This page
 preserves these outcomes and the conditions behind
 quality, memory and throughput claims.</p>
-<p><a href="paper_memory_decode.html">Current guide</a> · <a href="asymmetric-install.html">Install</a> ·
+<p><a href="asymmetric-quantization.html">Current guide</a> · <a href="asymmetric-install.html">Install</a> ·
 <a href="asymmetric-history.html">Historical results and failure record</a></p>
 <h2 id="current-8k-results">Current 8K results</h2>
 <p>Each study uses one H100 SXM 80 GB, FP16 compute, TP1, 22 CPU threads,
@@ -291,5 +291,5 @@ NLL, retrieval and full GSM8K evidence, never from a fabricated success file.</p
 Generating new prompts, new scales, changing compute/backend/capture policy,
 or combining an unqualified source pair requires the affected quality gates
 again. Installation checks alone cannot qualify such a change.</p></main>
-<footer><a href="paper_memory_decode.html">Asymmetric KV Cache Quantization</a> · <a href="https://github.com/mcgrof/knlp/blob/main/docs/asymmetric-methods.md">Markdown source</a></footer>
+<footer><a href="asymmetric-quantization.html">Asymmetric KV Cache Quantization</a> · <a href="https://github.com/mcgrof/knlp/blob/main/docs/asymmetric-methods.md">Markdown source</a></footer>
 </body></html>

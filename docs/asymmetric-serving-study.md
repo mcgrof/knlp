@@ -3,7 +3,7 @@
 This is an experimental measurement path. Its CPU recorder tests pass;
 GPU worker qualification and serving comparisons are separate gates.
 The existing [installation](asymmetric-install.md) and
-[measured results](paper_memory_decode.html) retain their original scope.
+[measured results](asymmetric-quantization.html) retain their original scope.
 
 The server imports `tools.kv.native.serving_worker.ServingWorker` in the
 actual worker process. It installs the frozen model scales before warmup,
