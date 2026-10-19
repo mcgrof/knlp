@@ -234,7 +234,10 @@ def cell(root, label, expected, *, expected_mode="timing"):
     assert all(r["label"] == label for r in rows) and len(
         {r["batch_id"] for r in rows}
     ) == len(rows)
-    new = [rid for r in rows for rid in r["new_request_ids"]]
+    from .serving_scheduler import admissions
+
+    admission_rows = list(admissions(rows))
+    new = [rid for row in admission_rows for rid in row["fresh"]]
     assert len(new) == len(set(new))
     traceids = [r["id"] for r in expected["requests"]]
     matched = {}
@@ -283,9 +286,7 @@ def cell(root, label, expected, *, expected_mode="timing"):
         "backlog": backlog(x),
         "preemption_events": w["preemption_events"],
         "actual_fresh_admission_cohorts": dict(
-            collections.Counter(
-                len(r["new_request_ids"]) for r in rows if r["new_request_ids"]
-            )
+            collections.Counter(len(r["fresh"]) for r in admission_rows if r["fresh"])
         ),
         "actual_scheduled_request_counts": dict(
             collections.Counter(len(r["scheduled_tokens"]) for r in rows)

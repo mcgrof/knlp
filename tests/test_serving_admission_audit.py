@@ -22,6 +22,7 @@ def test_recomputed_context_is_not_a_new_admission(tmp_path):
     path.write_text(
         json.dumps(
             [
+                step(0, {"old": 1024}, new=["old"]),
                 step(1, {"fresh": 1024, "old": 1}, new=["fresh"]),
                 step(2, {"fresh": 1}, preempted=["old"]),
                 step(3, {"old": 1040, "fresh": 1}, resumed=["old"]),
@@ -30,11 +31,11 @@ def test_recomputed_context_is_not_a_new_admission(tmp_path):
         )
     )
     out = summarize(path, sha(path), 1024)
-    assert out["steps"] == 4
+    assert out["steps"] == 5
     assert out["steps_by_kind"]["mixed_prefill_or_recompute_decode"] == 2
-    assert out["new_request_admission_steps"] == 1
+    assert out["new_request_admission_steps"] == 2
     assert out["new_request_admission_mixed_with_decode_steps"] == 1
-    assert out["new_request_admission_count_histogram"] == {1: 1}
+    assert out["new_request_admission_count_histogram"] == {1: 2}
     assert out["resumed_request_events"] == out["preemption_events"] == 1
     assert out["steps_with_longer_recomputed_context"] == 1
 

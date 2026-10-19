@@ -11,6 +11,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+from .serving_scheduler import admissions
 
 if not __debug__:
     raise RuntimeError("Evidence audits require Python assertions enabled")
@@ -30,7 +31,7 @@ def summarize(path, expected_sha256, input_tokens):
     prefill_sizes, admission_sizes, decode_sizes = Counter(), Counter(), Counter()
     seen = set()
     resumed = preempted = new_steps = new_mixed_steps = recompute_steps = 0
-    for row in rows:
+    for row, admission in zip(rows, admissions(rows, input_tokens), strict=True):
         assert row["batch_id"] not in seen
         seen.add(row["batch_id"])
         tokens = row["scheduled_tokens"]
@@ -41,7 +42,6 @@ def summarize(path, expected_sha256, input_tokens):
         prefill = sum(n > 1 for n in tokens.values())
         decode = sum(n == 1 for n in tokens.values())
         assert len(row["new_request_ids"]) == len(set(row["new_request_ids"]))
-        assert all(tokens[rid] == input_tokens for rid in row["new_request_ids"])
         kind = (
             "mixed_prefill_or_recompute_decode"
             if prefill and decode
@@ -54,7 +54,7 @@ def summarize(path, expected_sha256, input_tokens):
         kinds[kind] += 1
         if prefill:
             prefill_sizes[prefill] += 1
-        admitted = len(row["new_request_ids"])
+        admitted = len(admission["fresh"])
         if admitted:
             admission_sizes[admitted] += 1
             new_steps += 1
@@ -62,7 +62,9 @@ def summarize(path, expected_sha256, input_tokens):
         if decode:
             decode_sizes[decode] += 1
         recompute_steps += any(n > input_tokens for n in tokens.values())
-        resumed += len(row["resumed_request_ids"])
+        resumed += len(admission["resumed_via_new"]) + len(
+            admission["resumed_via_cached"]
+        )
         preempted += len(row["preempted_request_ids"])
     assert sum(kinds.values()) == len(rows)
     return {
