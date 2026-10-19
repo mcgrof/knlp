@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LayerRoPE and mHC: quality, time and precision | knlp</title>
-<meta name="description" content="Understand LayerRoPE's magnitude, rotation and input/output gains. Compare fresh TinyStories training and quantization results with mHC, and see why equal training time remains the next question.">
+<meta name="description" content="Understand LayerRoPE's magnitude, rotation and input/output gains. Compare equal-token and equal-training-time TinyStories results, separate quantized quality from rounding damage, and reproduce the finite-routing audit.">
 <style>
 :root{color-scheme:dark;--bg:#070b09;--panel:#101914;--panel2:#0c1410;--line:#293c31;--text:#e2ece5;--muted:#a4b7aa;--green:#2ae6a3;--cyan:#62dce5;--amber:#f0b65c;--violet:#b6a1ff;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 80% 0,rgba(42,230,163,.07),transparent 32rem),var(--bg);color:var(--text);font:16px/1.7 var(--sans)}
@@ -25,18 +25,18 @@ figure{margin:24px 0;padding:18px;background:var(--panel2);border:1px solid var(
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<header><nav aria-label="Page sections"><a class="logo" href="https://knlp.io/">knlp</a><a href="#depth-controls">LayerRoPE</a><a href="#learning">learning</a><a href="#budget">time budget</a><a href="#kv-cache">KV cache</a><a href="#floating">FP4 / FP8</a><a href="#mnist">MNIST</a><a href="#reproduce">reproduce</a></nav></header>
+<header><nav aria-label="Page sections"><a class="logo" href="https://knlp.io/">knlp</a><a href="#depth-controls">LayerRoPE</a><a href="#learning">equal tokens</a><a href="#budget">equal time</a><a href="#routing-audit">routing audit</a><a href="#kv-cache">KV cache</a><a href="#floating">FP4 / FP8</a><a href="#reproduce">reproduce</a></nav></header>
 <main id="main">
 <div class="hero">
 <div class="eyebrow">TinyStories · Depth-dependent gains · Residual routing</div>
 <h1>LayerRoPE and mHC.<br>Quality, time and precision.</h1>
-<p class="lead">LayerRoPE controls how each layer reads and writes. mHC controls how information moves between residual streams. <strong>Their combination has the best mean language loss at equal training tokens in this screen. The best model at equal training time is still unknown.</strong></p>
+<p class="lead">LayerRoPE controls how each layer reads and writes. mHC controls how information moves between residual streams. <strong>The combination has the lowest mean loss in the three-seed equal-token screen. Ordinary residual has the lowest mean clean and absolute quantized loss in the eight-seed equal-training-time comparison.</strong> Neither experiment establishes a universal architecture ranking.</p>
 <div class="grid3">
 <div class="card"><div class="kicker">Measured · equal tokens</div><div class="metric">24 models</div><p>Eight configurations, three fresh paired seeds each. All train from scratch for 2,000 updates, then receive quantization evaluations.</p></div>
-<div class="card"><div class="kicker">Measured · cache precision</div><div class="metric">Same floor</div><p>All eight reach 3,072 ideal cache bytes per token within the stated loss tolerance. Lower clean loss and lower rounding damage remain distinct.</p></div>
-<div class="card"><div class="kicker">Open · equal GPU time</div><div class="metric amber">Not tested</div><p>Residual and LayerRoPE models finish the token budget much sooner. Their loss and quantization after longer training have not been measured.</p></div>
+<div class="card"><div class="kicker">Measured · equal training time</div><div class="metric">787 seconds</div><p>Four configurations, eight paired final seeds each. Residual achieves the lowest mean held-out clean and K3/V2 loss in this portable implementation.</p></div>
+<div class="card"><div class="kicker">Measured · cache precision</div><div class="metric">Same floor</div><p>Every tested family reaches 3,072 ideal cache bytes per token within its cohort’s stated tolerance. Lower rounding damage and lower absolute loss remain separate results.</p></div>
 </div>
-<p class="byline">32-layer, roughly 20M-parameter story models · three language seeds · post-training fake quantization · updated 16 October 2026</p>
+<p class="byline">32-layer, roughly 20M-parameter story models · separate three-seed equal-token and eight-seed equal-time cohorts · simulated quantization · updated 18 October 2026</p>
 </div>
 
 <section id="depth-controls">
@@ -1263,21 +1263,36 @@ L 379.609135 51.900443
 </section>
 
 <section id="budget">
-<h2>Give faster models the same time to learn</h2>
-<p><strong>The practical ranking remains open.</strong> Stopping every model at 2,000 updates gives equal data exposure, but different compute time. Residual and plain LayerRoPE can perform many more updates during the time the routed models need. Their quality after that extra training has not been measured.</p>
-<div class="scroll"><table><caption>Planning estimates from measured mean optimizer-step time, assuming unchanged throughput. These are possible update counts, not completed longer runs or predicted losses. Evaluation and checkpoint overhead are excluded.</caption><thead><tr><th scope="col">Model</th><th scope="col">Measured seconds / 2,000 updates</th><th scope="col">Updates in ~615 s</th><th scope="col">Updates in ~787 s</th></tr></thead><tbody>
-<tr><th scope="row">Residual</th><td>121.1</td><td>~10,200</td><td>~13,000</td></tr>
-<tr><th scope="row">LayerRoPE, β=0</th><td>254.4</td><td>~4,800</td><td>~6,200</td></tr>
-<tr><th scope="row">mHC</th><td>615.0</td><td>2,000</td><td>~2,560</td></tr>
-<tr><th scope="row">mHC + LayerRoPE, β=0</th><td>786.8</td><td>~1,560</td><td>2,000</td></tr>
+<h2>What happens when faster models keep training?</h2>
+<p><strong>Ordinary residual leads at the same 787-second training budget.</strong> This is a separate completed experiment with eight fresh paired final seeds per row, not an extension of the three fixed-token seeds. Each family starts fresh and selects a learning rate using an equal five-rate pilot grid. The selected rates are 0.001 for residual, 0.01 for LayerRoPE, 0.003 for mHC and 0.01 for the combination. Both LayerRoPE slopes start at zero and remain trainable.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Equal-training-time loss and precision results"><table><caption>Means over eight paired seeds at 787 synchronized training seconds. Every endpoint predicts the same 131,072 fresh held-out next tokens. Cross-entropy (CE) is in nats per token; lower is better. K3/V3 and K3/V2 use the same signed quantizer with different value bit widths.</caption><thead><tr><th scope="col">Model</th><th scope="col">Clean CE</th><th scope="col">K3/V3 CE</th><th scope="col">K3/V2 CE</th><th scope="col">K3/V2 − K3/V3</th><th scope="col">Mean updates</th></tr></thead><tbody>
+<tr><th scope="row">Residual</th><td>2.354792</td><td>2.380044</td><td>2.442863</td><td>+0.062819</td><td>11,534.000</td></tr>
+<tr><th scope="row">LayerRoPE, β=0</th><td>2.483780</td><td>2.498185</td><td>2.533388</td><td>+0.035203</td><td>5,438.125</td></tr>
+<tr><th scope="row">mHC</th><td>2.771197</td><td>2.783344</td><td>2.813972</td><td>+0.030627</td><td>2,076.250</td></tr>
+<tr><th scope="row">mHC + LayerRoPE, β=0</th><td>2.828159</td><td>2.837663</td><td>2.866000</td><td>+0.028338</td><td>1,655.125</td></tr>
 </tbody></table></div>
-<p>A time-matched comparison should train all four on matched hardware, use paired seeds and equal tuning budgets, and retain checkpoints at common elapsed-time milestones. It should report clean loss and absolute quantized loss against GPU time, with training and end-to-end experiment time shown separately.</p>
-<p>At each milestone, measure K3/V2 minus K3/V3, weight-rounding damage from the checkpoint’s own clean loss, and minimum passing bytes. Also compare checkpoints at matched clean loss. More training could improve clean quality while increasing rounding sensitivity; neither outcome should be assumed.</p>
-<p class="note"><strong>Status: proposed, not run.</strong> The reproducible results below remain the fixed-token experiment. The equal-time winner, including whether residual or LayerRoPE catches mHC, is unknown. Timings describe this portable reference implementation; optimized kernels can change the tradeoff.</p>
+<p>Residual and LayerRoPE each beat both mHC families in all eight observed pairs for clean and absolute K3/V2 loss. These descriptive means do not establish a population-mean ranking. The predeclared paired-median comparisons and practical margins are defined in the <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/time_budget/README.md">equal-time protocol</a>.</p>
+<p><strong>Smaller rounding damage does not imply better quantized quality.</strong> The mHC rows lose less when values drop from three bits to two, but start from higher clean loss and finish with higher absolute K3/V2 loss. All four rows pass signed K3/V2 and affine K2/V2 at 3,072 ideal bytes per token under the ≤0.1-nat own-clean damage rule in every seed. None passes signed K2/V2 at 2,560 bytes in every seed. No family gains a lower passing floor in this menu.</p>
+<p>The clock includes batch preparation/transfers, warm-up, forward/backward, optimization and uniform scheduled numerical checks. It excludes setup, offline validation, checkpoint writes and final evaluation. This compares equal training time, not equal total rental cost. Checkpoints use the first completed update crossing each time target, within one update and 1% overshoot. Optimized kernels can change this portable implementation’s tradeoff.</p>
+<p class="note">All 16 mHC-containing final trajectories had at least one recorded routing-tolerance miss, with finite values. Every seed and its empirical loss remain in the result. The diagnostic below examines those finite-normalization errors; it does not invalidate the measured equal-time comparison or establish a causal explanation for the loss gap.</p>
+</section>
+
+<section id="routing-audit">
+<h2>Does tighter finite normalization justify another training run?</h2>
+<p><strong>No candidate passed the declared numerical screen.</strong> A saved-checkpoint replay compared 20, 40, 80, 160 and 320 normalization iterations in FP32 and FP64, using identical captured FP32 router logits. The original per-window validation losses replayed exactly, capture left logits unchanged, and the 20-step calculation reproduced the actual carry matrices.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Finite routing normalization diagnostic"><table><caption>Late qualification checkpoints: one paired seed (77690), both rows trained at learning rate 0.001, at 787 training seconds. Each row covers 524,288 correlated token/site matrices across 64 routing sites. These are not independent training replicates or final-cohort averages. The required maximum row and column error is 0.0001.</caption><thead><tr><th scope="col">Checkpoint</th><th scope="col">Max row error, 20</th><th scope="col">Max row error, 320</th><th scope="col">Matrices above limit, 20</th><th scope="col">Matrices above limit, 320</th></tr></thead><tbody>
+<tr><th scope="row">mHC</th><td>0.07641768</td><td>0.00323939</td><td>70.093%</td><td>28.926%</td></tr>
+<tr><th scope="row">mHC + LayerRoPE</th><td>0.08160710</td><td>0.00297618</td><td>61.715%</td><td>16.611%</td></tr>
+</tbody></table></div>
+<p>More iterations reduce the row errors, but the 320-step maxima remain about 30–32 times above the limit. FP64 gives almost the same errors at each count, supporting incomplete finite normalization as the main source of these large deviations on these inputs. This did not test an entirely FP64 router or model. The reported percentages count matrices with a row-sum miss, not incorrect predictions or a percentage loss change.</p>
+<p>The full replay covers M and ML at initialization, 200 and 787 seconds: 3,145,728 correlated matrix observations from one qualification seed. The 200-second states pass with more iterations; neither late state passes by the diagnostic cap. Sampled same-recipe FP32/FP64 derivatives and finite differences pass. Small column errors, passing derivatives and finite values do not prove that every routing constraint or a longer training trajectory is stable.</p>
+<p><strong>Finite normalization misses the stricter audit tolerance.</strong> The <a href="https://arxiv.org/html/2512.24880v1#S5.SS4">mHC paper</a> uses 20 iterations as a practical approximation and discusses remaining gain deviations. The <a href="https://github.com/deepseek-ai/TileKernels/blob/66258df6175d2f630ffecb04c5ab66bff8a2ae6a/tile_kernels/torch/mhc.py">pinned reference</a> has epsilon and a final column normalization; its default is 10, while this experiment explicitly uses 20. Our 10<sup>−4</sup> gate is not an upstream guarantee. An exact doubly stochastic constraint would require both row and column sums to equal one.</p>
+<p class="note"><strong>The conditional pilot was not admitted.</strong> No changed-operator full-forward sensitivity test or new training intervention ran. No new learning-speed or quantization effect follows. A lower violating fraction for the combination in these examples does not establish an advantage across seeds. The iteration grid, epsilon, tolerance and failed matrices were retained unchanged. The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/time_budget/ROUTING_AUDIT.md">reproduction guide</a> distinguishes replaying saved bytes from regenerating the experiment with your own checkpoints.</p>
 </section>
 
 <section id="kv-cache">
-<h2>Separate clean quality from cache-rounding damage</h2>
+<h2>Fixed-token cache-rounding damage</h2>
+<p>The tables in this section use the separate three-seed, 2,000-update cohort. The eight-seed equal-time cache results are <a href="#budget">above</a>. Different clean-loss baselines and training budgets must not be pooled.</p>
 <p>The key/value (KV) cache stores attention keys and values for earlier tokens. <strong>K3/V2</strong> uses three bits for keys and two for values; <strong>K3/V3</strong> is the matched three-bit comparison. “Signed” means a zero-centered quantizer, even when key and value bit widths differ. An <strong>affine</strong> quantizer adds an offset so its range need not be centered on zero.</p>
 <div class="formula">Value-precision penalty = CE(K3/V2) − CE(K3/V3)
 Architecture comparison = candidate’s penalty − baseline’s penalty
@@ -1327,7 +1342,7 @@ Negative favors the candidate’s tolerance to lowering value precision.</div>
 </section>
 
 <section id="methods">
-<h2>What the measurements cover</h2>
+<h2>What the fixed-token measurements cover</h2>
 <p>The language models have 32 layers, width 128, two attention heads, feed-forward width 352, a 256-token context and the GPT-2 vocabulary. Residual/LayerRoPE models have about 19.3 million parameters; mHC variants have about 20.1 million. Each final model receives 2,000 updates of 2,048 predicted tokens. Each row first receives four 500-update learning-rate pilots at 0.0003, 0.001, 0.003 and 0.01. Mean pilot CE at updates 300/400/500 selects the rate; ties select the smaller rate.</p>
 <p>Final seeds 77311–77313 pair common initial matrices and training-token orders across configurations. Every model starts fresh; none continues an earlier trained checkpoint. The data preparation and evaluation arrays are reused with hash checks, so the three-seed results are descriptive evidence, not independent confirmation.</p>
 <p>Measurements use two matched 80GB GPUs, Python 3.12.11, PyTorch 2.9.1 and four CPU threads per worker. Master weights, optimizer state, normalization, gains, routing and CE use FP32. Language matrix operations use BF16; TF32 and compilation are disabled. AdamW uses (0.9, 0.95), epsilon 10<sup>−8</sup>, no weight decay or clipping, and 100 warm-up updates followed by a constant learning rate.</p>
@@ -1346,20 +1361,38 @@ make CONFIG_RESIDUAL_OUTPUT_DIR=/path/to/runs \
      CONFIG_RESIDUAL_CHECKPOINT_DIR=/path/to/checkpoints \
      CONFIG_RESIDUAL_CPU_PYTHON=/path/to/python</code></pre>
 <p>Install dependencies from the <a href="https://github.com/mcgrof/knlp/blob/main/research/reproduction/README.md">reproduction guide</a>. Use <code>make menuconfig</code> for external data/cache locations and runtime settings. Language checkpoints retain model, optimizer and random-number-generator states at updates 0, 1000 and 2000; pilot endpoints and MNIST teacher/student states are also retained. Generated reports, arrays, logs and checkpoints stay outside the source checkout.</p>
-<p class="note"><strong>Equal-time training is not part of this completed preset.</strong> The time-budget comparison described above is a proposed next experiment. No longer-run loss or quantization result is claimed on this page.</p>
+<h3>Equal-training-time comparison</h3>
+<p>The separate time-budget presets retain the complete-update clock, held-out data preparation, bounded qualification, paired training and endpoint evaluation. The full route requires external prepared data and explicit bounded resource receipts; it does not rent compute. Follow the <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/time_budget/README.md">time-budget guide</a> to prepare those inputs and distinguish qualification from a scientific run.</p>
+<pre><code>make defconfig-layerrope-mhc-time-budget-smoke
+make
+make defconfig-layerrope-mhc-time-budget
+make CONFIG_RESIDUAL_TIME_CARD=/path/to/CARD.json \
+     CONFIG_RESIDUAL_TIME_RESOURCE=/path/to/RESOURCE.json \
+     CONFIG_RESIDUAL_TIME_ACTION=qualify</code></pre>
+<h3>Finite-routing replay</h3>
+<p>The CPU smoke uses synthetic inputs and produces no scientific finding. Exact replay requires six recorded qualification checkpoints and a generated input manifest. The <a href="https://github.com/mcgrof/knlp/blob/main/research/layerrope_beta/time_budget/ROUTING_AUDIT.md">routing-input guide</a> provides the schema, public data preparation, explicit qualification commands and an executable manifest generator for your own checkpoints. Regeneration creates a new experiment; another runtime may reject the strict original-loss fidelity check.</p>
+<pre><code>make defconfig-layerrope-mhc-routing-audit-smoke
+make
+python -m research.layerrope_beta.time_budget.routing_inputs manifest \
+    --data /path/to/training \
+    --result /path/to/M/RESULT.json --result /path/to/ML/RESULT.json \
+    --out /path/to/AUDIT-INPUTS.json
+make defconfig-layerrope-mhc-routing-audit
+make CONFIG_RESIDUAL_AUDIT_INPUTS=/path/to/AUDIT-INPUTS.json</code></pre>
+<p>The audit stops after its candidate decision. It does not enqueue a training pilot, a solver extension or another quantization sweep. All generated manifests, checkpoints and raw results stay outside the source checkout.</p>
 </section>
 
 <section id="references">
 <h2>Read the methods</h2>
 <ul class="refs">
 <li><a href="https://arxiv.org/html/2610.09179v1">LayerRoPE: Dynamic Depth-wise Magnitude &amp; Angular Superposition</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>, <a href="https://podcast.do-not-panic.com/viz/2026-10-09-layerrope-treating-transformer-depth-growth-as-a-positional-code-2a065a.html">Visualization</a>) — depth-conditioned gains and their construction.</li>
-<li><a href="https://arxiv.org/abs/2512.24880">mHC: Manifold-Constrained Hyper-Connections</a> — constrained routing of multiple residual streams.</li>
+<li><a href="https://arxiv.org/abs/2512.24880">mHC: Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/mhc-manifold-constrained-hyper-connections-stabilize-wider-residual-streams/">Audio Summary</a>) — finite constrained routing of multiple residual streams.</li>
 <li><a href="https://github.com/mcgrof/knlp/tree/main/research/layerrope_beta">Training and evaluation code</a> — the measured beta matrix and fake-quantization policies.</li>
 <li><a href="subliminal-learning-mnist.html">MNIST transfer study</a> — background on the separate teacher/student experiment.</li>
 </ul>
 </section>
 </main>
-<footer>knlp · Depth-dependent gains, residual routing and numerical precision. Equal-token results are measured; equal-time outcomes remain open.</footer>
+<footer>knlp · Depth-dependent gains, residual routing and numerical precision. Equal-token and equal-training-time results measure different tradeoffs. The bounded routing audit admitted no new training pilot.</footer>
 <script>
 (() => {
   'use strict';
