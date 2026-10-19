@@ -50,6 +50,17 @@ changed response behavior, so the difference from the original task
 cannot be attributed solely to extraction. No further prompt search or
 post-outcome parser change was used to admit a performance run.
 
+The already recorded flexible extractor gives a useful sensitivity check.
+On the original instruction it scores 1,235, 1,232 and 1,234 for K16/V8,
+FlashInfer and FA3. Paired loss counts are 10 and 11, with upper bounds
+of 1.283% and 1.377%. This secondary result argues against interpreting
+the original strict failure as broad quality harm. It does not replace
+the primary task or admit a performance claim. On the separate plain-text
+task, the same secondary extractor still has loss bounds of 2.637% and
+2.812%. Thus the strict parser flaw alone does not explain that task's
+failed preservation result. All comparisons reuse the original outputs;
+no new generation or extractor selection is involved.
+
 The 1K production checks passed for all three paths, including physical
 storage, calibrated scales before graph capture, actual FA3 dispatch and
 candidate routing. At both 1K and 8K, NLL and retrieval checks passed
