@@ -46,6 +46,27 @@ python -m tools.kv.native.serving_verify ./awq-http-pilot/closed-32-client.json
 python -m pytest -q tests/test_native_serving.py
 ```
 
+`serving_quality` captures the frozen NLL, retrieval and full GSM8K tasks
+through the actual HTTP worker. Its teacher-forced NLL records raw losses
+before selecting the frozen target IDs. Natural scored completions retain
+EOS, truncation, response bodies and generated token IDs. Compare serial
+HTTP outputs with `serving_reference --sequential-reference` separately
+from batch-order sensitivity.
+
+After all three quality arms and their serial references complete, audit
+the retained records without a GPU:
+
+```sh
+python -m tools.kv.native.serving_quality_audit \
+  --root ./http-study --format awq --output ./awq-quality-audit.json
+```
+
+The reader verifies raw response bodies, teacher registration, every target
+and cached-decode step, fixture identities and parser decisions. It computes
+paired preservation bounds against both native controls. An aggregate score
+gain cannot cancel correct-to-wrong transitions in the frozen loss test.
+Quality and controlled parity remain separate from performance qualification.
+
 After independent qualification, `serving_trial` starts a fresh server for
 one arm of one frozen block. It verifies the plan hash, input trace hashes,
 qualified scope and serving implementation hashes before launch. The plan
