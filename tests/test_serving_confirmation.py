@@ -5,11 +5,63 @@ import pytest
 
 from tools.kv.native.serving_confirmation import (
     backlog,
+    dense_weight_contract,
     memory_observations,
     run,
     stream_gaps,
 )
 from tools.kv.native.serving_storage_audit import storage
+
+
+def test_dense_contract_requires_structured_inventory_and_actual_fp16_weights():
+    protocol = {
+        "packed_execution": {
+            "format": "fp16",
+            "attention_layers": 36,
+            "linear_modules": 144,
+            "embedding_modules": 2,
+        },
+        "geometry": {"layers": 36, "query_heads": 32, "kv_heads": 8, "head_dim": 128},
+    }
+    installed = {
+        "layers": [None] * 36,
+        "packed": [],
+        "weights": {
+            "format": "fp16",
+            "linear_modules": [None] * 144,
+            "embedding_modules": [None] * 2,
+            "parameters": [{"dtype": "torch.float16"}],
+            "dispatch_marker": "aten::mm",
+            "unique_parameter_bytes": 4096,
+        },
+    }
+    assert (
+        dense_weight_contract(protocol, installed)["parameter_dtype"] == "torch.float16"
+    )
+    for expectation in [
+        False,
+        True,
+        {},
+        {**protocol["packed_execution"], "format": "awq"},
+    ]:
+        changed = copy.deepcopy(protocol)
+        changed["packed_execution"] = expectation
+        with pytest.raises(AssertionError):
+            dense_weight_contract(changed, installed)
+    for key, value in [
+        ("linear_modules", []),
+        ("embedding_modules", []),
+        ("parameters", [{"dtype": "torch.bfloat16"}]),
+        ("dispatch_marker", "_C::machete_mm"),
+    ]:
+        changed = copy.deepcopy(installed)
+        changed["weights"][key] = value
+        with pytest.raises(AssertionError):
+            dense_weight_contract(protocol, changed)
+    changed = copy.deepcopy(installed)
+    changed["packed"] = [{"qweight": "must not be dense"}]
+    with pytest.raises(AssertionError):
+        dense_weight_contract(protocol, changed)
 
 
 def test_backlog_counts_terminal_failures_and_final_drain():

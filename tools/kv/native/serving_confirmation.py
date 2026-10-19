@@ -30,6 +30,40 @@ def sha(p):
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def dense_weight_contract(protocol, installed):
+    """Validate the structured expectation emitted by both measured harnesses."""
+    expected = {
+        "format": "fp16",
+        "attention_layers": 36,
+        "linear_modules": 144,
+        "embedding_modules": 2,
+    }
+    assert protocol["packed_execution"] == expected
+    assert protocol["geometry"] == {
+        "layers": 36,
+        "query_heads": 32,
+        "kv_heads": 8,
+        "head_dim": 128,
+    }
+    assert len(installed["layers"]) == expected["attention_layers"]
+    assert not installed["packed"]
+    weights = installed["weights"]
+    assert weights["format"] == "fp16"
+    assert len(weights["linear_modules"]) == expected["linear_modules"]
+    assert len(weights["embedding_modules"]) == expected["embedding_modules"]
+    assert weights["parameters"] and all(
+        p["dtype"] == "torch.float16" for p in weights["parameters"]
+    )
+    assert weights["dispatch_marker"] == "aten::mm"
+    return {
+        **expected,
+        "parameter_count": len(weights["parameters"]),
+        "unique_parameter_bytes": weights["unique_parameter_bytes"],
+        "parameter_dtype": "torch.float16",
+        "scope": "Per-invocation installed weight inventory; actual operator/kernel dispatch is separately attested by the source-matched production qualification.",
+    }
+
+
 def server_gauges(scrapes):
     names = [
         "vllm:num_requests_running",
@@ -405,8 +439,9 @@ def run(root, planpath, prefix="fp16-8k"):
             assert (
                 engine["compilation_config"]["cudagraph_mode"] == "FULL_DECODE_ONLY"
                 and p["torch"] == "2.11.0+cu129"
-                and p["packed_execution"] is False
             )
+            weight_path = base / "server/before-capture/installed.json"
+            weights = dense_weight_contract(p, read(weight_path))
             inventories = []
             for label in ["before", "after"]:
                 raw = read(base / f"{label}-timing-storage.json")["results"]
@@ -439,6 +474,8 @@ def run(root, planpath, prefix="fp16-8k"):
             )
             arms[arm] = {
                 "cells": cells,
+                "dense_weight_contract": weights,
+                "installed_weight_receipt_sha256": sha(weight_path),
                 "physical_storage_before_and_after": inventories,
                 "memory_observations": memory,
                 "protocol_sha256": sha(base / "server/inputs/protocol.json"),
