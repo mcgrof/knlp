@@ -3,7 +3,8 @@
 The [complete 8K replication procedure](REPRODUCE.md) includes fresh-machine
 qualification and a CPU plan builder.
 
-The [dense 8K catalog](fp16-8k/README.md) reconstructs exact measured
+The [dense 8K catalog](fp16-8k/README.md) and
+[separate 1K catalog](fp16-1k/README.md) reconstruct exact measured
 arrival traces from the shared public prompt fixture. The tools below
 read captures produced by the public HTTP harness. They run on CPU;
 production, quality and performance remain separate checks.

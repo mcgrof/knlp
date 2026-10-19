@@ -11,6 +11,8 @@ The CPU readers in the current checkout are later analysis tools. Run the
 GPU entry points from their measured source, in a clean separate worktree:
 
 ```sh
+git fetch origin
+git checkout --detach 7cd400b685927d8994b88cef894e27bdbb42499c
 TOOLS_SOURCE="$PWD"
 STACK="$PWD/stack"                    # Existing validated installation
 MEASURED_SOURCE="$PWD/../knlp-http-measured"
