@@ -12,7 +12,7 @@ GPU entry points from their measured source, in a clean separate worktree:
 
 ```sh
 git fetch origin
-git checkout --detach 7cd400b685927d8994b88cef894e27bdbb42499c
+git checkout --detach e96be2f076547e66cdf9ca0b586b84897b6d28d4
 TOOLS_SOURCE="$PWD"
 STACK="$PWD/stack"                    # Existing validated installation
 MEASURED_SOURCE="$PWD/../knlp-http-measured"
@@ -136,7 +136,16 @@ cd "$TOOLS_SOURCE"
 "$STACK/env/bin/python" -m tools.kv.native.serving_confirmation \
   --root "$CAPTURES" --plan "$PLAN" --prefix fp16-8k \
   --output "$CAPTURES/confirmation-audit.json"
+"$STACK/env/bin/python" -m tools.kv.native.serving_admission_audit \
+  --root "$CAPTURES" --confirmation "$CAPTURES/confirmation-audit.json" \
+  --prefix fp16-8k --output "$CAPTURES/admission-audit.json"
 ```
+
+The admission supplement verifies the final reader's scheduler hashes and
+separates newly admitted prompts, their mixing with decode, and recomputation
+after preemption. It describes scheduling; it does not infer kernel dispatch
+or add performance comparisons. It requires a complete scheduled study,
+with failed launches retained, and uses every available captured cell.
 
 This is an exact-workload replication, including the historical absolute
 arrival rates. A different machine may place those rates at a different point

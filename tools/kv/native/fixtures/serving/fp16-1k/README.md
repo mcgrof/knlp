@@ -35,9 +35,9 @@ family; the other cells are descriptive. A failed request remains a failure.
 The trace inventory is not itself a performance result.
 
 The [8K replication procedure](../REPRODUCE.md) also describes the same
-qualification and replay tools used here. Keep a current tools checkout that
-contains this 1K directory; do not switch it to the earlier CPU-tools pin
-shown in the 8K example. Use a separate worktree for the measured source.
+qualification and replay tools used here. Its CPU-tools pin
+`e96be2f076547e66cdf9ca0b586b84897b6d28d4` contains both context catalogs
+and the scheduler-admission supplement. Use a separate worktree for the measured source.
 For this 1K design, use its measured
 harness above, `--length 1024`, `--cache-bytes 34359738368`, this catalog and
 design, and the `fp16-1k` capture/output prefix throughout. Requalify all three
