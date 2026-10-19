@@ -26,7 +26,7 @@ VARIANTS = {
         True,
     ),
     "mixed_transfer": ExecutionVariant(
-        {"vllm": "a74386bbdf700e3cfd90a7bbfc9f37026afa652e", "flashinfer": FLASHINFER},
+        {"vllm": "aad94efb160d452f196d6e9c4e17eb2806e4b7e2", "flashinfer": FLASHINFER},
         True,
         True,
     ),

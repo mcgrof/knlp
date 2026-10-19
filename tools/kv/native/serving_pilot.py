@@ -55,7 +55,7 @@ def run_trace(plan, output, label, mode="timing"):
     return result
 
 
-def batch(prompts, output_tokens=128):
+def batch(prompts, output_tokens=128, *, timeout=600):
     return post(
         "/v1/completions",
         {
@@ -67,6 +67,7 @@ def batch(prompts, output_tokens=128):
             "seed": 20261019,
             "return_token_ids": True,
         },
+        timeout=timeout,
     )
 
 
@@ -130,7 +131,10 @@ def main():
                     rpc("study_begin", f"qualification-{order}", "qualification")
                     try:
                         selected = prompts if order == 0 else prompts[1:] + prompts[:1]
-                        save(args.output / f"batch-{order}.json", batch(selected))
+                        save(
+                            args.output / f"batch-{order}.json",
+                            batch(selected, timeout=3600),
+                        )
                     finally:
                         save(
                             args.output / f"qualification-{order}.json",
