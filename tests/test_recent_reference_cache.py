@@ -130,7 +130,7 @@ def test_tiny_model_native_logits_and_quantized_decode(family, monkeypatch):
         config = Gemma4TextConfig(
             **common,
             layer_types=["sliding_attention", "full_attention"],
-            global_head_dim=16,
+            global_head_dim=32,
             num_global_key_value_heads=1,
             sliding_window=8,
             hidden_size_per_layer_input=0,
@@ -139,21 +139,29 @@ def test_tiny_model_native_logits_and_quantized_decode(family, monkeypatch):
         )
         model = Gemma4ForCausalLM(config).bfloat16().eval()
     ids = torch.randint(3, 128, (2, 13))
+    continuations = [torch.randint(3, 128, (2, width)) for width in (1, 11, 3)]
     with torch.inference_mode():
+        library_cache = native_library_cache(config)
         expected = model(
-            input_ids=ids, past_key_values=native_library_cache(config), use_cache=True
+            input_ids=ids, past_key_values=library_cache, use_cache=True
         ).logits
+        expected_continuations = [
+            model(input_ids=part, past_key_values=library_cache, use_cache=True).logits
+            for part in continuations
+        ]
         for mode in ("native", "k16v8", "k8v8"):
             cache = make_cache(config, mode)
             actual = model(input_ids=ids, past_key_values=cache, use_cache=True).logits
             if mode == "native":
                 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
-            for _ in range(3):
+            for part, continuation in zip(continuations, expected_continuations):
                 actual = model(
-                    input_ids=ids[:, -1:], past_key_values=cache, use_cache=True
+                    input_ids=part, past_key_values=cache, use_cache=True
                 ).logits
+                if mode == "native":
+                    torch.testing.assert_close(actual, continuation, rtol=0, atol=0)
                 assert torch.isfinite(actual).all()
-            assert cache.get_seq_length() == 16
+            assert cache.get_seq_length() == 28
 
 
 @pytest.mark.parametrize("mode", ["native", "k16v8", "k8v8"])
