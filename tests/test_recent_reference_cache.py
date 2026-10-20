@@ -80,10 +80,23 @@ def test_zero_and_memory_ratio_with_scale_overhead():
 
 
 @pytest.mark.parametrize("family", ["qwen", "gemma"])
-def test_tiny_model_native_logits_and_quantized_decode(family):
+def test_tiny_model_native_logits_and_quantized_decode(family, monkeypatch):
+    from transformers.models.qwen3_5 import modeling_qwen3_5
     from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForCausalLM
     from transformers.models.gemma4.modeling_gemma4 import Gemma4ForCausalLM
 
+    # These logits checks run on CPU even when optional GPU kernels are
+    # installed. Full checkpoint GPU qualification uses the official module
+    # without these test-local patches.
+    for name in (
+        "causal_conv1d_fn",
+        "causal_conv1d_update",
+        "chunk_gated_delta_rule",
+        "fused_recurrent_gated_delta_rule",
+        "FusedRMSNormGated",
+    ):
+        monkeypatch.setattr(modeling_qwen3_5, name, None)
+    monkeypatch.setattr(modeling_qwen3_5, "is_fast_path_available", False)
     torch.manual_seed(77)
     common = dict(
         vocab_size=128,
