@@ -14,6 +14,11 @@ Each quantized vector uses `max(max(abs(x)), 1e-12) / 448` as its scale.
 Only fresh tokens are quantized. Older codes are retained without
 requantization. Attention reconstructs its current layer's inputs to
 BF16 temporarily. It does not retain a reconstructed full-cache shadow.
+Independent Qwen text prediction-loss requests supply explicit token
+positions. This prevents the multimodal wrapper from reusing model-level
+position offsets left by an earlier generation batch. The official
+model implementation is unchanged.
+
 Recurrent states keep the official implementation and precision.
 Sliding layers discard old backing storage outside their window.
 

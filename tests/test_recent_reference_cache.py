@@ -154,3 +154,86 @@ def test_tiny_model_native_logits_and_quantized_decode(family, monkeypatch):
                 ).logits
                 assert torch.isfinite(actual).all()
             assert cache.get_seq_length() == 16
+
+
+@pytest.mark.parametrize("mode", ["native", "k16v8", "k8v8"])
+def test_text_nll_after_different_generation_batch(mode, monkeypatch):
+    from transformers import Qwen3_5Config, Qwen3_5VisionConfig
+    from transformers.models.qwen3_5 import modeling_qwen3_5
+    from transformers.models.qwen3_5.modeling_qwen3_5 import (
+        Qwen3_5ForConditionalGeneration,
+    )
+    from tools.kv.recent.run import nll_position_kwargs
+
+    for name in (
+        "causal_conv1d_fn",
+        "causal_conv1d_update",
+        "chunk_gated_delta_rule",
+        "fused_recurrent_gated_delta_rule",
+        "FusedRMSNormGated",
+    ):
+        monkeypatch.setattr(modeling_qwen3_5, name, None)
+    monkeypatch.setattr(modeling_qwen3_5, "is_fast_path_available", False)
+    torch.manual_seed(231)
+    text = Qwen3_5TextConfig(
+        vocab_size=128,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=1,
+        linear_num_value_heads=2,
+        pad_token_id=0,
+        eos_token_id=1,
+        bos_token_id=2,
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 0.5,
+            "mrope_section": [1, 1, 2],
+        },
+    )
+    vision = Qwen3_5VisionConfig(
+        depth=1,
+        hidden_size=32,
+        intermediate_size=64,
+        num_heads=2,
+        out_hidden_size=32,
+    )
+    config = Qwen3_5Config(text_config=text.to_dict(), vision_config=vision.to_dict())
+    model = Qwen3_5ForConditionalGeneration(config).bfloat16().eval()
+    ids = torch.randint(3, 128, (1, 17))
+
+    def continuation(explicit):
+        cache = make_cache(config, mode)
+        for start, end in [(0, 13), (13, 17)]:
+            part = ids[:, start:end]
+            kwargs = (
+                nll_position_kwargs("Qwen/Qwen3.8-27B", part, start) if explicit else {}
+            )
+            logits = model(
+                input_ids=part, past_key_values=cache, use_cache=True, **kwargs
+            ).logits
+        return logits
+
+    with torch.inference_mode():
+        # A clean model has no model-level offsets from a previous request.
+        expected = continuation(False)
+        model.generate(
+            input_ids=ids[:, :13].expand(4, -1),
+            attention_mask=torch.ones(4, 13, dtype=torch.long),
+            past_key_values=make_cache(config, "native"),
+            max_new_tokens=2,
+            do_sample=False,
+            pad_token_id=0,
+        )
+        assert model.model.rope_deltas.shape == (4, 1)
+        actual = continuation(True)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert torch.isfinite(actual).all()
+        assert nll_position_kwargs("google/gemma-4-26B-A4B-it", ids, 0) == {}

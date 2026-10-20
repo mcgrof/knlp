@@ -35,6 +35,22 @@ def sync():
     torch.cuda.synchronize()
 
 
+def nll_position_kwargs(model_name, input_ids, start):
+    """Give independent text requests positions unrelated to prior batches.
+
+    The Qwen multimodal wrapper retains generation's rope_deltas on the
+    model object. A new KV cache alone does not clear those offsets before
+    a cached direct forward. Explicit text positions bypass that stale
+    request state without modifying the official model implementation.
+    """
+    if not model_name.startswith("Qwen/"):
+        return {}
+    positions = torch.arange(
+        start, start + input_ids.shape[-1], device=input_ids.device
+    )
+    return {"position_ids": positions.unsqueeze(0).expand(input_ids.shape[0], -1)}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--inputs", type=Path, required=True)
@@ -220,12 +236,16 @@ def main():
                         past_key_values=cache,
                         use_cache=True,
                         logits_to_keep=1,
+                        **nll_position_kwargs(data["model"], ids[:, :length], 0),
                     )
                     logits = model(
                         input_ids=ids[:, length : length + 128],
                         past_key_values=cache,
                         use_cache=True,
                         logits_to_keep=128,
+                        **nll_position_kwargs(
+                            data["model"], ids[:, length : length + 128], length
+                        ),
                     ).logits.float()
                     if not torch.isfinite(logits).all():
                         raise RuntimeError("Nonfinite raw NLL logits")
