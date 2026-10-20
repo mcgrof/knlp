@@ -58,9 +58,10 @@ combining or claiming a reproduction of measured results.
 
 Use Python 3.12.11, a CUDA 12.9 environment and sufficient GPU memory
 for the original BF16 weights, persistent states and temporary attention
-inputs. The measured allocation has 96 GB GPU memory. The execution is
-one GPU per model; all three arms for a model share that GPU. Access to a
-checkpoint remains subject to its publisher's license and access rules.
+inputs. The Qwen allocation is advertised with 288 GB GPU memory; the
+Gemma allocation has 96 GB. The execution is one GPU per model; all
+three arms for a model share that GPU. Access to a checkpoint remains
+subject to its publisher's license and access rules.
 
 ```bash
 uv venv --python 3.12.11 .venv-recent
@@ -174,6 +175,9 @@ A candidate passing and another failing these preservation rules does
 not establish a difference between candidates. Their direct GSM8K
 comparison uses an exact two-sided McNemar test, with Holm correction
 across the two models. Report its direction and net accuracy difference.
+The two quantized arms have different memory budgets. This comparison
+does not establish that retaining keys is better than retaining values
+at an equal budget; it does not include a K8/V16 control.
 
 ## Memory accounting
 
