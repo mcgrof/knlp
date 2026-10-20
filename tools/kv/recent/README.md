@@ -26,6 +26,12 @@ This is a quality and storage reference. The quantizer, runtime and
 transient reconstruction differ from the optimized FlashInfer/vLLM
 recipe. Its timings do not establish production serving performance.
 
+The [completed results](RESULTS.md) do not establish a distinctive
+K16/V8 advantage. Both quantizers pass the fixed preservation limits on
+Qwen3.8-27B; symmetric FP8 saves twice as many state bytes. Neither
+quantizer clears all Gemma 4 26B-A4B prediction-loss bounds. The math
+comparison finds no significant difference between the candidates.
+
 ## Checkpoints and fixed inputs
 
 The checkpoints were selected using current public adoption data. Those
@@ -151,7 +157,9 @@ Per model and arm, the quality panel contains:
 - 32 Wikipedia documents at each context length. After prefill, the model
   consumes 128 teacher-forced continuation tokens and predicts the next
   128 tokens. The first scored target is position `context + 1` using
-  zero-based token positions.
+  zero-based token positions. This probe uses raw text with
+  `add_special_tokens=False` and no chat wrapper. Its absolute loss is
+  not comparable across models and tokenizers.
 
 Generation is greedy and ends naturally at an official end token.
 GSM8K and short retrieval use batch eight; long retrieval uses batch two;
