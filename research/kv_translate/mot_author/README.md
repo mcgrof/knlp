@@ -6,13 +6,22 @@ Mixture-of-Translators (MoT). It pins the author repository to commit
 unchanged. The author code uses the PolyForm Noncommercial License. It is not
 copied into knlp.
 
-The bounded diagnostic uses an isolated modified-MoT chain ending at
-`94c7f53c7498e765eaa7aea74f937493b8ed21fa`. It preserves exact token IDs for
+The bounded diagnostic uses an isolated modified-MoT chain published in
+`https://github.com/mcgrof/MoT.git` on branch
+`research/mot-modified-sparse-20261017`, ending at
+`9fb5e6f2a63981a53da1769c72e000a840ac976b`. It preserves exact token IDs for
 the verified GPT-2 tokenizer pair, applies that identity contract in channel
 profiling, and uses a dense selected-key correctness backend for reduced Top-S
 replay. It consumes frozen token rows offline and writes step-level training
 records. This is a corrected diagnostic, not an unchanged-author or
 paper-reproduction result.
+
+Prepare the exact modified source checkout with:
+
+```bash
+git clone https://github.com/mcgrof/MoT.git modified-MoT
+git -C modified-MoT checkout 9fb5e6f2a63981a53da1769c72e000a840ac976b
+```
 
 The first target is a GPT-2 to GPT-2-medium mechanics baseline. It uses the
 paper's shared 500-step OpenWebText training recipe, bfloat16 precision, two

@@ -22,6 +22,7 @@ from .preflight import run_real_model_preflight
 from .recipe import (
     DATASET_REVISIONS,
     MODEL_REVISIONS,
+    MODIFIED_MOT_URL,
     MODIFIED_MOT_SHA,
     MODIFIED_MOT_UPSTREAM_FILE_SHA256,
     UPSTREAM_FILE_SHA256,
@@ -134,6 +135,9 @@ def inspect_source(source: Path) -> dict[str, Any]:
     ]
     return {
         "upstream_url": UPSTREAM_URL,
+        "source_url": (
+            MODIFIED_MOT_URL if head == MODIFIED_MOT_SHA else UPSTREAM_URL
+        ),
         "expected_sha": [UPSTREAM_SHA, MODIFIED_MOT_SHA],
         "actual_sha": head,
         "sha_matches": head in {UPSTREAM_SHA, MODIFIED_MOT_SHA},

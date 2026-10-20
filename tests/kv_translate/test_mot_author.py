@@ -43,6 +43,7 @@ from research.kv_translate.mot_author.attribution_eval import (
 from research.kv_translate.mot_author.recipe import (
     MODIFIED_MOT_COMMITS,
     MODIFIED_MOT_SHA,
+    MODIFIED_MOT_URL,
 )
 
 
@@ -126,6 +127,7 @@ def test_model_snapshot_requires_exact_revision(tmp_path: Path) -> None:
 def test_modified_mot_commit_chain_is_explicit() -> None:
     assert len(MODIFIED_MOT_COMMITS) == 7
     assert MODIFIED_MOT_SHA == MODIFIED_MOT_COMMITS[-1]
+    assert MODIFIED_MOT_URL == "https://github.com/mcgrof/MoT.git"
     assert all(len(commit) == 40 for commit in MODIFIED_MOT_COMMITS)
 
 

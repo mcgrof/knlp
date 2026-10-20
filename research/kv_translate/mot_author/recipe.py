@@ -7,6 +7,7 @@ from typing import Any
 
 UPSTREAM_URL = "https://github.com/prosopher/MoT.git"
 UPSTREAM_SHA = "9753626a11b49b86ab940d87d9e5640958eb87d2"
+MODIFIED_MOT_URL = "https://github.com/mcgrof/MoT.git"
 
 MODIFIED_MOT_COMMITS = (
     "dd5c49d19781a9f49cc7d573c7ff735cc860c86a",
