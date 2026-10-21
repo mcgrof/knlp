@@ -176,9 +176,11 @@ not a general native vLLM object or fork API.</p>
 <p><strong>What is established so far:</strong> ordinary vLLM shares resident
 exact prefixes; KMesh singleflight removes duplicate engine ancestors in its
 controlled comparison; retained external cache reduces repeated storage reads.
-Preload latency is mixed, and a family hold can hurt other requests under
-pressure. Cascade and DMA-BUF results come from separate profiles and must not
-be added together as a combined speedup.</p>
+Earlier preload latency is mixed. In the
+<a href="#prefetch-demand">read-once demand comparison</a>, a 100 ms head start
+reduces both first-token and eight-token group waits. A family hold can hurt
+other requests under pressure. Cascade and DMA-BUF results come from separate
+profiles and must not be added together as a combined speedup.</p>
 </section>
 
 <div class="toc">
@@ -201,7 +203,8 @@ be added together as a combined speedup.</p>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
   <a href="#family-residency">18. Does holding the ancestor pay under pressure?</a>
   <a href="#reasoning-demand">19. Does model-driven branching leave room for better retention?</a>
-  <a href="#papers">20. Papers</a>
+  <a href="#prefetch-demand">20. Does early loading help when demand already reads once?</a>
+  <a href="#papers">21. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -1616,8 +1619,168 @@ historical source work on multiprocess ownership and serial shifted restore
 continues independently of this retention decision.</p>
 </section>
 
+<section id="prefetch-demand">
+<h2>20. Does a head start help after demand already reads once?</h2>
+<p><strong>A 100 ms head start helps even after demand loading already reads one
+copy. A's first-token wait falls 46.9–49.7%, and group completion falls
+8.7–13.0%, in this profile.</strong> This comparison starts from an optimized
+demand
+path: the children share one engine ancestor, and each cold group reads the
+same sixteen 3 MiB chunks, or 48 MiB, exactly once. Early loading changes when
+that work starts. It does not get credit for removing duplicate reads.</p>
+<p>The October 21, 2026 experiment uses one RTX 4090, Qwen2.5-0.5B-Instruct at
+revision <code>7ae557604adf67be50417f59c2c2f167def9a775</code>, BF16,
+batch-invariant synchronous eager serving with two OpenMP/MKL threads. Children share
+4,096 tokens, add distinct 512-token tails and produce eight greedy output
+tokens. vLLM prefix caching supplies physical sharing. The KMesh connector
+coordinates one restoration; cascade attention remains a separate optimization.</p>
+<p>Both arms retain the external copy and join overlapping fills. Demand starts
+at arrival and issues no extra warm request. Early loading starts 100 ms before
+arrival and uses a one-token engine warm request. That preparation token is
+charged separately. This tests the whole preparation path, including that
+warm request, rather than isolating raw DMA-BUF transfer time. Arrival is
+fixed 250 ms after the trace origin; slow
+preparation cannot move it. Every actual submission delay remains in the
+headline waits. An accepted warm request drains normally. If completion is
+observed after children are due, an unsubmitted warm is skipped.</p>
+<h3>Confirmation against retained demand</h3>
+<p>Each path and group size has ten fresh paired engine-process blocks, three
+warmups and twenty measured groups per arm per block: 200 measured groups per
+arm in each row. Means give each process block equal weight. Intervals use
+10,000 paired process-block bootstrap draws; children are not independent
+replicas. Positive improvement means less waiting. The intervals are nominal
+per endpoint, with limited independent evidence for tail behavior.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path / children</th><th scope="col">Demand A first token (ms)</th><th scope="col">Early A first token (ms)</th><th scope="col">Improvement (ms, 95% CI)</th><th scope="col">Improvement (%, 95% CI)</th></tr>
+<tr><td>Host-staged / 4</td><td>58.64</td><td>29.52</td><td>29.13 [28.09, 30.28]</td><td>49.67 [48.34, 51.11]</td></tr>
+<tr><td>Host-staged / 8</td><td>86.77</td><td>43.94</td><td>42.83 [41.39, 44.26]</td><td>49.36 [47.94, 50.60]</td></tr>
+<tr><td>DMA-BUF / 4</td><td>56.51</td><td>30.00</td><td>26.51 [25.33, 27.83]</td><td>46.91 [45.45, 48.38]</td></tr>
+<tr><td>DMA-BUF / 8</td><td>87.08</td><td>45.15</td><td>41.93 [40.35, 43.34]</td><td>48.15 [46.64, 49.52]</td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path / children</th><th scope="col">Demand last eighth token (ms)</th><th scope="col">Early last eighth token (ms)</th><th scope="col">Improvement (ms, 95% CI)</th><th scope="col">Improvement (%, 95% CI)</th></tr>
+<tr><td>Host-staged / 4</td><td>120.22</td><td>104.60</td><td>15.62 [14.67, 16.60]</td><td>12.99 [12.26, 13.75]</td></tr>
+<tr><td>Host-staged / 8</td><td>144.80</td><td>132.25</td><td>12.55 [11.20, 13.83]</td><td>8.67 [7.77, 9.50]</td></tr>
+<tr><td>DMA-BUF / 4</td><td>117.89</td><td>104.06</td><td>13.84 [12.91, 14.99]</td><td>11.74 [11.01, 12.59]</td></tr>
+<tr><td>DMA-BUF / 8</td><td>145.25</td><td>132.63</td><td>12.62 [11.10, 14.21]</td><td>8.69 [7.66, 9.76]</td></tr>
+</table></div>
+<p>Both clocks start at scheduled arrival. A is the first child submitted.
+Times are host observations at the local synchronous engine caller, rather than
+internal GPU token-ready or remote network timestamps. Trial output is cumulative;
+preparation receives copied settings so offline generation cannot switch
+child delivery to final-only output.
+Whole-group completion stops when the caller observes the last child's eighth token;
+later terminal acknowledgements and ownership cleanup have separate clocks.
+Eight tokens need not form a complete useful answer. The
+<a href="data/kmesh-prefetch-demand-20261021.json">aggregate record</a>
+also retains every child's first-token and submission-delay observations,
+preparation costs, empirical percentiles and warmups.</p>
+<p>All four path/group-size combinations meet the declared engineering rule on
+both endpoints. A useful engineering result requires at least
+5% point improvement in one primary endpoint, its paired interval excluding
+zero, and the other endpoint's interval excluding regression larger than 5%.
+No failed trials are removed, and the fixed sample grid is not extended to
+obtain a favorable interval.</p>
+<h3>Why the lead is 100 ms</h3>
+<p>The preceding pilot uses two fresh engine blocks per path, three warmups and
+five measured groups per control/block. Its sole selection rule is the shortest
+common lead ready by scheduled arrival in at least nine of ten measured groups
+on each path. Readiness, rather than latency gain, chooses the lead. Ready means both the
+external fill and engine warm have completed; the lead is not SSD latency.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Lead</th><th scope="col">Host-staged ready</th><th scope="col">DMA-BUF ready</th></tr>
+<tr><td>0 ms</td><td>0 / 10</td><td>0 / 10</td></tr>
+<tr><td>25 ms</td><td>0 / 10</td><td>0 / 10</td></tr>
+<tr><td>100 ms</td><td>10 / 10</td><td>10 / 10</td></tr>
+<tr><td>250 ms</td><td>10 / 10</td><td>10 / 10</td></tr>
+</table></div>
+<p>The 0 ms hint is same-time coordination. These small readiness counts do
+not certify a readiness probability or a service-level objective.
+In confirmation, all 200 measured early groups in each row were ready by
+scheduled arrival. Each issued one warm request; none skipped it. Demand issued
+no warm request.</p>
+<h3>Keep the memory-resident references visible</h3>
+<p>The table below retains the four-child pilot's placement controls, ten
+measured groups per row across two processes. The host-DRAM control starts with
+the ancestor in RAM. Its direct counterpart starts in the external GPU arena.
+They perform no trial SSD reads; each earlier 48 MiB placement fill is charged
+separately. The engine-resident reference also avoids external restoration.
+These pilot references are a different sample population from confirmation.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path / starting placement</th><th scope="col">A first token mean (ms)</th><th scope="col">Last eighth token mean (ms)</th><th scope="col">Trial / prior placement read (MiB)</th></tr>
+<tr><td>Host-staged / NVMe demand</td><td>55.97</td><td>116.95</td><td>48 / 0</td></tr>
+<tr><td>Host-staged / NVMe, 100 ms early</td><td>25.70</td><td>100.78</td><td>48 / 0</td></tr>
+<tr><td>Host-staged / Host DRAM already resident</td><td>44.02</td><td>105.40</td><td>0 / 48</td></tr>
+<tr><td>Host-staged / Engine already resident</td><td>24.30</td><td>101.71</td><td>0 / 48</td></tr>
+<tr><td>DMA-BUF / NVMe demand</td><td>57.23</td><td>119.26</td><td>48 / 0</td></tr>
+<tr><td>DMA-BUF / NVMe, 100 ms early</td><td>27.45</td><td>102.45</td><td>48 / 0</td></tr>
+<tr><td>DMA-BUF / External GPU arena already resident</td><td>41.07</td><td>101.88</td><td>0 / 48</td></tr>
+<tr><td>DMA-BUF / Engine already resident</td><td>29.86</td><td>103.28</td><td>0 / 48</td></tr>
+</table></div>
+<p>Each process configures 512 MiB for the engine cache and 512 MiB for the
+external arena. Arena allocation and registration precede timed groups. The
+observed engine block pool is 511.875 MiB, including its
+reserved null block; observed external backing is 512 MiB. The external
+arena retains 48 MiB of ancestor objects. The engine has its own shared
+48 MiB ancestor plus each child's private tail. Configured external placement is
+host memory for staging
+or GPU memory for direct I/O. The exported placement-size fields are
+configuration values; registered length and pinned-allocation peaks are not
+independently measured. Diagnostic engine occupancy follows allocation/free
+boundaries. External occupancy is sampled and can miss transients; payload
+byte-seconds are lower and upper bounds.</p>
+<h3>Correctness, cost and reproduction</h3>
+<p>Across qualification, pilot and confirmation, 12,320 child continuations and
+1,080 warm continuations pass exact-token checks, with zero delta in 99,640
+chosen-logprob comparisons. All 12,320 children first expose exactly one token
+before their eighth-token observation. Diagnostic warmups verify restored
+model-KV digests and one ready, physically shared 256-block ancestor. Both paths
+reject deliberate corruption. Resident references
+show zero trial storage reads, and every cold control shows the same 48 MiB
+payload work. An unused hint still pays for sixteen reads, retained occupancy
+and one warm token without serving a child. Ownership drains before objects
+are cleared. Backend payload operations are not physical NVMe command traces.
+Direct I/O bypasses the OS page cache; it does not prove cold flash or an empty
+SSD cache.</p>
+<p>The DMA-BUF route transfers NVMe bytes into an external GPU arena, then
+copies/scatters them into vLLM. The host path uses registered host staging.
+This is an exact-prefix test without memory pressure, competing families or
+application-quality evaluation. It assumes advance knowledge of arrival.
+It does not qualify a forecasting policy, a general memory manager or a
+combined cascade/DMA-BUF speedup. The earlier unsuccessful reasoning capture
+and the historical multiprocess/shifted-restore work remain separate.</p>
+<p>This comparison adds LMCache overlap joining and reuses the qualified vLLM
+branch. Use vLLM <code>1b76bf9dd9d52efbd75fb89bf2619898d8f01233</code> and LMCache
+<code>fb71fb40abe8ca3fdbe2b0a6b4823332d1a76f37</code>. The
+<a
+href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/PREFETCH.md">fixed-arrival
+reproduction instructions</a>
+cover the pinned model, native build, qualified DMA-BUF kernel, three phases
+and CPU-only saved-capture verification. The measured knlp harness is
+<code>e20a823b41bc304947968eae9498a85efe82fa6b</code>. Prepare that environment
+and source checkouts, then run:</p>
+<pre><code>make defconfig-kmesh-prefetch-cuda
+export KMESH_RESTORE_PY=/path/to/prepared/python
+export KMESH_RESTORE_MODEL_DIR=/path/to/model-snapshot
+export KMESH_RESTORE_VLLM_SOURCE=/path/to/vllm
+export KMESH_RESTORE_LMCACHE_SOURCE=/path/to/LMCache
+export PYTHONPATH=/path/to/LMCache:/path/to/vllm
+make kmesh-restore-plan
+make kmesh-restore
+KMESH_RESTORE_PHASE=pilot \
+  KMESH_RESTORE_OUTPUT=results/kmesh-prefetch/pilot make kmesh-restore
+KMESH_RESTORE_PHASE=confirmation \
+  KMESH_RESTORE_OUTPUT=results/kmesh-prefetch/confirmation make kmesh-restore</code></pre>
+<p>Every phase uses a fresh output directory. Pilot rechecks qualification;
+confirmation rechecks both admitting raw captures and freezes their source,
+model, native binaries, runtime and selected lead. The aggregate exporter
+checks those captures against the commit that actually ran and removes private
+paths and identities. Offline consistency checks do not independently
+authenticate hardware execution.</p>
+</section>
+
 <section id="papers">
-<h2>20. Papers</h2>
+<h2>21. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade Inference: Memory Bandwidth Efficient Shared Prefix Batch Decoding</a></span><br>
