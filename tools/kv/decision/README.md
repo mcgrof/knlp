@@ -156,6 +156,12 @@ audit that backing's complete ownership and allocator bytes, including any
 larger allocation around an aligned subview. CPU tests exercise disjoint
 code/scale writes and reject copied, swapped or misaligned scale planes.
 This helper does not establish dynamic-worker numerical or quality support.
+Its snapshot decoder reconstructs FP32 oracle operands directly from the
+gathered code and scale bytes through a specified causal prefix. It excludes
+the unused final-page tail and rejects invalid used scales, codes or overflow.
+Literal-byte tests check per-token/head scales and compare resulting attention
+with an independent head loop. This reconstruction is for excluded numerical
+checks; it is not a serving kernel.
 
 `production_dynamic_oracle.py` computes expected FP32 scale bits from
 retained native CPU operands and uses the independent E4M3 codebook. Scale

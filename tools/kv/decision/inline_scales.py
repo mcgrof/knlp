@@ -68,3 +68,38 @@ def verify_inline_scale_aliases(cache, geometry, actual):
         ):
             raise ValueError("Backend scale view differs from the inline byte layout")
     return expected
+
+
+def decode_inline_fp8_snapshot(raw, geometry, length):
+    """Decode an untimed, page-ordered byte snapshot through a causal prefix.
+
+    The caller gathers original page IDs into a contiguous four-dimensional
+    snapshot that includes all code and scale bytes. Only ``length`` valid
+    tokens are decoded; the unused tail of the final page is not evidence.
+    FP32 reconstruction here is an oracle operand, not a serving path.
+    """
+    import torch
+
+    block, heads, width = (geometry[k] for k in ("block_size", "kv_heads", "head_dim"))
+    if any(type(n) is not int or n <= 0 for n in (block, heads, width)) or width % 4:
+        raise ValueError("Inline snapshot requires positive aligned geometry")
+    if (
+        not isinstance(raw, torch.Tensor)
+        or raw.dtype not in (torch.uint8, torch.float8_e4m3fn)
+        or raw.ndim != 4
+        or raw.shape[0] <= 0
+        or tuple(raw.shape[1:]) != (block, heads, width + 4)
+        or not raw.is_contiguous()
+        or raw.storage_offset() % 4
+    ):
+        raise ValueError("Expected a contiguous page snapshot of inline FP8 bytes")
+    if type(length) is not int or not 0 < length <= raw.shape[0] * block:
+        raise ValueError("Causal prefix is outside the gathered page snapshot")
+    prefix = raw.view(torch.uint8).reshape(-1, heads, width + 4)[:length]
+    scales = prefix[..., width:].view(torch.float32)
+    if not bool(torch.isfinite(scales).all() and (scales > 0).all()):
+        raise ValueError("Invalid scale in the valid cache prefix")
+    values = prefix[..., :width].view(torch.float8_e4m3fn).float() * scales
+    if not bool(torch.isfinite(values).all()):
+        raise ValueError("Nonfinite decoded value in the valid cache prefix")
+    return values
