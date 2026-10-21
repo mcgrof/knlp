@@ -1,0 +1,11 @@
+# Compare early loading with read-once demand at fixed request deadlines.
+CONFIG_KNLP_REPRODUCE_KMESH_RESTORE=y
+CONFIG_KNLP_KMESH_RESTORE_OUTPUT="results/kmesh-prefetch/qualification"
+CONFIG_KNLP_KMESH_RESTORE_VLLM_SOURCE=""
+CONFIG_KNLP_KMESH_RESTORE_LMCACHE_SOURCE=""
+CONFIG_KNLP_KMESH_RESTORE_MODEL_DIR=""
+CONFIG_KNLP_KMESH_RESTORE_GPU_PROVIDER="vulkan_rm"
+CONFIG_KNLP_KMESH_RESTORE_SECTION="prefetch"
+CONFIG_KNLP_KMESH_RESTORE_PHASE="qualification"
+CONFIG_KNLP_KMESH_RESTORE_QUALIFIED="results/kmesh-prefetch/qualification"
+CONFIG_KNLP_KMESH_RESTORE_PILOT="results/kmesh-prefetch/pilot"

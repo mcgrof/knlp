@@ -108,6 +108,29 @@ requests; `RESULT.json` is written only after all gates pass. Raw timings,
 warmups, failed receipts, native operations and process identities remain
 available beside the all-child `RESULTS.csv`.
 
+The defconfig exposes the same phase commands. Select the Python interpreter
+from the prepared environment, then supply its source and model paths:
+
+```sh
+make defconfig-kmesh-prefetch-cuda
+export KMESH_RESTORE_PY="$(command -v python)"
+export KMESH_RESTORE_MODEL_DIR="$MODEL_PATH"
+export KMESH_RESTORE_VLLM_SOURCE="$VLLM_SOURCE"
+export KMESH_RESTORE_LMCACHE_SOURCE="$LMCACHE_SOURCE"
+make kmesh-restore-plan
+make kmesh-restore
+KMESH_RESTORE_PHASE=pilot \
+  KMESH_RESTORE_OUTPUT=results/kmesh-prefetch/pilot make kmesh-restore
+KMESH_RESTORE_PHASE=confirmation \
+  KMESH_RESTORE_OUTPUT=results/kmesh-prefetch/confirmation make kmesh-restore
+```
+
+These commands use the default qualification and pilot capture paths above.
+For other locations, set `KMESH_RESTORE_QUALIFIED` and
+`KMESH_RESTORE_PILOT` to the actual captures. Set a fresh output for each
+phase. `make kmesh-restore-plan` is CPU-only and reports missing inputs.
+`make kmesh-restore-verify` rechecks the selected output on CPU.
+
 The first endpoint is request A's first observed output token, timed from
 scheduled arrival. A is the first child submitted. The second endpoint is
 the last child's eighth observed output token, also timed from scheduled

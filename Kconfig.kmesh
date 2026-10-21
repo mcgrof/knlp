@@ -160,7 +160,7 @@ config KNLP_KMESH_RESTORE_GPU_PROVIDER
 	  Use native only after qualifying CUDA DMA-BUF export on the host.
 
 config KNLP_KMESH_RESTORE_SECTION
-	string "Scope: adapter, all, coldburst, singleflight, family, or retained"
+	string "Scope: adapter, all, coldburst, singleflight, family, retained, prefetch"
 	default "adapter"
 	help
 	  Adapter reproduces the qualified transport comparison. All also
@@ -173,6 +173,24 @@ config KNLP_KMESH_RESTORE_SECTION
 	  reactive coalescing and a fully warm control, with unused-work checks.
 	  Retained compares an engine preload against stock retained external-L1
 	  prefetch followed by the same preload, including its storage work.
+	  Prefetch compares read-once retained demand against early loading at
+	  fixed request deadlines, with an independent-process pilot and confirmation.
+
+if KNLP_KMESH_RESTORE_SECTION = "prefetch"
+
+config KNLP_KMESH_RESTORE_PHASE
+	string "Loading comparison: qualification, pilot, confirmation"
+	default "qualification"
+
+config KNLP_KMESH_RESTORE_QUALIFIED
+	string "Accepted native qualification capture"
+	default "results/kmesh-prefetch/qualification"
+
+config KNLP_KMESH_RESTORE_PILOT
+	string "Accepted complete pilot capture"
+	default "results/kmesh-prefetch/pilot"
+
+endif
 
 endif
 

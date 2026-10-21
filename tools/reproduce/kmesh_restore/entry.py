@@ -16,6 +16,7 @@ from restore_common import (
     CHUNKS,
     FAMILY_PREFETCH_COMMIT,
     LMCACHE_COMMIT,
+    RETAINED_DEMAND_COMMIT,
     SINGLEFLIGHT_COMMIT,
     VLLM_COMMIT,
 )
@@ -29,10 +30,14 @@ FIELDS = (
     "GPU_PROVIDER",
     "SECTION",
 )
+PREFETCH_FIELDS = ("PHASE", "QUALIFIED", "PILOT")
 DEFAULTS = {
     "OUTPUT": "results/kmesh-restore",
     "GPU_PROVIDER": "vulkan_rm",
     "SECTION": "adapter",
+    "PHASE": "qualification",
+    "QUALIFIED": "results/kmesh-prefetch/qualification",
+    "PILOT": "results/kmesh-prefetch/pilot",
 }
 
 
@@ -46,7 +51,7 @@ def settings(path: Path, environment: dict) -> dict:
                 result[key.removeprefix("CONFIG_KNLP_KMESH_RESTORE_")] = json.loads(
                     value
                 )
-    for key in FIELDS:
+    for key in FIELDS + PREFETCH_FIELDS:
         if "KMESH_RESTORE_" + key in environment:
             result[key] = environment["KMESH_RESTORE_" + key]
     return result
@@ -66,8 +71,17 @@ def command(config: dict) -> list[str]:
     if config["SECTION"] == "singleflight":
         result = [sys.executable, str(HERE / "singleflight.py")]
         flags.pop("SECTION")
+    elif config["SECTION"] == "prefetch":
+        result = [sys.executable, str(HERE / "prefetch_run.py")]
+        flags.pop("SECTION")
     for key, flag in flags.items():
         result.extend(["--" + flag, config.get(key, "")])
+    if config["SECTION"] == "prefetch":
+        result.extend(["--phase", config["PHASE"]])
+        if config["PHASE"] != "qualification":
+            result.extend(["--qualified", config["QUALIFIED"]])
+        if config["PHASE"] == "confirmation":
+            result.extend(["--pilot", config["PILOT"]])
     if config["SECTION"] in ("coldburst", "family", "retained"):
         result.extend(
             [
@@ -90,7 +104,42 @@ def main() -> None:
     args = parser.parse_args()
     config = settings(args.config, os.environ)
     missing = [name for name in FIELDS if not config.get(name)]
+    if config["SECTION"] == "prefetch":
+        if config["PHASE"] not in ("qualification", "pilot", "confirmation"):
+            parser.error("invalid KMESH_RESTORE_PHASE")
+        required = ("QUALIFIED",) if config["PHASE"] != "qualification" else ()
+        if config["PHASE"] == "confirmation":
+            required += ("PILOT",)
+        missing.extend(key for key in required if not config.get(key))
     if args.action == "plan":
+        if config["SECTION"] == "prefetch":
+            print(
+                json.dumps(
+                    {
+                        "vllm_commit": VLLM_COMMIT,
+                        "lmcache_commit": RETAINED_DEMAND_COMMIT,
+                        "ancestor_bytes": CHUNK_BYTES * CHUNKS,
+                        "phase": config["PHASE"],
+                        "blocks_per_path_fanout": {
+                            "qualification": 1,
+                            "pilot": 2,
+                            "confirmation": 10,
+                        }[config["PHASE"]],
+                        "warmups_per_arm_block": 3,
+                        "measured_groups_per_arm_block": {
+                            "qualification": 1,
+                            "pilot": 5,
+                            "confirmation": 20,
+                        }[config["PHASE"]],
+                        "fanouts": [4, 8] if config["PHASE"] == "confirmation" else [4],
+                        "command": command(config),
+                        "missing_inputs": missing,
+                        "requires": "prepared native runtime, qualified storage route and an available GPU",
+                    },
+                    indent=2,
+                )
+            )
+            return
         print(
             json.dumps(
                 {
@@ -137,6 +186,11 @@ def main() -> None:
                 },
                 indent=2,
             )
+        )
+    elif args.action == "verify" and config["SECTION"] == "prefetch":
+        subprocess.run(
+            [sys.executable, str(HERE / "prefetch_campaign.py"), config["OUTPUT"]],
+            check=True,
         )
     elif args.action == "verify" and config["SECTION"] == "singleflight":
         subprocess.run(
