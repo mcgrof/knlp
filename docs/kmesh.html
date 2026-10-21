@@ -176,9 +176,10 @@ not a general native vLLM object or fork API.</p>
 <p><strong>What is established so far:</strong> ordinary vLLM shares resident
 exact prefixes; KMesh singleflight removes duplicate engine ancestors in its
 controlled comparison; retained external cache reduces repeated storage reads.
-Earlier preload latency is mixed. In the
-<a href="#prefetch-demand">read-once demand comparison</a>, a 100 ms head start
-reduces both first-token and eight-token group waits. A family hold can hurt
+<a href="#prefetch-demand">The matched early-loading comparison in section 20</a>
+shows a clear benefit: with 100 ms of notice, request A's first-token wait
+falls about 47–50%, and the group finishes its eight-token outputs about
+9–13% sooner after arrival. Both transfer paths benefit. A family hold can hurt
 other requests under pressure. Cascade and DMA-BUF results come from separate
 profiles and must not be added together as a combined speedup.</p>
 </section>
@@ -203,7 +204,7 @@ profiles and must not be added together as a combined speedup.</p>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
   <a href="#family-residency">18. Does holding the ancestor pay under pressure?</a>
   <a href="#reasoning-demand">19. Does model-driven branching leave room for better retention?</a>
-  <a href="#prefetch-demand">20. Does early loading help when demand already reads once?</a>
+  <a href="#prefetch-demand">20. Does loading shared context early actually help?</a>
   <a href="#papers">21. Papers</a>
 </div>
 
@@ -1211,7 +1212,9 @@ separately from GPU sharing.</p>
 <a href="#retained">Section 16 measures that follow-up</a>: it retains the
 state in LMCache and times the requests again. Both controls there preload
 250 ms early, so it tests retention's effect rather than repeating this
-on-demand-versus-prefetch head-start sweep.</p>
+on-demand-versus-prefetch head-start sweep.
+<a href="#prefetch-demand">Section 20 completes that comparison with the
+read problem fixed in both approaches and finds a clear early-loading benefit.</a></p>
 </section>
 
 <section id="retained">
@@ -1230,12 +1233,12 @@ LMCache's copy against discarding that copy after loading vLLM.</p>
 <tr><th scope="col">Experiment</th><th scope="col">What changes between its controls?</th></tr>
 <tr><td class="hi">Section 15</td><td>Load when follow-ups arrive, or prepare early with different head starts.</td></tr>
 <tr><td class="hi">Section 16, measured here</td><td>Prepare early in both cases. Keep LMCache's copy or let later lookups reread SSD.</td></tr>
-<tr><td class="hi">Comparison still needed</td><td>Load on arrival versus prepare early, with the read-saving behavior enabled and verified in both. Repeat the head-start sweep under matched conditions.</td></tr>
+<tr><td class="hi">Section 20 completes the comparison</td><td><a href="#prefetch-demand">Load on arrival versus prepare early</a>, with one complete read of the shared context verified in both. Early preparation reduces waiting on both transfer paths in that controlled test.</td></tr>
 </table></div>
 <p>Do not compare section 15's latency numbers directly with this table to
-claim the fix helped or hurt. These are different experiments. Sections 17
-and 18 investigate workload traces and GPU retention under pressure; they
-do not fill in that missing on-demand-versus-prefetch comparison.</p>
+claim the fix helped or hurt. These are different experiments.
+<a href="#prefetch-demand">Section 20 makes the matched comparison</a> with
+the read-saving behavior enabled in both approaches.</p>
 
 <h3>Host DRAM and DMA-BUF are different cache arrangements</h3>
 <p><strong>External L1 means LMCache's in-memory cache outside vLLM.</strong>
@@ -1309,11 +1312,12 @@ therefore retains a second copy outside the one shared inside vLLM.
 Both controls configure a 512 MiB external arena and a 512 MiB engine KV pool;
 used external-cache bytes increase from zero to 48 MiB. This test applies
 no competing memory pressure.</p>
-<div class="note"><strong>The next latency question remains open.</strong>
-Does early preparation beat on-demand loading once both use the read-saving
-cache policy? Measure both first-token wait and whole-group completion, sweep
-the head start, and verify actual SSD bytes in every control. Enabling a cache
-policy does not by itself prove that concurrent first loads are coalesced.</div>
+<div class="note"><strong>Section 20 answers the next question.</strong>
+Once both approaches read the context only once, does loading early still
+help? <a href="#prefetch-demand">Yes, in the controlled 100 ms head-start test</a>:
+A's first-token wait and the time until every request has eight tokens both
+fall. The test verifies equal SSD bytes instead of assuming a cache setting
+prevents duplicate reads.</div>
 
 <h3>Where would RAID flash fit?</h3>
 <p>A striped SSD array is a future backing-store test. It could prepare a
@@ -1337,7 +1341,8 @@ A working single-drive DMA-BUF test does not prove that RAID works too.</p>
 reconstructible cache data; it provides no drive-failure redundancy. First
 check the topology and existing support. If qualifying the direct path needs
 new RAID or driver code, defer that work to a suitably equipped storage lab.
-It need not delay the missing single-drive prefetch comparison.</p>
+The <a href="#prefetch-demand">single-drive prefetch comparison in section 20</a>
+already demonstrates a benefit without RAID.</p>
 <details>
 <summary>How to project RAID's useful head start before testing it</summary>
 <p>An initial model is <code>preparation time &asymp; fixed work + bytes / effective bandwidth</code>.
@@ -1620,30 +1625,113 @@ continues independently of this retention decision.</p>
 </section>
 
 <section id="prefetch-demand">
-<h2>20. Does a head start help after demand already reads once?</h2>
-<p><strong>A 100 ms head start helps even after demand loading already reads one
-copy. A's first-token wait falls 46.9–49.7%, and group completion falls
-8.7–13.0%, in this profile.</strong> This comparison starts from an optimized
-demand
-path: the children share one engine ancestor, and each cold group reads the
-same sixteen 3 MiB chunks, or 48 MiB, exactly once. Early loading changes when
-that work starts. It does not get credit for removing duplicate reads.</p>
-<p>The October 21, 2026 experiment uses one RTX 4090, Qwen2.5-0.5B-Instruct at
-revision <code>7ae557604adf67be50417f59c2c2f167def9a775</code>, BF16,
-batch-invariant synchronous eager serving with two OpenMP/MKL threads. Children share
-4,096 tokens, add distinct 512-token tails and produce eight greedy output
-tokens. vLLM prefix caching supplies physical sharing. The KMesh connector
-coordinates one restoration; cascade attention remains a separate optimization.</p>
-<p>Both arms retain the external copy and join overlapping fills. Demand starts
-at arrival and issues no extra warm request. Early loading starts 100 ms before
-arrival and uses a one-token engine warm request. That preparation token is
-charged separately. This tests the whole preparation path, including that
-warm request, rather than isolating raw DMA-BUF transfer time. Arrival is
-fixed 250 ms after the trace origin; slow
-preparation cannot move it. Every actual submission delay remains in the
-headline waits. An accepted warm request drains normally. If completion is
-observed after children are due, an unsubmitted warm is skipped.</p>
-<h3>Confirmation against retained demand</h3>
+<h2>20. Does loading shared context early actually help?</h2>
+<div class="note"><strong>Yes. This is a clear benefit for early loading in
+the tested workload.</strong> Given 100 ms of advance notice, the first
+submitted request waits about half as long for its first output token.
+The whole group finishes its short, eight-token outputs about
+<strong>9–13% sooner after arrival</strong>. Both host staging and DMA-BUF
+benefit. This comparison does not establish that DMA-BUF is faster than
+host staging.</div>
+
+<h3>What are we comparing?</h3>
+<p>Imagine four requests, A, B, C and D, that all need the same saved context.
+The context is 48 MiB of cached model state on an SSD. Each request adds its
+own input and asks the model to generate eight output tokens. A token is a
+piece of text, sometimes part of a word; eight tokens need not form a
+complete answer. We also test groups of eight requests.</p>
+<ul class="experiment-steps">
+<li><strong>Load on arrival:</strong> wait for the requests, then load their shared context once and let them reuse it.</li>
+<li><strong>Load early:</strong> begin preparing that same context 100 ms before the requests are due. Load it into vLLM and run a small, one-token warm-up request, so the follow-ups arrive with their shared state ready.</li>
+</ul>
+<p><strong>Both approaches already read the SSD data only once.</strong>
+The benefit comes from doing preparation before the requests arrive.
+It is not a saving from eliminating extra SSD reads in only one side of
+the comparison. This is the comparison that sections 15 and 16 left open.</p>
+
+<h3>A concrete result: four requests using DMA-BUF</h3>
+<p>Start both stopwatches when the group is due to arrive. A is the first
+request submitted; it is not necessarily the first request to produce output.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">What the stopwatch measures</th><th scope="col">Load on arrival</th><th scope="col">Load 100 ms early</th><th scope="col">Wait saved</th></tr>
+<tr><td class="hi">Until A produces its first output token</td><td>56.51 ms</td><td>30.00 ms</td><td>26.51 ms (46.91%)</td></tr>
+<tr><td class="hi">Until A, B, C and D have each produced all 8 tokens</td><td>117.89 ms</td><td>104.06 ms</td><td>13.84 ms (11.74%)</td></tr>
+</table></div>
+<p><strong>A starts producing text much sooner, and the group finishes a
+little sooner.</strong> Those are two different benefits. “About half the
+wait” describes A's first token; it does not mean every request improves by
+half or the whole job runs twice as fast. Values are means; savings are
+calculated before rounding.</p>
+
+<h3>Does the benefit hold across the tested cases?</h3>
+<p>Yes. All four combinations improve on both measures. Host staging moves
+SSD data through CPU RAM on its way to vLLM. DMA-BUF moves it into a separate
+GPU buffer, then copies it into vLLM's cache.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Transfer path / number of requests</th><th scope="col">Reduction in A's first-token wait</th><th scope="col">Reduction in wait until everyone has 8 tokens</th></tr>
+<tr><td class="hi">Host staging / 4</td><td>49.67%</td><td>12.99%</td></tr>
+<tr><td class="hi">Host staging / 8</td><td>49.36%</td><td>8.67%</td></tr>
+<tr><td class="hi">DMA-BUF / 4</td><td>46.91%</td><td>11.74%</td></tr>
+<tr><td class="hi">DMA-BUF / 8</td><td>48.15%</td><td>8.69%</td></tr>
+</table></div>
+<p>Each row compares 200 groups per approach, spread across ten fresh paired
+engine runs. The statistical intervals support improvements on both measures
+in every row. This is stronger evidence for this controlled workload than
+the small comparisons in sections 15 and 16. Full times and uncertainty
+intervals are available below.</p>
+
+<h3>The 100 ms is advance notice, not free work</h3>
+<p>The test tells the system when the requests will arrive. It starts early
+preparation 100 ms before that time. It does not postpone the requests until
+preparation finishes: any delay in submitting them still counts against the
+measured wait. The preparation includes loading, copying into vLLM and one
+real warm-up token. This measures the complete preparation method, not just
+SSD transfer speed.</p>
+<p><strong>An application needs an opportunity to do that work early.</strong>
+For example, it might know which context a follow-up will need while waiting
+for a tool. This benchmark supplies that knowledge; it does not demonstrate
+an application predicting it. Delaying useful requests to create a 100 ms
+gap would have to count as extra waiting.</p>
+<p>The pilot tried 0, 25, 100 and 250 ms of notice. At 25 ms, preparation was
+not ready in any of its ten groups on either path. At 100 ms it was ready in
+all ten, so 100 ms was selected for the larger test. This is the shortest
+successful <em>tested</em> lead, not a measured minimum or the SSD's loading
+time. All 800 measured early-loading groups in the larger test were ready
+by arrival.</p>
+<p>The tables count waiting <strong>after the scheduled arrival</strong>.
+The benchmark also records an earlier, fixed 250 ms interval before arrival.
+For the four-request DMA-BUF example, counting from that earlier start gives
+367.89 ms versus 354.06 ms: the same roughly 13.84 ms saved, but about
+3.8% of the longer interval. Neither percentage is a prediction for an
+entire real application workflow.</p>
+
+<h3>Why can early SSD loading look faster than data already in DRAM?</h3>
+<p>“Already in DRAM” means the saved state is in LMCache's CPU memory.
+It still has to be restored into vLLM's GPU cache after the requests arrive.
+Early loading from SSD has already done that restoration and the warm-up
+before arrival. These controls differ in <strong>how much work remains</strong>;
+they do not show that SSD is faster than RAM.</p>
+<p>The “engine already resident” control starts with the state in vLLM's
+cache. It is the closer comparison for a fully prepared request. In the
+small four-request pilot, early loading and that control give similar
+first-token waits. The placement table below keeps the actual DRAM and GPU
+memory controls visible.</p>
+
+<h3>What this result establishes</h3>
+<p><strong>KMesh can use advance notice to reduce waiting even after
+duplicate reads have been removed.</strong> The next question is how often
+a real application can supply useful notice, and whether the benefit survives
+competition for storage and GPU memory. A wrong hint still spends I/O,
+memory and model work without helping a follow-up.</p>
+<p>The evidence here covers one small model, a 48 MiB shared context, four
+or eight requests, and eight-token outputs, with no competing families or
+memory pressure. It supports early preparation in that setting. It does not
+establish a production prediction policy, a general DMA-BUF latency advantage,
+or a combined speedup with Cascade attention.</p>
+
+<details>
+<summary>Full timing results, confidence intervals and stopwatch definitions</summary>
+<h3>Full measurements and uncertainty</h3>
 <p>Each path and group size has ten fresh paired engine-process blocks, three
 warmups and twenty measured groups per arm per block: 200 measured groups per
 arm in each row. Means give each process block equal weight. Intervals use
@@ -1651,14 +1739,14 @@ arm in each row. Means give each process block equal weight. Intervals use
 replicas. Positive improvement means less waiting. The intervals are nominal
 per endpoint, with limited independent evidence for tail behavior.</p>
 <div class="table-wrap"><table>
-<tr><th scope="col">Path / children</th><th scope="col">Demand A first token (ms)</th><th scope="col">Early A first token (ms)</th><th scope="col">Improvement (ms, 95% CI)</th><th scope="col">Improvement (%, 95% CI)</th></tr>
+<tr><th scope="col">Transfer path / number of requests</th><th scope="col">Load on arrival: A's first token (ms)</th><th scope="col">Load early: A's first token (ms)</th><th scope="col">Wait saved (ms), with 95% confidence interval</th><th scope="col">Wait saved (%), with 95% confidence interval</th></tr>
 <tr><td>Host-staged / 4</td><td>58.64</td><td>29.52</td><td>29.13 [28.09, 30.28]</td><td>49.67 [48.34, 51.11]</td></tr>
 <tr><td>Host-staged / 8</td><td>86.77</td><td>43.94</td><td>42.83 [41.39, 44.26]</td><td>49.36 [47.94, 50.60]</td></tr>
 <tr><td>DMA-BUF / 4</td><td>56.51</td><td>30.00</td><td>26.51 [25.33, 27.83]</td><td>46.91 [45.45, 48.38]</td></tr>
 <tr><td>DMA-BUF / 8</td><td>87.08</td><td>45.15</td><td>41.93 [40.35, 43.34]</td><td>48.15 [46.64, 49.52]</td></tr>
 </table></div>
 <div class="table-wrap"><table>
-<tr><th scope="col">Path / children</th><th scope="col">Demand last eighth token (ms)</th><th scope="col">Early last eighth token (ms)</th><th scope="col">Improvement (ms, 95% CI)</th><th scope="col">Improvement (%, 95% CI)</th></tr>
+<tr><th scope="col">Transfer path / number of requests</th><th scope="col">Load on arrival: everyone has 8 tokens (ms)</th><th scope="col">Load early: everyone has 8 tokens (ms)</th><th scope="col">Wait saved (ms), with 95% confidence interval</th><th scope="col">Wait saved (%), with 95% confidence interval</th></tr>
 <tr><td>Host-staged / 4</td><td>120.22</td><td>104.60</td><td>15.62 [14.67, 16.60]</td><td>12.99 [12.26, 13.75]</td></tr>
 <tr><td>Host-staged / 8</td><td>144.80</td><td>132.25</td><td>12.55 [11.20, 13.83]</td><td>8.67 [7.77, 9.50]</td></tr>
 <tr><td>DMA-BUF / 4</td><td>117.89</td><td>104.06</td><td>13.84 [12.91, 14.99]</td><td>11.74 [11.01, 12.59]</td></tr>
@@ -1681,6 +1769,9 @@ both endpoints. A useful engineering result requires at least
 zero, and the other endpoint's interval excluding regression larger than 5%.
 No failed trials are removed, and the fixed sample grid is not extended to
 obtain a favorable interval.</p>
+</details>
+<details>
+<summary>Pilot results: choosing the head start and comparing memory locations</summary>
 <h3>Why the lead is 100 ms</h3>
 <p>The preceding pilot uses two fresh engine blocks per path, three warmups and
 five measured groups per control/block. Its sole selection rule is the shortest
@@ -1699,7 +1790,7 @@ not certify a readiness probability or a service-level objective.
 In confirmation, all 200 measured early groups in each row were ready by
 scheduled arrival. Each issued one warm request; none skipped it. Demand issued
 no warm request.</p>
-<h3>Keep the memory-resident references visible</h3>
+<h3>Where the data starts: pilot measurements</h3>
 <p>The table below retains the four-child pilot's placement controls, ten
 measured groups per row across two processes. The host-DRAM control starts with
 the ancestor in RAM. Its direct counterpart starts in the external GPU arena.
@@ -1707,7 +1798,7 @@ They perform no trial SSD reads; each earlier 48 MiB placement fill is charged
 separately. The engine-resident reference also avoids external restoration.
 These pilot references are a different sample population from confirmation.</p>
 <div class="table-wrap"><table>
-<tr><th scope="col">Path / starting placement</th><th scope="col">A first token mean (ms)</th><th scope="col">Last eighth token mean (ms)</th><th scope="col">Trial / prior placement read (MiB)</th></tr>
+<tr><th scope="col">Path / starting placement</th><th scope="col">Mean wait for A's first token (ms)</th><th scope="col">Mean wait until everyone has 8 tokens (ms)</th><th scope="col">Trial / prior placement read (MiB)</th></tr>
 <tr><td>Host-staged / NVMe demand</td><td>55.97</td><td>116.95</td><td>48 / 0</td></tr>
 <tr><td>Host-staged / NVMe, 100 ms early</td><td>25.70</td><td>100.78</td><td>48 / 0</td></tr>
 <tr><td>Host-staged / Host DRAM already resident</td><td>44.02</td><td>105.40</td><td>0 / 48</td></tr>
@@ -1729,7 +1820,25 @@ configuration values; registered length and pinned-allocation peaks are not
 independently measured. Diagnostic engine occupancy follows allocation/free
 boundaries. External occupancy is sampled and can miss transients; payload
 byte-seconds are lower and upper bounds.</p>
-<h3>Correctness, cost and reproduction</h3>
+</details>
+<details>
+<summary>Exact setup, correctness checks and reproduction commands</summary>
+<p>The October 21, 2026 experiment uses one RTX 4090, Qwen2.5-0.5B-Instruct at
+revision <code>7ae557604adf67be50417f59c2c2f167def9a775</code>, BF16,
+batch-invariant synchronous eager serving with two OpenMP/MKL threads. Each request shares
+the same 4,096 input tokens, adds 512 input tokens of its own and generates
+eight output tokens with greedy decoding. vLLM prefix caching supplies physical sharing. The KMesh connector
+coordinates one restoration; cascade attention remains a separate optimization.</p>
+<p>Both arms retain the external copy and join overlapping fills. Demand starts
+at arrival and issues no extra warm request. Early loading starts 100 ms before
+arrival and uses a one-token engine warm request. That preparation token is
+charged separately. This tests the whole preparation path, including that
+warm request, rather than isolating raw DMA-BUF transfer time. Arrival is
+fixed 250 ms after the trace origin; slow
+preparation cannot move it. Every actual submission delay remains in the
+headline waits. An accepted warm request drains normally. If completion is
+observed after children are due, an unsubmitted warm is skipped.</p>
+<h3>Correctness and scope</h3>
 <p>Across qualification, pilot and confirmation, 12,320 child continuations and
 1,080 warm continuations pass exact-token checks, with zero delta in 99,640
 chosen-logprob comparisons. All 12,320 children first expose exactly one token
@@ -1777,6 +1886,7 @@ model, native binaries, runtime and selected lead. The aggregate exporter
 checks those captures against the commit that actually ran and removes private
 paths and identities. Offline consistency checks do not independently
 authenticate hardware execution.</p>
+</details>
 </section>
 
 <section id="papers">
@@ -1820,4 +1930,5 @@ authenticate hardware execution.</p>
 </main>
 </body>
 </html>
+
 
