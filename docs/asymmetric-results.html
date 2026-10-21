@@ -2,10 +2,10 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asymmetric KV: results and data — knlp</title>
 <meta name="description" content="Asymmetric KV results by model and execution path: throughput, quality, physical memory and downloadable evidence.">
-<link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019c"></head>
+<link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261020b"></head>
 <body><a class="skip" href="#main">Skip to content</a><header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
 <main id="main" class="reference"><h1>Asymmetric KV:<br>results and data</h1>
-<p>Earlier positive batch-throughput evidence is Qwen3-8B at 8K input and batch 32, in two weight formats. The completed dense HTTP studies and additional model transfers have separate quality, performance and reliability outcomes. This page collects the comparison scopes and machine-readable data without combining them into a single leaderboard.</p>
+<p>In-process batch-throughput evidence covers Qwen3-8B at 8K input and batch 32, in two weight formats. The completed dense HTTP studies and additional model transfers have separate quality, performance and reliability outcomes. This page collects the comparison scopes, machine-readable data and the <a href="#recent-reference">Qwen3.8/Gemma 4 symmetric-versus-asymmetric reference</a>.</p>
 <nav aria-label="Results sections"><a href="#throughput">Throughput</a><a href="#quality">Quality</a><a href="#http">HTTP</a><a href="#memory">Memory</a><a href="#data">Data</a></nav>
 <h2 id="throughput">Complete-request throughput</h2>
 <p>One H100 SXM 80 GB, FP16 compute, in-process execution, 128 forced output tokens. Native controls store FP16 K and V. The candidate physically stores FP16 K and E4M3 FP8 V. Each comparison matches its model, inputs, scheduler and KV byte budget.</p>
@@ -48,6 +48,29 @@
 </tbody></table></div>
 <p>Weights, wrapper buffers, staging, metadata, graphs and allocator overhead remain. These slot counts do not establish a new maximum resident request batch or a 25% total-GPU-memory reduction. <a href="asymmetric-methods.html">Full memory accounting</a> and the <a href="asymmetric-install.html#verified-installation">clean installation receipt</a> retain actual allocation and driver measurements.</p>
 <p>The <a href="asymmetric-history.html#asym-k16v8">historical kernel comparison</a> also retains a different finding: ordinary symmetric K8/V8 was 16–19% faster than K16/V8 at the tested bandwidth-bound shapes within one SM90 Tensor Core family, with a batch-one reversal. That is a standalone kernel comparison, not the current complete-request throughput result. Quality qualification still determines whether symmetric storage is usable.</p>
+<section id="recent-reference" aria-labelledby="recent-models-title">
+<p class="eyebrow">Transformers reference · symmetric versus asymmetric</p>
+<h2 id="recent-models-title">Qwen3.8 and Gemma 4: quality and persistent state.</h2>
+<p>Qwen3.8-27B and Gemma 4 26B-A4B were tested with native BF16 K/V, BF16 keys plus FP8 values (K16/V8), and symmetric FP8 K/V (K8/V8). Each arm uses the same original BF16 weights and official model implementation. This Transformers reference stores actual FP8 cache tensors with independent FP32 scales per token and head, then reconstructs attention inputs to BF16 temporarily.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Recent-model quality and state savings"><table>
+<caption>All frozen quality gates; persistent-state savings after 8,192 prefill + 128 continuation tokens</caption>
+<thead><tr><th scope="col">Model</th><th scope="col">K16/V8 quality</th><th scope="col">K8/V8 quality</th><th scope="col">State saved<br>K16/V8 / K8/V8</th></tr></thead>
+<tbody>
+<tr><th scope="row">Qwen3.8-27B</th><td><span class="status-pass">Pass</span></td><td><span class="status-pass">Pass</span></td><td>21.48% / 42.96%</td></tr>
+<tr><th scope="row">Gemma 4 26B-A4B</th><td>Not established: 1K loss bound fails</td><td>Not established: 1K and 8K loss bounds fail</td><td>24.70% / 49.39%</td></tr>
+</tbody></table></div>
+<p><strong>Qwen:</strong> both candidates pass every preservation limit, while symmetric FP8 saves twice as many state bytes. <strong>Gemma:</strong> both pass math and retrieval, but neither passes the joint preservation rule. A failed certificate does not prove general quality harm.</p>
+<p>All 1,319 GSM8K test questions were retained. Native / K16/V8 / K8/V8 correct counts are <strong>1,268 / 1,273 / 1,277</strong> for Qwen and <strong>1,270 / 1,272 / 1,271</strong> for Gemma. The direct candidate comparison does not establish a math-accuracy advantage for either compressed format (Holm-corrected p = 0.775 and 1.0). Every model and arm scores 100/100 on each of the 1K and 8K retrieval panels.</p>
+<p>The loss rule requires a 98.75% one-sided upper bound no greater than <strong>+1% relative mean negative log-likelihood</strong>. Gemma’s 1K upper bounds are +5.735% for K16/V8 and +4.360% for K8/V8. At 8K they are +0.903% and +1.664%. Qwen’s largest upper bound is +0.134%. Each context uses 32 paired documents, 128 scored targets per document and 100,000 bootstrap resamples.</p>
+<p class="scope">Prediction loss uses unframed Wikipedia text; math and retrieval use official chat templates with thinking disabled. Absolute loss is not comparable across models or tokenizers. The fixed inputs, parser, margins, truncations and outliers remain unchanged. A pass/fail difference between preservation tests is not proof of superiority.</p>
+<figure aria-labelledby="recent-state-title" aria-describedby="recent-state-caption">
+<h3 id="recent-state-title">Measured persistent cache and recurrent state</h3>
+<img class="state-plot" src="assets/asymmetric-recent-state-20261020.svg" width="1100" height="700" loading="lazy" alt="Stacked state-memory bars at 1,152 and 8,320 consumed tokens. Qwen retains fixed recurrent state. On both models, symmetric FP8 saves twice as many state bytes as K16/V8, including scales.">
+<figcaption id="recent-state-caption">Unique backing bytes include FP32 scales and unchanged recurrent state. They exclude weights, temporary reconstruction and allocator reservations. At 1,152 tokens, K16/V8 saves 11.99% for Qwen and 24.63% for Gemma; symmetric FP8 saves 23.98% and 49.26%. These are state savings, not whole-GPU-memory or serving-capacity gains. <a href="assets/asymmetric-recent-state-20261020.svg">Open full-size plot →</a></figcaption>
+</figure>
+<p class="scope"><strong>Scope:</strong> the two candidates have different memory budgets, and no equal-budget K8/V16 control was tested. This quantizer and runtime differ from the <a href="asymmetric-quantization.html#install">optimized serving recipe</a>. The study establishes no fused-backend support or production-speed benefit. All 9,226 saved generation outputs and physical-cache accounting passed validation; 13 CPU cache tests also pass.</p>
+<p><a href="https://github.com/mcgrof/knlp/blob/592db3793de8a38b0d7ea6fcfbd5844f09f1191e/tools/kv/recent/RESULTS.md">Complete results, bounds and failure diagnostics →</a> · <a href="https://github.com/mcgrof/knlp/blob/592db3793de8a38b0d7ea6fcfbd5844f09f1191e/tools/kv/recent/README.md">Pinned checkpoints, methods and reproduction commands →</a></p>
+</section>
 <h2 id="integration">Capacity planning and related integrations</h2>
 <p>The <a href="asymmetric-upstream.html">upstream integration reference</a> separates FlashInfer and vLLM serving dependencies from LMCache’s merged split-SerDes foundation and ongoing MP-mode storage series.</p>
 <p>For equal-sized K and V tensors, raw payload ratios are 4:3:2 for K16/V16, K16/V8 and K8/V8. The symmetric K8/V8 option still needs its own quality and performance qualification. Byte arithmetic is not evidence that a representation is faster or safe.</p>
@@ -71,3 +94,4 @@
 <a href="bias-aware-kv-quantization.html">Separate bias-aware symmetric-KV repair study <span>→</span></a>
 </div>
 </main><footer>knlp · Open research, measured claims · <a href="asymmetric-quantization.html">Asymmetric quantization overview</a></footer></body></html>
+
