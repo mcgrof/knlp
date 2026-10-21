@@ -286,6 +286,11 @@ SVG and PNG files. It excludes raw question text and operator metadata.
 The figures show descriptive paired math intervals and tensor backing bytes;
 neither a descriptive interval nor storage alone establishes a certificate
 or serving benefit. Certificate labels in the JSON retain the full objective.
+The aggregate bundle also includes both retrieval and NLL endpoints and all
+20 direct contrasts per model, with paired intervals and the eight-comparison
+Holm adjustment for each endpoint. Direct result fields named `native_correct`
+or `native_mean` refer to that row's explicitly named compressed baseline.
+Significance for one endpoint does not establish overall superiority.
 
 Use `--data figures/reference-aggregates.json --out redrawn` instead to
 redraw a published aggregate bundle. This reproduces figures without

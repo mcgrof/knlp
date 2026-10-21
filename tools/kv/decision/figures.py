@@ -9,8 +9,10 @@ an aggregate bundle does not independently re-audit the underlying experiment.
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import platform
+import re
 
 
 MODELS = {
@@ -28,6 +30,95 @@ LABELS = {
     "RD": "K8/V16 · dynamic",
     "SD": "K8/V8 · dynamic",
 }
+BINARY_FIELDS = (
+    "n",
+    "native_correct",
+    "candidate_correct",
+    "losses",
+    "gains",
+    "net_delta",
+    "net_interval_95",
+    "net_one_sided_bounds",
+    "gross_loss_one_sided_bounds",
+    "certificate_alpha",
+)
+NLL_FIELDS = (
+    "n_documents",
+    "native_mean",
+    "candidate_mean",
+    "absolute_delta",
+    "relative_delta",
+    "absolute_one_sided_bounds",
+    "relative_one_sided_bounds",
+    "alpha",
+    "resamples",
+    "seed",
+)
+ENDPOINTS = ("gsm8k", "retrieval-1024", "retrieval-8192", "nll-1024", "nll-8192")
+
+
+def numeric(value):
+    """Only finite numeric aggregates may cross the publication boundary."""
+    if type(value) in (int, float) and math.isfinite(value):
+        return value
+    if isinstance(value, list) and len(value) == 2:
+        if all(type(x) in (int, float) and math.isfinite(x) for x in value):
+            return list(value)
+    raise ValueError("Expected a finite numeric aggregate or two-endpoint interval")
+
+
+def endpoint(row, name):
+    if name.startswith("nll-"):
+        if (
+            row["n_documents"] != 64
+            or row["alpha"] != 0.025 / 12
+            or row["resamples"] != 100000
+            or row["seed"] != 20261020
+            or row["quantile"] != "linear"
+        ):
+            raise ValueError("NLL panel or inference settings differ")
+        fields = NLL_FIELDS
+    else:
+        if row["n"] != (1319 if name == "gsm8k" else 200):
+            raise ValueError("Incomplete binary panel")
+        if row["certificate_alpha"] != 0.025 / 12:
+            raise ValueError("Binary certificate alpha differs")
+        fields = BINARY_FIELDS
+    return {key: numeric(row[key]) for key in fields}
+
+
+def direct_contrasts(rows):
+    expected = {
+        ("A" + policy, control + policy, name)
+        for policy in ("F", "D")
+        for control in ("R", "S")
+        for name in ENDPOINTS
+    }
+    identities = [(r["candidate"], r["baseline"], r["endpoint"]) for r in rows]
+    if len(identities) != len(expected) or set(identities) != expected:
+        raise ValueError("Require every predeclared direct comparison exactly once")
+    result = []
+    for row in rows:
+        nll = row["endpoint"].startswith("nll-")
+        interval = row["bonferroni8_nll_interval"]
+        if not nll and interval is not None:
+            raise ValueError("Binary contrast unexpectedly has an NLL interval")
+        result.append(
+            {key: row[key] for key in ("candidate", "baseline", "endpoint")}
+            | {
+                "result": endpoint(row["result"], row["endpoint"]),
+                "p_two_sided": numeric(row["p_two_sided"]),
+                "holm8_p": numeric(row["holm8_p"]),
+                "paired_interval_95": numeric(row["paired_interval_95"]),
+                "bonferroni8_nll_interval": numeric(interval) if nll else None,
+                "test_method": (
+                    "Paired-document centered bootstrap, 100000 seed20261020; approximate"
+                    if nll
+                    else "Exact two-sided McNemar; descriptive Tango interval"
+                ),
+            }
+        )
+    return result
 
 
 def sha(path):
@@ -63,6 +154,9 @@ def aggregate(analysis_path, evidence_path, receipt_path):
         model, audit = analysis["models"][name], evidence["models"][name]
         if (
             model["model"] != model_id
+            or not re.fullmatch(r"[0-9a-f]{40}", model["revision"])
+            or not re.fullmatch(r"[0-9a-f]{40}", model["source"]["commit"])
+            or not re.fullmatch(r"[0-9a-f]{64}", model["input_sha256"])
             or any(
                 model[k] != audit[k]
                 for k in ("model", "revision", "source", "input_sha256")
@@ -75,28 +169,18 @@ def aggregate(analysis_path, evidence_path, receipt_path):
             raise ValueError("Incomplete reference or inconsistent identities")
         candidates = {}
         for arm, row in model["candidates"].items():
-            gsm = row["gsm8k"]
-            if gsm["n"] != 1319:
-                raise ValueError("Incomplete math panel")
+            if any(
+                type(row[key]) is not bool
+                for key in ("preservation_certificate", "aggregate_math_certificate")
+            ):
+                raise ValueError("Certificate labels must be booleans")
             candidates[arm] = {
                 key: row[key]
                 for key in ("preservation_certificate", "aggregate_math_certificate")
             }
-            candidates[arm]["gsm8k"] = {
-                key: gsm[key]
-                for key in (
-                    "n",
-                    "native_correct",
-                    "candidate_correct",
-                    "losses",
-                    "gains",
-                    "net_delta",
-                    "net_interval_95",
-                    "net_one_sided_bounds",
-                    "gross_loss_one_sided_bounds",
-                    "certificate_alpha",
-                )
-            }
+            candidates[arm].update(
+                {name: endpoint(row[name], name) for name in ENDPOINTS}
+            )
         # Explicit aggregate allowlist: no request text, operator receipts,
         # filesystem paths or cloud identities enter this public bundle.
         result["models"][name] = {
@@ -106,10 +190,12 @@ def aggregate(analysis_path, evidence_path, receipt_path):
             "measured_source_commit": model["source"]["commit"],
             "input_sha256": model["input_sha256"],
             "candidates": candidates,
+            "direct": direct_contrasts(model["direct"]),
+            "direct_scope": "All deltas are candidate minus the named baseline. In direct result fields, native_correct/native_mean denote that compressed baseline. Holm adjustment is across eight contrasts per endpoint over both models; endpoint significance is not general quality superiority.",
             "memory": {
                 arm: {
                     length: {
-                        key: model["memory"][arm][length][key]
+                        key: numeric(model["memory"][arm][length][key])
                         for key in ("persistent_bytes", "scale_bytes")
                     }
                     for length in ("1024", "8192")
