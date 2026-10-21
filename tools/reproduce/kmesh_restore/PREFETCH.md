@@ -164,3 +164,20 @@ the other endpoint excluding regression larger than 5%. Report absolute
 milliseconds, placement references, warm costs and failed readiness too.
 Mixed or wide intervals remain mixed or inconclusive. Backend payload
 counts do not establish physical NVMe command counts or general throughput.
+
+After all three phases pass, export aggregates for review:
+
+```sh
+python tools/reproduce/kmesh_restore/prefetch_publish.py \
+  --capture results/prefetch \
+  --harness-commit "$MEASURED_KNLP_COMMIT" --repository . \
+  --output public-prefetch-results.json
+```
+
+Set `MEASURED_KNLP_COMMIT` to the full commit ID whose harness actually ran.
+The exporter authenticates every captured Python-file hash and the model
+manifest against that Git tree. It also rechecks the complete raw phases,
+source pins, native binaries and runtime. The exported file keeps declared
+scientific fields and native library basenames. Raw paths, process and
+request identities stay in the original capture. Offline checks establish
+capture consistency; they cannot independently authenticate GPU execution.
