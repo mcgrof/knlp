@@ -57,6 +57,16 @@ def main(config: dict) -> None:
     )
     if config["mode"] == "direct":
         adapter.affinity_tag = "gpu"
+    prefetch = (
+        {
+            "prefetch_policy": "retain",
+            "prefetch_join_overlaps": True,
+            "prefetch_max_in_flight": 8,
+            "prefetch_max_pending": 1024,
+        }
+        if config.get("retained_fill", False)
+        else {}
+    )
     run_http_server(
         HTTPFrontendConfig(http_host="127.0.0.1", http_port=config["http_port"]),
         MPServerConfig(
@@ -69,7 +79,9 @@ def main(config: dict) -> None:
             worker_reap_timeout_seconds=30,
             worker_registration_grace_seconds=30,
         ),
-        StorageManagerConfig(l1, EvictionConfig("noop"), L2AdaptersConfig([adapter])),
+        StorageManagerConfig(
+            l1, EvictionConfig("noop"), L2AdaptersConfig([adapter]), **prefetch
+        ),
         ObservabilityConfig(enabled=False),
         DEFAULT_COORDINATOR_CONFIG,
     )

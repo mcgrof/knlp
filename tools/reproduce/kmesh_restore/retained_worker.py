@@ -28,10 +28,12 @@ from worker import (
 GAP_MS = 250
 
 
-def warm_external(config, ancestor):
+def warm_external(config, ancestor, *, request=None):
     """Complete the stock retained L2-to-L1 prefetch before warming the engine."""
     start = time.perf_counter_ns()
-    submitted = http(
+    if request is None:
+        request = http
+    submitted = request(
         config["http_port"],
         "cache/prefetches",
         {
@@ -48,7 +50,7 @@ def warm_external(config, ancestor):
     deadline = time.monotonic() + 60
     polls = 0
     while time.monotonic() < deadline:
-        result = http(
+        result = request(
             config["http_port"], "cache/prefetches/" + submitted["request_id"]
         )
         polls += 1
@@ -60,7 +62,7 @@ def warm_external(config, ancestor):
                 "total_keys": result["total_keys"],
                 "polls": polls,
                 "completion_ms": (time.perf_counter_ns() - start) / 1e6,
-                "l1": http(config["http_port"], "status")["storage_manager"][
+                "l1": request(config["http_port"], "status")["storage_manager"][
                     "l1_manager"
                 ],
             }

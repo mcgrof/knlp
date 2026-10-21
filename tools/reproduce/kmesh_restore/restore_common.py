@@ -19,6 +19,7 @@ VLLM_COMMIT = "1b76bf9dd9d52efbd75fb89bf2619898d8f01233"
 LMCACHE_COMMIT = "007a3388331209737ee19c095e430907fc467952"
 SINGLEFLIGHT_COMMIT = "100442de5a499af165fa4b797d9be75df2834943"
 FAMILY_PREFETCH_COMMIT = "44a52bda3b494e3d427e65b08d7196c70f631c47"
+RETAINED_DEMAND_COMMIT = "fb71fb40abe8ca3fdbe2b0a6b4823332d1a76f37"
 ANCESTOR = 4096
 TAIL = 512
 CHUNK = 256
@@ -96,14 +97,16 @@ def prompts(fanout: int = 5) -> tuple[list[int], list[list[int]]]:
     ]
 
 
-def http(port: int, route: str, body: dict | None = None) -> dict:
+def http(
+    port: int, route: str, body: dict | None = None, *, timeout: float = 300
+) -> dict:
     """Call a loopback control endpoint and return its JSON response."""
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/{route}",
         data=None if body is None else json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=300) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 

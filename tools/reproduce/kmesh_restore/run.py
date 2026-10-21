@@ -108,7 +108,8 @@ def serving(
             consumer_script,
             (
                 [str(path)]
-                if consumer_script in ("family_worker.py", "retained_worker.py")
+                if consumer_script
+                in ("family_worker.py", "retained_worker.py", "prefetch_worker.py")
                 else [str(path), "consumer"]
             ),
             destination / "consumer.log",
