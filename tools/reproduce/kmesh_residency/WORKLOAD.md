@@ -15,6 +15,14 @@ indices 0, 1 and 2 are chosen in file order before observing answers. All
 selected answers are graded with exact rational arithmetic and a restricted
 syntax parser; model text is never executed. Report failed tasks too.
 
+The [first completed capture](https://knlp.io/kmesh.html#reasoning-demand)
+finishes 173 model calls but solves none of the three puzzles. Fifteen of
+eighteen later selections add only whitespace; all proposal replies stop at
+the output cap. The captured calls have zero additional exact-prefix cache
+headroom, but this stalled search does not qualify a successful reasoning
+baseline. A profile that follows the proposal and answer protocol needs its
+own declared settings and result; do not retune or filter this capture.
+
 The capture distinguishes logical parentage from exact token identity. A
 proposal's producer is the parent of the calls that evaluate or extend it.
 The official prompts can rewrite the state rather than append the producer's

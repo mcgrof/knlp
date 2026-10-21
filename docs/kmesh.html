@@ -138,7 +138,9 @@ follow-up requests about it. Those five requests are the <strong>children</stron
 The cached computation for their common context is the <strong>ancestor</strong>;
 the related requests form a <strong>family</strong>. A five-child burst means
 submitting five follow-ups together. It does not mean five GPUs or five models.
-The experiments use synthetic token sequences to control this relationship.</p>
+The controlled fork experiments use synthetic token sequences to fix this
+relationship. <a href="#reasoning-demand">Section 19</a> records model-driven
+arithmetic search and its failed solution contract.</p>
 <div class="note"><strong>The north star: declare reuse early, restore once,
 share compatible state, and retain it only when the benefit pays for its cost.</strong>
 An explicit family declaration can convey intended reuse before children arrive.
@@ -198,7 +200,8 @@ be added together as a combined speedup.</p>
   <a href="#retained">16. Does keeping data in LMCache stop repeat SSD reads?</a>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
   <a href="#family-residency">18. Does holding the ancestor pay under pressure?</a>
-  <a href="#papers">19. Papers</a>
+  <a href="#reasoning-demand">19. Does model-driven branching leave room for better retention?</a>
+  <a href="#papers">20. Papers</a>
 </div>
 
 <section id="redundancies">
@@ -1515,8 +1518,106 @@ demand, with a policy that saves enough work to pay for displaced hits and
 unused holds. The trace gap in the preceding section remains open.</p>
 </section>
 
+<section id="reasoning-demand">
+<h2>19. Does model-driven branching leave room for better retention?</h2>
+<p><strong>Stock vLLM reaches the ideal exact-prefix cache ceiling in this
+unsuccessful local-model search.</strong> This capture lets a model generate
+arithmetic proposals, score candidate states and choose which states to
+extend. Later requests follow those choices. It answers whether stock prefix
+caching leaves exact-prefix reuse available to an ideal retention policy in
+this observed search, at the same physical cache capacity.</p>
+<p>The workload uses the official Tree of Thoughts Game of 24 search at
+revision <code>8050e67d0e3a</code>, with its original prompts, value memoization
+and dataset. We replace its model provider with Qwen2.5-7B-Instruct and take
+puzzles 0, 1 and 2 in file order. This bounded adaptation keeps two states,
+evaluates each once and allows 192 output tokens per call. It uses one
+synchronous eager vLLM engine, BF16, a 2,048-token context, 16-token cache blocks,
+temperature 0.7 and seed 123 plus the call index. All task outcomes count;
+this is not the paper's model or accuracy setup.</p>
+<div class="note"><strong>Search quality fails in this profile: zero of three puzzles
+produce a valid selected solution.</strong> Fifteen of the eighteen selections
+after the first step extend an earlier state only with whitespace. The
+upstream parser treats proposal lines, including blanks, as candidates; cached
+value scores can preserve these unchanged states. All 21 proposal replies
+and 81 of 152 value replies terminate at the 192-token cap. The verbose output,
+format mismatch and truncation are not separated by this run. It validates
+capture and cache accounting on those calls, but does not qualify a successful
+reasoning baseline or measure the model's general puzzle-solving ability.
+A separately declared profile that follows the search protocol is needed
+before drawing conclusions about useful reasoning workloads.</div>
+<p>The October 20, 2026 (PDT) capture runs on a CUDA GPU with a configured 512 MiB
+cache and two CPU threads. The observed pool contains 585 blocks,
+including one reserved null block, leaving 584 usable blocks.
+The <a href="data/kmesh-reasoning-demand-20261020.json">aggregate result</a>
+records exact model, search, vLLM and runtime identities plus raw capture
+hashes. 173 model calls complete: 21 proposal calls and
+152 value calls. Application memoization avoids 84 further value
+calls. The upstream driver treats 270 proposal lines as candidates and retains
+24 across its steps. All failed tasks stay in the result.</p>
+<p>Prefill means processing input tokens whose KV is not reused. The table
+counts those tokens, leaving output generation outside this metric.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Exact-prefix cache accounting</th><th scope="col">Tokens</th></tr>
+<tr><td class="hi">Observed stock prefill</td><td>4,605</td></tr>
+<tr><td class="hi">Optimistic minimum prefill at the same capacity</td><td>4,605</td></tr>
+<tr><td class="hi">Maximum remaining prefill saving</td><td>0 (0.0%)</td></tr>
+</table></div>
+<p>The offline bound knows the complete future request order. It can retain
+full blocks independently of their prefix ancestors and ignores active-request
+pins. Generated full blocks enter as writes, and the final prompt fragment
+needed to produce next-token scores remains compulsory. These relaxations favor the ideal cache:
+the table gives an upper limit on possible token savings, not an implementable
+policy or a conversion into elapsed time. This closes further retention-policy
+comparisons for these captured calls at this budget. Successful reasoning
+workloads remain untested by this result.</p>
+<p><strong>A search parent is not automatically a reusable ancestor.</strong>
+All 170 recorded producer edges have known parents in one engine and
+clock domain. None preserves the parent's entire input and generated
+output as the child's exact prefix. The search prompts can rewrite a state
+for evaluation or extension, so a family label cannot justify sharing all
+of its KV. Application memoization avoids a call; candidate pruning does not
+cancel an inference request. This workload has one active call at a time and
+performs no live fork or cross-engine sharing.</p>
+<p>All non-null references drain, and all 584 usable blocks return
+to the free queue; 1,290 cached blocks are evicted during the search.
+The complete invocation, search and physical allocator evidence passes
+consistency checks, and the CPU export regrades answers and recomputes the
+bound. Those checks do not independently replay tokenized search or authenticate
+execution. Source hashes and the admitted model run are checked separately.
+Capture observation and writes remain active, so durations are not latency
+results. No external cache connector or storage transfer participates here.</p>
+<h3>Reproduce the search and CPU evidence</h3>
+<p>Follow the <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_residency/WORKLOAD.md">pinned model, runtime and search preparation</a>.
+The worker checks all eleven model/tokenizer hashes before allocation. Keep
+raw prompts, answers, token IDs and physical block identities with private
+evidence. The public exporter retains aggregate counts and capture hashes.</p>
+<pre><code>make defconfig-kmesh-tot-cuda
+export KMESH_RESIDENCY_SOURCE=/path/to/vllm
+export KMESH_RESIDENCY_WORKLOAD_SOURCE=/path/to/tot
+export KMESH_RESIDENCY_MODEL=/path/to/model-snapshot
+export KMESH_RESIDENCY_OUTPUT=/path/to/fresh-search-capture
+export PYTHONPATH=/path/to/tot-deps:/path/to/vllm
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
+make kmesh-residency-plan
+make KMESH_RESIDENCY_PY=/path/to/prepared/python
+
+make kmesh-workload-test kmesh-headroom-test
+make kmesh-headroom KMESH_HEADROOM_ROOT=/path/to/fresh-search-capture \
+  KMESH_HEADROOM_OUTPUT=/path/to/fresh-headroom.json
+python3 -m tools.reproduce.kmesh_residency.workload_publish \
+  /path/to/fresh-search-capture --output public-workload-results.json</code></pre>
+<p>The profile has a 384-call limit, a 75-minute safety ceiling checked at
+call boundaries and a 120-second bound on each admitted invocation. Partial
+captures cannot qualify. This result concerns exact causal-prefix residency
+in these three sequential puzzles at this capacity. Approximate or
+position-independent recovery, cascade attention, storage latency and
+concurrent agent traffic need their own qualified tests. The remaining
+historical source work on multiprocess ownership and serial shifted restore
+continues independently of this retention decision.</p>
+</section>
+
 <section id="papers">
-<h2>19. Papers</h2>
+<h2>20. Papers</h2>
 <ul class="papers">
 <li>
   <span class="t"><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade Inference: Memory Bandwidth Efficient Shared Prefix Batch Decoding</a></span><br>
