@@ -24,9 +24,24 @@ def oracle(x, scale):
     return q | np.where(np.signbit(y), 128, 0).astype(np.uint8)
 
 
+def oracle_decode(codes, scale, dtype):
+    magnitude = codes & np.uint8(127)
+    exponent = (magnitude // 8).astype(int)
+    mantissa = (magnitude % 8).astype(int)
+    values = np.where(
+        exponent == 0,
+        mantissa / 8 * 2.0 ** (-6),
+        (1 + mantissa / 8) * 2.0 ** (exponent - 7),
+    ).astype(np.float32)
+    values = np.where(codes & np.uint8(128), -values, values)
+    restored = values * np.asarray(scale, dtype=np.float32)
+    return torch.from_numpy(restored).to(dtype)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--calibration", type=Path, required=True)
+    p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = p.parse_args()
     sc = json.loads((a.calibration / "scales.json").read_text())
     held = torch.load(
@@ -35,34 +50,42 @@ def main():
         weights_only=True,
     )
     rows = []
-    for key, x in held.items():
+    for key, original in held.items():
+        x = original.to(a.device)
         parts = key.split("/")
         layer = int(parts[1].split("-")[1])
         component = parts[2]
         for policy in ["fixed", "dynamic"]:
             scale = (
-                torch.tensor(sc["scales"][layer][component], dtype=torch.float32)
+                torch.tensor(
+                    sc["scales"][layer][component], dtype=torch.float32, device=a.device
+                )
                 if policy == "fixed"
                 else None
             )
             q, s = encode(x, scale)
-            expected = oracle(x, s.numpy())
-            same = np.array_equal(q.view(torch.uint8).numpy(), expected)
+            expected = oracle(original, s.cpu().numpy())
+            same = np.array_equal(q.view(torch.uint8).cpu().numpy(), expected)
             reconstructed = decode(q, s, x.dtype)
+            expected_native = oracle_decode(expected, s.cpu().numpy(), original.dtype)
+            decode_same = torch.equal(reconstructed.cpu(), expected_native)
             rows.append(
                 dict(
                     fixture=key,
                     policy=policy,
                     codes_exact=same,
+                    decode_exact=decode_same,
                     shape=list(x.shape),
                     native_dtype=str(x.dtype),
                     finite=bool(torch.isfinite(reconstructed).all()),
                 )
             )
     result = dict(
+        device=a.device,
         fixtures=len(held),
         comparisons=len(rows),
-        passed=bool(rows) and all(r["codes_exact"] and r["finite"] for r in rows),
+        passed=bool(rows)
+        and all(r["codes_exact"] and r["decode_exact"] and r["finite"] for r in rows),
         rows=rows,
     )
     (a.calibration / "INDEPENDENT-ORACLE.json").write_text(
