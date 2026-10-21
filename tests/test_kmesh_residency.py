@@ -33,14 +33,14 @@ class ResidencyDispatchTest(unittest.TestCase):
     def test_plan_exposes_cpu_and_gpu_modes_without_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "config"
-            for mode in ("cpu", "serving"):
+            for mode in ("cpu", "serving", "tot"):
                 config.write_text(
                     "CONFIG_KNLP_KMESH_RESIDENCY_MODE=" + json.dumps(mode) + "\n"
                 )
                 result = self.run_cli(config, "--plan")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(
-                    json.loads(result.stdout)["gpu_execution"], mode == "serving"
+                    json.loads(result.stdout)["gpu_execution"], mode != "cpu"
                 )
 
     def test_environment_overrides_config_and_unknown_mode_fails(self):
@@ -56,7 +56,7 @@ class ResidencyDispatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "absent"
             output = Path(directory) / "output"
-            for mode in ("cpu", "serving"):
+            for mode in ("cpu", "serving", "tot"):
                 result = self.run_cli(
                     config,
                     KMESH_RESIDENCY_MODE=mode,

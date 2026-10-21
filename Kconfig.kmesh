@@ -26,7 +26,7 @@ config KNLP_KMESH_TRACE_MODE
 endif
 
 config KNLP_REPRODUCE_KMESH_RESIDENCY
-	bool "Qualify bounded family references through vLLM"
+	bool "Qualify family references and capture branching workloads"
 	default n
 	help
 	  Compare a bounded ancestor hold with stock prefix caching under a
@@ -36,7 +36,7 @@ config KNLP_REPRODUCE_KMESH_RESIDENCY
 if KNLP_REPRODUCE_KMESH_RESIDENCY
 
 config KNLP_KMESH_RESIDENCY_MODE
-	string "Qualification mode: cpu or serving"
+	string "Qualification mode: cpu, serving or tot"
 	default "cpu"
 
 config KNLP_KMESH_RESIDENCY_SOURCE
@@ -45,6 +45,10 @@ config KNLP_KMESH_RESIDENCY_SOURCE
 
 config KNLP_KMESH_RESIDENCY_MODEL
 	string "Local model snapshot for serving capture"
+	default ""
+
+config KNLP_KMESH_RESIDENCY_WORKLOAD_SOURCE
+	string "Pinned Tree of Thoughts source directory"
 	default ""
 
 config KNLP_KMESH_RESIDENCY_OUTPUT

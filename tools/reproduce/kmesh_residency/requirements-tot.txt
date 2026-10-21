@@ -1,0 +1,7 @@
+# Install in an isolated --target directory with --no-deps.
+# numpy and sympy come from the prepared torch/vLLM runtime.
+pandas==2.3.3
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tzdata==2025.2
+six==1.17.0

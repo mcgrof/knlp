@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Select CPU metadata qualification or a controlled model capture."""
+"""Select CPU qualification, controlled serving or a live search capture."""
 
 import argparse
 import json
@@ -27,26 +27,30 @@ def main():
         return os.environ.get("KMESH_RESIDENCY_" + key, config.get(key, default))
 
     mode = value("MODE", "cpu")
-    if mode not in ("cpu", "serving"):
-        parser.error("mode must be cpu or serving")
+    if mode not in ("cpu", "serving", "tot"):
+        parser.error("mode must be cpu, serving or tot")
     plan = {
         "mode": mode,
         "source": value("SOURCE"),
         "model": value("MODEL"),
         "output": value("OUTPUT", "results/kmesh-family-residency"),
-        "gpu_execution": mode == "serving",
+        "gpu_execution": mode != "cpu",
+        "workload_source": value("WORKLOAD_SOURCE"),
     }
     if args.plan:
         print(json.dumps(plan, indent=2))
         return
-    if not plan["source"] or (mode == "serving" and not plan["model"]):
+    if not plan["source"] or (mode != "cpu" and not plan["model"]):
         parser.error(
-            "set KMESH_RESIDENCY_SOURCE and, for serving, KMESH_RESIDENCY_MODEL"
+            "set KMESH_RESIDENCY_SOURCE and, for GPU modes, KMESH_RESIDENCY_MODEL"
         )
+    if mode == "tot" and not plan["workload_source"]:
+        parser.error("set KMESH_RESIDENCY_WORKLOAD_SOURCE for the pinned search")
+    module = "tot_workload" if mode == "tot" else mode
     command = [
         sys.executable,
         "-m",
-        "tools.reproduce.kmesh_residency." + mode,
+        "tools.reproduce.kmesh_residency." + module,
         "--source",
         plan["source"],
         "--output",
@@ -57,6 +61,8 @@ def main():
         environment["CUDA_VISIBLE_DEVICES"] = ""
     else:
         command += ["--model", plan["model"]]
+    if mode == "tot":
+        command += ["--workload-source", plan["workload_source"]]
     subprocess.run(command, env=environment, check=True)
 
 

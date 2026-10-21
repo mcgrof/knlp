@@ -31,6 +31,10 @@ ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_RESIDENCY),y)
 .DEFAULT_GOAL := kmesh-residency
 endif
 
+.PHONY: kmesh-workload-test
+kmesh-workload-test:
+	@"$(KMESH_RESIDENCY_PY)" -m unittest discover -s tests -p test_kmesh_workload.py -v
+
 KMESH_FORK_PY ?= $(PYTHON)
 KMESH_FORK_CONFIG ?= .config
 KMESH_FORK_DIR := tools/reproduce/kmesh_forks
