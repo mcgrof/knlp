@@ -1,10 +1,17 @@
 # Recent models: tested capability and current limits
 
-The current K16/V8 implementation does not provide a qualified serving
+The fused K16/V8 implementation tested here does not provide a qualified serving
 benefit across recent architectures. Ministral 3 failed the frozen
-quality-preservation task. Qwen3.5 and Gemma 4 ran native calibration,
+quality-preservation task. Qwen3.5-9B and Gemma 4 12B ran native calibration,
 but their cache layouts or attention features are outside the asymmetric
 implementation. These outcomes have different meanings.
+
+The separate October 20 comparison tests Qwen3.8-27B and Gemma 4 26B-A4B
+with physical Transformers reference caches. Qwen passes both K16/V8
+and symmetric FP8; neither Gemma candidate clears all prediction-loss
+bounds. It establishes no distinctive asymmetric advantage or fused
+serving support. See the [completed comparison](asymmetric-quantization.html#recent-models)
+for quality, state memory and reproduction.
 
 | Model | Actual test | Result |
 | --- | --- | --- |

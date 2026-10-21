@@ -12,6 +12,7 @@ pre.expected{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--accent)}
 @media(max-width:480px){.metric-grid{grid-template-columns:1fr}.metric-grid>div{flex-direction:row;align-items:center;gap:20px;padding:18px}.metric-grid strong{font-size:36px;min-width:132px}.metric-grid span{font-size:12px}.metric-chart{padding:22px 18px}.bar-label{font-size:12px}.bar-label strong{font-size:20px}.payload-track{font-size:10px}nav{gap:18px}.reference nav{line-height:2}}
 
 .serving-plot{display:block;width:100%;height:auto;max-width:400px;margin:0 auto 16px}
+.state-plot{display:block;width:100%;height:auto;margin:0 auto 20px;background:#fff;border-radius:4px}
 .reference img{max-width:100%;height:auto}
 
 .http-methods table{min-width:900px;overflow-wrap:normal}.http-methods td code{overflow-wrap:anywhere}
