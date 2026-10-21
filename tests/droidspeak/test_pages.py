@@ -36,21 +36,30 @@ def test_comparison_page_keeps_methods_and_results_separate() -> None:
 
     required = (
         "NOT A HEAD-TO-HEAD BENCHMARK",
+        "What we learned",
+        "Cross-model cache reuse can work",
+        "LMCache can move a cache between servers",
         "KV-Lingo used CoQA",
         "DroidSpeak used HotpotQA",
         "0 / 4",
         "4 / 32 layers",
+        "+2.68 F1",
+        "Modified MoT: what the four-arm attribution isolated",
+        "FULL-KEY CONTROL",
         "Could DroidSpeak improve KV-Lingo?",
         "not as a drop-in patch",
-        "LMCache is the transport layer, not a third repair method",
+        "LMCache is transport, not representation repair",
+        "Reproduce the public modified-MoT path",
     )
     for text in required:
         assert text in html
 
     assert 'href="kv-lingo.html"' in html
     assert 'href="droidspeak.html"' in html
+    assert 'href="https://github.com/mcgrof/MoT/' in html
     assert "<script" not in html
-    assert ".json" not in html
+    assert 'href="data/' not in html
+    assert 'src="data/' not in html
 
 
 def test_page_navigation_is_bidirectional() -> None:
