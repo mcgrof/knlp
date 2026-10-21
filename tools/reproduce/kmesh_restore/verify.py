@@ -50,7 +50,9 @@ def check_core(core: dict, mode: str, *, terminal: bool = False) -> None:
         raise ValueError("native operation evidence is incomplete")
 
 
-def read_delta(before: dict, after: dict, mode: str) -> dict:
+def read_delta(
+    before: dict, after: dict, mode: str, *, allow_empty: bool = False
+) -> dict:
     """Cross-check completed bytes and enforce the payload route independently."""
     check_core(before, mode)
     check_core(after, mode)
@@ -94,7 +96,9 @@ def read_delta(before: dict, after: dict, mode: str) -> dict:
         }:
             raise ValueError("native payload submission and completion do not agree")
     route_count = len(operations)
-    if route_count != delta["logical_requests"] or route_count == 0:
+    if route_count != delta["logical_requests"] or (
+        route_count == 0 and not allow_empty
+    ):
         raise ValueError("payload route counts do not account for every read")
     if delta["logical_bytes"] != route_count * CHUNK_BYTES:
         raise ValueError("restored bytes do not match the model chunk geometry")

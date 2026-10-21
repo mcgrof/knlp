@@ -282,6 +282,21 @@ class RestoreVerificationTests(unittest.TestCase):
             delta = verify.read_delta(core(mode), core(mode, CHUNKS), mode)
             self.assertEqual(delta["completed_padded_bytes"], 48 << 20)
 
+    def test_resident_control_requires_explicit_zero_read_permission(self):
+        for mode in ("direct", "staged"):
+            with self.assertRaisesRegex(ValueError, "route counts"):
+                verify.read_delta(core(mode), core(mode), mode)
+            delta = verify.read_delta(core(mode), core(mode), mode, allow_empty=True)
+            self.assertEqual(delta["completed_padded_bytes"], 0)
+            after = core(mode)
+            after["payload_reads"]["logical_bytes"] = CHUNK_BYTES
+            with self.assertRaisesRegex(ValueError, "model chunk geometry"):
+                verify.read_delta(core(mode), after, mode, allow_empty=True)
+            with self.assertRaisesRegex(ValueError, "registered route"):
+                verify.read_delta(
+                    core("staged"), core("staged"), "direct", allow_empty=True
+                )
+
     def test_compaction_retains_every_new_native_operation(self):
         before, after = core(count=16), core(count=32)
         lean_before, lean_after = compact_core_pair(before, after)
