@@ -59,6 +59,14 @@ def recipe_pins(recipe):
                 "a74386bbdf700e3cfd90a7bbfc9f37026afa652e",
             ),
         }
+    if recipe == "decision-http":
+        return {
+            **PINS,
+            "vllm": (
+                "2026-10-19-feature-asymmetric-geometry-transfer",
+                "cca5181dd50b24ff58f114e3ee7d200293c9fbf6",
+            ),
+        }
     raise ValueError("unknown installation recipe: " + recipe)
 
 
@@ -80,7 +88,7 @@ def main():
     parser.add_argument("root", type=Path)
     parser.add_argument(
         "--recipe",
-        choices=("historical-compact", "current", "recent-transfer"),
+        choices=("historical-compact", "current", "recent-transfer", "decision-http"),
         default="historical-compact",
     )
     args = parser.parse_args()

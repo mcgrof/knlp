@@ -5,6 +5,137 @@ The caller must also verify actual worker read/write formats. An allocation
 inventory alone cannot establish that an attention kernel consumed the cache.
 """
 
+import math
+
+
+def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks=None):
+    """Recompute retained allocation totals on CPU without inferring allocator pools."""
+    if (
+        record["arm"] != arm
+        or record["persistent_budget_bytes"] != persistent_budget_bytes
+    ):
+        raise ValueError("Retained storage identity or budget differs")
+    layers = record["layers"]
+    if len(layers) != geometry["layers"] or len({r["layer"] for r in layers}) != len(
+        layers
+    ):
+        raise ValueError("Missing or repeated attention layer storage")
+    blocks = record["physical_blocks_per_layer"]
+    if (
+        type(blocks) is not int
+        or blocks <= 0
+        or equal_blocks is not None
+        and blocks != equal_blocks
+    ):
+        raise ValueError("Physical block geometry differs")
+    if record["token_slots_per_layer"] != blocks * geometry["block_size"]:
+        raise ValueError("Token slots differ from actual blocks")
+    shape = [blocks, geometry["block_size"], geometry["kv_heads"], geometry["head_dim"]]
+    payload, scales = [], []
+    for layer in layers:
+        for side in ("K", "V"):
+            tensor = layer[side]
+            compressed = arm == "SF" or arm == "AF" and side == "V"
+            dtypes = (
+                {"torch.float8_e4m3fn", "torch.uint8"}
+                if compressed
+                else {"torch.float16"}
+            )
+            if (
+                tensor["shape"] != shape
+                or tensor["dtype"] not in dtypes
+                or tensor["element_size"] != (1 if compressed else 2)
+            ):
+                raise ValueError("Physical plane dtype or geometry differs")
+            payload.append(tensor)
+        if len(layer["scales"]) != 3 or any(
+            s["dtype"] != "torch.float32"
+            or s["element_size"] != 4
+            or s["logical_bytes"] != 4
+            for s in layer["scales"]
+        ):
+            raise ValueError("Missing native-Q or component FP32 scale")
+        scales.extend(layer["scales"])
+    for tensor in payload + scales:
+        if (
+            not tensor["device"].startswith("cuda:")
+            or tensor["logical_bytes"]
+            != math.prod(tensor["shape"]) * tensor["element_size"]
+            or tensor["tensor_pointer"]
+            != tensor["storage_pointer"]
+            + tensor["storage_offset"] * tensor["element_size"]
+            or len(tensor["shape"]) != len(tensor["strides"])
+            or any(x < 0 for x in tensor["strides"])
+            or tensor["storage_offset"] < 0
+        ):
+            raise ValueError("Invalid retained tensor storage geometry")
+        last = tensor["storage_offset"] + sum(
+            (n - 1) * stride for n, stride in zip(tensor["shape"], tensor["strides"])
+        )
+        if (last + 1) * tensor["element_size"] > tensor["storage_bytes"]:
+            raise ValueError("Tensor view exceeds its backing allocation")
+    for key, tensors in (
+        ("KV", payload),
+        ("scales_including_native_Q_constant", scales),
+        ("persistent_combined", payload + scales),
+    ):
+        expected = {}
+        for tensor in tensors:
+            address = (int(tensor["device"].split(":")[1]), tensor["storage_pointer"])
+            if address in expected and expected[address] != tensor["storage_bytes"]:
+                raise ValueError("Aliased backing sizes disagree")
+            expected[address] = tensor["storage_bytes"]
+        rows = record[key]["allocations"]
+        observed = {(r["device"], r["address"]): r["requested_bytes"] for r in rows}
+        if len(observed) != len(rows) or observed != expected:
+            raise ValueError("Allocation inventory differs from unique backing storage")
+        if any(
+            r["allocated_block_bytes"] < r["requested_bytes"]
+            or r["rounding_bytes"] != r["allocated_block_bytes"] - r["requested_bytes"]
+            for r in rows
+        ):
+            raise ValueError("Invalid CUDA block rounding")
+        if record[key]["allocation_count"] != len(rows) or any(
+            record[key][field] != sum(r[field] for r in rows)
+            for field in ("requested_bytes", "allocated_block_bytes", "rounding_bytes")
+        ):
+            raise ValueError("Retained allocation totals differ")
+    if record["KV"]["requested_bytes"] != sum(t["logical_bytes"] for t in payload):
+        raise ValueError("KV backing includes oversized persistent storage")
+    if (
+        record["persistent_combined"]["allocation_count"]
+        != record["KV"]["allocation_count"]
+        + record["scales_including_native_Q_constant"]["allocation_count"]
+    ):
+        raise ValueError("Scales and KV unexpectedly alias")
+    for side in ("K", "V"):
+        if record[side + "_payload_bytes"] != sum(
+            r[side]["logical_bytes"] for r in layers
+        ):
+            raise ValueError("Plane payload total differs")
+    used = record["persistent_combined"]["allocated_block_bytes"]
+    if (
+        used > persistent_budget_bytes
+        or record["budget_slack_bytes"] != persistent_budget_bytes - used
+    ):
+        raise ValueError("Persistent allocation exceeds budget or slack differs")
+    if arm != "AF" and record["workspace"] is not None:
+        raise ValueError("Control unexpectedly retains asymmetric staging")
+    return {
+        "arm": arm,
+        "physical_blocks_per_layer": blocks,
+        "token_slots_per_layer": blocks * geometry["block_size"],
+        "K_payload_bytes": record["K_payload_bytes"],
+        "V_payload_bytes": record["V_payload_bytes"],
+        "persistent_allocated_bytes": used,
+        "budget_slack_bytes": persistent_budget_bytes - used,
+        "scale_allocated_bytes": record["scales_including_native_Q_constant"][
+            "allocated_block_bytes"
+        ],
+        "workspace": record["workspace"],
+        "whole_process": record["whole_process"],
+    }
+
 
 def allocation_sizes(storages, segments):
     """Match unique live storage pointers to pinned Torch allocator blocks.

@@ -4,8 +4,44 @@
 import copy
 
 import pytest
+from decision_storage_fixture import memory_fixture
 
-from tools.kv.decision.paged_memory import allocation_sizes
+from tools.kv.decision.paged_memory import allocation_sizes, audit_record
+
+
+@pytest.mark.parametrize("arm", ["native_fi", "native_fa3", "AF", "SF"])
+def test_cpu_replay_counts_unique_backings_and_scale_rounding(arm):
+    geometry, record = memory_fixture(arm)
+    result = audit_record(record, arm, geometry, 4096, equal_blocks=2)
+    assert result["token_slots_per_layer"] == 32
+    assert result["scale_allocated_bytes"] == 1536
+    assert result["V_payload_bytes"] == (64 if arm in ("AF", "SF") else 128)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    ["dtype", "view", "rounding", "total", "oversized", "slots", "duplicate", "budget"],
+)
+def test_cpu_memory_replay_rejects_forged_geometry_and_totals(defect):
+    geometry, record = memory_fixture()
+    if defect == "dtype":
+        record["layers"][0]["V"]["dtype"] = "torch.float16"
+    elif defect == "view":
+        record["layers"][0]["V"]["storage_offset"] = 1
+    elif defect == "rounding":
+        record["KV"]["allocations"][0]["rounding_bytes"] += 1
+    elif defect == "total":
+        record["KV"]["allocated_block_bytes"] -= 1
+    elif defect == "oversized":
+        record["layers"][0]["V"]["storage_bytes"] *= 2
+    elif defect == "slots":
+        record["token_slots_per_layer"] += 1
+    elif defect == "duplicate":
+        record["layers"].append(copy.deepcopy(record["layers"][0]))
+    else:
+        record["budget_slack_bytes"] += 1
+    with pytest.raises(ValueError):
+        audit_record(record, "AF", geometry, 4096)
 
 
 def inputs():

@@ -148,3 +148,125 @@ declared persistent-cache budget, including scales. Staging and whole-process
 allocated/reserved memory are reported separately. Unknown/custom allocations
 fail closed. CPU tests cover aliasing, rounding and inconsistent snapshots;
 actual kernel read/write behavior still requires worker qualification.
+
+## Conditional actual-worker comparison
+
+The `production_*` tools implement the next experimental protocol; they do
+not yet establish a completed GPU qualification or serving result. Use them
+only after both full reference panels and their evidence audits finish. The
+optimized interface is fixed per-layer/component scaling. Dynamic SD's
+per-token/head scale plane is not implemented here, and SF cannot substitute
+for a stronger dynamic reference result.
+
+The worker pins the HTTP vLLM source
+`cca5181dd50b24ff58f114e3ee7d200293c9fbf6` and FlashInfer
+`800a550f8b736e49f8cfa136b82bfaf6d9d32711`. The installer's `decision-http`
+recipe selects those sources directly, with Torch 2.11.0+cu129 and
+Transformers 5.5.3. The separate `current` batch recipe keeps its existing
+source pins. Production requires one H100 80GB HBM3, at least twelve usable
+CPU cores of affinity and quota, and an otherwise idle device.
+
+Create `official-model-files.json` from the pinned checkpoint's immutable
+Git objects for `config.json`, `generation_config.json` and
+`model.safetensors.index.json`. The mapping `files` contains each filename's
+`bytes`, `digest` and `algorithm="git_blob_sha1"`; the top-level
+`model` and `revision` match the original checkpoint. This supplements the
+safetensor weight SHA-256 manifest. Preserve the original tokenizer and
+prompt token IDs rather than re-encoding displayed text.
+
+```sh
+python -m tools.kv.decision.production_prepare \
+  --analysis reference-analysis.json --evidence reference-evidence.json \
+  --reference-inputs inputs/qwen3 \
+  --reference-scales calibration/scales.json \
+  --official-model-files official-model-files.json --out production-inputs
+python -m tools.kv.native.october_setup install --recipe decision-http
+```
+
+Preparation requires committed, clean source and freezes all runner/input
+hashes in `production-inputs/protocol.json`. Preserve that file's SHA-256 as
+`PROTOCOL_SHA`. Download the pinned checkpoint into the Hugging Face snapshot
+cache used by the installed environment, then keep model access offline.
+The installer and full setup/package/source receipts remain part of the
+evidence. A helper creates no cloud allocation.
+
+For each of `native_fi`, `AF`, `native_fa3`, `SF`, run one fresh numerical and
+quality invocation. Use the installed Python for all worker commands:
+
+```sh
+install/env/bin/python -m tools.kv.decision.production_stage \
+  --install install --inputs production-inputs --protocol-sha256 "$PROTOCOL_SHA" \
+  --arm native_fi --phase numerical_quality --output worker-quality/native_fi
+install/env/bin/python -m tools.kv.decision.production_analysis \
+  --inputs production-inputs --protocol-sha256 "$PROTOCOL_SHA" \
+  --root worker-quality --output worker-quality-analysis.json
+```
+
+Q remains FP16 in every arm; fixed K/V scales transfer before warmup and
+graph capture. Native controls keep normal optimized dispatch. Numerical
+probes check raw page/slot routing, physical codes, independent FP32 causal
+attention, fresh/mixed/decode execution, near-capacity 8K batches and repeated
+graph/eager replay. They sample selected rows and do not prove every possible
+operand. Their bounds and case lists are frozen before worker outcomes.
+Numerical instrumentation has an explicit memory exemption; quality and
+timing do not. The full quality panel retains 64 documents/context, 200
+retrieval cases/context and all 1,319 GSM8K questions with the original parser
+and truncation semantics.
+
+The two quality objectives each retain four candidate/control slots at
+alpha .025/4. Serving preselects aggregate-math and requires the candidate
+to qualify against both native controls. Strict preservation is reported
+separately. A declared SF support gap requires retained launch/log/exit
+evidence from a failure before any quality item; its unused alpha slots
+remain unused. Neither a support failure nor an unestablished certificate
+is proof of task-quality degradation.
+
+Run `--phase equal_slots` in another fresh invocation for each completed
+worker arm. `production_memory_analysis` joins those captures with the
+quality analysis using `--equal-slot-root` and `--quality-analysis`. It
+reports 17,000-block equal-slot bytes separately from physical capacity
+under the common 40-GiB KV-plus-scale allocation budget. The worker uses
+eight server, two client and two control CPUs, a 68-GiB Torch reserved cap,
+and a 76-GiB driver envelope sampled every 100 ms. Gaps above 500 ms fail
+the resource audit; shorter peaks can be missed. Staging, weights and graph
+pools are separate from persistent cache storage.
+
+## Gated serving plans and analysis
+
+`production_serving_plan --phase initial` creates a native-FA3-only soak
+and a bounded calibration fallback sequence. Pass the frozen worker inputs,
+protocol hash, `--quality-analysis` and `--output`. Run the soak once, then
+calibration entries in manifest order until the first stable point. Keep all
+failed or unstable observations; later fallback plans remain unexecuted.
+
+For each plan, `production_stage --phase timing` additionally requires
+`--plan`, `--plan-sha256` and `--quality-analysis`. Every invocation has its
+own output directory and fresh server. `production_timing_analysis` replays
+the exact raw client/ASGI/worker, resource and build evidence using those
+same inputs plus `--root` and `--output`.
+
+`production_serving_plan --phase loads` requires `--previous-plans`,
+`--previous-manifest-sha256` and `--previous-results`. It independently
+replays the native evidence and freezes absolute limits at 110% of the
+selected pilot's p95. Run its complete nine-load native grid once. The
+`confirmation` phase uses the same previous-phase arguments to select the
+eligible 70–90% SLO-attainment load closest to 80%, or record that the bounded
+grid found no informative primary cell. No candidate timing selects the
+limits, load or quality route.
+
+Freeze and retain the complete confirmation manifest and every named plan
+before candidate timing. It specifies ten counterbalanced blocks, matching
+Poisson arrival traces across all qualified arms, 120-second arrival windows,
+120-second drain, 128 forced outputs and a fresh server per arm/block. The
+secondary 1K cell uses the same absolute limits; it and other 8K loads are
+descriptive. Requests ending after the fixed drain still contribute zero,
+even while bounded post-client cleanup waits for an empty scheduler.
+
+`production_serving_analysis` takes `--plans`, `--manifest-sha256`,
+`--root`, `--quality-analysis`, the frozen inputs/protocol and `--output`.
+It requires all ten primary paired blocks and the complete qualified control
+family. Genuine overload preemptions and failed offered requests remain in
+the data. Missing/changed captures, invalid resource evidence or client
+saturation prevent a serving improvement claim; there are no replacement
+blocks. Compiled-module/package identities must match worker quality, and
+generated-kernel inventories remain available at each boundary.
