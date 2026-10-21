@@ -67,6 +67,13 @@ details { margin: 28px 0 0; padding: 18px 22px; border: 1px solid var(--line); b
 summary { cursor: pointer; color: var(--cyan); font-weight: 600; }
 summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 5px; }
 details[open] summary { margin-bottom: 22px; }
+.prefetch-timeline { margin: 24px 0 30px; }
+.timeline-scroll { overflow-x: auto; border-radius: 14px; }
+.timeline-scroll:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+.timeline-scroll svg { display: block; width: 100%; min-width: 900px; height: auto; }
+.prefetch-timeline figcaption { max-width: 1030px; margin-top: 16px; color: var(--muted); font-size: 15px; }
+.timeline-scroll-hint { display: none; font-size: 13px; margin-top: 10px; }
+@media (max-width: 940px) { .timeline-scroll-hint { display: block; } }
 .papers { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 28px 0 0; }
 .papers li { min-width: 0; padding: 24px; background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 14px; }
 .papers .t { color: var(--text); font-weight: 600; }
@@ -989,6 +996,93 @@ The intended advantage is to move work into time the application already has
 before those requests arrive. Delaying useful requests just to manufacture
 that gap would not establish an overall speedup.</p>
 <h3>What the timing table means</h3>
+<figure class="prefetch-timeline" aria-labelledby="preload-diagram-caption">
+<div class="timeline-scroll" tabindex="0" role="region" aria-label="Shared-context preparation timeline; scroll horizontally on small screens">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 890" width="1100" height="890" role="img" aria-labelledby="preload-timeline-title preload-timeline-desc">
+<title id="preload-timeline-title">When we load shared context, and what the timing table measures</title>
+<desc id="preload-timeline-desc">Three timelines align at the first follow-up submission. Loading on arrival puts restoration inside the measured wait. Preparing early can finish before arrival, leaving only serving work after submission, or the context can still be unavailable and the request waits for the remaining preparation. Every green bracket ends at the first submitted follow-up's first token. Preparation before submission is excluded from the table. Bar lengths are schematic, not measured durations.</desc>
+<defs>
+  <marker id="preload-time-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#93a59a"/></marker>
+</defs>
+<rect x="1" y="1" width="1098" height="888" rx="14" fill="#0c1410" stroke="#30483a"/>
+<g font-family="Arial, Helvetica, sans-serif">
+  <text x="32" y="41" fill="#e2ece5" font-size="25" font-weight="700">Same follow-ups. Different times to start loading.</text>
+  <text x="32" y="72" fill="#b5c5ba" font-size="17">A schematic of the experiment — bar lengths are not measured times or promised speedups.</text>
+  <text x="48" y="117" fill="#93a59a" font-size="15" font-weight="700" letter-spacing="1">BEFORE FOLLOW-UPS ARRIVE</text>
+  <text x="569" y="117" fill="#2ae6a3" font-size="15" font-weight="700" letter-spacing="1">AFTER ARRIVAL: THE TABLE'S TIMER RUNS</text>
+  <path d="M 52 151 H 421 M 644 151 H 1044" fill="none" stroke="#62736a" stroke-width="2" marker-end="url(#preload-time-arrow)"/>
+  <rect x="433" y="130" width="202" height="58" rx="8" fill="#163326" stroke="#2ae6a3"/>
+  <text x="534" y="154" fill="#e2ece5" font-size="17" font-weight="700" text-anchor="middle">Follow-ups submitted</text>
+  <text x="534" y="176" fill="#2ae6a3" font-size="16" text-anchor="middle">Timer starts here</text>
+  <path d="M 534 188 V 810" stroke="#2ae6a3" stroke-width="2" stroke-dasharray="5 6" opacity=".65"/>
+
+  <text x="32" y="224" fill="#e2ece5" font-size="22" font-weight="700">1 · Load on arrival</text>
+  <text x="32" y="250" fill="#93a59a" font-size="16">Wait until the follow-ups arrive, then restore their shared context.</text>
+  <text x="256" y="312" fill="#93a59a" font-size="19" text-anchor="middle">No loading yet</text>
+  <rect x="534" y="277" width="190" height="64" rx="7" fill="#4a3417" stroke="#f0b65c"/>
+  <text x="629" y="303" fill="#ffe0ac" font-size="18" text-anchor="middle">Restore shared</text>
+  <text x="629" y="326" fill="#ffe0ac" font-size="18" text-anchor="middle">context from SSD</text>
+  <rect x="732" y="277" width="218" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="841" y="303" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="841" y="326" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="950" cy="309" r="6" fill="#2ae6a3"/>
+  <text x="965" y="303" fill="#e2ece5" font-size="17">First token</text>
+  <text x="965" y="325" fill="#2ae6a3" font-size="16">Timer stops</text>
+  <path d="M 534 357 V 367 H 950 V 357" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="742" y="392" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <path d="M 32 412 H 1068" stroke="#263b2e"/>
+  <text x="32" y="444" fill="#e2ece5" font-size="22" font-weight="700">2 · Prepare early: context is ready when follow-ups arrive</text>
+  <rect x="64" y="482" width="390" height="64" rx="7" fill="#13363c" stroke="#62dce5"/>
+  <text x="259" y="508" fill="#b8f6fa" font-size="18" text-anchor="middle">Warm request: restore shared context</text>
+  <text x="259" y="531" fill="#b8f6fa" font-size="16" text-anchor="middle">+ generate 1 preparation token</text>
+  <path d="M 454 514 H 534" stroke="#62dce5" stroke-width="2" stroke-dasharray="4 5"/>
+  <text x="494" y="474" fill="#62dce5" font-size="16" text-anchor="middle">Ready</text>
+  <rect x="534" y="482" width="268" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="668" y="508" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="668" y="531" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="802" cy="514" r="6" fill="#2ae6a3"/>
+  <text x="817" y="508" fill="#e2ece5" font-size="17">First token</text>
+  <text x="817" y="530" fill="#2ae6a3" font-size="16">Timer stops</text>
+  <path d="M 64 564 V 574 H 534 V 564" fill="none" stroke="#62dce5" stroke-width="2"/>
+  <text x="299" y="599" fill="#62dce5" font-size="17" text-anchor="middle">Head start — excluded from the table's wait</text>
+  <path d="M 534 564 V 574 H 802 V 564" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="668" y="599" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <path d="M 32 622 H 1068" stroke="#263b2e"/>
+  <text x="32" y="655" fill="#e2ece5" font-size="22" font-weight="700">3 · Prepare early: context is still unavailable at arrival</text>
+  <rect x="302" y="694" width="232" height="64" rx="7" fill="#13363c" stroke="#62dce5"/>
+  <text x="418" y="720" fill="#b8f6fa" font-size="18" text-anchor="middle">Start warm request</text>
+  <text x="418" y="743" fill="#b8f6fa" font-size="16" text-anchor="middle">Preparation underway</text>
+  <rect x="534" y="694" width="218" height="64" rx="7" fill="#4a3417" stroke="#f0b65c"/>
+  <text x="643" y="720" fill="#ffe0ac" font-size="18" text-anchor="middle">Wait until shared</text>
+  <text x="643" y="743" fill="#ffe0ac" font-size="18" text-anchor="middle">context is usable</text>
+  <text x="752" y="686" fill="#62dce5" font-size="15" text-anchor="middle">Context ready</text>
+  <rect x="760" y="694" width="222" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="871" y="720" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="871" y="743" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="982" cy="726" r="6" fill="#2ae6a3"/>
+  <text x="997" y="720" fill="#e2ece5" font-size="17">First token</text>
+  <text x="997" y="742" fill="#2ae6a3" font-size="15">Timer stops</text>
+  <path d="M 302 774 V 784 H 534 V 774" fill="none" stroke="#62dce5" stroke-width="2"/>
+  <text x="418" y="809" fill="#62dce5" font-size="17" text-anchor="middle">Head start — excluded</text>
+  <path d="M 534 774 V 784 H 982 V 774" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="758" y="809" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <text x="32" y="852" fill="#e2ece5" font-size="17">The timer follows the first request submitted, not whichever request answers fastest.</text>
+  <text x="32" y="877" fill="#b5c5ba" font-size="16">The warm-up token is preparation output. It is not the follow-up token that stops the timer.</text>
+</g>
+</svg>
+</div>
+<figcaption id="preload-diagram-caption"><strong>Only the green brackets are measured by the timing table.</strong>
+Starting early moves some preparation before request submission. If the shared
+context is still unavailable when a follow-up arrives, its remaining wait counts.
+The 0, 25 and 100 ms columns request different head starts; they are not loading
+durations. The “already ready” control starts with the context available, as at
+the arrival line in row 2. The bars illustrate event order; the actual latency
+results are in the table below.</figcaption>
+<p class="timeline-scroll-hint">On a small screen, scroll the diagram sideways to follow the timeline.</p>
+</figure>
 <p>Every value below is <strong>milliseconds from submitting the first
 follow-up request until that request produces its first token</strong>.
 Lower is better. It is not the fastest answer among the group or the time for
