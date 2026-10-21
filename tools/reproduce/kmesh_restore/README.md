@@ -455,3 +455,15 @@ case and its limits. Export an independently verified capture on CPU with:
 python tools/reproduce/kmesh_restore/publish_retained.py /path/to/results \
   --output public-results.json
 ```
+
+## Demand already reads once: the early-loading comparison
+
+`make defconfig-kmesh-prefetch-cuda` compares retained demand against early
+loading while both cold controls perform exactly one 48 MiB backend fill.
+It freezes arrival before preparation and charges every late submission to
+the reported waits. The host-DRAM and engine-resident controls are separate
+placement references. Follow [the three-phase instructions](PREFETCH.md)
+for native qualification, readiness-based lead selection, independent-process
+confirmation and saved-capture verification. The
+[public result](https://knlp.io/kmesh.html#prefetch-demand) keeps the first
+child's first-token wait separate from the last child's eighth-token time.
