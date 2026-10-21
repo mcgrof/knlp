@@ -275,3 +275,20 @@ the data. Missing/changed captures, invalid resource evidence or client
 saturation prevent a serving improvement claim; there are no replacement
 blocks. Compiled-module/package identities must match worker quality, and
 generated-kernel inventories remain available at each boundary.
+
+## Reference figures
+
+With Matplotlib installed, `python -m tools.kv.decision.figures --analysis
+REFERENCE-ANALYSIS.json --evidence REFERENCE-EVIDENCE.json --receipt
+REFERENCE-ANALYSIS-RECEIPT.json --out figures` verifies the complete reader
+receipt and both models' panel counts before exporting aggregate-only JSON,
+SVG and PNG files. It excludes raw question text and operator metadata.
+The figures show descriptive paired math intervals and tensor backing bytes;
+neither a descriptive interval nor storage alone establishes a certificate
+or serving benefit. Certificate labels in the JSON retain the full objective.
+
+Use `--data figures/reference-aggregates.json --out redrawn` instead to
+redraw a published aggregate bundle. This reproduces figures without
+independently re-auditing the raw experiment. The figure manifest records
+the renderer, plotting version and output hashes. Render checks use a
+visible synthetic-data watermark and are not experimental evidence.
