@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cross-model KV-cache sharing: KV-Lingo and DroidSpeak</title>
-<meta name="description" content="A plain comparison of two cross-model KV-cache sharing efforts: KV-Lingo translates cache tensors, while DroidSpeak reuses most layers and recomputes a receiver interval.">
+<title>Cross-model KV-cache sharing: translation, replay, and recomputation</title>
+<meta name="description" content="Measured KNLP results for KV-Lingo, DroidSpeak, and modified Mixture-of-Translators, with public reproduction instructions and explicit quality limits.">
 <link rel="canonical" href="https://knlp.io/kv-cache-sharing.html">
 <style>
 :root{
   --bg:#070a0d;--bg2:#0c1117;--card:#111821;--card2:#0d141c;--line:#26313d;
   --text:#e7edf2;--muted:#99a7b3;--dim:#677683;--lingo:#b69aff;
-  --droid:#52e1bd;--blue:#64b6ff;--amber:#f1ba67;--red:#f27f7f;
+  --droid:#52e1bd;--mot:#f0a06b;--blue:#64b6ff;--amber:#f1ba67;--red:#f27f7f;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
 }
@@ -20,37 +20,38 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}a:foc
 header{position:sticky;top:0;z-index:10;background:rgba(7,10,13,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--blue)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
 main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--blue)}h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1080px;margin:16px 0 24px}h2{font-size:30px;letter-spacing:-.025em;margin:0 0 12px}.lead{max-width:990px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
 .verdict{margin-top:30px;padding:22px 24px;border:1px solid rgba(100,182,255,.42);border-left:4px solid var(--blue);border-radius:10px;background:linear-gradient(110deg,rgba(100,182,255,.08),rgba(82,225,189,.025))}.verdict b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--blue);text-transform:uppercase;margin-bottom:8px}.verdict span{font-size:18px}
-.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.badge.lingo{color:var(--lingo);border-color:rgba(182,154,255,.45)}.badge.droid{color:var(--droid);border-color:rgba(82,225,189,.45)}.badge.warn{color:var(--amber);border-color:rgba(241,186,103,.45)}
-section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);max-width:990px;margin:0 0 28px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:11px;padding:22px}.card.lingo{border-top:3px solid var(--lingo)}.card.droid{border-top:3px solid var(--droid)}.card h3{margin:5px 0 10px;font-size:20px}.card p{color:var(--muted);margin:9px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}.kicker.lingo{color:var(--lingo)}.kicker.droid{color:var(--droid)}.kicker.info{color:var(--blue)}
-.decision{display:inline-block;margin-top:12px;padding:5px 9px;border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.decision.fail{color:var(--red);border:1px solid rgba(242,127,127,.45)}.decision.pass{color:var(--droid);border:1px solid rgba(82,225,189,.45)}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.badge.lingo{color:var(--lingo);border-color:rgba(182,154,255,.45)}.badge.droid{color:var(--droid);border-color:rgba(82,225,189,.45)}.badge.mot{color:var(--mot);border-color:rgba(240,160,107,.48)}.badge.warn{color:var(--amber);border-color:rgba(241,186,103,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);max-width:990px;margin:0 0 28px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:11px;padding:22px}.card.lingo{border-top:3px solid var(--lingo)}.card.droid{border-top:3px solid var(--droid)}.card.mot{border-top:3px solid var(--mot)}.card h3{margin:5px 0 10px;font-size:20px}.card p{color:var(--muted);margin:9px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}.kicker.lingo{color:var(--lingo)}.kicker.droid{color:var(--droid)}.kicker.mot{color:var(--mot)}.kicker.info{color:var(--blue)}
+.decision{display:inline-block;margin-top:12px;padding:5px 9px;border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.decision.fail{color:var(--red);border:1px solid rgba(242,127,127,.45)}.decision.pass{color:var(--droid);border:1px solid rgba(82,225,189,.45)}.decision.signal{color:var(--mot);border:1px solid rgba(240,160,107,.48)}
 .diagram{display:grid;grid-template-columns:1fr 48px 1fr;gap:12px;align-items:stretch}.box{padding:21px;border:1px solid var(--line);border-radius:10px;background:var(--card2)}.box strong{display:block;font:700 11px var(--mono);letter-spacing:.08em;margin-bottom:9px}.box.lingo strong{color:var(--lingo)}.box.droid strong{color:var(--droid)}.arrow{display:grid;place-items:center;color:var(--dim);font:26px var(--mono)}.cacheline{display:flex;height:42px;margin-top:16px;border:1px solid var(--line);border-radius:6px;overflow:hidden}.cacheline span{display:grid;place-items:center;text-align:center;font:700 9px/1.2 var(--mono);padding:5px}.translated{flex:1;background:rgba(182,154,255,.2);color:#d8caff}.reused{flex:3;background:#263849;color:#b8d8ed}.native{flex:1;background:rgba(82,225,189,.22);color:#a8f5dd}
-.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card2)}table{width:100%;border-collapse:collapse;min-width:880px}caption{text-align:left;padding:16px;color:var(--muted)}th,td{padding:14px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#101821;font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}th:nth-child(2){color:var(--lingo)}th:nth-child(3){color:var(--droid)}td{color:var(--muted)}td:first-child{width:18%;color:var(--text);font-weight:700}tbody tr:last-child td{border-bottom:0}
-.metric{font:700 clamp(24px,4vw,38px)/1.1 var(--mono);margin:10px 0}.metric.lingo{color:var(--lingo)}.metric.droid{color:var(--droid)}.metric.warn{color:var(--amber)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card2)}table{width:100%;border-collapse:collapse;min-width:880px}caption{text-align:left;padding:16px;color:var(--muted)}th,td{padding:14px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#101821;font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}th:nth-child(2){color:var(--lingo)}th:nth-child(3){color:var(--droid)}th:nth-child(4){color:var(--mot)}.mot-table th:nth-child(n+2){color:var(--muted)}.mot-table th:nth-child(3){color:var(--mot)}td{color:var(--muted)}td:first-child{width:18%;color:var(--text);font-weight:700}tbody tr:last-child td{border-bottom:0}
+.metric{font:700 clamp(24px,4vw,38px)/1.1 var(--mono);margin:10px 0}.metric.lingo{color:var(--lingo)}.metric.droid{color:var(--droid)}.metric.mot{color:var(--mot)}.metric.warn{color:var(--amber)}
 .note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(241,186,103,.06);color:var(--muted)}.note strong{color:var(--text)}
 .rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--droid)}.rule.warn{border-left-color:var(--amber)}.rule.info{border-left-color:var(--blue)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--droid)}.rule.warn strong{color:var(--amber)}.rule.info strong{color:var(--blue)}
 .steps{counter-reset:hybrid;display:grid;grid-template-columns:repeat(3,1fr);gap:13px}.steps div{counter-increment:hybrid;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:18px;color:var(--muted)}.steps div:before{content:"STEP " counter(hybrid);display:block;color:var(--blue);font:700 10px var(--mono);letter-spacing:.1em;margin-bottom:8px}
-.links{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.links a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.links a:hover{border-color:rgba(100,182,255,.55);text-decoration:none}.links b{display:block;color:var(--text);margin-bottom:5px}.links span{color:var(--muted)}code{font-family:var(--mono);font-size:.92em;color:#b9dbff}.fine{font-size:12px;color:var(--dim)}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
-@media(max-width:850px){.grid3,.steps{grid-template-columns:1fr}.diagram{grid-template-columns:1fr}.arrow{transform:rotate(90deg);min-height:30px}}
+.links{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.links a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.links a:hover{border-color:rgba(100,182,255,.55);text-decoration:none}.links b{display:block;color:var(--text);margin-bottom:5px}.links span{color:var(--muted)}code{font-family:var(--mono);font-size:.92em;color:#b9dbff}pre{overflow-x:auto;margin:14px 0 0;padding:17px;border:1px solid var(--line);border-radius:8px;background:#080d12;color:#b9dbff;font:12px/1.6 var(--mono);white-space:pre}.fine{font-size:12px;color:var(--dim)}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:1000px){.grid4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:850px){.grid3,.grid4,.steps{grid-template-columns:1fr}.diagram{grid-template-columns:1fr}.arrow{transform:rotate(90deg);min-height:30px}}
 @media(max-width:700px){main{padding:48px 17px 70px}.grid2,.links{grid-template-columns:1fr}.spacer{display:none}}
 </style>
 </head>
 <body>
 <header><nav aria-label="Page navigation">
-<a class="logo" href="./">KNLP</a><span class="spacer"></span><a href="#efforts">two efforts</a><a href="#compare">compare</a><a href="#evidence">evidence</a><a href="#hybrid">possible hybrid</a><a href="#lmcache">LMCache</a>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span><a href="#efforts">three efforts</a><a href="#compare">compare</a><a href="#evidence">evidence</a><a href="#mot">MoT attribution</a><a href="#reproduce">reproduce</a><a href="#lmcache">LMCache</a>
 </nav></header>
 <main>
 <div class="hero">
 <div class="eyebrow">Cross-model KV-cache sharing · evidence map · October 2026</div>
-<h1>Two ways to hand a KV cache to a different model.</h1>
-<p class="lead"><strong>KV-Lingo translates cached keys and values into the receiver's representation. DroidSpeak keeps most sender layers and recomputes one receiver-layer interval.</strong> Both try to avoid a full receiver prefill after a model change. They use different model pairs, data, controls, and decision rules.</p>
-<div class="verdict"><b>Evidence in one sentence</b><span>Our unrestricted Qwen3-4B/8B KV-Lingo reproduction did not qualify, while our same-base Mistral-adapter DroidSpeak mechanism passed its held-out quality rule; neither result yet proves a production cross-model cache-sharing system.</span></div>
-<div class="badges"><span class="badge lingo">KV-LINGO: TRANSLATE</span><span class="badge droid">DROIDSPEAK: RECOMPUTE A WINDOW</span><span class="badge warn">NOT A HEAD-TO-HEAD BENCHMARK</span></div>
+<h1>Three tested ways to repair a cache after a model change.</h1>
+<p class="lead"><strong>KV-Lingo translates retained cache spans. DroidSpeak recomputes one receiver-layer interval. Modified Mixture-of-Translators (MoT) injects translated K/V into a source-selected reduced-key replay.</strong> All three try to avoid full receiver prefill, but they use different model pairs, data, controls, and quality rules.</p>
+<div class="verdict"><b>Evidence in one sentence</b><span>DroidSpeak passed one same-base adapter-pair quality test; unrestricted Qwen3-4B/8B KV-Lingo did not qualify; and modified MoT showed that translation helps one reduced-key cohort, but the replay policy still caused most of the measured loss.</span></div>
+<div class="badges"><span class="badge lingo">KV-LINGO: TRANSLATE SPANS</span><span class="badge droid">DROIDSPEAK: RECOMPUTE A WINDOW</span><span class="badge mot">MODIFIED MoT: TRANSLATE + SELECTED REPLAY</span><span class="badge warn">NOT A HEAD-TO-HEAD BENCHMARK</span></div>
 </div>
 
 <section id="efforts">
 <h2>Each effort answers a different question</h2>
 <p class="sub">A KV cache stores the attention keys and values for prior tokens. Ordinary reuse requires the same model weights and cache layout. Cross-model reuse needs a method to repair the representation mismatch.</p>
-<div class="grid2">
+<div class="grid3">
 <article class="card lingo">
 <div class="kicker lingo">Effort 1 · KV-Lingo</div><h3>Translate each model's missing cache spans</h3>
 <p>Learn separate linear key and value maps for corresponding receiver layers. Keep one cache line per model. When a model returns, translate only the conversation spans that it did not produce itself.</p>
@@ -65,79 +66,162 @@ section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);
 <span class="decision pass">MECHANISM QUALITY QUALIFIED</span>
 <p><a href="droidspeak.html">Read the full DroidSpeak result →</a></p>
 </article>
+<article class="card mot">
+<div class="kicker mot">Effort 3 · modified MoT</div><h3>Translate K/V inside selected-key replay</h3>
+<p>Use source attention to select at most 128 prior keys. Replay the receiver with exact bottom layers and inject translated K/V at four configured target layers.</p>
+<p><strong>Tested here:</strong> one frozen GPT-2 to GPT-2-medium checkpoint on 500 items from five question-answering tasks, with four inference-only control arms.</p>
+<span class="decision signal">MECHANISM SIGNAL; RECIPE NOT QUALIFIED</span>
+<p><a href="#mot">Read the attribution result →</a></p>
+</article>
 </div>
 </section>
 
 <section aria-labelledby="mechanism-title">
-<h2 id="mechanism-title">The representation repair happens in different places</h2>
-<div class="diagram">
-<div class="box lingo"><strong>KV-LINGO · REPAIR CACHE TENSORS</strong><span>Source KV passes through learned layer-specific maps before the receiver uses it.</span><div class="cacheline" aria-hidden="true"><span class="translated">translated K/V</span><span class="translated">translated K/V</span><span class="translated">translated K/V</span></div></div>
-<div class="arrow" aria-hidden="true">↔</div>
-<div class="box droid"><strong>DROIDSPEAK · REPAIR MODEL STATE WITH COMPUTE</strong><span>Sender KV stays unchanged outside a profiled receiver interval.</span><div class="cacheline" aria-hidden="true"><span class="reused">sender KV</span><span class="native">receiver recompute</span><span class="reused">sender KV</span></div></div>
+<h2 id="mechanism-title">The three methods repair different state</h2>
+<div class="grid3">
+<div class="card lingo"><div class="kicker lingo">KV-Lingo</div><h3>Repair retained spans</h3><p>Source K/V passes through learned layer-specific maps. Each model keeps a cache line with native and translated spans.</p></div>
+<div class="card droid"><div class="kicker droid">DroidSpeak</div><h3>Repair a layer interval</h3><p>Sender K/V stays outside a profiled interval. The receiver recomputes native state inside that interval.</p></div>
+<div class="card mot"><div class="kicker mot">Modified MoT</div><h3>Repair a reduced-key replay</h3><p>Source attention selects keys. Learned translators inject receiver-width K/V into that selected replay trajectory.</p></div>
 </div>
 </section>
 
 <section id="compare">
 <h2>Method comparison</h2>
-<p class="sub">The table compares the method contracts. It does not compare raw scores because the two evaluations are not matched.</p>
+<p class="sub">The table compares the method contracts. It does not compare raw scores because the three evaluations are not matched.</p>
 <div class="table-wrap">
 <table>
 <caption>Cross-model KV-cache sharing methods implemented in knlp.</caption>
-<thead><tr><th>Axis</th><th>KV-Lingo</th><th>DroidSpeak</th></tr></thead>
+<thead><tr><th>Axis</th><th>KV-Lingo</th><th>DroidSpeak</th><th>Modified MoT</th></tr></thead>
 <tbody>
-<tr><td>Repair operation</td><td>Translate keys and values with learned, layer-specific linear maps.</td><td>Recompute one native receiver-layer interval; reuse sender KV elsewhere.</td></tr>
-<tr><td>New training</td><td>Yes. Each directed model pair needs fitted key and value maps.</td><td>No new weights. An offline profiler selects an interval for the model pair.</td></tr>
-<tr><td>Receiver compute</td><td>Apply maps to missing spans, then continue normal decoding.</td><td>Run the selected receiver layers over the cached prompt, then continue decoding.</td></tr>
-<tr><td>Compatibility</td><td>Needs defined layer correspondence and trained maps. It can bridge different hidden widths when the maps have matching source and target shapes.</td><td>Our implementation requires the same decoder architecture, layer layout, hidden shape, and token vocabulary.</td></tr>
-<tr><td>Cache ownership</td><td>One retained cache line per participating model, with translated copies of missing spans.</td><td>One hybrid cache: sender KV outside the interval and receiver KV inside it.</td></tr>
-<tr><td>Repeated switches</td><td>Central to the tested ten-turn protocol.</td><td>Our current result tests a single sender-to-receiver handoff.</td></tr>
-<tr><td>Measured quality result</td><td>No checkpoint pair passed the full either-model-first rule. Three of four passed both controls only when 8B started; that is unconfirmed.</td><td>The four-layer interval passed the held-out receiver-relative quality rule. Direct full reuse failed.</td></tr>
-<tr><td>Measured system result</td><td>No end-to-end latency, cost, or memory saving established.</td><td>A 4.03× local time-to-first-token ratio is a compute-path signal, not a distributed-system speedup.</td></tr>
-<tr><td>Current status</td><td>Unrestricted Qwen3-4B/8B sharing unqualified. Restricted 8B-first scheduling needs untouched confirmation.</td><td>Mechanism qualified for one adapter pair. Remote serving integration remains open.</td></tr>
+<tr><td>Repair operation</td><td>Translate keys and values with learned, layer-specific linear maps.</td><td>Recompute one native receiver-layer interval; reuse sender KV elsewhere.</td><td>Select prior keys from source attention, replay the receiver, and inject translated K/V at target layers.</td></tr>
+<tr><td>New training</td><td>Yes. Each directed model pair needs fitted key and value maps.</td><td>No new weights. An offline profiler selects an interval for the model pair.</td><td>Yes. Two translator experts use Top-1 routing for the fixed directed model pair.</td></tr>
+<tr><td>Receiver compute</td><td>Apply maps to missing spans, then continue normal decoding.</td><td>Run the selected receiver layers over the cached prompt, then continue decoding.</td><td>Run exact bottom layers and a complete selected-key receiver replay; inject at layers 17, 19, 21, and 23.</td></tr>
+<tr><td>Compatibility</td><td>Needs defined layer correspondence and trained maps. It can bridge different hidden widths when the maps have matching source and target shapes.</td><td>Our implementation requires the same decoder architecture, layer layout, hidden shape, and token vocabulary.</td><td>The tested GPT-2 pair shares token IDs but has different widths and depths. The frozen recipe uses explicit depth-ratio channel alignment.</td></tr>
+<tr><td>Cache ownership</td><td>One retained cache line per participating model, with translated copies of missing spans.</td><td>One hybrid cache: sender KV outside the interval and receiver KV inside it.</td><td>A source cache and selection ledger feed a receiver replay with optional translated injections.</td></tr>
+<tr><td>Repeated switches</td><td>Central to the tested ten-turn protocol.</td><td>Our current result tests a single sender-to-receiver handoff.</td><td>Not tested. The attribution run evaluates one frozen source-to-receiver path per item.</td></tr>
+<tr><td>Measured quality result</td><td>No checkpoint pair passed the full either-model-first rule. Three of four passed both controls only when 8B started; that is unconfirmed.</td><td>The four-layer interval passed the held-out receiver-relative quality rule. Direct full reuse failed.</td><td>Translation improved NewsQA over the same replay without injection by 2.68 F1 points, but remained 8.56 points below native. Other task intervals crossed zero.</td></tr>
+<tr><td>Measured system result</td><td>No end-to-end latency, cost, or memory saving established.</td><td>A 4.03× local time-to-first-token ratio is a compute-path signal, not a distributed-system speedup.</td><td>No serving latency or memory saving established. Four diagnostic generation arms are not a serving benchmark.</td></tr>
+<tr><td>Current status</td><td>Unrestricted Qwen3-4B/8B sharing unqualified. Restricted 8B-first scheduling needs untouched confirmation.</td><td>Mechanism qualified for one adapter pair. Remote serving integration remains open.</td><td>Translator mechanism signal on NewsQA. The fixed selected-replay recipe is not quality-qualified and training is stopped.</td></tr>
 </tbody>
 </table>
 </div>
-<p class="note"><strong>Do not rank the methods from these numbers.</strong> KV-Lingo used CoQA, two model sizes, ten alternating turns, one training seed, and custom deployment gates. DroidSpeak used HotpotQA, two adapters on one base, a profile/held-out split, and the paper's 5% receiver-relative rule. Raw F1 and timing are not comparable across the studies.</p>
+<p class="note"><strong>Do not rank the methods from these numbers.</strong> KV-Lingo used CoQA and ten alternating turns. DroidSpeak used HotpotQA and a profile/held-out split. Modified MoT used five 100-item cohorts and a different GPT-2 pair. The models, tasks, controls, and quality rules differ.</p>
 </section>
 
 <section id="evidence">
 <h2>What the current evidence says</h2>
-<p class="sub">Token F1 measures normalized word overlap with the reference answer on a scale from 0 to 1. Each study compares its treatment only with its own matched controls.</p>
-<div class="grid2">
+<p class="sub">Token F1 measures normalized word overlap with the reference answer. Each study compares its treatment only with its own matched controls.</p>
+<div class="grid3">
 <div class="card lingo"><div class="kicker lingo">KV-Lingo outcome</div><div class="metric lingo">0 / 4</div><p>Forward/reverse checkpoint pairs passed the full rule across both starting models and both native references.</p><p>All eight 4B-start comparisons failed at least one gate. The 8B-first signal is a narrower development result, not a qualified deployment.</p></div>
 <div class="card droid"><div class="kicker droid">DroidSpeak outcome</div><div class="metric droid">4 / 32 layers</div><p>The selected receiver interval scored 0.3149 held-out F1 versus 0.2887 for full receiver prefill and a required floor of 0.2742.</p><p>Direct cache reuse scored 0.2263. Some receiver recomputation was necessary.</p></div>
+<div class="card mot"><div class="kicker mot">Modified MoT outcome</div><div class="metric mot">+2.68 F1</div><p>On NewsQA, translated selected replay scored 11.11% versus 8.43% without injection. The paired 95% interval was +0.52 to +4.82 points.</p><p>Exact native scored 19.67%. Translation recovered about 24% of the observed replay-to-native gap; it did not qualify the recipe.</p></div>
 </div>
 <div class="grid3" style="margin-top:18px">
-<div class="card rule info"><strong>SUPPORTED</strong><p>Cross-model cache repair can preserve quality for the tested same-base DroidSpeak adapter pair. Learned KV translation acquired useful structure but did not meet our unrestricted Qwen3-4B/8B rule.</p></div>
-<div class="card rule warn"><strong>NOT YET SUPPORTED</strong><p>Neither study proves arbitrary cross-family cache reuse, a universal checkpoint, production reliability, or a full-path cost saving.</p></div>
-<div class="card rule warn"><strong>ARTIFACT BOUNDARY</strong><p>KV-Lingo produced trained pair-specific maps, but those tested tensors are not published. DroidSpeak produced no trained checkpoint; its reusable artifact is the selected interval and runtime configuration.</p></div>
+<div class="card rule info"><strong>SUPPORTED</strong><p>Cross-model cache repair can preserve quality for the tested same-base DroidSpeak adapter pair. In modified MoT, learned translation also adds measurable value inside one reduced-key cohort.</p></div>
+<div class="card rule warn"><strong>NOT YET SUPPORTED</strong><p>No study here proves arbitrary cross-family reuse, a universal checkpoint, production reliability, or an end-to-end cost saving. Modified MoT does not pass an overall quality gate.</p></div>
+<div class="card rule warn"><strong>ARTIFACT BOUNDARY</strong><p>The public code and source pins are available. The exact tested KV-Lingo and modified-MoT checkpoint tensors are not published. DroidSpeak produces configuration, not trained weights.</p></div>
 </div>
+</section>
+
+<section id="mot">
+<h2>Modified MoT: what the four-arm attribution isolated</h2>
+<p class="sub">The frozen run did not train or profile. It kept one GPT-2 to GPT-2-medium checkpoint, five 100-item task cohorts, one source-derived selection procedure, Top-S=128, two exact bottom layers, greedy decoding, and a 64-token output cap. Each item ran four arms.</p>
+<div class="grid4">
+<div class="card"><div class="kicker info">N · native</div><h3>Exact receiver cache</h3><p>Full receiver prefill. This is the quality reference.</p></div>
+<div class="card mot"><div class="kicker mot">T · translated</div><h3>Selected replay + learned K/V</h3><p>The candidate path. It injects frozen translated K/V into the reduced-key replay.</p></div>
+<div class="card"><div class="kicker info">R · replay</div><h3>Selected replay, no injection</h3><p>This isolates what translation adds while holding key selection and replay fixed.</p></div>
+<div class="card"><div class="kicker info">O · native injection</div><h3>Selected replay + native K/V</h3><p>Receiver K/V from full prefill is injected at the same layers. It is a trajectory-mismatch control, not an upper bound.</p></div>
+</div>
+<div class="table-wrap" style="margin-top:20px">
+<table class="mot-table">
+<caption>Frozen attribution scores, in percentage points. The interval is the paired T−R difference.</caption>
+<thead><tr><th>Task</th><th>N</th><th>T</th><th>R</th><th>O</th><th>T−R, 95% interval</th></tr></thead>
+<tbody>
+<tr><td>BoolQ accuracy</td><td>56.00</td><td>61.00</td><td>59.00</td><td>62.00</td><td>+2.00 [−5.00, +9.00]</td></tr>
+<tr><td>MMLU-Redux accuracy</td><td>17.00</td><td>16.00</td><td>17.00</td><td>17.00</td><td>−1.00 [−6.12, +4.00]</td></tr>
+<tr><td>NewsQA token F1</td><td>19.67</td><td>11.11</td><td>8.43</td><td>8.90</td><td>+2.68 [+0.52, +4.82]</td></tr>
+<tr><td>PubMedQA accuracy</td><td>29.00</td><td>37.00</td><td>41.00</td><td>36.00</td><td>−4.00 [−10.00, +2.00]</td></tr>
+<tr><td>SQuAD token F1</td><td>38.63</td><td>41.40</td><td>38.50</td><td>37.97</td><td>+2.90 [−1.72, +8.74]</td></tr>
+</tbody>
+</table>
+</div>
+<div class="grid3" style="margin-top:18px">
+<div class="card rule good"><strong>TRANSLATOR SIGNAL</strong><p>NewsQA always uses reduced keys. T beat R by 2.68 F1 points, and the document-cluster interval excludes zero. This is evidence that the frozen translator adds useful information inside that path.</p></div>
+<div class="card rule warn"><strong>DOMINANT OBSERVED LOSS</strong><p>R was 11.24 points below N on NewsQA. T recovered about 24% of that gap and remained 8.56 points below N. The fixed replay path and cache trajectory dominate the observed deficit.</p></div>
+<div class="card rule info"><strong>FULL-KEY CONTROL</strong><p>R and N produced identical tokens on all 189 items whose contexts fit inside Top-S=128. Divergence starts when the path actually removes keys.</p></div>
+</div>
+<p class="note"><strong>Interpretation limit:</strong> the result does not separate source-guided ranking from the later selected-attention trajectory. The configured layer-23 injection has no downstream prefix-cache layer, so only the first three injection sites can change the returned cache. The other T−R intervals cross zero. SQuAD has only four context clusters, and several classification cohorts have weak or invalid-answer baselines. No speed or memory claim follows.</p>
 </section>
 
 <section id="hybrid">
 <h2>Could DroidSpeak improve KV-Lingo?</h2>
-<p class="sub"><strong>Yes as a research design, but not as a drop-in patch for the current Qwen3-4B/8B pair.</strong> DroidSpeak offers a way to spend native receiver compute where translation error is most damaging, while KV-Lingo can translate the cache outside that interval.</p>
+<p class="sub"><strong>Yes as a research design, but not as a drop-in patch for the current Qwen3-4B/8B pair.</strong> DroidSpeak offers a way to spend native receiver compute where translation or selected replay is most damaging. The modified-MoT attribution strengthens this rationale because replay, not missing translated injection alone, caused most of its measured NewsQA gap.</p>
 <div class="steps">
 <div>Profile translated-cache quality across candidate receiver-layer intervals. Treat full translation as the zero-recompute control and full receiver prefill as the correctness control.</div>
 <div>For each interval, translate the boundary hidden state into the receiver width, recompute native receiver KV inside the interval, and use translated KV outside it.</div>
 <div>Select the smallest interval that passes untouched quality data, then measure transfer, translation, recomputation, storage, and time to first token end to end.</div>
 </div>
 <div class="grid2" style="margin-top:18px">
-<div class="card rule good"><strong>WHY IT COULD HELP</strong><p>Our KV-Lingo result shows a large first 4B→8B handoff deficit. Local native recomputation could reset accumulated representation error before the receiver decodes. DroidSpeak's interval profiler supplies a direct way to find where that reset has the best quality-to-compute tradeoff.</p></div>
+<div class="card rule good"><strong>WHY IT COULD HELP</strong><p>KV-Lingo shows a large first 4B→8B handoff deficit. Modified MoT shows that useful translated K/V cannot by itself repair a weak reduced-key trajectory. Local native recomputation could reset that state before decode.</p></div>
 <div class="card rule warn"><strong>WHY IT IS NEW WORK</strong><p>The current DroidSpeak path assumes equal hidden shapes and aligned layers. Qwen3-4B and Qwen3-8B do not satisfy that contract. A hybrid needs a trained hidden-state bridge, explicit layer alignment, and tests that the recomputed interval can consume translated boundary state safely.</p></div>
 </div>
 <p class="note"><strong>Most credible first test:</strong> start with two adapters on one base architecture, where DroidSpeak already works, and add KV translation outside the selected interval only if direct reuse remains weak. Test a cross-width Qwen3 pair after the same-shape hybrid passes exact controls.</p>
 </section>
 
 <section id="lmcache">
-<h2>LMCache is the transport layer, not a third repair method</h2>
-<p class="sub">LMCache can share a compatible cache between serving processes. Our control retrieved 7,168 same-model cached tokens and produced an identical completion. Cross-model use still needs KV-Lingo translation or DroidSpeak partial recomputation in the receiver runtime.</p>
-<div class="grid3">
+<h2>LMCache is transport, not representation repair</h2>
+<p class="sub">LMCache can share a compatible cache between serving processes. Our control retrieved 7,168 same-model cached tokens and produced an identical completion. Cross-model use still needs translation, partial recomputation, or selected replay in the receiver runtime.</p>
+<div class="grid4">
 <div class="card"><div class="kicker info">Transport</div><h3>LMCache</h3><p>Names, stores, moves, and retrieves compatible KV data across processes or nodes.</p></div>
 <div class="card lingo"><div class="kicker lingo">Representation repair</div><h3>KV-Lingo</h3><p>Maps cached keys and values from one model representation to another.</p></div>
 <div class="card droid"><div class="kicker droid">Representation repair</div><h3>DroidSpeak</h3><p>Reuses compatible sender layers and rebuilds one interval with receiver compute.</p></div>
+<div class="card mot"><div class="kicker mot">Representation + replay</div><h3>Modified MoT</h3><p>Stores source state and a selection ledger, then runs receiver replay with translated injections.</p></div>
 </div>
-<p class="note"><strong>Production composition:</strong> LMCache could carry the stored tensors and transition state. The serving engine must still enforce model-pair compatibility and run the selected cross-model repair path.</p>
+<p class="note"><strong>Production composition:</strong> LMCache could carry stored tensors and transition state. The serving engine must still enforce model-pair, token-position, selection-ledger, and replay compatibility before it runs a cross-model path.</p>
+</section>
+
+<section id="reproduce">
+<h2>Reproduce the public modified-MoT path</h2>
+<p class="sub">The public repositories contain the modified source chain, KNLP wrapper, defconfigs, controls, and result evaluator. Use Python 3.10 or 3.11 with the pinned MoT requirements. Keep model snapshots and generated run artifacts outside the source trees. The MoT fork retains the upstream PolyForm Noncommercial License.</p>
+<div class="steps">
+<div><strong>Pin both repositories.</strong> The modified source commit is public on a dedicated branch. KNLP validates the exact seven-commit chain and key file hashes.</div>
+<div><strong>Run code and mechanics controls.</strong> Unit tests need no model. Real-model controls require the pinned GPT-2 and GPT-2-medium snapshots recorded in <code>recipe.py</code>.</div>
+<div><strong>Train and evaluate explicitly.</strong> Freeze the data manifest, run the diagnostic controls, train one directed checkpoint, then run the paired evaluation and four-arm attribution.</div>
+</div>
+<pre><code>git clone https://github.com/mcgrof/knlp.git
+git clone https://github.com/mcgrof/MoT.git modified-MoT
+git -C modified-MoT checkout 9fb5e6f2a63981a53da1769c72e000a840ac976b
+
+python3.11 -m venv mot-env
+mot-env/bin/python -m pip install -r modified-MoT/requirements.txt pytest zstandard
+
+cd knlp
+../mot-env/bin/python -m pytest -q tests/kv_translate/test_mot_author.py
+make defconfig-mot-author-readiness
+make MOT_SOURCE=../modified-MoT MOT_AUTHOR_PYTHON=../mot-env/bin/python</code></pre>
+<p class="sub" style="margin-top:20px">The real-model mechanics gate checks native continuation, full-key replay, selected-key replay, token identity, and source provenance before training:</p>
+<pre><code>make defconfig-mot-author-mechanics
+make mot-author-mechanics-preflight \
+  MOT_VARIANT=modified-mot \
+  MOT_SOURCE=../modified-MoT \
+  MOT_AUTHOR_PYTHON=../mot-env/bin/python \
+  MOT_SOURCE_MODEL=/path/to/gpt2-607a30d783dfa663caf39e06633721c8d4cfcd7e \
+  MOT_TARGET_MODEL=/path/to/gpt2-medium-6dcaa7a952f72f9298047fd5137cd6e4f05f41da \
+  MOT_OUTPUT=/path/to/new-run/mechanics</code></pre>
+<p class="sub" style="margin-top:20px">After you create a frozen manifest and checkpoint with the documented diagnostic targets, run the same four-arm evaluator:</p>
+<pre><code>make defconfig-mot-modified-attribution
+make mot-author-attribution-eval \
+  MOT_SOURCE=../modified-MoT \
+  MOT_CHECKPOINT=/path/to/checkpoint \
+  MOT_CHECKPOINT_SHA256=&lt;translator-file-sha256&gt; \
+  MOT_DATA_MANIFEST=/path/to/diagnostic-data.json \
+  MOT_ANCHOR_RECORDS=/path/to/paired-records.jsonl.zst \
+  MOT_OUTPUT=/path/to/new-run/attribution</code></pre>
+<div class="grid2" style="margin-top:18px">
+<div class="card rule info"><strong>WHAT IS PUBLICLY REPRODUCIBLE</strong><p>The exact source chain, configuration, data-free controls, model-revision checks, training path, evaluator, offline replay, and aggregate calculation are public.</p></div>
+<div class="card rule warn"><strong>WHAT IS NOT SHIPPED</strong><p>The tested translator checkpoint, frozen 500-item manifest, and token-level anchor records are not in the public repository. You can reproduce the procedure with newly generated inputs, but not byte-replay this exact result without those artifacts.</p></div>
+</div>
+<p class="note"><strong>Start with the full runbook:</strong> <a href="https://github.com/mcgrof/knlp/blob/main/research/kv_translate/mot_author/README.md">research/kv_translate/mot_author/README.md</a>. It includes data freezing, training smoke, full training, paired evaluation, and offline replay commands.</p>
 </section>
 
 <section id="details">
@@ -145,11 +229,13 @@ section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);
 <div class="links">
 <a href="kv-lingo.html"><b>KV-Lingo result</b><span>Training, multi-turn protocol, all 16 comparisons, paper differences, and limits.</span></a>
 <a href="droidspeak.html"><b>DroidSpeak result</b><span>Partial recomputation, profile and held-out scores, timing boundary, and LMCache control.</span></a>
-<a href="https://github.com/mcgrof/knlp/tree/main/research"><b>Public research code</b><span>Implementations and tests. Raw run artifacts and private resource records are excluded.</span></a>
+<a href="https://github.com/mcgrof/knlp/tree/main/research/kv_translate/mot_author"><b>Modified MoT integration</b><span>Defconfigs, controls, training wrapper, attribution evaluator, tests, and runbook.</span></a>
+<a href="https://github.com/mcgrof/MoT/tree/research/mot-modified-sparse-20261017"><b>Modified MoT source</b><span>Public seven-commit source chain ending at the exact pinned attribution commit.</span></a>
+<a href="https://github.com/mcgrof/knlp/tree/main/research"><b>All public research code</b><span>Implementations and tests. Raw run artifacts and private resource records are excluded.</span></a>
 </div>
-<p class="fine" style="margin-top:15px">The two result pages contain static aggregate values. They do not load private data or machine-readable experiment artifacts.</p>
+<p class="fine" style="margin-top:15px">This page contains static aggregate values. It does not load private data or machine-readable experiment artifacts.</p>
 </section>
 </main>
-<footer>KNLP · cross-model KV-cache sharing · method comparison and evidence boundary</footer>
+<footer>KNLP · cross-model KV-cache sharing · translation, selected replay, recomputation, and evidence limits</footer>
 </body>
 </html>
