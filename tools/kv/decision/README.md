@@ -95,6 +95,19 @@ name retained attempt directories explicitly; no latest-result selection occurs:
 python -m tools.kv.decision.analyze --study study --out analysis.json
 ```
 
+Audit retained evidence independently before interpreting the certificates:
+
+```sh
+python -m tools.kv.decision.evidence --study study --output evidence.json
+```
+
+This checks frozen input/source/weight identities, complete item inventories,
+original EOS/truncation flags, and text decoded from retained token IDs. It
+reconciles persistent tensor shapes, strides, scale bytes and distinct backing
+allocations. A/R must match both requested bytes and the complete allocation
+size multiset. Those quantities do not include allocator fragmentation or
+equalize whole-process reserved memory. The reader changes no score or gate.
+
 A quality-reference pass alone does not qualify production support, memory
 capacity under a serving allocator or useful serving throughput. Those need
 actual-worker tests and a separate frozen quality/serving protocol.
