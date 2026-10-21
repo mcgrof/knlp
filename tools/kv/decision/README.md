@@ -98,3 +98,31 @@ python -m tools.kv.decision.analyze --study study --out analysis.json
 A quality-reference pass alone does not qualify production support, memory
 capacity under a serving allocator or useful serving throughput. Those need
 actual-worker tests and a separate frozen quality/serving protocol.
+
+`serving.py` provides connection tracing for that conditional next stage.
+It reuses a persistent HTTP session, records every offered request and has
+no retries, semaphore or connector concurrency cap. Its optional
+`AcceptedRequests` ASGI middleware records the application acceptance
+boundary without rebuilding the streaming request or response. Set
+`KNLP_DECISION_HTTP_EVENTS` to a dedicated capture path before installing
+that middleware. ASGI acceptance alone does not establish worker execution.
+
+The client requires `aiohttp` and `psutil`. A separately frozen JSON trace
+names `mode="open"`, `model`, `seed`, `arrival_seconds`, `drain_seconds`,
+`request_timeout_seconds` and `requests`. Each request specifies a unique
+`id`, integer `offset_ns`, `prompt_token_ids` and `max_tokens`. Run it with:
+
+```sh
+python -m tools.kv.decision.serving --trace trace.json --output capture
+```
+
+`goodput.evaluate` applies externally frozen `ttft_ms`, `tpot_ms` and
+`eos_ms` limits to the resulting capture. Failed, invalid, wrong-length,
+late and timed-out requests contribute zero to useful completions divided
+by the common arrival window. It reports completion and SLO fractions of
+all offered requests, plus conditional latency distributions. Coalesced
+token timestamps remain at SSE-event resolution. `compare_blocks` requires
+all ten independent paired blocks, Holm-adjusts sign tests across the full
+control family and reports conservative simultaneous Bonferroni median
+lower bounds. A practical claim also requires a 5% median relative gain.
+These tools do not select SLOs or establish a completed serving result.
