@@ -996,11 +996,23 @@ The intended advantage is to move work into time the application already has
 before those requests arrive. Delaying useful requests just to manufacture
 that gap would not establish an overall speedup.</p>
 <h3>What the timing table means</h3>
+<p><strong>Four follow-ups means four separate requests to the model.</strong>
+Call them A, B, C and D, in the order we submit them. They share the same
+4,096-token context, but each adds 512 input tokens of its own. The benchmark
+submits them together as one group and asks <strong>each request to generate
+8 output tokens</strong>. A token is a piece of text, sometimes only part of
+a word; eight tokens are not necessarily a complete answer. With eight
+follow-ups, the same experiment has requests A through H.</p>
+<p><strong>This section's table follows request A only:</strong> start its
+stopwatch when A is submitted; stop it when A produces its first output token.
+A means the first request submitted, even if another request produces output
+sooner. The diagram below shows that stopwatch. Section 16 adds a second
+stopwatch for the time until every request has produced all 8 output tokens.</p>
 <figure class="prefetch-timeline" aria-labelledby="preload-diagram-caption">
 <div class="timeline-scroll" tabindex="0" role="region" aria-label="Shared-context preparation timeline; scroll horizontally on small screens">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 890" width="1100" height="890" role="img" aria-labelledby="preload-timeline-title preload-timeline-desc">
 <title id="preload-timeline-title">When we load shared context, and what the timing table measures</title>
-<desc id="preload-timeline-desc">Three timelines align at the first follow-up submission. Loading on arrival puts restoration inside the measured wait. Preparing early can finish before arrival, leaving only serving work after submission, or the context can still be unavailable and the request waits for the remaining preparation. Every green bracket ends at the first submitted follow-up's first token. Preparation before submission is excluded from the table. Bar lengths are schematic, not measured durations.</desc>
+<desc id="preload-timeline-desc">Three timelines align at the first follow-up submission. Loading on arrival puts restoration inside the measured wait. Preparing early can finish before arrival, leaving only serving work after submission, or the context can still be unavailable and the request waits for the remaining preparation. Every green bracket ends at request A's first output token. A is the first request submitted. Preparation before submission is excluded from the table. Bar lengths are schematic, not measured durations.</desc>
 <defs>
   <marker id="preload-time-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#93a59a"/></marker>
 </defs>
@@ -1023,7 +1035,7 @@ that gap would not establish an overall speedup.</p>
   <text x="629" y="303" fill="#ffe0ac" font-size="18" text-anchor="middle">Restore shared</text>
   <text x="629" y="326" fill="#ffe0ac" font-size="18" text-anchor="middle">context from SSD</text>
   <rect x="732" y="277" width="218" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
-  <text x="841" y="303" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="841" y="303" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
   <text x="841" y="326" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
   <circle cx="950" cy="309" r="6" fill="#2ae6a3"/>
   <text x="965" y="303" fill="#e2ece5" font-size="17">First token</text>
@@ -1039,7 +1051,7 @@ that gap would not establish an overall speedup.</p>
   <path d="M 454 514 H 534" stroke="#62dce5" stroke-width="2" stroke-dasharray="4 5"/>
   <text x="494" y="474" fill="#62dce5" font-size="16" text-anchor="middle">Ready</text>
   <rect x="534" y="482" width="268" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
-  <text x="668" y="508" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="668" y="508" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
   <text x="668" y="531" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
   <circle cx="802" cy="514" r="6" fill="#2ae6a3"/>
   <text x="817" y="508" fill="#e2ece5" font-size="17">First token</text>
@@ -1059,7 +1071,7 @@ that gap would not establish an overall speedup.</p>
   <text x="643" y="743" fill="#ffe0ac" font-size="18" text-anchor="middle">context is usable</text>
   <text x="752" y="686" fill="#62dce5" font-size="15" text-anchor="middle">Context ready</text>
   <rect x="760" y="694" width="222" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
-  <text x="871" y="720" fill="#e5d9ff" font-size="18" text-anchor="middle">Run follow-up</text>
+  <text x="871" y="720" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
   <text x="871" y="743" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
   <circle cx="982" cy="726" r="6" fill="#2ae6a3"/>
   <text x="997" y="720" fill="#e2ece5" font-size="17">First token</text>
@@ -1069,7 +1081,7 @@ that gap would not establish an overall speedup.</p>
   <path d="M 534 774 V 784 H 982 V 774" fill="none" stroke="#2ae6a3" stroke-width="3"/>
   <text x="758" y="809" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
 
-  <text x="32" y="852" fill="#e2ece5" font-size="17">The timer follows the first request submitted, not whichever request answers fastest.</text>
+  <text x="32" y="852" fill="#e2ece5" font-size="17">The timer follows request A, the first request submitted. Another request may produce output sooner.</text>
   <text x="32" y="877" fill="#b5c5ba" font-size="16">The warm-up token is preparation output. It is not the follow-up token that stops the timer.</text>
 </g>
 </svg>
@@ -1083,10 +1095,9 @@ the arrival line in row 2. The bars illustrate event order; the actual latency
 results are in the table below.</figcaption>
 <p class="timeline-scroll-hint">On a small screen, scroll the diagram sideways to follow the timeline.</p>
 </figure>
-<p>Every value below is <strong>milliseconds from submitting the first
-follow-up request until that request produces its first token</strong>.
-Lower is better. It is not the fastest answer among the group or the time for
-all requests to finish.</p>
+<p>Every value below is <strong>request A's wait for its first output token,
+in milliseconds</strong>. Lower is better. A still has seven more tokens to
+generate after this timer stops; B, C and D have their own output to generate.</p>
 <ul class="experiment-steps">
 <li><strong>Load on arrival:</strong> use singleflight, but start restoring only when the follow-ups arrive.</li>
 <li><strong>Already ready:</strong> a comparison with the context fully warmed before the follow-ups are submitted.</li>
@@ -1237,22 +1248,47 @@ This is therefore not a pure DMA-BUF on/off comparison with identical memory
 placement. Keeping both paths in one table makes their different resource
 costs and results visible.</p>
 
-<h3>What changed after the repeated reads were removed?</h3>
-<p>Each cell shows <strong>without retention &rarr; with retention</strong>.
-The SSD column counts the whole group, including its warm request. Timing
-starts when the follow-ups are submitted, after the 250 ms preparation gap.
-Lower is better for both timing columns.</p>
+<h3>Two stopwatches: A's first token, and everyone's eighth token</h3>
+<p>For a four-request test, we submit <strong>A, B, C and D</strong> together.
+Each uses the shared context and generates its own eight-token output.
+For an eight-request test, there are requests A through H. The two timing
+columns answer different questions:</p>
+<ol class="experiment-steps">
+<li><strong>How long does A wait for its first token?</strong> Start when A is submitted. Stop at A's first output token. This follows A, the first request submitted, even if B produces a token sooner.</li>
+<li><strong>How long until every request has generated 8 tokens?</strong> Start when we begin submitting the group. Stop when the last request finishes its eighth token. If D finishes last, the timer waits for D. It does not add the four requests' individual times.</li>
+</ol>
 <div class="table-wrap"><table>
-<tr><th scope="col">Cache path / follow-ups</th><th scope="col">SSD data read, MiB</th><th scope="col">First submitted request's first token, ms</th><th scope="col">All follow-ups finish, ms</th></tr>
+<caption>Made-up example to explain the timers &mdash; these are not benchmark results</caption>
+<tr><th scope="col">Event</th><th scope="col">Time after group submission begins</th></tr>
+<tr><td>A, B, C and D are submitted together</td><td>0 ms (A's stopwatch also starts here)</td></tr>
+<tr><td>A produces its first token</td><td><strong>20 ms &mdash; A's first-token timer stops</strong></td></tr>
+<tr><td>A, B and C finish their eighth tokens</td><td>50, 60 and 80 ms, respectively</td></tr>
+<tr><td>D finishes its eighth token; everyone is now done</td><td><strong>100 ms &mdash; the whole-group timer stops</strong></td></tr>
+</table></div>
+<p>The table would report <strong>20 ms and 100 ms</strong> for that example.
+Neither number includes the earlier 250 ms preparation interval. The separate
+warm-up request produces one preparation token; it is not A, B, C or D and
+does not stop either timer. These short outputs test serving behavior, not
+the time needed to write a complete useful answer.</p>
+
+<h3>What changed after the repeated reads were removed?</h3>
+<p>These are the <strong>measured results</strong>. Each cell shows
+<strong>without retention &rarr; with retention</strong>. The SSD column
+counts all reads for preparation and the follow-up group. Both stopwatches
+start with follow-up submission, after preparation. Lower is better.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Cache path / follow-ups</th><th scope="col">SSD data read, MiB</th><th scope="col">Wait for A's first output token (ms)</th><th scope="col">Wait until every request has generated 8 tokens (ms)</th></tr>
 <tr><td class="hi">Host DRAM / 4</td><td>240 &rarr; 48</td><td>62.939 &rarr; 22.050</td><td>148.575 &rarr; 101.262</td></tr>
 <tr><td class="hi">Host DRAM / 8</td><td>432 &rarr; 48</td><td>40.792 &rarr; 40.578</td><td>193.578 &rarr; 128.345</td></tr>
 <tr><td class="hi">GPU DMA-BUF / 4</td><td>240 &rarr; 48</td><td>71.071 &rarr; 82.974</td><td>181.381 &rarr; 170.288</td></tr>
 <tr><td class="hi">GPU DMA-BUF / 8</td><td>192&ndash;432 &rarr; 48</td><td>124.600 &rarr; 136.622</td><td>282.868 &rarr; 239.682</td></tr>
 </table></div>
-<p><strong>Reads improve consistently. First-token wait is mixed. Group
-completion improves in all four medians.</strong> The last column measures
-the time until all four or eight follow-ups finish their eight output tokens;
-it answers a different question from how soon one request starts answering.
+<p><strong>Fewer SSD reads do not make both stopwatches faster in every case.</strong>
+For example, with four requests on the GPU DMA-BUF path, A's first token
+arrives later: 71.071 &rarr; 82.974 ms. But the group reaches everyone's
+eighth token sooner: 181.381 &rarr; 170.288 ms. Both observations can be true.
+Across the four rows, A's first-token wait is mixed, while the median time
+until everyone has generated 8 tokens improves in every row.
 The <a href="data/kmesh-retained-prefetch-20261017.json">published result data</a>
 contains both measurements. There are five measured paired groups per case,
 after three warmups, with alternating order and one engine per path/group size.
@@ -1285,6 +1321,17 @@ experiment to show that benefit.</p>
 reaches the engine</strong> (host staging or a qualified GPU DMA-BUF path),
 and <strong>when preparation starts</strong> (on demand or early). A DRAM-resident
 baseline remains valuable alongside the flash paths.</p>
+<p><strong>A software RAID test does not need a hardware RAID card or HBA.</strong>
+Linux can stripe reads across two NVMe devices in software. Ordinary reads
+into host RAM do not require GPU DMA-BUF support. Sending those reads directly
+into a GPU buffer is the separate question: the selected RAID stack, each
+drive's mapping and the PCIe route must support this experimental path.
+A working single-drive DMA-BUF test does not prove that RAID works too.</p>
+<p>Two-drive RAID 0 is a useful optional test of read parallelism for
+reconstructible cache data; it provides no drive-failure redundancy. First
+check the topology and existing support. If qualifying the direct path needs
+new RAID or driver code, defer that work to a suitably equipped storage lab.
+It need not delay the missing single-drive prefetch comparison.</p>
 <details>
 <summary>How to project RAID's useful head start before testing it</summary>
 <p>An initial model is <code>preparation time &asymp; fixed work + bytes / effective bandwidth</code>.
