@@ -195,7 +195,7 @@ be added together as a combined speedup.</p>
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
   <a href="#singleflight">14. Load shared context once for all follow-ups</a>
   <a href="#preload">15. Can loading context early make follow-ups start sooner?</a>
-  <a href="#retained">16. Can external L1 keep the shared ancestor off NVMe?</a>
+  <a href="#retained">16. Does keeping data in LMCache stop repeat SSD reads?</a>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
   <a href="#family-residency">18. Does holding the ancestor pay under pressure?</a>
   <a href="#papers">19. Papers</a>
@@ -1190,54 +1190,137 @@ operation before the engine preload, asking whether external-L1 residency
 removes repeated NVMe reads. It counts HTTP work and extra residency
 separately from GPU sharing.</p>
 </details>
+<p style="margin-top:24px"><strong>What happens after fixing the repeated SSD reads?</strong>
+<a href="#retained">Section 16 measures that follow-up</a>: it retains the
+state in LMCache and times the requests again. Both controls there preload
+250 ms early, so it tests retention's effect rather than repeating this
+on-demand-versus-prefetch head-start sweep.</p>
 </section>
 
 <section id="retained">
-<h2>16. Can external L1 keep the shared ancestor off NVMe?</h2>
-<p><strong>GPU sharing and storage residency solve separate problems.</strong>
-An ordinary engine preload makes one ancestor reusable in vLLM, but each
-child's LOOKUP can still read its chunks from NVMe. This control first uses
-LMCache's existing warm-prefetch API to retain those chunks in external L1,
-then submits the same one-token engine warm request. The HTTP operation
-makes chunks resident in LMCache; the engine request makes its own ancestor
-ready for automatic prefix sharing.</p>
-<pre><code>Engine preload: NVMe -&gt; temporary external L1 -&gt; shared vLLM ancestor
-Retained preload: NVMe -&gt; retained external L1 -&gt; shared vLLM ancestor
-Later child LOOKUP: external-L1 hit instead of another NVMe read</code></pre>
-<p>Measured on October 17, 2026, on RTX 4090, both arms use the same
-declaration and singleflight code, start with empty
-resident caches, and preserve the NVMe index. The synthetic fork gap is
-250 ms. The clock starts before HTTP submission
-and completion polling, so that work consumes the supplied lead time.
-The verifier requires both preloads to complete before child release.
-This tests an adequately-warm ancestor; it does not locate the minimum useful
-lead time. Arms alternate within each paired sample. Attained gaps in the
-retained samples range from 250.004 to 250.117 ms.</p>
+<h2>16. Does keeping data in LMCache stop repeat SSD reads?</h2>
+<p><strong>Yes. We removed the repeated SSD reads and measured latency again.</strong>
+Section 15 prepares shared context in vLLM, but follow-up lookups can still
+reread that context from the SSD. Here we also keep a copy in LMCache, so
+those lookups find it in memory. Every measured group with retention reads
+the 48 MiB shared state from SSD exactly once, including preparation.</p>
+<h3>Is this section 15 retested with the read problem fixed?</h3>
+<p>It is a follow-up test of the fix, but it asks a narrower question.
+<strong>Both sides here prepare early, with a 250 ms head start.</strong>
+Both must finish warming before the follow-ups arrive. We compare keeping
+LMCache's copy against discarding that copy after loading vLLM.</p>
 <div class="table-wrap"><table>
-<tr><th scope="col">Path / children</th><th scope="col">Engine preload: NVMe MiB</th><th scope="col">Retained preload: NVMe MiB</th><th scope="col">Engine: child TTFT ms</th><th scope="col">Retained: child TTFT ms</th><th scope="col">Engine: L1 MiB resident</th><th scope="col">Retained: L1 MiB resident</th></tr>
-<tr><td class="hi">Host staged / 4</td><td>240</td><td>48</td><td>62.939</td><td>22.050</td><td>0</td><td>48</td></tr><tr><td class="hi">Host staged / 8</td><td>432</td><td>48</td><td>40.792</td><td>40.578</td><td>0</td><td>48</td></tr><tr><td class="hi">DMA-BUF / 4</td><td>240</td><td>48</td><td>71.071</td><td>82.974</td><td>0</td><td>48</td></tr><tr><td class="hi">DMA-BUF / 8</td><td>192–432</td><td>48</td><td>124.600</td><td>136.622</td><td>0</td><td>48</td></tr>
+<tr><th scope="col">Experiment</th><th scope="col">What changes between its controls?</th></tr>
+<tr><td class="hi">Section 15</td><td>Load when follow-ups arrive, or prepare early with different head starts.</td></tr>
+<tr><td class="hi">Section 16, measured here</td><td>Prepare early in both cases. Keep LMCache's copy or let later lookups reread SSD.</td></tr>
+<tr><td class="hi">Comparison still needed</td><td>Load on arrival versus prepare early, with the read-saving behavior enabled and verified in both. Repeat the head-start sweep under matched conditions.</td></tr>
 </table></div>
-<p>NVMe payload and external-L1 allocator use show the observed range across
-5 retained families per arm after three warmups. Latency is the median
-for the first submitted child, measured from its actual engine arrival.
-The whole retained family, including HTTP prefetch and engine warming, must
-read exactly sixteen 3 MiB chunks: one 48 MiB ancestor. Every child must then
-use its local ancestor, with no additional external engine load.
-<a href="data/kmesh-retained-prefetch-20261017.json">All retained samples
-and verification counts</a> are available separately.</p>
-<p>The read reduction is consistent across the retained arm's samples.
-Child latency is mixed: the staged four-child median improves, staged eight
-is nearly unchanged, and both DMA-BUF medians are higher with retention.
-This establishes fewer backend reads at a measured residency cost, rather
-than a general child-latency improvement.</p>
-<p><strong>Retained chunks have a memory cost.</strong> The same 512 MiB
-external arena is configured in both arms, and the table reports used
-allocator bytes inside it. Staged external L1 lives in host RAM; DMA-BUF
-external L1 lives in GPU memory. In the direct arm, its retained ancestor
-is a separate copy from the one shared inside vLLM's 512 MiB KV pool.
-Resident external objects have no read locks, write locks, staging state or
-external I/O leases. This workload has no eviction pressure; it does not
-qualify a residency priority or a lease policy.</p>
+<p>Do not compare section 15's latency numbers directly with this table to
+claim the fix helped or hurt. These are different experiments. Sections 17
+and 18 investigate workload traces and GPU retention under pressure; they
+do not fill in that missing on-demand-versus-prefetch comparison.</p>
+
+<h3>Host DRAM and DMA-BUF are different cache arrangements</h3>
+<p><strong>External L1 means LMCache's in-memory cache outside vLLM.</strong>
+It is not the CPU's hardware L1 cache. Its memory can be host DRAM or a GPU
+buffer. The table tests retention off and on within each of these two paths:</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Path</th><th scope="col">Without retention</th><th scope="col">With retention</th></tr>
+<tr><td class="hi">Host DRAM</td><td>SSD data passes through temporary host-RAM buffers before loading vLLM's GPU cache.</td><td>Keep the 48 MiB copy in host RAM. Later LMCache lookups hit DRAM.</td></tr>
+<tr><td class="hi">GPU DMA-BUF</td><td>SSD data enters a registered GPU buffer before copying into vLLM's GPU cache.</td><td>Keep the 48 MiB copy in that GPU arena. Later LMCache lookups hit this separate GPU copy.</td></tr>
+</table></div>
+<p>The retained host arm is <strong>NVMe-backed host-DRAM caching</strong>;
+DRAM is a useful retention tier, not just a transfer buffer. Both arms start
+with empty resident caches and fetch from NVMe during preparation. A separate
+DRAM-only offload baseline would start with the state already in host RAM.
+This is therefore not a pure DMA-BUF on/off comparison with identical memory
+placement. Keeping both paths in one table makes their different resource
+costs and results visible.</p>
+
+<h3>What changed after the repeated reads were removed?</h3>
+<p>Each cell shows <strong>without retention &rarr; with retention</strong>.
+The SSD column counts the whole group, including its warm request. Timing
+starts when the follow-ups are submitted, after the 250 ms preparation gap.
+Lower is better for both timing columns.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Cache path / follow-ups</th><th scope="col">SSD data read, MiB</th><th scope="col">First submitted request's first token, ms</th><th scope="col">All follow-ups finish, ms</th></tr>
+<tr><td class="hi">Host DRAM / 4</td><td>240 &rarr; 48</td><td>62.939 &rarr; 22.050</td><td>148.575 &rarr; 101.262</td></tr>
+<tr><td class="hi">Host DRAM / 8</td><td>432 &rarr; 48</td><td>40.792 &rarr; 40.578</td><td>193.578 &rarr; 128.345</td></tr>
+<tr><td class="hi">GPU DMA-BUF / 4</td><td>240 &rarr; 48</td><td>71.071 &rarr; 82.974</td><td>181.381 &rarr; 170.288</td></tr>
+<tr><td class="hi">GPU DMA-BUF / 8</td><td>192&ndash;432 &rarr; 48</td><td>124.600 &rarr; 136.622</td><td>282.868 &rarr; 239.682</td></tr>
+</table></div>
+<p><strong>Reads improve consistently. First-token wait is mixed. Group
+completion improves in all four medians.</strong> The last column measures
+the time until all four or eight follow-ups finish their eight output tokens;
+it answers a different question from how soon one request starts answering.
+The <a href="data/kmesh-retained-prefetch-20261017.json">published result data</a>
+contains both measurements. There are five measured paired groups per case,
+after three warmups, with alternating order and one engine per path/group size.
+These are useful bounded observations, not a general latency or throughput guarantee.</p>
+<p>For four follow-ups, the unretained path reads 240 MiB: 48 MiB for the
+warm request plus 48 MiB for each follow-up. Retention cuts this to one
+48 MiB read for the entire group. Every follow-up reuses the already-loaded
+vLLM state; none needs another external load into vLLM.</p>
+<p>The saving costs <strong>48 MiB of additional occupied LMCache memory</strong>:
+host RAM in the staged path, GPU memory in the DMA-BUF path. The direct path
+therefore retains a second copy outside the one shared inside vLLM.
+Both controls configure a 512 MiB external arena and a 512 MiB engine KV pool;
+used external-cache bytes increase from zero to 48 MiB. This test applies
+no competing memory pressure.</p>
+<div class="note"><strong>The next latency question remains open.</strong>
+Does early preparation beat on-demand loading once both use the read-saving
+cache policy? Measure both first-token wait and whole-group completion, sweep
+the head start, and verify actual SSD bytes in every control. Enabling a cache
+policy does not by itself prove that concurrent first loads are coalesced.</div>
+
+<h3>Where would RAID flash fit?</h3>
+<p>A striped SSD array is a future backing-store test. It could prepare a
+large context sooner or serve more cold groups at once. In this retained
+250 ms control, the context is already ready and the follow-ups trigger no
+SSD reads. Faster flash therefore cannot remove a remaining SSD wait from
+their measured interval; it would need a shorter head-start or cold-demand
+experiment to show that benefit.</p>
+<p>Keep three experimental choices separate: <strong>where data starts</strong>
+(resident DRAM, one NVMe device or striped NVMe devices), <strong>how it
+reaches the engine</strong> (host staging or a qualified GPU DMA-BUF path),
+and <strong>when preparation starts</strong> (on demand or early). A DRAM-resident
+baseline remains valuable alongside the flash paths.</p>
+<details>
+<summary>How to project RAID's useful head start before testing it</summary>
+<p>An initial model is <code>preparation time &asymp; fixed work + bytes / effective bandwidth</code>.
+The preparation wait remaining at arrival is approximately
+<code>max(0, preparation time &minus; available head start)</code>.
+This is a projection, not a measured request-latency model.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Assumed effective aggregate bandwidth</th><th scope="col">48 MiB payload time only</th></tr>
+<tr><td>6 GB/s</td><td>8.39 ms</td></tr>
+<tr><td>12 GB/s</td><td>4.19 ms</td></tr>
+<tr><td>24 GB/s</td><td>2.10 ms</td></tr>
+</table></div>
+<p>GB/s is decimal; MiB is binary. These illustrative rates are not RAID
+measurements or promises for a particular drive count. Measure aggregate
+delivery on the actual route, including PCIe limits, concurrency, chunk
+distribution and destination bandwidth. Fixed coordination, copying and
+warm-request model work still have to be paid. If fixed work exceeds the
+available head start, adding SSDs cannot make preparation finish in time.</p>
+<p><a href="https://docs.kernel.org/admin-guide/device-mapper/striped.html">Linux's striped-target documentation</a>
+describes parallel use of multiple devices. The experimental DMA-BUF route
+also needs qualification through the selected RAID stack and each member's
+device mapping; single-device success does not establish that combination.
+See the <a href="https://docs.kernel.org/driver-api/pci/p2pdma.html">kernel's P2PDMA topology and DMA-BUF mapping requirements</a>.</p>
+</details>
+
+<details>
+<summary>Preparation accounting, correctness checks and reproduction commands</summary>
+<p>The experiment runs on RTX 4090 on October 17, 2026, using the same
+declaration and singleflight code in both controls. It starts with empty
+resident caches and keeps the NVMe index warm. The retained control invokes
+LMCache's warm-prefetch HTTP API and polls for completion, then submits the
+one-token engine warm request. HTTP submission, polling and engine warming
+all consume the 250 ms lead-time interval. The verifier requires warming to
+finish before follow-up release. Attained retained gaps are 250.004&ndash;250.117 ms.
+The whole-group timer includes submission and engine execution until the
+follow-ups finish. Preparation-to-completion time is separately recorded.</p>
 <p>All 384 child and
 68 warm continuations, including warmups
 and unused controls, match their references. All
@@ -1274,6 +1357,8 @@ python tools/reproduce/kmesh_restore/publish_retained.py /path/to/results \
 under trace-supported competing workloads. This control answers the storage
 read question with enough lead time; it does not answer that pressure question
 or establish cross-engine sharing.</p>
+
+</details>
 </section>
 
 <section id="trace-audit">
