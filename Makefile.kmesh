@@ -31,6 +31,15 @@ ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_RESIDENCY),y)
 .DEFAULT_GOAL := kmesh-residency
 endif
 
+KMESH_HEADROOM_ROOT ?= results/kmesh-tot
+KMESH_HEADROOM_OUTPUT ?= results/kmesh-headroom.json
+.PHONY: kmesh-headroom kmesh-headroom-test
+kmesh-headroom:
+	@"$(KMESH_RESIDENCY_PY)" -m tools.reproduce.kmesh_residency.headroom "$(KMESH_HEADROOM_ROOT)" --output "$(KMESH_HEADROOM_OUTPUT)"
+
+kmesh-headroom-test:
+	@"$(KMESH_RESIDENCY_PY)" -m unittest discover -s tests -p test_kmesh_headroom.py -v
+
 .PHONY: kmesh-workload-test
 kmesh-workload-test:
 	@"$(KMESH_RESIDENCY_PY)" -m unittest discover -s tests -p test_kmesh_workload.py -v

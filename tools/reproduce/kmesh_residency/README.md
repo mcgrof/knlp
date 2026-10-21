@@ -156,6 +156,6 @@ reference counts and drained ownership. It preserves the actual capture file
 hashes. The exported result remains a controlled-mechanism qualification; it
 makes no production-workload or latency claim.
 
-For model-driven branching demand, see the
+For model-driven branching demand and a CPU cache-headroom bound, see the
 [Tree of Thoughts capture](WORKLOAD.md). It preserves the official search while
 replacing its model provider with a bounded local vLLM call boundary.

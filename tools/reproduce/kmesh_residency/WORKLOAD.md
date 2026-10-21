@@ -79,3 +79,37 @@ Keep raw text and tokens with private experiment evidence. Allocation logging
 records changed block tables rather than repeating them at every decode step.
 Observation and capture writes can alter request gaps: this is not a latency
 benchmark. Partial files remain on failure and cannot qualify the complete run.
+
+## Bound the remaining opportunity on CPU
+
+```sh
+make kmesh-workload-test kmesh-headroom-test
+make kmesh-headroom KMESH_HEADROOM_ROOT=/path/to/fresh-search-capture \
+  KMESH_HEADROOM_OUTPUT=/path/to/fresh-headroom.json
+```
+
+The bound uses the actual request order, exact computed full-block identities
+and observed stock cache hits at the captured pool budget. The final prompt
+fragment that must be recomputed for logits remains compulsory work. Generated
+full blocks enter as writes, with no fictitious read cost. A block can save one
+eligible prefill block if retained between its preceding access and a later
+read. Offline interval selection maximizes those equal-sized block hits within
+the residency budget.
+
+This ideal cache knows the future, can retain blocks independently of their
+prefix ancestors, and ignores active-request pinning. It is more permissive
+than a feasible engine policy. Its minimum possible prefill is therefore an
+optimistic lower bound; its improvement over observed stock is an upper bound
+on available prefill-token savings. The interval selector is checked against
+exhaustive optimal selection for all small interval sets. It does not convert
+token savings into a predicted latency gain or describe a production policy.
+A bound below observed stock hits is rejected as an invalid replay model.
+Each reported hit must also have a matching causal prefix computed earlier
+in the capture; balanced aggregate counts cannot validate a cold-cache hit.
+The intervals needed for the reported hits must themselves fit the capacity.
+These checks concern logical block residency, not exact physical eviction replay.
+
+Zero headroom at this budget ends the case without another policy GPU run.
+Positive headroom first needs attribution to reusable family prefixes and
+comparison against displaced/unused work. It does not by itself establish that
+a family lease, asynchronous serving or DMA-BUF offload will improve runtime.
