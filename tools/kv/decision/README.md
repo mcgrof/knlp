@@ -139,3 +139,12 @@ all ten independent paired blocks, Holm-adjusts sign tests across the full
 control family and reports conservative simultaneous Bonferroni median
 lower bounds. A practical claim also requires a 5% median relative gain.
 These tools do not select SLOs or establish a completed serving result.
+
+`paged_memory.py` reconciles live paged K/V and scalar-scale tensor storages
+with Torch's CUDA allocator snapshot. It counts each shared backing once,
+includes active-block rounding, and keeps inactive segment space separate.
+The worker inventory rejects oversized backing storage and enforces the
+declared persistent-cache budget, including scales. Staging and whole-process
+allocated/reserved memory are reported separately. Unknown/custom allocations
+fail closed. CPU tests cover aliasing, rounding and inconsistent snapshots;
+actual kernel read/write behavior still requires worker qualification.

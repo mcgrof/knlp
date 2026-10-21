@@ -266,3 +266,39 @@ def test_failures_before_server_acceptance_remain_offered(tmp_path):
     )
     summary = evaluate(result, {"ttft_ms": 20, "tpot_ms": 20, "eos_ms": 100})
     assert summary["offered"] == 2 and summary["goodput_requests_per_second"] == 0
+
+
+def test_disconnected_post_is_retained_without_automatic_retry():
+    async def exercise():
+        from aiohttp import web
+
+        seen = []
+
+        async def handler(request):
+            body = await request.json()
+            seen.append(body["request_id"])
+            request.transport.close()
+            return web.Response()
+
+        app = web.Application()
+        app.router.add_post("/v1/completions", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        p = plan()
+        p["arrival_seconds"] = 0.1
+        p["requests"] = p["requests"][:1]
+        try:
+            result = await replay(p, f"http://127.0.0.1:{port}")
+        finally:
+            await runner.cleanup()
+        assert seen == ["good-a"]
+        row = result["requests"][0]
+        assert row["status"] == "error" and "ServerDisconnectedError" in row["error"]
+        assert sum(e["event"] == "request_start" for e in row["connection_events"]) == 1
+        scored = evaluate(result, {"ttft_ms": 20, "tpot_ms": 20, "eos_ms": 100})
+        assert scored["offered"] == 1 and scored["slo_completed"] == 0
+
+    asyncio.run(exercise())
