@@ -10,6 +10,13 @@ import subprocess
 import time
 import urllib.request
 
+from tools.kv.native.source_bundle import (
+    bundle_identity,
+    commit_id,
+    import_bundle,
+    require_descendant,
+)
+
 PINS = {
     "vllm": (
         "20261016-k16v8-compact-prefill",
@@ -73,6 +80,24 @@ def recipe_pins(recipe):
 EVENTS = []
 
 
+def source_override(recipe, revision=None, bundle=None, bundle_sha256=None):
+    """Validate the optional dependency transfer before installing packages."""
+    pins = recipe_pins(recipe)
+    base = pins["vllm"][1]
+    if revision is None and bundle is None and bundle_sha256 is None:
+        return pins, None
+    if recipe != "decision-http":
+        raise ValueError("source overrides require the decision-http recipe")
+    commit_id(revision)
+    if (bundle is None) != (bundle_sha256 is None):
+        raise ValueError("source bundle and its SHA-256 must be supplied together")
+    receipt = {"base": base, "target": revision}
+    if bundle is not None:
+        receipt = bundle_identity(bundle, bundle_sha256, base, revision)
+    pins["vllm"] = (pins["vllm"][0], revision)
+    return pins, receipt
+
+
 def run(*args, **kwargs):
     started = time.perf_counter()
     try:
@@ -91,8 +116,20 @@ def main():
         choices=("historical-compact", "current", "recent-transfer", "decision-http"),
         default="historical-compact",
     )
+    parser.add_argument(
+        "--vllm-revision", help="full descendant commit for decision-http only"
+    )
+    parser.add_argument(
+        "--vllm-source-bundle", type=Path, help="optional incremental v2 Git bundle"
+    )
+    parser.add_argument("--vllm-bundle-sha256", help="required SHA-256 of that bundle")
     args = parser.parse_args()
-    pins = recipe_pins(args.recipe)
+    pins, source_transfer = source_override(
+        args.recipe,
+        args.vllm_revision,
+        args.vllm_source_bundle,
+        args.vllm_bundle_sha256,
+    )
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     env = root / "env"
@@ -163,6 +200,16 @@ def main():
             "https://github.com/mcgrof/" + name + ".git",
             checkout,
         )
+        if name == "vllm" and source_transfer is not None:
+            if args.vllm_source_bundle is not None:
+                source_transfer = import_bundle(
+                    checkout,
+                    args.vllm_source_bundle,
+                    args.vllm_bundle_sha256,
+                    source_transfer["base"],
+                    revision,
+                )
+            require_descendant(checkout, source_transfer["base"], revision)
         # A branch is a discovery hint; an immutable revision is the recipe.
         run("git", "-C", checkout, "checkout", "--detach", revision)
         actual = subprocess.check_output(
@@ -261,6 +308,7 @@ def main():
                 "recipe": args.recipe,
                 "transformers": transformers_version,
                 "sources": pins,
+                "source_transfer": source_transfer,
                 "compiled_base": BASE,
                 "wheel_sha256": WHEEL_SHA,
                 "steps": EVENTS,

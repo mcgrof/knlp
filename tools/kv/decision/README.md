@@ -207,6 +207,18 @@ python -m tools.kv.decision.production_prepare \
 python -m tools.kv.native.october_setup install --recipe decision-http
 ```
 
+The installer can transfer an unpublished dependency change for qualification.
+`--vllm-revision` selects its full commit identity. Add
+`--vllm-source-bundle source.bundle --vllm-bundle-sha256 "$BUNDLE_SHA256"`
+for a version-2 Git bundle created with
+`git bundle create --version=2 source.bundle "$BASE_COMMIT..$FEATURE_BRANCH"`.
+It must contain one branch head and one prerequisite: the original
+`decision-http` vLLM commit. The installer checks the bundle digest, Git
+objects, ancestry and unchanged compiled-wheel sources, and records the
+transfer in `setup.json`. Once that exact commit is published, omit the
+bundle flags. These options only install source; they do not update or
+bypass the worker protocol's separate source and numerical quality checks.
+
 Preparation requires committed, clean source and freezes all runner/input
 hashes in `production-inputs/protocol.json`. Preserve that file's SHA-256 as
 `PROTOCOL_SHA`. Download the pinned checkpoint into the Hugging Face snapshot
