@@ -2,11 +2,14 @@
 """Reference completion and policy identity precede worker protocol selection."""
 
 import copy
+import hashlib
+import json
+import sys
 
 import pytest
 
 from tools.kv.decision.production import MODEL, REVISION, validate
-from tools.kv.decision.production_prepare import protocol, reference_gate
+from tools.kv.decision.production_prepare import main, protocol, reference_gate
 
 
 def reports():
@@ -37,12 +40,60 @@ def reports():
     return analysis, evidence
 
 
-def test_dynamic_reference_success_remains_distinct_from_fixed_worker_support():
+def test_dynamic_reference_success_requires_worker_integration():
     selection = reference_gate(*reports(), "qwen3")
     assert selection["reference_candidates"]["SD"]["aggregate_math"]
     assert not selection["reference_candidates"]["SF"]["aggregate_math"]
     assert selection["optimized_symmetric_policy"] == "fixed"
-    assert "separate engineering gap" in selection["scope"]
+    assert selection["requires_dynamic_worker"]
+    assert "TRITON_ATTN" in selection["dynamic_symmetric_support"]
+    assert "do not establish" in selection["scope"]
+
+
+def test_ineligible_dynamic_reference_does_not_require_dynamic_serving():
+    analysis, evidence = reports()
+    analysis["models"]["qwen3"]["candidates"]["SD"][
+        "aggregate_math_certificate"
+    ] = False
+    selection = reference_gate(analysis, evidence, "qwen3")
+    assert not selection["requires_dynamic_worker"]
+
+
+def test_fixed_launcher_cannot_freeze_around_qualified_dynamic_candidate(
+    tmp_path, monkeypatch
+):
+    analysis, evidence = reports()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    raw = b"identity-only fixture; the dynamic gate precedes input decoding"
+    (inputs / "inputs.json.gz").write_bytes(raw)
+    for record in (analysis, evidence):
+        record["models"]["qwen3"]["input_sha256"] = hashlib.sha256(raw).hexdigest()
+    for name, record in (("analysis", analysis), ("evidence", evidence)):
+        (tmp_path / name).write_text(json.dumps(record))
+    out = tmp_path / "must-not-exist"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "production_prepare",
+            "--analysis",
+            str(tmp_path / "analysis"),
+            "--evidence",
+            str(tmp_path / "evidence"),
+            "--reference-inputs",
+            str(inputs),
+            "--reference-scales",
+            str(tmp_path / "unused-scales"),
+            "--official-model-files",
+            str(tmp_path / "unused-model"),
+            "--out",
+            str(out),
+        ],
+    )
+    with pytest.raises(ValueError, match="Qualified SD requires a dynamic worker"):
+        main()
+    assert not out.exists()
 
 
 @pytest.mark.parametrize(

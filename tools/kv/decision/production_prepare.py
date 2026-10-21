@@ -4,6 +4,8 @@
 This prepares files only. It does not allocate a GPU or establish that the
 selected optimized backend supports or qualifies either compressed recipe.
 Dynamic per-token/head scale storage is outside this launcher's interface.
+The pinned Triton backend does provide that storage, so a qualified dynamic
+reference candidate must be integrated and frozen before this study proceeds.
 """
 
 import argparse
@@ -70,8 +72,11 @@ def reference_gate(analysis, evidence, input_digest):
             for arm in ("AF", "SF", "SD")
         },
         "optimized_symmetric_policy": "fixed",
-        "dynamic_symmetric_support": "Not expressed by this pinned worker's scalar layer-scale interface; no dynamic worker quality or timing claim",
-        "scope": "Fixed-scale deployment comparison. If SD alone qualifies in the reference, its missing paged scale plane remains a separate engineering gap; SF does not stand in for SD.",
+        "dynamic_symmetric_support": "The pinned TRITON_ATTN backend provides fp8_per_token_head storage and reads. Its scale floor and reciprocal-multiply writer differ from the reference; numerical and quality qualification remain required.",
+        "requires_dynamic_worker": qwen["candidates"]["SD"][
+            "aggregate_math_certificate"
+        ],
+        "scope": "Fixed-scale launcher only. A qualified dynamic symmetric reference requires extending the worker comparison before freezing its protocol; scalar FlashInfer limitations do not establish a vLLM-wide support gap.",
     }
 
 
@@ -155,6 +160,11 @@ def main():
     input_path = args.reference_inputs / "inputs.json.gz"
     analysis, evidence = read(args.analysis), read(args.evidence)
     selection = reference_gate(analysis, evidence, sha(input_path))
+    if selection["requires_dynamic_worker"]:
+        raise ValueError(
+            "Qualified SD requires a dynamic worker comparison; integrate and "
+            "freeze the pinned Triton route before preparing this protocol"
+        )
     source = Path(__file__).resolve().parents[3]
     if subprocess.check_output(
         ["git", "-C", str(source), "status", "--porcelain", "--", "tools/kv"], text=True
