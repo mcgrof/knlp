@@ -44,7 +44,7 @@ section{padding:54px 0;border-top:1px solid var(--line)}.sub{color:var(--muted);
 <div class="eyebrow">Cross-model KV-cache sharing · evidence map · October 2026</div>
 <h1>Three tested ways to repair a cache after a model change.</h1>
 <p class="lead"><strong>KV-Lingo translates retained cache spans. DroidSpeak recomputes one receiver-layer interval. Modified Mixture-of-Translators (MoT) injects translated K/V into a source-selected reduced-key replay.</strong> All three try to avoid full receiver prefill, but they use different model pairs, data, controls, and quality rules.</p>
-<div class="verdict"><b>Evidence in one sentence</b><span>DroidSpeak passed one same-base adapter-pair quality test; unrestricted Qwen3-4B/8B KV-Lingo did not qualify; and modified MoT showed that translation helps one reduced-key cohort, but the replay policy still caused most of the measured loss.</span></div>
+<div class="verdict"><b>What we learned</b><span>Cross-model cache reuse can work, but only when the receiver repairs the cache carefully. DroidSpeak worked for one closely related Mistral pair by rebuilding 4 of 32 layers. Our Qwen3-4B/8B KV-Lingo checkpoints did not keep answer quality when either model could start. The modified-MoT translator helped on NewsQA, but its reduced-key replay still caused most of the quality loss. LMCache can move a cache between servers; it cannot make an incompatible cache safe to use.</span></div>
 <div class="badges"><span class="badge lingo">KV-LINGO: TRANSLATE SPANS</span><span class="badge droid">DROIDSPEAK: RECOMPUTE A WINDOW</span><span class="badge mot">MODIFIED MoT: TRANSLATE + SELECTED REPLAY</span><span class="badge warn">NOT A HEAD-TO-HEAD BENCHMARK</span></div>
 </div>
 

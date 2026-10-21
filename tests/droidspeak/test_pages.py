@@ -36,6 +36,9 @@ def test_comparison_page_keeps_methods_and_results_separate() -> None:
 
     required = (
         "NOT A HEAD-TO-HEAD BENCHMARK",
+        "What we learned",
+        "Cross-model cache reuse can work",
+        "LMCache can move a cache between servers",
         "KV-Lingo used CoQA",
         "DroidSpeak used HotpotQA",
         "0 / 4",
