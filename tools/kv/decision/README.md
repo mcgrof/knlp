@@ -149,14 +149,24 @@ allocated/reserved memory are reported separately. Unknown/custom allocations
 fail closed. CPU tests cover aliasing, rounding and inconsistent snapshots;
 actual kernel read/write behavior still requires worker qualification.
 
+`inline_scales.py` independently separates E4M3 codes from inline FP32
+token/head scales in an NHD cache and checks the backend scale views' exact
+aliases. The views share their original backing. The caller must still
+audit that backing's complete ownership and allocator bytes, including any
+larger allocation around an aligned subview. CPU tests exercise disjoint
+code/scale writes and reject copied, swapped or misaligned scale planes.
+This helper does not establish dynamic-worker numerical or quality support.
+
 ## Conditional actual-worker comparison
 
 The `production_*` tools implement the next experimental protocol; they do
 not yet establish a completed GPU qualification or serving result. Use them
 only after both full reference panels and their evidence audits finish. The
-optimized interface is fixed per-layer/component scaling. Dynamic SD's
-per-token/head scale plane is not implemented here, and SF cannot substitute
-for a stronger dynamic reference result.
+worker interface is fixed per-layer/component scaling. The pinned vLLM
+Triton backend supplies per-token/head FP8 scales, but its writer policy
+differs from the reference and its integration needs separate qualification.
+The preparer refuses a fixed-only protocol when the complete reference
+qualifies SD under aggregate-math. SF cannot substitute for that candidate.
 
 The worker pins the HTTP vLLM source
 `cca5181dd50b24ff58f114e3ee7d200293c9fbf6` and FlashInfer
