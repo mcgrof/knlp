@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh experiments reproduce TokenDance-style recovery, exact-prefix sharing, cascade and DMA-BUF offload in vLLM and LMCache.">
+<meta name="description" content="KMesh explores application-declared reuse: shared KV, singleflight restoration, prefetch and bounded retention in vLLM with DMA-BUF-enabled LMCache.">
 <title>KMesh: Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</title>
 <style>
 :root {
@@ -87,8 +87,9 @@ footer a { color: var(--muted); }
   <nav aria-label="Main navigation">
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
+    <a href="#grounding">start here</a>
     <a href="#redundancies">reuse</a>
-    <a href="#milestone">first milestone</a>
+    <a href="#singleflight">singleflight</a>
     <a href="#reproduce">reproduce</a>
     <a href="#results">results</a>
     <a href="#fork-accounting">reasoning forks</a>
@@ -98,36 +99,79 @@ footer a { color: var(--muted); }
 </header>
 <main id="content">
 <div class="hero">
-  <span class="eyebrow">Inference systems · Recovery, sharing and offload</span>
+  <span class="eyebrow">Inference systems · Application-declared reuse</span>
   <h1>KMesh</h1>
   <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
-  <p class="lead">Request-centric inference execution flattens round, segment, branch, and
-  lineage structure before it reaches the runtime, forcing the engine to
-  rediscover relationships the orchestrator already knew — or miss them. KMesh
-  investigates whether an inference engine can be given explicit, keyed state
-  relationships so that recovery, scheduling, and storage operate on groups of
-  related requests rather than isolated token streams. A bounded TokenDance-style
-  baseline now checks collective recovery against serial recovery and measures
-  exact family encoding. Subsequent profiles test engine sharing, cascade,
-  DMA-BUF offload and ancestor preloading separately. The instructions and measured results below distinguish
-  those mechanisms from the longer-term research goals.</p>
+  <p class="lead">An application often knows that several upcoming requests will
+  reuse the same context. KMesh investigates how to give that knowledge to
+  vLLM and LMCache early enough to prepare the cached state, share it and keep
+  it available for the requests that need it.</p>
+  <p>KMesh is an existing experimental codebase being developed alongside
+  DMA-BUF-enabled LMCache. This page presents the current implementation and
+  experiments: what ordinary prefix caching and Cascade already provide,
+  what KMesh adds, and which benefits the measurements support. Each experiment
+  isolates a mechanism; the CPU allocator, GPU-resident attention and retention
+  controls do not themselves perform DMA-BUF storage transfers.</p>
   <p class="paper-links"><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
   &middot; <a href="https://arxiv.org/abs/2604.03143">TokenDance</a>
-  &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a></p>
+  &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a>
+  &middot; <a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade Inference</a></p>
 </div>
 
-<div class="stat-grid">
-  <div class="stat"><div class="val">cross-turn</div><div class="label">temporal reuse<br>(DualPath)</div></div>
-  <div class="stat"><div class="val cyan">cross-agent</div><div class="label">sibling redundancy<br>(TokenDance)</div></div>
-  <div class="stat"><div class="val amber">vLLM</div><div class="label">first milestone,<br>correctness-first</div></div>
-</div>
+<section id="grounding">
+<h2>Start here: where KMesh fits</h2>
+<p><strong>Example:</strong> an agent reads a document, then launches five
+follow-up requests about it. Those five requests are the <strong>children</strong>.
+The cached computation for their common context is the <strong>ancestor</strong>;
+the related requests form a <strong>family</strong>. A five-child burst means
+submitting five follow-ups together. It does not mean five GPUs or five models.
+The experiments use synthetic token sequences to control this relationship.</p>
+<div class="note"><strong>The north star: declare reuse early, restore once,
+share compatible state, and retain it only when the benefit pays for its cost.</strong>
+An explicit family declaration can convey intended reuse before children arrive.
+The research question is whether that advance knowledge saves more waiting,
+I/O and recomputation than it costs in coordination, unused prefetches and memory
+displaced from other requests.</div>
+<div class="table-wrap"><table>
+<tr><th scope="col">Mechanism</th><th scope="col">What it does</th><th scope="col">Role in this work</th></tr>
+<tr><td class="hi">vLLM prefix caching</td><td>Matching requests reuse completed KV blocks already in the engine.</td><td>Existing physical sharing; KMesh builds on it.</td></tr>
+<tr><td class="hi">Cascade attention</td><td>Process attention against a shared prefix efficiently, then combine it with each request's private suffix.</td><td>Existing attention optimization, measured separately in <a href="#cascade">section 12</a>.</td></tr>
+<tr><td class="hi">KMesh singleflight</td><td>Let one request restore an ancestor into the engine while matching followers wait and then share it.</td><td>A load-coalescing feature in the LMCache connector, introduced and tested in <a href="#singleflight">section 14</a>.</td></tr>
+<tr><td class="hi">KMesh family declaration</td><td>Tell the connector that related requests are coming and coordinate preparation before they arrive.</td><td>A prototype using a one-token warm request; <a href="#preload">section 15</a> measures the lead time and cost.</td></tr>
+<tr><td class="hi">Prefetch and retention</td><td>Fetch state before demand, or keep it available through a gap between uses.</td><td><a href="#retained">External-cache retention</a> avoids repeated NVMe reads; <a href="#family-residency">engine retention</a> must pay for the capacity it occupies.</td></tr>
+<tr><td class="hi">DMA-BUF transfer path</td><td>Restore NVMe data into a registered GPU buffer on a qualified host.</td><td>Changes how bytes move. It does not choose what to fetch or deduplicate requests; the tested path still copies from that buffer into the engine cache.</td></tr>
+</table></div>
+<h3>How this extends the Cascade idea</h3>
+<p>Cascade supplies an important part of shared-context inference: efficient
+attention over shared KV. KMesh explores application-informed coordination
+around that computation, including preparation, ownership and lifetime.
+The <a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade post</a>
+already describes multi-level shared prefixes implemented in MLC-Serving, and
+FlashInfer exposes a
+<a href="https://docs.flashinfer.ai/api/cascade.html#flashinfer.cascade.MultiLevelCascadeAttentionWrapper">multi-level cascade API</a>.
+Those levels are nested contexts: a shared system prompt, a document shared by
+a subgroup, then private questions. KMesh's additional direction is advance
+knowledge of when related requests will need state and how long to keep it.</p>
+<p><strong>Family membership expresses intended reuse; compatibility decides
+whether bytes can actually be shared.</strong> Matching model/cache identity
+and causal context still matter. A common passage after different private
+histories is not automatically the same KV. Extending the contract to other
+inference objects is a research goal; the current declaration prototype is
+not a general native vLLM object or fork API.</p>
+<p><strong>What is established so far:</strong> ordinary vLLM shares resident
+exact prefixes; KMesh singleflight removes duplicate engine ancestors in its
+controlled comparison; retained external cache reduces repeated storage reads.
+Preload latency is mixed, and a family hold can hurt other requests under
+pressure. Cascade and DMA-BUF results come from separate profiles and must not
+be added together as a combined speedup.</p>
+</section>
 
 <div class="toc">
   <a href="#redundancies">1. Two redundancies, one missing structure</a>
   <a href="#current">2. What TokenDance and ForkKV show</a>
   <a href="#generalization">3. The generalization: keyed inference state</a>
   <a href="#unresolved">4. The long-term architecture is unresolved</a>
-  <a href="#milestone">5. The first milestone</a>
+  <a href="#milestone">5. What the implementation tests</a>
   <a href="#baseline">6. The baseline we implement</a>
   <a href="#reproduce">7. Reproduce the baseline</a>
   <a href="#results">8. Results and limits</a>
@@ -136,7 +180,7 @@ footer a { color: var(--muted); }
   <a href="#restore-latency">11. Does DMA-BUF reduce offloaded-ancestor latency?</a>
   <a href="#cascade">12. Does cascade reach the shared-prefix attention path?</a>
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
-  <a href="#singleflight">14. Can one loader remove duplicate GPU ancestors?</a>
+  <a href="#singleflight">14. Singleflight: one loader, one shared GPU ancestor</a>
   <a href="#preload">15. What does an early ancestor declaration buy?</a>
   <a href="#retained">16. Can external L1 keep the shared ancestor off NVMe?</a>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
@@ -231,12 +275,13 @@ reproduction from foreclosing chain-of-thought support later.</p>
 </section>
 
 <section id="milestone">
-<h2>5. The first milestone</h2>
-<p>The first milestone is a correctness-first reproduction of TokenDance-style,
-segment-aware collective reuse and Master&ndash;Mirror storage in vLLM. The
-comparison is built up in stages under controlled, deterministic All-Gather
-workloads, each stage validated against the one below it before any performance
-claim is made.</p>
+<h2>5. What the implementation tests</h2>
+<p>The implementation separates collective recovery, physical prefix sharing,
+attention computation, external restoration and future-use coordination.
+The TokenDance-style baseline checks segment-aware recovery and
+Master&ndash;Mirror storage under controlled All-Gather workloads. The serving,
+DMA-BUF, singleflight and family experiments then test their own mechanisms
+with explicit controls.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Stage</th><th scope="col">What it establishes</th></tr>
@@ -246,8 +291,8 @@ claim is made.</p>
 <tr><td class="hi">Master&ndash;Mirror</td><td>A codec that encodes a family of recovered caches as one dense master plus sparse mirror diffs, with exact round-trip tests and real serialized-byte accounting — not a changed-block oracle.</td></tr>
 </table>
 </div>
-<p>Only then does the API extend toward chain-of-thought and other
-test-time-scaling branches. Results on a single workstation-class GPU are labeled
+<p>Exact-prefix forks and family declarations test the extension toward
+chain-of-thought and other test-time-scaling branches. Results on a single workstation-class GPU are labeled
 as functional or trend results; a comparison against the paper's numbers waits for
 comparable data-center-class hardware, with every material difference disclosed.
 The standard is not that the code runs — it is that the workload is controlled,
@@ -291,137 +336,62 @@ exit or a self-reported driver flag does not establish a result.</p>
 
 <section id="reproduce">
 <h2>7. Reproduce the baseline</h2>
-<p>The harness lives in <code>tools/reproduce/tokendance/</code>, with the full
-prerequisites, commands and output contract in the
-<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md">reproducer README</a>.
-The scripts and defconfigs are on knlp main. The paired implementations are
-published in the <a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-tokendance-reproduction">vLLM fork branch</a>
-and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-16-feature-tokendance-reproduction">LMCache fork branch</a>.
-These experimental branches are separate from upstream releases. The raw
-reference capture is retained separately and is not distributed with knlp.</p>
-
-<h3>Validate the workload on CPU</h3>
-<pre><code>make defconfig-tokendance
+<p>The current CUDA profile in
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">the reproducer README</a>
+runs the eight-case recovery experiment on one H100 with BF16, eager execution
+and Triton attention. The vLLM and LMCache branches include the current
+integration work; this particular control uses LocalCPU storage to isolate
+recovery correctness. It does not exercise DMA-BUF transfers.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Component</th><th scope="col">Source for this experiment</th></tr>
+<tr><td class="hi">vLLM</td><td><a href="https://github.com/mcgrof/vllm/commit/21ad334d124ea9258e6fc37fa10a275f4e706930"><code>21ad334d124e</code></a></td></tr>
+<tr><td class="hi">LMCache</td><td><a href="https://github.com/mcgrof/LMCache/commit/643f8ca3962e0d02687ed9d0194e0915679b3c0b"><code>643f8ca3962e</code></a></td></tr>
+</table></div>
+<p>Both branches are named <code>2026-10-16-feature-kmesh-current-validation</code>.
+The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/profile.json">profile</a>
+pins source trees, the H100 runtime and model revision. Follow the README's
+image and compiler preparation before running:</p>
+<pre><code>bash tools/reproduce/tokendance/prepare_cuda.sh /workspace/kmesh-runtime
+. /workspace/kmesh-runtime/run.env
+make defconfig-tokendance-cuda
+make tokendance-plan
+TOKENDANCE_OUTPUT=/workspace/tokendance-h100 make tokendance-gpu</code></pre>
+<p>The model is <code>Qwen/Qwen2.5-0.5B-Instruct</code> at revision
+<code>7ae557604adf67be50417f59c2c2f167def9a775</code>. Set source and model paths
+explicitly and use a fresh output directory. The launcher checks contracts
+and resolved configuration, runs each case in a fresh process, and writes raw
+tensors, semantic ledgers, an independent verification and offline codec results.
+Instrumentation makes these capture times unsuitable for speed comparisons.</p>
+<h3>Validate the workload or recheck a capture on CPU</h3>
+<pre><code>make defconfig-tokendance-cpu
 make tokendance-plan
 make
 make tokendance-test</code></pre>
-<p><code>defconfig-tokendance-cpu</code> selects the same CPU profile explicitly.
-This needs Python 3.10 or newer and GNU make. It generates the pinned trace
-without loading a model or touching a GPU. The resulting <code>result.json</code>
-states <code>synthetic_trace_only</code> and
-<code>executed_kv_reuse: false</code>. Use a fresh absolute
-<code>TOKENDANCE_OUTPUT</code> for each execution; existing outputs are never
-overwritten.</p>
-
-<h3>Use the exact component and runtime pins</h3>
-<p>Both published component branches are named
-<code>2026-10-16-feature-tokendance-reproduction</code>. The runner requires clean
-checkouts matching their commit and tree digests.</p>
-<div class="table-wrap">
-<table>
-<tr><th scope="col">Component</th><th scope="col">Dated baseline commit</th></tr>
-<tr><td class="hi">vLLM</td><td><a href="https://github.com/mcgrof/vllm/commit/18f90213f45783bad6b7acd7bc43cbba957a69f8"><code>18f90213f45783bad6b7acd7bc43cbba957a69f8</code></a></td></tr>
-<tr><td class="hi">LMCache</td><td><a href="https://github.com/mcgrof/LMCache/commit/aa4984b57f78b9d1dce2e8d870ce7aa4716cd341"><code>aa4984b57f78b9d1dce2e8d870ce7aa4716cd341</code></a></td></tr>
-</table>
-</div>
-<p>From a knlp checkout, clone the paired branches into sibling directories
-and select the immutable commits:</p>
-<pre><code>git clone --single-branch --branch 2026-10-16-feature-tokendance-reproduction \
-  https://github.com/mcgrof/vllm.git ../vllm-tokendance
-git clone --single-branch --branch 2026-10-16-feature-tokendance-reproduction \
-  https://github.com/mcgrof/LMCache.git ../lmcache-tokendance
-git -C ../vllm-tokendance checkout --detach 18f90213f45783bad6b7acd7bc43cbba957a69f8
-git -C ../lmcache-tokendance checkout --detach aa4984b57f78b9d1dce2e8d870ce7aa4716cd341</code></pre>
-<p>Use the resulting absolute checkout paths for the source variables below.
-The default CPU trace profile needs neither component; the contract and model
-commands require the paired implementations.</p>
-<p>The GPU profile is deliberately narrow: one <code>gfx1100</code> device with
-48,301,604,864 bytes, the pinned ROCm container and prepared native Python
-environment, BF16, eager <code>TRITON_ATTN</code>, 32-token blocks and prefix
-caching disabled. The model is <code>Qwen/Qwen2.5-0.5B-Instruct</code> at revision
-<code>7ae557604adf67be50417f59c2c2f167def9a775</code>. Software versions, compiled
-extension hashes, model-file hashes, trace hashes and source trees are fixed
-by the harness. The wrapper does not build or download the native environment.</p>
-<p>Configure <code>TOKENDANCE_VLLM_SOURCE</code>,
-<code>TOKENDANCE_LMCACHE_SOURCE</code>, <code>TOKENDANCE_RUNTIME_VOLUME</code> and
-<code>TOKENDANCE_MODEL_DIR</code> with local paths and the prepared Docker volume.
-The host model path may be anywhere; the wrapper mounts it at the profile's
-fixed container path. Sources, model and runtime are read-only and execution
-has no network access. A CUDA GPU or a different native build requires its own
-qualification; changing an identity constant is not qualification.</p>
-
-<h3>Check contracts, then run GPU execution</h3>
-<p>The CPU contract suite imports the real component code in the pinned
-environment without exposing GPU devices. Run it with the component and volume
-variables set and a fresh output directory:</p>
-<pre><code>TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
-TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
-TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
-TOKENDANCE_OUTPUT=/path/to/fresh-contract-results \
-make tokendance-contracts</code></pre>
-<p>For the model experiment, select the ROCm defconfig and run the command
-on a qualified GPU host with the prepared runtime and explicit input paths:</p>
-<pre><code>make defconfig-tokendance-rocm
-make tokendance-plan
-/usr/bin/env \
-  TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
-  TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
-  TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
-  TOKENDANCE_MODEL_DIR=/path/to/pinned-model-snapshot \
-  TOKENDANCE_OUTPUT=/path/to/fresh-gpu-results \
-  make tokendance-gpu TOKENDANCE_PY=/usr/bin/python3
-</code></pre>
-<p>Set <code>TOKENDANCE_DOCKER='sudo -n docker'</code> only where
-that is the configured Docker invocation. The launcher checks contracts and the resolved model
-profile, runs all eight cases in separate containers, then verifies them on CPU.
-The new wrapper's live GPU execution and cancellation are still unqualified.</p>
-
-<h3>Independently verify a capture and measure storage bytes</h3>
-<p>A saved capture can be checked without a GPU using Python with PyTorch and
-safetensors. The capture directory contains <code>arms/</code>. Keep verification
-outputs outside it. <code>reference</code> selects the original captured source
-pair, vLLM <code>2f8d7fc1dce4</code> and LMCache <code>d416824a6f89</code>;
-use <code>dated</code> for a new capture on the dated branches.</p>
+<p>This CPU profile validates the synthetic workload and reports
+<code>executed_kv_reuse: false</code>; it executes no model. To independently
+verify a current GPU capture, use Python with PyTorch and safetensors:</p>
 <pre><code>TOKENDANCE_BUNDLE=/path/to/eight-case-capture \
-TOKENDANCE_SOURCE_PAIR=reference \
+TOKENDANCE_SOURCE_PAIR=current \
 TOKENDANCE_OUTPUT=/path/to/fresh-verification \
 make tokendance-verify TOKENDANCE_PY=/path/to/torch-env/bin/python</code></pre>
-<p>After the independent gate passes, the offline codec command uses the dated
-LMCache implementation to encode, write, reload and bitwise-compare all four
-captured caches. It also rejects an intentionally corrupted payload.</p>
-<pre><code>TOKENDANCE_VLLM_SOURCE=/path/to/vllm \
-TOKENDANCE_LMCACHE_SOURCE=/path/to/lmcache \
-TOKENDANCE_RUNTIME_VOLUME=prepared-runtime-volume \
-TOKENDANCE_BUNDLE=/path/to/eight-case-capture \
-TOKENDANCE_VERIFICATION=/path/to/fresh-verification/verified.json \
-TOKENDANCE_OUTPUT=/path/to/fresh-codec-results \
-make tokendance-codec</code></pre>
-<p>Inspect <code>verified.json</code> and <code>report.json</code> for the recovery
-claims, <code>codec.json</code> for actual dense and encoded byte counts, and
-<code>family.bin</code> for the encoded artifact. Run
-<code>sha256sum -c SHA256SUMS</code> inside the verification directory to check
-the summary digest. Its result and ledger hashes bind the captured inputs.
-Any failed check leaves evidence and stops promotion.</p>
+<p>Inspect <code>verified.json</code> for recovery checks and
+<code>codec/codec.json</code> for actual dense and encoded bytes. The GPU run's
+offline codec writes and reloads the family, requires bitwise restoration,
+and rejects a deliberately corrupted payload. These are correctness and
+storage-size measurements, not online GPU capacity or transfer results.</p>
 </section>
 
 <section id="results">
 <h2>8. Results and limits</h2>
-<p><strong>Evidence status, 2026-10-16:</strong> the portable verifier independently
-rechecked the retained 2026-08-03 GPU capture on CPU. The dated component pair
-passed the CPU contract suite, and its LMCache codec encoded the captured
-tensors on CPU. There was no fresh model/GPU run on the dated pair. Exact
-source, workload and evidence digests are in the
-<a href="data/tokendance-reference.json">sanitized reference record</a>.</p>
-<p><strong>H100 retest, 2026-10-16:</strong> all eight cases pass on the
-rebased <a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-current-validation">vLLM</a>
-and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-16-feature-kmesh-current-validation">LMCache</a>
-branches. The accepted serial/collective correctness and encoded-byte findings
-are unchanged. Full-recomputation parity remains unclaimed. The
-<a href="data/tokendance-h100-retest.json">retest record</a> and
-<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">CUDA reproducer</a>
-contain the exact pins and results.</p>
+<p><strong>H100 recovery experiment, October 16, 2026:</strong> all eight cases
+and the independent verifier pass on the component pins above. Serial and
+collective K/V match bit for bit, with zero maximum logit difference. The
+offline codec restores all four members exactly and rejects corruption.
+Full recomputation and recovery are not numerically equivalent. The
+<a href="data/tokendance-h100-retest.json">H100 result record</a>
+binds these findings to the exact sources and verifier digest.</p>
 <div class="stat-grid">
-  <div class="stat"><div class="val">8 / 8</div><div class="label">saved GPU cases<br>independently reverified</div></div>
+  <div class="stat"><div class="val">8 / 8</div><div class="label">current H100 cases<br>independently verified</div></div>
   <div class="stat"><div class="val cyan">bitwise</div><div class="label">collective vs serial K/V<br>four recovered siblings</div></div>
   <div class="stat"><div class="val amber">30.4%</div><div class="label">fewer encoded bytes<br>offline family storage</div></div>
 </div>
@@ -430,14 +400,14 @@ contain the exact pins and results.</p>
 <tr><th scope="col">Measurement</th><th scope="col">Result</th><th scope="col">What it establishes</th></tr>
 <tr><td class="hi">Serial vs collective</td><td>Raw K/V bits identical; maximum absolute logit difference 0.0.</td><td>Batching preserves this serial recovery baseline for four siblings in this synthetic case.</td></tr>
 <tr><td class="hi">Order, fallback, cleanup</td><td>All eight cases pass their independent checks.</td><td>Reversing request order, missing data, incompatible groups and injected failure obey the bounded contract.</td></tr>
-<tr><td class="hi">Ordinary vs serial</td><td>Maximum absolute logit difference 0.55859375; numerical diagnostic fails.</td><td>Recovery is not numerically equivalent to full recomputation. That parity is not an accepted claim.</td></tr>
+<tr><td class="hi">Ordinary vs serial</td><td>Maximum absolute logit difference 0.5625; numerical diagnostic fails.</td><td>Recovery is not numerically equivalent to full recomputation. That parity is not an accepted claim.</td></tr>
 <tr><td class="hi">Family codec</td><td>17,506,917 encoded bytes / 25,165,824 dense bytes = 69.566% of dense size.</td><td>Actual serialized storage saves 30.434%, including metadata, with exact restoration and corruption rejection.</td></tr>
 </table>
 </div>
 <p>The dense byte count is four siblings &times; two K/V planes &times; 512 tokens
 &times; 24 layers &times; 128 features &times; two BF16 bytes. Shared spans align
-by content before encoding. CPU codec measurement used the pinned container
-with two OpenMP threads and no GPU devices. It does not measure how many GPU
+by content before encoding. The current CUDA run includes offline codec measurement on the captured
+tensors. It does not measure how many GPU
 pages an online engine can share.</p>
 <p>The collective ledger records 24 cached-key recovery operations, 24 model
 rotary operations and one difference-analysis operation per participating
@@ -448,7 +418,7 @@ constant work or a latency improvement.</p>
 The one-token output check passes, but does not establish agent-task quality.
 Capture synchronization and tensor writes invalidate timing comparisons. No
 throughput, latency, live GPU capacity, cascade-attention gain, DMA-BUF gain or
-end-to-end storage-offload result is established. This small-model synthetic
+end-to-end storage-offload result is established by this recovery control. This small-model synthetic
 baseline is not the paper's larger-model, real-agent workload evaluation.</div>
 </section>
 
@@ -464,8 +434,8 @@ already reaches the fork-oracle block count in the tested trees while the
 ancestor remains cached. The experiment drives the real
 <code>KVCacheManager</code> on CPU and records actual block IDs. It treats
 allocation as completed prefill, without a model, scheduler, KV tensors or GPU.
-The complete five-tree matrix and six eviction points match the archived
-experiment. The serving replay below checks the real model and scheduler separately.</p>
+The matrix covers five tree shapes, 25 scenarios and six eviction points.
+The serving replay below checks the real model and scheduler separately.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Primary fork tree</th><th scope="col">Written blocks</th><th scope="col">Peak pool usage</th><th scope="col">Failed admissions</th></tr>
@@ -496,40 +466,33 @@ entirely and the next four hit fully. In this metadata admission sequence,
 the first child's simulated prefill repopulates the lost blocks. This does
 not establish a universal bound under interleaved traffic or preemption.</p>
 
-<p>The CPU allocator matrix was also repeated on the rebased serving
-branch with the current CUDA environment and GPU visibility disabled. All
-25 scenarios and six eviction points agree, and all 174 prefix-cache tests
-pass. The <a href="data/kmesh-fork-accounting-current.json">current capture</a>
-and README give the source and runtime pins.</p>
-
+<p>The current capture uses the serving branch and CUDA software environment
+with GPU visibility disabled. All 25 scenarios pass, and all 174 prefix-cache
+tests pass without skips. The
+<a href="data/kmesh-fork-accounting-current.json">allocator capture</a>
+records the observed block IDs and accounting.</p>
 <h3>Reproduce this allocator check</h3>
-<p>The
-<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md">fork-accounting README</a>
-documents the complete runtime prerequisites and verification. Its
-<a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-fork-accounting">dated vLLM branch</a>
-extends the published TokenDance source, retaining upstream base
-<code>454ea5b52611</code>. Only the benchmark, tests and usage documentation
-change. LMCache remains at its published baseline pin.</p>
-<pre><code>make defconfig-kmesh-fork-accounting
+<p>Follow the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md#repeat-on-the-current-allocator">current allocator instructions</a>.
+Use vLLM <code>1b76bf9dd9d52efbd75fb89bf2619898d8f01233</code> from
+<a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-serving-replay">the serving branch</a>.
+This adds the benchmark and tests while using the production memory manager.
+LMCache is not involved in the allocator check.</p>
+<pre><code>make defconfig-kmesh-fork-accounting-current
 make kmesh-fork-plan
 make kmesh-fork-test
 
-git clone --single-branch --branch 2026-10-16-feature-kmesh-fork-accounting \
-  https://github.com/mcgrof/vllm.git ../vllm-kmesh-forks
-git -C ../vllm-kmesh-forks checkout --detach 5ccaa1456af6d2c08fbb39e6c7bc4480df445d07
-
-KMESH_FORK_VLLM_SOURCE=/path/to/vllm-kmesh-forks \
-KMESH_FORK_RUNTIME_VOLUME=prepared-runtime-volume \
-KMESH_FORK_OUTPUT=/path/to/fresh-fork-results \
-make</code></pre>
-<p>The runner requires the pinned prepared native environment; it does not
-install dependencies. It authenticates clean source identity and runtime
-versions, disables network access, mounts no GPU devices, and independently
-verifies the complete output. Seed <code>20260805</code> preserves the original
-workload despite the new commit dates. Python 3.12.13, PyTorch
-<code>2.11.0+gitd0c8b1f</code> and two OpenMP threads were used. The
-<a href="data/kmesh-fork-accounting.json">full CPU counter capture</a> includes
-the observed block tables; the README links exact source and runtime pins.</p>
+export KMESH_FORK_VLLM_SOURCE=/absolute/path/to/pinned-vllm
+export KMESH_FORK_PYTHON=/absolute/path/to/prepared-venv/bin/python
+export KMESH_FORK_WHEEL_PACKAGE=/absolute/path/to/site-packages/vllm
+export KMESH_FORK_OUTPUT=/path/to/fresh-fork-results
+make
+KMESH_FORK_OUTPUT=/path/to/fresh-contract-results make kmesh-fork-contracts</code></pre>
+<p>The pinned environment uses Python 3.13.15, PyTorch
+<code>2.13.0+cu130</code> and matching vLLM native extensions. The runner checks
+source identity, imports and runtime versions, hides GPUs and verifies the
+output independently. The workload uses seed <code>20260805</code> and two
+OpenMP threads.</p>
 <div class="note"><strong>Shared capacity does not imply shared attention reads.</strong>
 These counters narrow the case for replacing the allocator in exact-prefix
 forks. They do not measure model quality, serving speed, attention traffic,
@@ -540,12 +503,12 @@ retention, external caching and DMA-BUF remain separate questions.</div>
 
 <section id="serving-replay">
 <h2>10. Does sharing survive real serving?</h2>
-<p><strong>Yes, for this exact-prefix fork tree.</strong> The original serving
-replay was forward-ported and rerun on an H100 with the rebased vLLM branch.
-All seven cases and the independent block-table verifier pass. A warm
+<p><strong>Yes, for this exact-prefix fork tree.</strong> The H100 serving
+experiment runs seven cases on the current vLLM branch. All cases and the
+independent block-table verifier pass. A warm
 4,096-token ancestor is physically shared by all five children; their writable
 tails remain separate. This tests real model execution and scheduler admission,
-beyond the earlier CPU allocator check.</p>
+complementing the CPU allocator check.</p>
 <h3 id="prefix-sharing">What creates the shared ancestor?</h3>
 <p>vLLM's <strong>automatic prefix caching (APC)</strong> creates the physical
 sharing. The reproducer submits five ordinary requests. Each contains the
@@ -616,7 +579,7 @@ Runtime is Python 3.13.15, PyTorch
 OpenMP threads. Stock defaults resolve to FlashAttention, 16,384 maximum
 batched tokens, 1,024 maximum sequences, chunked prefill and asynchronous
 scheduling. The recorder checks allocation/free boundaries and also retains
-the original five-millisecond pool samples.</p>
+five-millisecond pool samples.</p>
 <div class="note"><strong>Engine-level prefix capacity sharing is confirmed.</strong>
 The measurements cover one model and fork tree. They do not establish serving
 speed, task quality, shared attention reads, cascade-attention gains or
@@ -626,18 +589,25 @@ DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.
 <section id="restore-latency">
 <h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
 <p><strong>Yes for transport readiness and a single restored child in this workload.</strong>
-Retested on 2026-10-17 with an RTX 4090 and the current rebased branches,
+Measured on October 17, 2026, with an RTX 4090 and the DMA-BUF-enabled stack,
 DMA-BUF reduces median GPU-consumer readiness by <strong>16.3%</strong> for a
 48 MiB ancestor and single-child time to first token by <strong>6.4%</strong>.
 The five-child burst has no stable latency benefit. All strict restoration
-and numerical gates pass in this repeat without DEBUG logging.</p>
+and numerical gates pass with INFO logging.</p>
 <div class="table-wrap">
 <table>
-<tr><th scope="col">Transport metric</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
+<tr><th scope="col">One 48 MiB ancestor restore</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
 <tr><td class="hi">Adapter load complete</td><td>8.063 / 8.204 ms</td><td>8.023 / 8.160 ms</td></tr>
 <tr><td class="hi">GPU consumer ready</td><td>11.006 / 11.165 ms</td><td>9.211 / 9.364 ms</td></tr>
 </table>
 </div>
+<p><strong>In everyday terms:</strong> the 48 MiB ancestor is a saved bundle
+of model state for the shared context. Restoring that bundle and completing
+a small GPU operation that reads it takes 9.211 ms with DMA-BUF versus
+11.006 ms with host staging: about 1.8 ms less on this measured path, or 16.3%.
+This table measures one bundle being restored and consumed,
+not five children generating answers. The median (p50) is the middle run;
+p95 is the time at or below which 95% of the measured runs finish.</p>
 <p>Four pairs alternate staged/direct order, with 100 measured restores per
 arm in each pair, giving 400 measured restores per arm. Five warmups per cell
 are excluded from timing summaries. Complete payload checks pass, and both
@@ -653,44 +623,28 @@ describe complete transfer paths; physical NVMe command splitting was not
 matched or traced.</p>
 
 <h3>What the model checks establish</h3>
-<p>The new integration uses the production <code>LMCacheMPConnector</code>.
+<p>The integration uses the production <code>LMCacheMPConnector</code>.
 One arm restores an owned NVMe file into registered host memory and copies
 to the engine. The other restores into a registered GPU DMA-BUF arena, then
-copies KV into the engine cache. This is cold external-cache restoration;
-the earlier warm automatic-prefix-cache sharing result is a separate test.
-The TokenDance shifted-span recovery profile remains CPU-backed.</p>
-<p>The initial default-kernel smoke matches restored model KV and generated
-tokens, but its largest chosen-token log-probability difference from full
-recomputation is <code>0.0728383</code>, above the fixed <code>0.02</code> limit.
-That attempt remains failed. Enabling vLLM's batch-invariant kernels in the
-retry, including recomputation, gives <strong>zero difference for all 48
-checked chosen-token log probabilities</strong> and identical generated tokens.
-All twelve post-family model-KV prefix members match their producer.</p>
-<p>The retry fails a different strict gate: one child in a five-request
-host-staged warmup reports zero cached ancestor tokens. Its output remains
-correct, but recomputation does not qualify as restoration. Formal serving
-pairs therefore do not run. The cause of that cache miss remains open.
-The reproducer retains this gate, and does not remove the request or widen
-the numerical bound. Batch-invariant arithmetic can also change performance
-relative to default vLLM kernels. Post-family checksum block IDs can be reused
-between siblings; they do not establish simultaneous physical sharing.</p>
-<p>An October 17 diagnostic repeat with DEBUG logging passes all transport
-and serving gates. All <strong>96 continuation observations</strong>, including
-warmups, match recomputation exactly in both generated tokens and chosen-token
-log probabilities. Every child reports the full 4,096-token cached ancestor.
-This repeat uses one paired round and one retained family per fanout and arm.
-Logging can change race timing, so it neither explains the earlier miss nor
-establishes a serving speedup. The <a href="data/kmesh-restore-diagnostic-20261017.json">diagnostic
-record</a> preserves the counts and limits without reporting its instrumented
-times as performance results.</p>
-<h3>Serving repeat without diagnostic logging</h3>
-<p>The subsequent four-pair repeat uses INFO logging in both components and
-20 measured families per fanout and arm in each pair. Every one of its
-<strong>1,152 continuation observations</strong>, including smoke checks and
-warmups, restores the full 4,096-token ancestor, matches generated tokens and
-has zero chosen-token log-probability difference from recomputation. Model-KV
-digests, native routes, complete payloads and drained ownership also pass.
-No cache-admission fix was made; the earlier miss remains unexplained.</p>
+copies KV into the engine cache. Both test cold external-cache restoration.
+The resident prefix-sharing control and the CPU-backed shifted-span recovery
+control isolate different mechanisms.</p>
+<p>The serving comparison uses batch-invariant kernels, INFO logging and
+four alternating pairs, with 20 measured families per fanout and arm in each
+pair. Every one of its <strong>1,152 continuation observations</strong>,
+including smoke checks and warmups, restores the full 4,096-token ancestor,
+matches generated tokens and has zero chosen-token log-probability difference
+from recomputation. Model-KV digests, native routes, complete payloads and
+drained ownership also pass.</p>
+<h3>How long does a child wait for its first output?</h3>
+<p><strong>Time to first token (TTFT)</strong> is the wait from submitting a
+request until its first generated token. One child waits 23.403 ms with
+DMA-BUF versus 25.015 ms with staging: about 1.6 ms saved, or 6.4%. TTFT also
+includes serving work, so the transfer-path improvement does not translate
+directly into the same percentage improvement for the whole request.
+The second row submits five follow-up requests together and measures each
+child's wait. It is a separate workload, not five copies of the single-child
+timing added together.</p>
 <div class="table-wrap">
 <table>
 <tr><th scope="col">Time to first token</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
@@ -702,12 +656,12 @@ No cache-admission fix was made; the earlier miss remains unexplained.</p>
 Five-child paired changes vary in sign; the pooled median changes by only
 0.5%, while median batch completion is 74.576 ms direct versus 73.883 ms
 staged. These measurements do not establish a stable burst benefit. The
-<a href="data/kmesh-restore-serving-20261017.json">full-repeat record</a>
+<a href="data/kmesh-restore-serving-20261017.json">serving result record</a>
 retains all percentiles, paired medians, counts and limits.</p>
 <p>Every retained five-child burst issues 80 backend chunk
 reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. A
 single child reads sixteen chunks, or 48 MiB. These
-counts motivate the later cold-burst coalescing test. They count adapter
+counts motivate the cold-burst and load-coalescing experiments below. They count adapter
 requests and completed payload bytes, not physical NVMe commands, and do not
 prove how many ancestor copies occupy GPU memory simultaneously.</p>
 
@@ -719,10 +673,7 @@ and
 The latter extends the checksum endpoint to the current packed KV layouts.
 The
 <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
-gives native preparation, exact pins, queued execution and CPU rechecks.
-The <a href="data/kmesh-dmabuf-restore.json">initial transport record</a>
-retains the October 16 measurements and both failed serving gates; the
-October 17 full-repeat record above contains the accepted serving timings.</p>
+gives native preparation, exact pins, queued execution and CPU rechecks.</p>
 <pre><code>make defconfig-kmesh-restore-cuda
 make kmesh-restore-plan
 
@@ -732,7 +683,7 @@ make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
 KMESH_RESTORE_OUTPUT=/path/to/results make kmesh-restore-verify</code></pre>
 <p>The default preset selects the qualified adapter comparison and the
 experimental Vulkan/RM GPU provider. <code>KMESH_RESTORE_SECTION=all</code>
-also runs the strict serving qualification used in the full repeat. Keep
+also runs the strict serving qualification used for these timings. Keep
 both component log levels at INFO for the timing comparison. Run on a host with the
 <a href="io-uring-dmabuf.html">qualified experimental DMA-BUF kernel and storage route</a>;
 a stock RunPod container does not provide that host integration.</p>
@@ -751,14 +702,18 @@ Model startup and checksum controls are outside timed intervals.</p>
 <div class="note"><strong>The measured wins are GPU-consumer readiness and single-child latency.</strong>
 It does not establish cold-media behavior, general model quality, serving
 throughput, cascade-attention gains or cross-engine page sharing. Five-child
-burst latency has no stable improvement, and the earlier admission miss
-remains open despite this passing repeat.</div>
+burst latency has no stable improvement. Qualification is specific to
+batch-invariant kernels; default-kernel numerical equivalence is not established.
+An intermittent ancestor-admission miss remains an unresolved reliability limit
+in the <a href="data/kmesh-dmabuf-restore.json">qualification evidence</a>;
+the measured cohort contains no such miss. Passing this cohort does not establish
+that the condition cannot recur.</div>
 </section>
 
 <section id="cascade">
 <h2>12. Does cascade reach the shared-prefix attention path?</h2>
 <p><strong>Yes, with the cascade-capable runner and flag selected explicitly.</strong>
-The October 17 RTX 4090 retest uses the current vLLM serving branch with
+The October 17 RTX 4090 experiment uses the current vLLM serving branch with
 Llama-3.1-8B-Instruct, an 8,192-token shared ancestor, 32 distinct 512-token
 tails and 128 greedy generated tokens per child. Automatic prefix caching
 shares capacity; cascade groups attention reads of that ancestor and merges
@@ -811,14 +766,14 @@ KMESH_CASCADE_OUTPUT=/path/to/results make kmesh-cascade-verify</code></pre>
 <p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_cascade/README.md">cascade README</a>
 describes the authenticated inputs, process-local policy, rejected comparisons
 and CPU recheck. This tests an existing vLLM feature, with no family-aware
-scheduler or new attention kernel. The following section tests the original
+scheduler or new attention kernel. The following section tests a
 cold external-cache burst versus a leader completed before its followers.</p>
 </section>
 
 <section id="coldburst">
 <h2>13. Do cold siblings repeat storage reads and GPU copies?</h2>
 <p><strong>Repeated NVMe payload reads remain; GPU-copy amplification varies.</strong>
-The October 17 current-branch retest releases siblings together from an empty
+The October 17 experiment releases siblings together from an empty
 engine cache, with their 48 MiB ancestor available only through the NVMe-backed
 external cache. A separate control completes the leader before submitting
 three followers. Each case retains three families after three warmups, on
@@ -854,9 +809,8 @@ assuming that every backend read creates a private GPU ancestor.</p>
 the full 4,096-token cached ancestor and exactly match recomputation's eight
 generated tokens. All <strong>1,728 chosen-token log probabilities</strong>
 also match exactly. Restored model-KV digests, registered native routes,
-complete bytes and drained ownership pass. The earlier one-token diagnostic
-also passed. This table uses eight-token continuations and additional lookup
-observations. Longer request lifetimes and instrumentation can both affect
+complete bytes and drained ownership pass. This table uses eight-token
+continuations and lookup observations. Request lifetimes and instrumentation can both affect
 admission timing; these samples do not establish a general race frequency.</p>
 <p>Allocation/free observations retain live block IDs, request status and
 computed-token counts. Each ancestor spans 256 engine blocks. A reserved
@@ -869,12 +823,12 @@ ordinary-file NVMe route match the restore comparison above. This profile
 uses seed 20260805, distinct 512-token tails, eight greedy output tokens,
 512 MiB server arenas in each path and a 512 MiB engine KV pool. Both caches
 are cleared before each family; the external index and SSD ranges remain
-warm. The historical host-RAM tier is not retested. The
+warm. The
 <a href="data/kmesh-coldburst-20261017.json">sanitized evidence</a> retains
 each family's backend counts, live destinations, local-hit/load counts and
 source/model/native hashes.</p>
-<h3>Twenty-family repeat</h3>
-<p>A larger repeat on the same RTX 4090 and frozen sources retains 20 families
+<h3>Twenty-family arrival sample</h3>
+<p>A larger sample on the same RTX 4090 and frozen sources retains 20 families
 per case, again after three warmups. It passes all strict gates:
 <strong>828 continuations and 6,624 chosen-token log probabilities</strong>
 match recomputation exactly, including warmups. Every retained family still
@@ -896,7 +850,7 @@ These observations strengthen the separation between repeated storage reads
 and the remaining admission race. Each mode/arrival combination uses one engine;
 the families are not independent process-paired trials and do not establish
 a general race rate or a difference in race probability between paths.
-The <a href="data/kmesh-coldburst-repeat20-20261017.json">repeat record</a>
+The <a href="data/kmesh-coldburst-repeat20-20261017.json">twenty-family record</a>
 preserves the histograms and unchanged source/model/native identities.
 No coalescing change or latency qualification is included.</p>
 <h3>Reproduce the arrival controls</h3>
@@ -909,18 +863,28 @@ make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
 KMESH_RESTORE_SECTION=coldburst KMESH_RESTORE_OUTPUT=/path/to/results \
   make kmesh-restore-verify</code></pre>
 <p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md#cold-external-cache-arrival-controls">arrival-control instructions</a>
-describe the queued wrapper and independent CPU recheck. This is a measured
-baseline: no singleflight, family prefetch, new allocator or sharing fix has
-been added.</p>
+describe the queued wrapper and independent CPU recheck. This control
+measures default loading without KMesh load coalescing. The next experiment
+enables that feature to test whether one loader eliminates duplicate GPU ancestors.</p>
 </section>
 
 <section id="singleflight">
-<h2>14. Can one loader remove duplicate GPU ancestors?</h2>
-<p><strong>Yes in this replay; repeated NVMe reads remain.</strong> The original
-exact-prefix singleflight gate is retested on the current DMA-BUF-capable
-LMCache branch and RTX 4090. Singleflight selects one loader for an externally
-cached text ancestor. Followers defer before GPU allocation and retry vLLM's
-ordinary local prefix cache after the leader publishes the ancestor.</p>
+<h2>14. Singleflight: one loader, one shared GPU ancestor</h2>
+<p><strong>Singleflight means one request does the work while others needing
+the same result wait and reuse it.</strong> When several children need an
+externally cached ancestor at once, they can each start restoring their own
+GPU copy before the first restoration becomes reusable. KMesh adds an
+exact-prefix singleflight gate to the LMCache connector to coordinate that race.</p>
+<p>This is KMesh's load-coalescing feature on the DMA-BUF-enabled LMCache
+branch. It applies an established programming pattern to ancestor restoration:
+choose one loader, defer matching followers before GPU allocation, and let
+them retry vLLM's ordinary prefix cache after the loader publishes the ancestor.
+The feature is opt-in and limited to compatible text prefixes. It uses the
+existing vLLM allocator and scheduler retry mechanism.</p>
+<p><strong>The experiment asks:</strong> does enabling the gate leave one
+ready GPU ancestor for the family? On the RTX 4090, every enabled family in
+this comparison has one external engine load and one shared ready ancestor.
+Repeated backend NVMe reads remain a separate problem.</p>
 <p>Disabled and enabled controls use identical sources and native binaries.
 Each path and arrival case retains twenty families after three warmups:
 bursts of two, four and eight children, plus a completed leader followed by
@@ -951,11 +915,11 @@ retains every backend count, copy/load histograms, exact source/model/native
 hashes and numerical bounds. Each control/path/arrival uses one engine;
 these are not independent randomized process pairs or a general race-rate
 estimate. No serving-speed claim follows from this instrumented replay.</p>
-<h3>Reproduce the load gate</h3>
+<h3>Reproduce the singleflight experiment</h3>
 <p>Use public LMCache branch
 <a href="https://github.com/mcgrof/LMCache/tree/2026-10-17-feature-kmesh-external-singleflight"><code>2026-10-17-feature-kmesh-external-singleflight</code></a>
 at <code>100442de5a49</code>, with vLLM unchanged at
-<code>1b76bf9dd9d5</code>. Both author and committer dates are October 17.</p>
+<code>1b76bf9dd9d5</code>.</p>
 <pre><code>make defconfig-kmesh-singleflight-cuda
 make kmesh-restore-plan
 
@@ -973,7 +937,7 @@ retaining storage-read accounting.</p>
 
 <section id="preload">
 <h2>15. What does an early ancestor declaration buy?</h2>
-<p><strong>Early declaration coordinates restoration; this replay shows mixed
+<p><strong>Early declaration coordinates restoration; this experiment shows mixed
 latency.</strong> vLLM's existing prefix cache creates the sharing. The caller
 knows the ancestor and intended fanout,
 submits a one-token warm request, then releases children during the fork gap.
@@ -982,8 +946,11 @@ is active and their ancestor is not locally reusable. Completion, cancellation
 or expiry releases the wait. Local reuse is credited after allocation admits
 the child, independently of an external lookup hit or miss. The declaration
 itself submits no I/O and leases no GPU blocks.</p>
-<pre><code>Reactive: child arrival -&gt; one ancestor restore -&gt; local sharing
-Declared: warm request -&gt; attained fork gap -&gt; child arrival -&gt; local sharing</code></pre>
+<p><strong>Reactive singleflight</strong> starts when children arrive.
+<strong>Declared preloading</strong> starts a warm request during the time
+before their expected arrival, called the fork gap. This is speculative
+prefetching: preparation can be wasted if the expected children never arrive.
+It is separate from speculative token decoding.</p>
 <p>Measured on October 17, 2026, on RTX 4090, this replay releases requests
 through vLLM's public engine loop. Requested gaps are 0, 10, 25 and 100 ms; a synchronous engine
 step can delay release, so every sample records its attained gap. Children
@@ -1258,6 +1225,12 @@ unused holds. The trace gap in the preceding section remains open.</p>
 <h2>19. Papers</h2>
 <ul class="papers">
 <li>
+  <span class="t"><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade Inference: Memory Bandwidth Efficient Shared Prefix Batch Decoding</a></span><br>
+  Shared-prefix attention computation and merging with private suffixes.
+  The post describes multi-level prefix hierarchies already implemented in
+  MLC-Serving; KMesh explores coordination and future reuse around that computation.
+</li>
+<li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
   Cross-turn temporal KV reuse in long-context, short-append agent trajectories,
   and a dual-path loading scheme that rebalances the resulting storage-bandwidth
@@ -1289,3 +1262,4 @@ unused holds. The trace gap in the preceding section remains open.</p>
 </main>
 </body>
 </html>
+
