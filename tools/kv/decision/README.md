@@ -157,6 +157,14 @@ larger allocation around an aligned subview. CPU tests exercise disjoint
 code/scale writes and reject copied, swapped or misaligned scale planes.
 This helper does not establish dynamic-worker numerical or quality support.
 
+`production_dynamic_oracle.py` computes expected FP32 scale bits from
+retained native CPU operands and uses the independent E4M3 codebook. Scale
+creation clamps the maximum before multiplying by the rounded FP32 reciprocal
+of 448, matching the reference's CUDA scalar-division path. Normalization
+uses FP32 division. Tests distinguish the one-ULP scale-construction cases
+and cover signed zero, subnormals, per-head independence and rounding ties.
+Actual GPU writer integration and byte comparisons remain required.
+
 ## Conditional actual-worker comparison
 
 The `production_*` tools implement the next experimental protocol; they do
