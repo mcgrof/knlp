@@ -4,7 +4,7 @@ import pytest
 import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen3Config, Qwen3ForCausalLM
 from transformers.cache_utils import Cache
-from tools.kv.decision.oracle import oracle
+from tools.kv.decision.oracle import oracle, oracle_decode
 from tools.kv.decision.cache import ARMS, Layer, decode, encode, inventory, make_cache
 
 
@@ -17,7 +17,9 @@ def test_independent_codebook(dtype, fixed):
     q, s = encode(x, scale)
     np.testing.assert_array_equal(q.view(torch.uint8).numpy(), oracle(x, s.numpy()))
     assert q.element_size() == 1 and s.dtype == torch.float32
-    assert torch.equal(decode(q, s, dtype), (q.float() * s).to(dtype))
+    assert torch.equal(
+        decode(q, s, dtype), oracle_decode(oracle(x, s.numpy()), s.numpy(), dtype)
+    )
     z, zs = encode(torch.zeros_like(x), scale)
     assert torch.isfinite(decode(z, zs, dtype)).all() and torch.all(z.float() == 0)
 

@@ -49,7 +49,8 @@ on 32 independent documents at 1K and 8K, including 128 forced greedy decode
 steps. Each fixed component scale is FP32 `max(maxabs, 1e-12)/448` over all
 those operands. A second native replay audits clipping and error for both
 scale policies on every calibration operand. Saved activation fragments
-also undergo an independent mathematical E4M3FN codebook comparison.
+also undergo independent E4M3FN codebook and reconstruction comparisons
+on CUDA when available (otherwise CPU). The recorded device is explicit.
 Dynamic scales apply the same equation independently to each fresh
 head/token vector. Stored codes are never requantized. Conversion clips
 to ±448, uses nearest/even E4M3FN rounding and reconstructs by FP32
@@ -87,7 +88,8 @@ endpoints into a general superiority claim. Failed or incomplete panels
 cannot be replaced or enlarged to obtain a pass.
 
 CPU analysis expects `inputs/{qwen3,qwen25}/inputs.json.gz` and
-`{qwen3,qwen25}/artifact-mirror/confirmation/` below the supplied study root:
+`{qwen3,qwen25}/artifact-mirror/confirmation/` below the supplied study root. A `PLAN.json` `executions` mapping may
+name retained attempt directories explicitly; no latest-result selection occurs:
 
 ```sh
 python -m tools.kv.decision.analyze --study study --out analysis.json

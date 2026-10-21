@@ -242,10 +242,13 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     results = {}
+    plan_path = a.study / "PLAN.json"
+    plan = json.loads(plan_path.read_text()) if plan_path.exists() else {}
     for name in ["qwen3", "qwen25"]:
+        execution = plan.get("executions", {}).get(name, name)
         results[name] = model_result(
             a.study / "inputs" / name / "inputs.json.gz",
-            a.study / name / "artifact-mirror/confirmation",
+            a.study / execution / "artifact-mirror/confirmation",
         )
     for endpoint in [
         "gsm8k",
