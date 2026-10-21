@@ -93,3 +93,36 @@ def test_generated_protocol_keeps_full_family_and_rejects_changed_objective():
     changed["serving_qualification_route"] = "preservation"
     with pytest.raises(ValueError, match="preselected"):
         validate(changed, data, scales)
+    changed = copy.deepcopy(record)
+    changed["kv_allocator_allowance_bytes"] = 0
+    changed["engine"]["kv_cache_memory_bytes"] += record["kv_allocator_allowance_bytes"]
+    with pytest.raises(ValueError, match="allocation rounding"):
+        validate(changed, data, scales)
+
+
+@pytest.mark.parametrize(
+    "bytes_per_pair,near_capacity_requests", [(4, 35), (3, 46), (2, 70)]
+)
+def test_payload_request_leaves_room_for_unsplit_allocator_tails(
+    bytes_per_pair, near_capacity_requests
+):
+    record = protocol(
+        {"model": MODEL, "revision": REVISION, "scales": [{"K": 0.1, "V": 0.2}] * 36}
+    )
+    per_block = 16 * 8 * 128 * bytes_per_pair
+    layers = 36
+    blocks = record["engine"]["kv_cache_memory_bytes"] // (layers * per_block)
+    # Torch 2.11 native should_split leaves <=1 MiB attached to a large
+    # active allocation; scales occupy 512-byte small-pool blocks.
+    upper = layers * (blocks * per_block + 1024**2 + 3 * 512)
+    assert upper <= record["persistent_budget_bytes"]
+    assert blocks >= near_capacity_requests * ((8192 + 32) // 16)
+    # A fresh cudaMalloc rounds to 2 MiB. The previous scale-only request
+    # left 256 KiB per layer unsplit and exceeded the declared 40 GiB.
+    old_blocks = (record["persistent_budget_bytes"] - layers * 3 * 512) // (
+        layers * per_block
+    )
+    old_request = old_blocks * per_block
+    old_segment = ((old_request + 2 * 1024**2 - 1) // (2 * 1024**2)) * 2 * 1024**2
+    assert 0 < old_segment - old_request <= 1024**2
+    assert layers * (old_segment + 3 * 512) > record["persistent_budget_bytes"]

@@ -226,6 +226,11 @@ worker arm. `production_memory_analysis` joins those captures with the
 quality analysis using `--equal-slot-root` and `--quality-analysis`. It
 reports 17,000-block equal-slot bytes separately from physical capacity
 under the common 40-GiB KV-plus-scale allocation budget. The worker uses
+the same payload request across arms after reserving 36 MiB for unsplit
+KV allocation tails and 55,296 bytes for scale allocations. This follows
+the pinned [Torch 2.11 native allocator's splitting rule](https://github.com/pytorch/pytorch/blob/v2.11.0/c10/cuda/CUDACachingAllocator.cpp#L2894-L2920).
+The live allocator inventory, rather than this request bound, determines
+whether the physical budget passes. The worker uses
 eight server, two client and two control CPUs, a 68-GiB Torch reserved cap,
 and a 76-GiB driver envelope sampled every 100 ms. Gaps above 500 ms fail
 the resource audit; shorter peaks can be missed. Staging, weights and graph

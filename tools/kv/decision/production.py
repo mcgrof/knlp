@@ -241,13 +241,15 @@ def validate(protocol, data, calibration):
     }:
         raise ValueError("Graph policy differs")
     allowance = protocol["scale_allocator_allowance_bytes"]
+    kv_allowance = protocol["kv_allocator_allowance_bytes"]
     if (
         allowance != 36 * 3 * 512
+        or kv_allowance != 36 * 1024**2
         or engine["kv_cache_memory_bytes"]
-        != protocol["persistent_budget_bytes"] - allowance
+        != protocol["persistent_budget_bytes"] - allowance - kv_allowance
     ):
         raise ValueError(
-            "KV payload budget must leave room for scale allocation rounding"
+            "KV payload budget must leave room for live KV and scale allocation rounding"
         )
     if protocol["torch_allocator_reserved_cap_bytes"] != 68 * 1024**3:
         raise ValueError("The common Torch allocator ceiling differs")

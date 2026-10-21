@@ -77,6 +77,9 @@ def reference_gate(analysis, evidence, input_digest):
 
 def protocol(scales):
     allowance = 36 * 3 * 512
+    # The native Torch allocator may keep a <=1-MiB unsplit tail in each
+    # large active block. All four workers use one KV backing per layer.
+    kv_allowance = 36 * 1024**2
     return {
         "schema": 1,
         "arms": list(ARMS),
@@ -95,6 +98,7 @@ def protocol(scales):
         "transformers": "5.5.3",
         "persistent_budget_bytes": 40 * 1024**3,
         "scale_allocator_allowance_bytes": allowance,
+        "kv_allocator_allowance_bytes": kv_allowance,
         "equal_slot_blocks": 17000,
         "torch_allocator_reserved_cap_bytes": 68 * 1024**3,
         "resource_policy": RESOURCE_POLICY,
@@ -115,7 +119,7 @@ def protocol(scales):
             "seed": 20261020,
             "stream_interval": 1,
             "generation_config": "vllm",
-            "kv_cache_memory_bytes": 40 * 1024**3 - allowance,
+            "kv_cache_memory_bytes": 40 * 1024**3 - allowance - kv_allowance,
             "compilation_config": {
                 "mode": 0,
                 "cudagraph_mode": "FULL_DECODE_ONLY",
