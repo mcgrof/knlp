@@ -61,6 +61,12 @@ td.hi { color: var(--green); font: 650 12px/1.7 var(--mono); }
 tr:last-child td { border-bottom: 0; }
 .note { margin-top: 24px; padding: 20px 24px; border-left: 3px solid var(--amber); background: rgba(240,182,92,.06); color: var(--muted); border-radius: 0 9px 9px 0; }
 .note strong { display: block; margin-bottom: 8px; color: var(--amber); }
+.experiment-steps { color: var(--muted); max-width: 1000px; padding-left: 24px; }
+.experiment-steps li { padding: 4px 0 8px 6px; }
+details { margin: 28px 0 0; padding: 18px 22px; border: 1px solid var(--line); border-radius: 9px; background: var(--card2); }
+summary { cursor: pointer; color: var(--cyan); font-weight: 600; }
+summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 5px; }
+details[open] summary { margin-bottom: 22px; }
 .papers { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 28px 0 0; }
 .papers li { min-width: 0; padding: 24px; background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 14px; }
 .papers .t { color: var(--text); font-weight: 600; }
@@ -180,8 +186,8 @@ be added together as a combined speedup.</p>
   <a href="#restore-latency">11. Does DMA-BUF reduce offloaded-ancestor latency?</a>
   <a href="#cascade">12. Does cascade reach the shared-prefix attention path?</a>
   <a href="#coldburst">13. Do cold siblings repeat storage reads and GPU copies?</a>
-  <a href="#singleflight">14. Singleflight: one loader, one shared GPU ancestor</a>
-  <a href="#preload">15. What does an early ancestor declaration buy?</a>
+  <a href="#singleflight">14. Load shared context once for all follow-ups</a>
+  <a href="#preload">15. Can loading context early make follow-ups start sooner?</a>
   <a href="#retained">16. Can external L1 keep the shared ancestor off NVMe?</a>
   <a href="#trace-audit">17. Can the traces qualify family retention?</a>
   <a href="#family-residency">18. Does holding the ancestor pay under pressure?</a>
@@ -869,42 +875,64 @@ enables that feature to test whether one loader eliminates duplicate GPU ancesto
 </section>
 
 <section id="singleflight">
-<h2>14. Singleflight: one loader, one shared GPU ancestor</h2>
-<p><strong>Singleflight means one request does the work while others needing
-the same result wait and reuse it.</strong> When several children need an
-externally cached ancestor at once, they can each start restoring their own
-GPU copy before the first restoration becomes reusable. KMesh adds an
-exact-prefix singleflight gate to the LMCache connector to coordinate that race.</p>
-<p>This is KMesh's load-coalescing feature on the DMA-BUF-enabled LMCache
-branch. It applies an established programming pattern to ancestor restoration:
-choose one loader, defer matching followers before GPU allocation, and let
-them retry vLLM's ordinary prefix cache after the loader publishes the ancestor.
-The feature is opt-in and limited to compatible text prefixes. It uses the
-existing vLLM allocator and scheduler retry mechanism.</p>
-<p><strong>The experiment asks:</strong> does enabling the gate leave one
-ready GPU ancestor for the family? On the RTX 4090, every enabled family in
-this comparison has one external engine load and one shared ready ancestor.
-Repeated backend NVMe reads remain a separate problem.</p>
-<p>Disabled and enabled controls use identical sources and native binaries.
-Each path and arrival case retains twenty families after three warmups:
-bursts of two, four and eight children, plus a completed leader followed by
-three children. The gate records <strong>29 actual follower joins</strong>,
-including warmups. Every enabled family, including warmups, has one external
-engine load, one ready ancestor spanning 256 blocks, and local hits for all
-remaining children. No registry state remains after a family completes.</p>
+<h2>14. Load shared context once for all follow-ups</h2>
+<p>Imagine four follow-up requests about the same document. The model has
+already processed their shared context, and its saved computation
+(the <strong>KV cache</strong>) is on the SSD. In this test that shared state
+occupies 48 MiB. It must be restored to vLLM's GPU cache before the requests
+can reuse it.</p>
+<p><strong>The problem:</strong> if the requests arrive together, several
+can start restoring their own copy before any one copy is ready to share.
+They need the same state, but the loading process has not coordinated them.
+That can waste GPU cache space and duplicate restoration work.</p>
+<p><strong>KMesh adds coordination:</strong></p>
+<ol class="experiment-steps">
+<li><strong>Choose one request to load the shared state.</strong> This is the loader, also called the leader.</li>
+<li><strong>Make matching requests wait for that load.</strong> They wait before allocating their own destination in vLLM's GPU cache.</li>
+<li><strong>Let them reuse the completed copy.</strong> vLLM's existing prefix cache supplies the sharing. Each request still gets private space for its different continuation.</li>
+</ol>
+<p>This is called <strong>singleflight</strong>: one operation runs while
+other callers needing the same result wait for it. KMesh applies this
+established pattern in the LMCache connector. On this page, a <em>GPU ancestor</em>
+means the shared context's KV blocks in vLLM's GPU cache; it is not another
+model, GPU or agent.</p>
+<h3>What happened when we enabled it?</h3>
+<p>With coordination enabled, <strong>every tested family used one restoration
+into vLLM and one ready copy of the shared state in its cache</strong>.
+Without it, some simultaneous arrivals produced multiple ready copies.
+Each row below covers twenty measured groups of requests on each transfer
+path, after three warmup groups. A range such as 1&ndash;6 means the number
+of copies varied between groups.</p>
 <div class="table-wrap"><table>
-<tr><th scope="col">Case</th><th scope="col">Gate disabled: ready GPU copies</th><th scope="col">Gate enabled: ready GPU copies</th><th scope="col">Backend payload, either gate</th></tr>
-<tr><td class="hi">Two-child burst</td><td>1</td><td>1</td><td>96 MiB</td></tr>
-<tr><td class="hi">Four-child burst</td><td>1&ndash;2</td><td>1</td><td>192 MiB</td></tr>
-<tr><td class="hi">Eight-child burst</td><td>1&ndash;6 staged; 1&ndash;2 DMA-BUF</td><td>1</td><td>384 MiB</td></tr>
-<tr><td class="hi">Leader, then three children</td><td>1</td><td>1</td><td>192 MiB</td></tr>
+<tr><th scope="col">How follow-ups arrive</th><th scope="col">Copies in vLLM without coordination</th><th scope="col">Copies in vLLM with singleflight</th><th scope="col">Bytes read from storage, with or without</th></tr>
+<tr><td class="hi">2 follow-ups together</td><td>1</td><td>1</td><td>96 MiB</td></tr>
+<tr><td class="hi">4 follow-ups together</td><td>1&ndash;2</td><td>1</td><td>192 MiB</td></tr>
+<tr><td class="hi">8 follow-ups together</td><td>1&ndash;6 with host staging; 1&ndash;2 with DMA-BUF</td><td>1</td><td>384 MiB</td></tr>
+<tr><td class="hi">1 request finishes, then 3 follow-ups</td><td>1</td><td>1</td><td>192 MiB</td></tr>
 </table></div>
-<p>The read totals are unchanged: the 48 MiB ancestor is still read once per
-child at the backend. The gate follows LOOKUP, which has already started L2
-prefetch, including for children that later find the ancestor in vLLM.
-<strong>GPU load coalescing and storage-read suppression are separate
-problems.</strong> DMA-BUF changes the transfer route; it does not fix this
-lookup behavior.</p>
+<p><strong>Read the four-request row this way:</strong> singleflight leaves
+one usable 48 MiB copy in vLLM's cache. But storage still supplies
+192 MiB&mdash;four reads of the same 48 MiB state. The feature fixes duplicate
+copies inside the engine; this experiment does not fix repeated SSD reads.</p>
+<p>Why are reads still repeated? The connector asks the external cache for
+the data before the singleflight gate decides which request will load it
+into vLLM. That lookup already starts storage prefetching. A request can
+therefore trigger an SSD read and later reuse an existing vLLM copy.
+<a href="#retained">Section 16</a> tests keeping the data in the external
+cache so those lookups no longer reread it from the SSD.</p>
+<div class="note"><strong>Result: one shared copy in vLLM, but still repeated storage reads.</strong>
+This establishes coordinated restoration and correct sharing for the tested
+workload. It does not yet establish faster replies. DMA-BUF changes the
+transfer route; singleflight coordinates who restores the state.</div>
+<details>
+<summary>Correctness checks, implementation limits and reproduction commands</summary>
+<p>The feature is opt-in and restricted to compatible exact text prefixes.
+It uses vLLM's existing scheduler retry mechanism and prefix cache. Disabled
+and enabled controls use identical sources and native binaries on an RTX 4090.
+The registry records 29 actual follower joins, including warmups. Every enabled
+family has one external engine load and one ready ancestor spanning 256 blocks;
+all remaining children hit the local prefix cache. Registry state drains when
+the family completes.</p>
 <p>Across both controls, all <strong>1,656 continuations</strong> and
 <strong>13,248 chosen-token log probabilities</strong> match recomputation
 exactly, including warmups. Every child has the full 4,096-token cached
@@ -929,46 +957,85 @@ make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
 KMESH_RESTORE_SECTION=singleflight KMESH_RESTORE_OUTPUT=/path/to/results \
   make kmesh-restore-verify</code></pre>
 <p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
-describes the pinned inputs and strict checks. The following section compares
-reactive coalescing with an ancestor preloaded before child arrival, charging
-preload work and unused declarations while measuring attained fork gaps and
-retaining storage-read accounting.</p>
+describes the pinned inputs and strict checks.</p>
+</details>
+<p style="margin-top:24px">Singleflight starts when follow-ups arrive.
+The next experiment asks whether we can start preparing their shared context
+before they arrive.</p>
 </section>
 
 <section id="preload">
-<h2>15. What does an early ancestor declaration buy?</h2>
-<p><strong>Early declaration coordinates restoration; this experiment shows mixed
-latency.</strong> vLLM's existing prefix cache creates the sharing. The caller
-knows the ancestor and intended fanout,
-submits a one-token warm request, then releases children during the fork gap.
-The connector parks matching children before LOOKUP while the warm request
-is active and their ancestor is not locally reusable. Completion, cancellation
-or expiry releases the wait. Local reuse is credited after allocation admits
-the child, independently of an external lookup hit or miss. The declaration
-itself submits no I/O and leases no GPU blocks.</p>
-<p><strong>Reactive singleflight</strong> starts when children arrive.
-<strong>Declared preloading</strong> starts a warm request during the time
-before their expected arrival, called the fork gap. This is speculative
-prefetching: preparation can be wasted if the expected children never arrive.
-It is separate from speculative token decoding.</p>
-<p>Measured on October 17, 2026, on RTX 4090, this replay releases requests
-through vLLM's public engine loop. Requested gaps are 0, 10, 25 and 100 ms; a synchronous engine
-step can delay release, so every sample records its attained gap. Children
-can arrive before the warm request finishes. No estimated unfinished-restore
-term is added to a measured warm-child time.</p>
+<h2>15. Can loading context early make follow-ups start sooner?</h2>
+<p>Suppose an application knows it will launch four follow-up requests after
+a tool finishes. All four will reuse the same context, whose saved model
+state is on the SSD. <strong>Could we load that state while the tool is still
+running, so the follow-ups spend less time waiting once they arrive?</strong>
+That is the idea tested here. The actual experiment uses controlled delays
+to represent this opportunity; it does not run a real tool workflow.</p>
+<h3>What an early declaration actually does</h3>
+<p>The application tells the connector, in effect: <strong>“These upcoming
+requests will reuse this exact context.”</strong> This advance notice is the
+<em>family declaration</em>. The shared cached context is called the ancestor.
+The declaration itself does not load data or reserve GPU memory.</p>
+<p>The current prototype prepares the context with a small real model request:</p>
+<ol class="experiment-steps">
+<li><strong>Declare the expected reuse.</strong> Identify the shared context and the expected number of follow-ups.</li>
+<li><strong>Submit a warm-up request that generates one token.</strong> This is an ordinary model request used to get the shared state loaded through LMCache into vLLM. It still performs real model work.</li>
+<li><strong>Release the follow-ups after a controlled delay.</strong> If the state is ready, they reuse it. If the warm request is still active and the state is not reusable, matching follow-ups wait.</li>
+</ol>
+<p>The time between starting the warm request and releasing the follow-ups
+is the <strong>head start</strong>, called the <em>fork gap</em> in the experiment.
+The intended advantage is to move work into time the application already has
+before those requests arrive. Delaying useful requests just to manufacture
+that gap would not establish an overall speedup.</p>
+<h3>What the timing table means</h3>
+<p>Every value below is <strong>milliseconds from submitting the first
+follow-up request until that request produces its first token</strong>.
+Lower is better. It is not the fastest answer among the group or the time for
+all requests to finish.</p>
+<ul class="experiment-steps">
+<li><strong>Load on arrival:</strong> use singleflight, but start restoring only when the follow-ups arrive.</li>
+<li><strong>Already ready:</strong> a comparison with the context fully warmed before the follow-ups are submitted.</li>
+<li><strong>Start 0, 25 or 100 ms early:</strong> request that much head start for the warm-up request. Actual release times are recorded because engine execution can delay submission.</li>
+</ul>
+<p>The head start is <strong>outside the displayed wait</strong>. For example,
+a 100 ms head start followed by a 34 ms request wait is not a 34 ms total
+workflow. Prefetch work, bytes read and unused preparations are recorded
+separately; this table measures the delay the follow-up sees after arrival.</p>
+<p>Host staging brings data through CPU RAM on its way to the GPU. The
+DMA-BUF path restores into a registered GPU buffer before copying into
+vLLM's cache. Both paths run the same preparation experiment.</p>
 <div class="table-wrap"><table>
-<tr><th scope="col">Path / children</th><th scope="col">Reactive</th><th scope="col">Fully warm control</th><th scope="col">Declared / 0 ms</th><th scope="col">Declared / 25 ms</th><th scope="col">Declared / 100 ms</th></tr>
+<tr><th scope="col">Transfer path / follow-ups</th><th scope="col">Load on arrival</th><th scope="col">Already ready</th><th scope="col">Start 0 ms early</th><th scope="col">Start 25 ms early</th><th scope="col">Start 100 ms early</th></tr>
 <tr><td class="hi">Host staged / 4</td><td>46.631</td><td>54.893</td><td>58.093</td><td>32.493</td><td>34.220</td></tr><tr><td class="hi">Host staged / 8</td><td>48.592</td><td>34.118</td><td>85.430</td><td>57.333</td><td>49.814</td></tr><tr><td class="hi">DMA-BUF / 4</td><td>31.611</td><td>45.872</td><td>53.601</td><td>33.004</td><td>32.165</td></tr><tr><td class="hi">DMA-BUF / 8</td><td>40.851</td><td>40.565</td><td>76.435</td><td>45.818</td><td>41.324</td></tr>
 </table></div>
-<p>Values are median time to first token for the first submitted child, in
-milliseconds, with 5 retained families per case after three warmups.
-The declared 100 ms case has a lower median than reactive coalescing in
-1 of four path/fanout combinations; zero-gap preloading has
-a higher median in all four. Warming completed before child
-release in 20 of 20 retained 100 ms families. These are
-exploratory observations from one engine per path/fanout in fixed case order,
-with visible sample variation. They do not establish a general serving
-speedup or a causal performance difference between storage paths.</p>
+<p><strong>Example:</strong> with four follow-ups and host staging, loading on
+arrival gives a 46.631 ms median wait. Giving the warm request a requested
+100 ms head start reduces that wait to 34.220 ms. But with DMA-BUF and four
+follow-ups, the corresponding wait is 31.611 ms versus 32.165 ms&mdash;no
+improvement in this sample.</p>
+<div class="note"><strong>Result: the coordination works; faster replies are not a consistent result.</strong>
+The 100 ms preparation finishes before follow-up arrival in all twenty measured
+groups, yet lowers median request wait in only one of the four comparisons.
+With no head start, the warm-request approach is slower in all four. Advance
+notice alone is not enough: preparation and coordination have costs, and the
+benefit must be measured. This experiment does not establish a general
+latency win from speculative prefetching.</div>
+<p>These are medians of five measured groups per case, after three warmups,
+on an RTX 4090 on October 17, 2026. Cases run in fixed order with one engine
+per transfer path and group size. The small sample and visible variation
+limit interpretation, including the sometimes slower “already ready” control.
+This is not a reliable ranking of the two transfer paths.</p>
+<details>
+<summary>Timing plots, wasted work, correctness checks and reproduction commands</summary>
+<p>The replay uses vLLM's public engine loop and requests head starts of
+0, 10, 25 and 100 ms. Every sample records the actual interval; children can
+arrive while the warm request is still running. The connector waits before
+LOOKUP while the warm request is active and the ancestor is not locally
+reusable. Completion, cancellation or expiry releases the wait. Reuse is
+credited only after allocation admits the child. vLLM's existing prefix cache
+creates the physical sharing. No unfinished-restore estimate is added to
+a measured warm-child time.</p>
 <figure style="margin:24px 0">
 <img src="images/kmesh-preload-20261017.svg" width="1000" height="650" style="width:100%;height:auto;border-radius:9px;background:white" alt="Four panels plot measured first-child latency against attained fork gap, with reactive and fully warm median references.">
 <figcaption style="color:var(--muted);font-size:13px;margin-top:12px">Points
@@ -1028,6 +1095,7 @@ python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
 operation before the engine preload, asking whether external-L1 residency
 removes repeated NVMe reads. It counts HTTP work and extra residency
 separately from GPU sharing.</p>
+</details>
 </section>
 
 <section id="retained">
