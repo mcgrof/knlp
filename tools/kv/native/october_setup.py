@@ -80,6 +80,15 @@ def recipe_pins(recipe):
 EVENTS = []
 
 
+def file_sha256(path):
+    """Hash artifacts with the host interpreter before using the new env."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def source_override(recipe, revision=None, bundle=None, bundle_sha256=None):
     """Validate the optional dependency transfer before installing packages."""
     pins = recipe_pins(recipe)
@@ -234,7 +243,7 @@ def main():
     EVENTS.append(
         {"download": "upstream vLLM wheel", "seconds": time.perf_counter() - started}
     )
-    if hashlib.file_digest(wheel.open("rb"), "sha256").hexdigest() != WHEEL_SHA:
+    if file_sha256(wheel) != WHEEL_SHA:
         raise RuntimeError("upstream binary digest differs")
     build_env = {
         **os.environ,
