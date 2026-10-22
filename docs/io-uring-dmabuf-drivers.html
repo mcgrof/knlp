@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="How cuFile, nvidia-fs, P2PDMA, hipFile, OpenRM, Nouveau and Nova fit together.">
+<title>Drivers and storage routes — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-drivers.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html" aria-current="page">Drivers</a>
+<a href="io-uring-dmabuf-memory.html">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<h1>Drivers and storage routes</h1>
+<p class="lead">A storage library, a GPU kernel driver and Linux peer-DMA support are different components. This page names each dependency and distinguishes open source from mainline support.</p>
+<nav class="toc" aria-label="On this page"><a href="#routes">The storage routes side by side</a><a href="#openrm">OpenRM is a Linux kernel driver</a><a href="#cuda-export">Does CUDA DMA-BUF export require a proprietary kernel module?</a><a href="#nova">Where do Nouveau, NVK and Nova fit?</a></nav>
+</div>
+<section id="routes">
+<h2>The storage routes side by side</h2>
+<div class="scroll"><table><caption>Library names do not identify the kernel path by themselves</caption><thead><tr><th scope="col">Route</th><th scope="col">GPU kernel support</th><th scope="col">Storage integration</th></tr></thead><tbody><tr><td>NVIDIA: cuFile + nvidia-fs</td><td>Compatible NVIDIA GPU modules. Current nvidia-fs requires the open modules; older releases also supported the proprietary modules.</td><td>nvidia-fs shadow pages and NVFS callbacks in a compatible patched NVMe driver. Shadow pages represent the request; they do not imply a host payload copy.</td></tr><tr><td>NVIDIA: cuFile + PCI P2PDMA</td><td>NVIDIA open GPU kernel modules (OpenRM/UVM), with supported GPU/BAR configuration.</td><td>GPU BAR memory is represented by Linux P2PDMA device pages. Supported direct I/O and block/NVMe paths consume them without nvidia-fs or its custom NVMe hooks.</td></tr><tr><td>AMD: hipFile + AIS</td><td>AMD amdgpu/KFD with the AIS additions. AMD documents installation through amdgpu-dkms.</td><td>The inspected AIS implementation builds P2PDMA-backed vectors for VRAM and submits VFS direct I/O. AIS-specific driver integration is out of tree.</td></tr><tr><td>Common experimental path: io_uring + DMA-BUF</td><td>A GPU exporter whose allocation can be mapped by the NVMe importer; vendor and driver requirements still apply.</td><td>LMCache or NIXL submits registered-buffer I/O through the experimental Linux patches. No cuFile, hipFile, nvidia-fs or AIS backend is used.</td></tr></tbody></table></div><p>NVIDIA documents the NVMe P2PDMA route starting with CUDA 12.8
+and OpenRM 570.x, with a supporting kernel and platform configuration.
+This removes a storage-driver integration dependency; the GPU driver is
+still required. See the <a href="https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html">GDS overview</a>
+and <a href="https://docs.nvidia.com/gpudirect-storage/configuration-guide/index.html">configuration guide</a>.</p>
+<p>The traditional nvidia-fs route should not be summarized as “broken on
+new kernels.” Its NVMe callbacks are absent from stock mainline NVMe;
+availability depends on the supported driver stack. NVIDIA's
+<a href="https://github.com/NVIDIA/gds-nvidia-fs/blob/master/ChangeLog">nvidia-fs changelog</a>
+records the move to open-module-only support in 2.17.5. The
+<a href="https://github.com/NVIDIA/gds-nvidia-fs/blob/52f3e7eab633103478e22cc2c2ac1c6ec368eea3/src/nvfs-dma.c">NVFS source</a>
+shows the storage callback integration.</p>
+<p>AMD Infinity Storage (AIS) is AMD's storage technology and associated
+driver/runtime support, not a separate upstream Linux subsystem. The
+<a href="https://github.com/ROCm/amdgpu/blob/48f2f4486a8dc6122195fa8755b6a1a6ee2ad3e2/drivers/gpu/drm/amd/amdkfd/kfd_ais.c">inspected KFD AIS source</a>
+uses P2PDMA. AMD's <a href="https://rocm.docs.amd.com/projects/hipFile/en/latest/how-to/setup-local-nvme.html">hipFile setup guide</a>
+specifies the driver installation, while the
+<a href="https://rocm.docs.amd.com/projects/hipFile/en/latest/how-to/checking-system-compatibility.html">compatibility checks</a>
+test the required driver and runtime entry points.</p>
+<p>The base <code>amdgpu</code>/KFD drivers are open-source Linux kernel
+drivers with upstream implementations. The out-of-tree dependency here
+is the inspected AIS integration. AMD's route does not use an NVIDIA
+driver, and out-of-tree AMD code is not thereby proprietary.</p>
+</section>
+<section id="openrm">
+<h2>OpenRM is a Linux kernel driver</h2>
+
+<p><strong>OpenRM refers to NVIDIA's open-source GPU kernel modules and
+Resource Manager implementation.</strong> Resource Manager (RM) is in
+<code>nvidia.ko</code>; the driver stack also includes modules such as
+<code>nvidia-uvm</code> and <code>nvidia-drm</code>. These run in the Linux
+kernel. CUDA and NVIDIA's Vulkan implementation run in userspace.</p>
+<p>The source is dual MIT/GPLv2 licensed. It contains an OS-independent
+core and Linux interface code. Sharing core code across operating systems
+does not turn it into a userspace driver. Its matching CUDA/Vulkan
+userspace components and GPU firmware remain separate, proprietary
+components. See the <a href="https://github.com/NVIDIA/open-gpu-kernel-modules">open kernel module README</a>.</p>
+<div class="note"><strong>Open source and upstream are different properties.</strong>
+OpenRM is maintained outside the mainline Linux tree. It is neither
+Nouveau nor Nova, and installing it does not make a complete GPU software
+stack open source.</div>
+<p>NVIDIA initially described this code as unsuitable for merging into
+mainline in its existing form. Its cross-platform internal design and
+release-coupled interfaces differ from the upstream driver approach.
+Licensing alone does not resolve that engineering work. The
+<a href="https://developer.nvidia.com/blog/nvidia-releases-open-source-gpu-kernel-modules/">NVIDIA release explanation</a>
+describes those constraints.</p>
+
+</section>
+<section id="cuda-export">
+<h2>Does CUDA DMA-BUF export require a proprietary kernel module?</h2>
+
+<p><strong>The documented CUDA DMA-BUF route requires NVIDIA's open
+kernel modules.</strong> The CUDA userspace driver remains proprietary.
+Do not confuse the license of that userspace library with the license of
+the loaded GPU kernel module. NVIDIA's
+<a href="https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html">DMA-BUF requirements table</a>
+specifies the open-module requirement.</p>
+<p>On a supported device and allocation, software can query
+<code>CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED</code> and export with
+<code>cuMemGetHandleForAddressRange</code> using
+<code>CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD</code>. These are CUDA APIs,
+not cuFile calls. See the <a href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html">CUDA memory API</a>.</p>
+<p>OpenRM is necessary for that documented route, but it is not sufficient
+for every GPU and allocation. Our records include both a native CUDA
+export success and a separate open-module configuration that returned
+<code>CUDA_ERROR_NOT_SUPPORTED</code> (801). The latter used the experimental
+<a href="io-uring-dmabuf-memory.html#vulkan">Vulkan/RM provider</a> instead.
+The recorded work does not establish the same storage path under NVIDIA's
+closed kernel module.</p>
+
+</section>
+<section id="nova">
+<h2>Where do Nouveau, NVK and Nova fit?</h2>
+<div class="scroll"><table><caption>Separate driver projects and separate qualification</caption><thead><tr><th scope="col">Component</th><th scope="col">Role</th><th scope="col">Status in this evaluation</th></tr></thead><tbody><tr><td>Nouveau</td><td>Upstream Linux kernel DRM driver for NVIDIA GPUs. DRM means Direct Rendering Manager.</td><td>A Vulkan allocation exported a 2 MiB DMA-BUF. That export test did not qualify both GPU ↔ NVMe directions.</td></tr><tr><td>NVK</td><td>Mesa userspace Vulkan driver for NVIDIA GPUs, used with an appropriate kernel driver.</td><td>The recorded Nouveau/NVK export is distinct from the later NVIDIA OpenRM + Vulkan/RM storage success.</td></tr><tr><td>Nova</td><td>Rust-based upstream NVIDIA driver effort: nova-core for hardware/firmware foundations and nova-drm for DRM integration.</td><td>Future storage exporter enablement and testing are required. No io_uring DMA-BUF storage qualification is recorded here.</td></tr></tbody></table></div><p>Nouveau does support DMA-BUF sharing. The unresolved question here
+is whether a particular exported allocation stays in VRAM and maps
+correctly for NVMe, with visibility and integrity in both directions.
+“Untested end to end” does not mean “DMA-BUF unsupported.”</p>
+<p>Nova is the new upstream Rust driver direction for newer NVIDIA GPUs,
+with firmware and graphics/memory enablement still evolving. CUDA support
+is an active development topic, not a capability this storage evaluation
+has established. Consult the
+<a href="https://docs.kernel.org/gpu/nova/index.html">kernel Nova documentation</a>,
+<a href="https://rust-for-linux.com/nova-gpu-driver">Rust for Linux project description</a>
+and <a href="https://lpc.events/event/20/contributions/2346/attachments/2154/4758/Nova%20%E2%80%94%20Building%20an%20NVIDIA%20GPU%20Driver%20in%20Rust%20Upstream.pdf">October 2026 development report</a>.
+An upstream driver still needs the same exporter/importer and platform
+qualification as any other implementation.</p>
+</section>
+
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf.html">← Overview</a><a href="io-uring-dmabuf-memory.html">Memory & integration →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="pd-disaggregation.html">Prefill / decode</a> ·
+<a href="kmesh.html">KMesh</a> ·
+<a href="io-uring-dmabuf-linux.html#source">Source revisions</a>
+<p>Experimental evaluation. Results apply to the stated exporter, kernel, storage target and platform route.</p>
+</footer>
+</main>
+</body>
+</html>

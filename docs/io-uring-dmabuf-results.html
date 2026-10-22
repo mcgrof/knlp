@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Separate GPU export, NVMe peer access, byte integrity, serving correctness and performance evidence.">
+<title>What the tests establish — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-results.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html">Drivers</a>
+<a href="io-uring-dmabuf-memory.html">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html" aria-current="page">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<h1>What the tests establish</h1>
+<p class="lead">An exported handle, a full-length I/O completion and a correct model continuation prove different things. These records separate low-level export, verified storage transfers, serving behavior and performance.</p>
+<nav class="toc" aria-label="On this page"><a href="#driver-tests">Driver and exporter evidence</a><a href="#performance">What is the overhead compared with P2PDMA?</a><a href="#tests">What has been tested?</a><a href="#validation-fixes">Corrections found during validation</a><a href="#platform">A common interface still needs a working platform route</a><a href="#process">A test ladder that avoids false positives</a></nav>
+</div>
+<section id="driver-tests">
+<h2>Driver and exporter evidence</h2>
+<div class="scroll"><table><caption>Recorded capability, with the limit beside it</caption><thead><tr><th scope="col">Configuration</th><th scope="col">Observed result</th><th scope="col">What it does not establish</th></tr></thead><tbody><tr><td>NVIDIA open modules + native CUDA DMA-BUF</td><td>Native CUDA export and verified GPU storage transfers in the September comparison.</td><td>Support for every NVIDIA device or for the proprietary kernel-module variant.</td></tr><tr><td>NVIDIA open modules + Vulkan/RM helper</td><td>Native CUDA export returned 801 on a different profile. The helper later passed 18/18 XFS and 18/18 ext4 GPU-to-storage checks at 4 KiB, 64 KiB and 2 MiB; three 2 MiB storage-to-GPU reads were verified.</td><td>A standard Vulkan DMA-BUF exporter, all devices, or every PCIe route. Later LMCache serving evidence is listed separately below.</td></tr><tr><td>Nouveau + NVK</td><td>A 2 MiB Vulkan allocation exported as DMA-BUF.</td><td>NVMe attachment, persistent VRAM placement or byte-correct storage I/O in both directions. Full storage qualification was not completed.</td></tr><tr><td>Nova</td><td>No completed storage qualification in this evaluation.</td><td>A working CUDA/export/storage stack. Further enablement and testing are needed.</td></tr><tr><td>AMD ROCm DMA-BUF</td><td>Verified direct GPU storage transfers in the September AIS comparison.</td><td>That later HIP host-staged serving tests are AMD GPU-direct results.</td></tr><tr><td>NVIDIA proprietary kernel modules</td><td>Not established as the io_uring DMA-BUF test route by the cited results.</td><td>That use of proprietary CUDA or Vulkan userspace means the closed kernel module was loaded.</td></tr></tbody></table></div><p>The low-level NVIDIA helper checks above were recorded on 7 October
+2026. They are separate from the 15 October application cohorts below.
+On another platform, a cross-Root-Port pair failed independent readback
+despite reporting a full write completion; see
+<a href="#platform">the negative qualification</a>. A passing exporter
+on one platform cannot qualify another route.</p>
+</section>
+<section id="performance">
+<h2>What is the overhead compared with P2PDMA?</h2>
+
+<p><strong>There is no measured universal overhead percentage.</strong>
+P2PDMA describes peer DMA support and memory representation. DMA-BUF
+describes shared-memory ownership and attachment. They are not mutually
+exclusive: a DMA-BUF path can use Linux peer-DMA infrastructure too.</p>
+<p>The vendor paths inspected here represent GPU BAR memory with device
+<code>struct page</code> metadata. The experimental importer can handle
+page-less DMA-BUF mappings and reuse device mappings while valid. That
+changes setup and metadata costs. It does not prove a throughput or CPU
+advantage; cuFile also provides batching and registered-buffer mechanisms.</p>
+<div class="scroll"><table><caption>Recorded comparisons; these are not matched production-serving benchmarks</caption><thead><tr><th scope="col">Comparison</th><th scope="col">Measured result</th><th scope="col">Interpretation and limits</th></tr></thead><tbody><tr><td>NVIDIA cuFile P2PDMA vs NIXL DMA-BUF, September 2026</td><td>On the same XFS file, 1 MiB I/O over a 1 GiB working set: cuFile best-thread write/read 4.284/9.975 GiB/s; two NIXL runs 4.28/9.66 and 4.27/9.77 GiB/s. Payload checks passed.</td><td>Near parity for this case. The wider size/concurrency matrix was mixed. gdsio threads and the NIXL batch-drain harness were not equivalent scheduling controls; the small working set can be cache resident. No valid steady-state CPU comparison was established.</td></tr><tr><td>AMD AIS runtime vs DMA-BUF, September 2026</td><td>Verified queue-depth-one transfers, 2–128 MiB. At 2 MiB, the initial DMA-BUF write/read result was 5763/5409 MiB/s versus AIS 1911/1621 MiB/s. At 128 MiB the paths were near parity.</td><td>This called ROCr AIS file read/write APIs directly, not the hipFile wrapper. It is not a concurrent hipFile benchmark or a ceiling for AIS. Repeated small-transfer results preserved the gap, but did not establish a library-wide cause.</td></tr></tbody></table></div><p>The NVIDIA P2PDMA run worked on the experimental kernel with open
+GPU modules and the required BAR configuration, without nvidia-fs or a
+custom NVMe hook patch. An earlier diagnosis that it could not work there
+was corrected after the configuration was fixed.</p>
+<p>The first AMD explanation blamed a 128 KiB command clamp versus 2 MiB
+commands. Equalizing that limit did not remove the throughput gap, so
+command size alone did not explain it. The queue-depth-one harness also
+does not establish what concurrent hipFile streams can achieve.</p>
+<p>AMD documents approximately 1 GiB of host metadata per 64 GiB of VRAM
+registered for AIS in its
+<a href="https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/install/detailed-install/post-install.html">driver setup guidance</a>.
+That is metadata capacity, not a measured payload bounce or a fixed CPU
+tax per I/O. DMA-BUF has its own attachment, mapping and lifetime costs.</p>
+<p>A useful overhead comparison must hold exporter, target, payload size,
+concurrency, verification and cache conditions constant. Measure setup and
+steady-state CPU time separately, plus latency and throughput. These
+records support the interoperability motivation; they do not support
+calling cuFile untested, treating the AIS result as a hipFile ceiling, or
+claiming that io_uring is always faster.</p>
+</section>
+<section id="tests">
+    <h2>
+     What has been tested?
+    </h2>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Profile
+        </th>
+        <th>
+         Evidence
+        </th>
+        <th>
+         Limit
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Latest LMCache MP, CUDA GPU direct GPU DMA-BUF
+        </td>
+        <td>
+         Per filesystem: 13 model continuations; 27 complete 8 MiB reads; cold L1; 9 capacity evictions.
+        </td>
+        <td>
+         One GPU, two live engines, two storage owners, same initialized XFS or ext4 file. Explicit Vulkan/RM exporter.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Latest LMCache staged baselines, CUDA GPU and HIP GPU
+        </td>
+        <td>
+         13 continuations and 27 reads each. HIP GPU uses engine-driven staging, shared host L1 and classic fixed buffers.
+        </td>
+        <td>
+         HIP GPU is a host-staged result, not AMD GPU-direct storage.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Native NIXL IO_URING, current dated source
+        </td>
+        <td>
+         Native backend units and physical XFS/ext4 host transfers pass. With the vLLM CUDA staging follow-up, ordinary host, fixed host and host DMA-BUF modes each pass 19 model continuations across fresh-reader, concurrent and pressure cases.
+        </td>
+        <td>
+         Model qualification uses two engines on one NVIDIA GPU, an initialized XFS file and VLLM_BATCH_INVARIANT=1. Host DMA-BUF staging does not establish GPU DMA-BUF export or cross-host operation. Use the vLLM staging fix linked in the P/D guide; the original be9c66a5 tip lacks it.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Historical NIXL XNVME_NVM + vLLM
+        </td>
+        <td>
+         Two-GPU host-staged and GPU-direct serving passed historical sequential, concurrent and pressure cases.
+        </td>
+        <td>
+         Different source revisions and backend; see the
+         <a href="pd-disaggregation.html#evidence">
+          P/D evidence table
+         </a>
+         .
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     For the latest LMCache cohorts: Llama-3.2-1B-Instruct revision
+     <code>
+      9213176726f574b556790deb65791e0c5aa438b6
+     </code>
+     , BF16, eager, greedy seed 123, batches 1/4/8, 257/513/769-token prompts and a bounded five-token copying task. Runs recorded on 15 October 2026 (PDT) using published LMCache 10a941b54 produce 52 matching continuations across direct XFS/ext4 and the CUDA/HIP staged profiles. Maximum chosen-token logprob delta is 0.004954 against the unchanged 0.02 bound. The MP GPU matrix passes all 32 profiles with independent values, native I/O receipts and zero terminal ownership. Filesystem GPU component suites also pass on ext4 and XFS. These checks do not qualify GPU raw-device I/O or model quality under lossy FP8.
+    </p>
+    <p class="note">
+     An earlier staged phrase-recall run matched token IDs but exceeded the unchanged likelihood bound: 0.026329 &gt; 0.02. Its cause is unresolved. The passing copy fixture does not establish broad numerical equivalence or a throughput advantage.
+    </p>
+   </section><section id="validation-fixes">
+    <h2>
+     Corrections found during validation
+    </h2>
+    <p>
+     Local tests found two runtime bugs. LMCache
+     <a href="https://github.com/mcgrof/LMCache/commit/b8845f7c2205e98ca5efaf541a59855d1535f354">b8845f7c</a>
+     prevents repeated close from submitting cleanup to a stopped receiver event loop. The regression reproduces the timeout and coroutine warning on the base; all 33 asynchronous backend tests pass with the fix.
+    </p>
+    <p>
+     In the separate NIXL lane, vLLM
+     <a href="https://github.com/mcgrof/vllm/commit/2697fd5ead43221308e923672697888e6ccfd793">2697fd5ead</a>
+     registers the whole contiguous host staging arena once with CUDA. Copies crossing separately registered chunks previously failed with
+     <code>cudaErrorInvalidValue</code>.
+     Storage registrations retain their DMA-BUF boundaries. The CUDA regression, 52 adapter tests and 57 same-GPU model continuations pass; four adapter hardware gates remain explicit.
+    </p>
+    <p>
+     Use the <a href="io-uring-dmabuf-linux.html#source">follow-up branches</a> when reproducing these results. The original feature refs are unchanged. The
+     <a href="pd-disaggregation.html#validation-fixes">P/D correction details</a>
+     distinguish regression checks from model measurements; neither fix extends the hardware qualification above.
+    </p>
+   </section><section id="platform">
+    <h2>
+     A common interface still needs a working platform route
+    </h2>
+    <p>
+     DMA-BUF/io_uring can unify the storage interface across GPU exporters. It cannot create a missing PCIe peer route. Qualification has to establish platform routing, kernel admission, memory representation and application correctness separately.
+    </p>
+    <div class="grid2">
+     <div class="card">
+      <h3>
+       Devices below one switch
+      </h3>
+      <svg aria-label="A GPU and NVMe controller share one PCIe switch below one Root Port. Their peer traffic can remain below the Root Complex." role="img" viewBox="0 0 420 270">
+       <g fill="#101914" stroke="#7898ae" stroke-width="2">
+        <rect height="42" rx="6" width="220" x="100" y="8">
+        </rect>
+        <rect height="42" rx="6" width="170" x="125" y="76">
+        </rect>
+        <rect height="42" rx="6" width="170" x="125" y="144">
+        </rect>
+        <rect height="42" rx="6" width="130" x="30" y="218">
+        </rect>
+        <rect height="42" rx="6" width="130" x="260" y="218">
+        </rect>
+       </g>
+       <g fill="none" stroke="#2ae6a3" stroke-width="3">
+        <path d="M210 50V76M210 118V144M165 186L95 218M255 186L325 218">
+        </path>
+       </g>
+       <g fill="#e2ece5" font-size="18" text-anchor="middle">
+        <text x="210" y="35">
+         Root Complex
+        </text>
+        <text x="210" y="103">
+         Root Port
+        </text>
+        <text x="210" y="171">
+         PCIe switch
+        </text>
+        <text x="95" y="245">
+         GPU
+        </text>
+        <text x="325" y="245">
+         NVMe
+        </text>
+       </g>
+      </svg>
+      <p class="sub">
+       Useful endpoint control. A passing switch-local route does not qualify routing through the Root Complex.
+      </p>
+     </div>
+     <div class="card">
+      <h3>
+       Devices below separate Root Ports
+      </h3>
+      <svg aria-label="A GPU and NVMe controller are below different Root Ports. Their peer route needs Root Complex forwarding or acceptance and reissue." role="img" viewBox="0 0 420 270">
+       <g fill="#101914" stroke="#7898ae" stroke-width="2">
+        <rect height="42" rx="6" width="220" x="100" y="8">
+        </rect>
+        <rect height="42" rx="6" width="170" x="15" y="109">
+        </rect>
+        <rect height="42" rx="6" width="170" x="235" y="109">
+        </rect>
+        <rect height="42" rx="6" width="130" x="35" y="218">
+        </rect>
+        <rect height="42" rx="6" width="130" x="255" y="218">
+        </rect>
+       </g>
+       <g fill="none" stroke="#ce8c23" stroke-width="3">
+        <path d="M165 50L100 109M255 50L320 109M100 151V218M320 151V218">
+        </path>
+       </g>
+       <g fill="#e2ece5" font-size="18" text-anchor="middle">
+        <text x="210" y="35">
+         Root Complex
+        </text>
+        <text x="100" y="136">
+         Root Port A
+        </text>
+        <text x="320" y="136">
+         Root Port B
+        </text>
+        <text x="100" y="245">
+         GPU
+        </text>
+        <text x="320" y="245">
+         NVMe
+        </text>
+       </g>
+      </svg>
+      <p class="sub">
+       A separate platform contract. Sharing a PCI segment does not imply a shared Root Port. Crossing sockets or segments needs its own qualification.
+      </p>
+     </div>
+    </div>
+    <p>
+     <a href="https://pcisig.com/PCIExpress/Specs/Base/_4.0_1.0">
+      PCIe 4.0 §1.3.1, Root Complex
+     </a>
+     describes peer routing between Root Port hierarchies as optional and implementation dependent. It remains optional in the inspected revisions through
+     <a href="https://iccircle.com/static/upload/img20250622145127.pdf">
+      PCIe 7.0 §1.3.1
+     </a>
+     . A faster PCIe link does not supply that guarantee. A host-bridge route can forward PCIe traffic without copying payloads through host RAM.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Contract
+        </th>
+        <th>
+         What must be established
+        </th>
+        <th>
+         What alone is insufficient
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Platform routing
+        </td>
+        <td>
+         The exact port path supports the requested peer transactions.
+        </td>
+        <td>
+         A PCIe generation, segment label or same-switch pass.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Kernel admission
+        </td>
+        <td>
+         The running kernel and drivers admit and map the route under supported isolation settings.
+        </td>
+        <td>
+         An allowlist edit or a topology prediction.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Memory representation
+        </td>
+        <td>
+         The intended allocation exports and maps in GPU-local memory.
+        </td>
+        <td>
+         A GPU pointer, large BAR, DMA-BUF descriptor or aggregate memory counter.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Application correctness
+        </td>
+        <td>
+         Readiness, visibility, byte integrity and lifetime hold through checked completion and consumption.
+        </td>
+        <td>
+         Registration success or a full-length completion.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     <a href="https://docs.kernel.org/driver-api/pci/p2pdma.html">
+      Linux PCI P2PDMA
+     </a>
+     has topology and platform admission rules. The
+     <a href="io-uring-dmabuf-linux.html#history">
+      Linux admission history
+     </a>
+     is distinct from the hardware route itself. A rejected policy is not a completed hardware test; removing that rejection does not make a route correct. Exporters can apply different policies. AMD can clear peer eligibility and migrate a shared allocation into host GTT; waiting for migration fixes backing readiness, not GPU-direct placement.
+    </p>
+    <h3>
+     Storage direction is not PCIe transaction direction
+    </h3>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Application operation
+        </th>
+        <th>
+         NVMe controller's GPU-facing transaction
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         Read storage into GPU memory
+        </td>
+        <td>
+         PCIe Memory Writes into GPU memory.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         Write GPU memory to storage
+        </td>
+        <td>
+         PCIe Memory Reads from GPU memory, followed by Completions.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p class="note">
+     <strong>
+      Recorded negative qualification:
+     </strong>
+     in one bounded cross-Root-Port test, an experimental admission change enabled VRAM resource mapping. The host-memory DMA-BUF control passed both ways. A guarded 4 KiB storage read into GPU memory passed, but the reverse storage write reported 4096 bytes completed while independent disk readback found all
+     <code>
+      0xff
+     </code>
+     payload bytes. That pair failed qualification. The run did not isolate physical forwarding from DMA-address/IOMMU behavior, and it does not establish results for other devices or routes.
+    </p>
+    <h3>
+     Qualify the claimed route and both directions
+    </h3>
+    <p>
+     Use changing payloads, poisoned destinations, surrounding guards and independent readback. Compare host-memory and switch-local controls where available. Record the port path, memory placement, mapping decisions, firmware, kernel/driver versions and actual completions. Repeat buffer reuse and mapping changes before testing concurrent pairs. Preserve supported DMA isolation; blanket ACS overrides are not a substitute for platform support. Keep application I/O size, actual NVMe command size and PCIe packet size separate.
+    </p>
+    <p>
+     The kernel branch includes
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/pci-peer-check.py?h=dmabuf-size-ceiling-v7.3-rc3">
+      <code>
+       pci-peer-check.py
+      </code>
+     </a>
+     and its
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/pci-peer-check.rst?h=dmabuf-size-ceiling-v7.3-rc3">
+      usage and limits
+     </a>
+     . Default mode predicts policy without storage transfers. Its source-pinned model does not automatically learn a modified kernel's admission table. The optional live-probe protocol needs a separately supplied reviewed helper. Follow with the
+     <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/kv_cache/storage_backends/raw_block_dmabuf.rst">
+      LMCache payload and ordering tests
+     </a>
+     ; a diagnostic pass is only the first gate.
+    </p>
+    <details>
+     <summary>
+      Exporter enablement is separate from platform routing
+     </summary>
+     <p>
+      The explicitly selected NVIDIA Vulkan/RM provider allocates device-local, non-host-visible memory, maps the same owned allocation into CUDA through OPAQUE_FD, and exports through the RM core DMA-BUF interface. It addresses native CUDA export refusal on the tested profile. It is version-coupled, does not convert arbitrary existing Torch allocations, and does not repair a peer route rejected by the platform or driver. See the
+      <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/design/v1/memory_allocators/vulkan-rm-staging.md">
+       provider design
+      </a>
+      .
+     </p>
+    </details>
+    <h3>
+     A template for future platform enablement
+    </h3>
+    <p>
+     <a href="https://documentation-service.arm.com/static/68c934bd8a337a2bc66460b3?token=">
+      Arm SBSA 8.0 §1.2.18 and Appendix C GPU_02/RGPU_02, printed page 60
+     </a>
+     provides a useful template: within its GPU-compute scope, it requires peer reads and writes across endpoint hierarchies, including different Root Ports. This is a conditional platform requirement, not a guarantee for every Arm processor.
+    </p>
+    <p>
+     Future ecosystem enablement can pair a common Linux interface with explicit platform routing guarantees, documented port coverage, supported isolation and runnable integrity tests in both directions. The Arm requirement illustrates what a platform contract can add beyond the base PCIe specification. Already qualified pairs can use the interface while broader coverage grows.
+    </p>
+   </section><section id="process">
+    <h2>
+     A test ladder that avoids false positives
+    </h2>
+    <ol>
+     <li>
+      Prove target identity, initialized extents, alignment and kernel capability. Test a harmless owned file before a dedicated block target.
+     </li>
+     <li>
+      Write known payloads and independently read/hash them with a fresh reader. Check registration mode and actual native operation path.
+     </li>
+     <li>
+      Test finite submission pressure, short reads, partial submissions, cancellation and shutdown. A timeout is not proof DMA stopped.
+     </li>
+     <li>
+      Run the same no-connector model oracle and split/recompute control before comparing offload restoration. Cold L1 and payload-read counts must establish a real restore.
+     </li>
+     <li>
+      For P/D, verify READY/claim/adopt/restore/ACK ordering, eviction protection and strict failed-load rejection. Add warm prefixes, concurrency and reader/writer failure as separate cases.
+     </li>
+     <li>
+      Only then measure latency, throughput or host-memory savings against your existing NIXL baseline. Report device command traces separately from logical I/O counts.
+     </li>
+    </ol>
+    <p>
+     A GDS-labelled arm must also establish that GPU-direct storage engaged. A cuFile POSIX compatibility fallback is a useful staged baseline, not a measurement of GPUDirect.
+    </p>
+   </section>
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf-memory.html">← Memory & integration</a><a href="io-uring-dmabuf-linux.html">Linux & reproduce →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="pd-disaggregation.html">Prefill / decode</a> ·
+<a href="kmesh.html">KMesh</a> ·
+<a href="io-uring-dmabuf-linux.html#source">Source revisions</a>
+<p>Experimental evaluation. Results apply to the stated exporter, kernel, storage target and platform route.</p>
+</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="The experimental io_uring DMA-BUF kernel interface, P2PDMA history, pinned source and reproduction steps.">
+<title>Linux support and reproduction — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-linux.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html">Drivers</a>
+<a href="io-uring-dmabuf-memory.html">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html" aria-current="page">Linux & reproduce</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<h1>Linux support and reproduction</h1>
+<p class="lead">DMA-BUF and PCI P2PDMA already exist in Linux. The new work is the storage importer and io_uring integration described here. This page retains the kernel details, admission history and reproducible source pins.</p>
+<nav class="toc" aria-label="On this page"><a href="#kernel">A common Linux storage interface</a><a href="#reproduce">Build and test the pinned enablement stack</a><a href="#source">Source and interfaces</a></nav>
+</div>
+<section id="kernel">
+    <h2>
+     A common Linux storage interface
+    </h2>
+    <p>
+     The goal is shared upstream infrastructure beneath existing userspace APIs, reducing bespoke out-of-tree storage integration. DMA-BUF is established; the new work is
+     <a href="https://lists.openwall.net/linux-kernel/2026/09/28/1685">
+      DMA-BUF-backed io_uring read/write support
+     </a>
+     . Different GPU drivers can export allocations into the same storage interface while retaining their own export and peer-access rules. cuFile and hipFile could adopt this transport beneath existing APIs; this implementation uses io_uring directly and does not implement that library change.
+    </p>
+<p>The <a href="io-uring-dmabuf-drivers.html#routes">driver comparison</a>
+separates traditional nvidia-fs, cuFile P2PDMA and hipFile/AIS from this
+interface. Upstream P2PDMA and DMA-BUF infrastructure already exist;
+the storage integration described here remains experimental.</p>
+    <p>
+     The experimental
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=dmabuf-size-ceiling-v7.3-rc3">
+      dmabuf-size-ceiling-v7.3-rc3 kernel branch
+     </a>
+     is pinned at
+     <code>
+      856b6583ab2f4581e81670845eadb69de7a68b30
+     </code>
+     . The cited upstream proposal covers NVMe block devices. This branch adds iomap, ext4 and XFS direct I/O, a separate DMA-BUF request ceiling, an optional DMA-optimal clamp lift and a 32 MiB driver cap. Ordinary I/O still traverses filesystem extent handling where applicable, the block layer and NVMe PCI driver.
+    </p>
+    <p>
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/tree/tools/testing/selftests/dmabuf-heaps/dmabuf-block-io.c?h=dmabuf-size-ceiling-v7.3-rc3">
+      Byte-verifying read/write selftests
+     </a>
+     exercise larger requests. Actual command sizes remain bounded by controller Maximum Data Transfer Size (MDTS), mapping segments, queue limits and filesystem extents. Registration creates a context; first use may construct the reusable device mapping. A large io_uring operation does not guarantee one NVMe command. Initialized aligned XFS/ext4 files and raw NVMe are distinct test targets, not support for every inode, block driver or exporter.
+    </p>
+   </section><section id="history">
+    <div class="eyebrow">
+     From optional hardware to explicit Linux policy
+    </div>
+    <h2>
+     Why Linux keeps a P2PDMA allowlist
+    </h2>
+    <p>
+     PCIe 4.0 §1.3.1 already makes forwarding between Root Port hierarchies optional; that remains true through the inspected PCIe 7.0 revision. Linux therefore cannot treat a Root Complex as a switch that always forwards peer traffic. It admits well-defined switch-local routes and uses platform knowledge for routes through a host bridge. The source calls the table
+     <code>
+      pci_p2pdma_whitelist
+     </code>
+     ; this guide calls it the allowlist.
+    </p>
+    <p>
+     The commits below trace the main admission rules in the pinned kernel. Dates are commit dates. Each link opens the full change in Torvalds’ tree, including its original rationale and exact entries.
+    </p>
+    <ol class="history">
+     <li>
+      <div class="history-meta">
+       2019-05-01
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=0f97da83102610db886e8b688b9029e080e6d511">
+        0f97da831026
+       </a>
+      </div>
+      <div>
+       <h3>
+        Known-working Root Complexes become explicit exceptions
+       </h3>
+       <p>
+        Adds the first AMD host-bridge exception when no common upstream bridge exists. The rationale cites PCIe 4.0 §1.3.1: cross-Root-Port forwarding is optional. The exception admits known support instead of assuming every Root Complex routes peers.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-06-19
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=6dbbd053e6aea827abde89ac9b9d6855dab1a66b">
+        6dbbd053e6ae
+       </a>
+      </div>
+      <div>
+       <h3>
+        Missing IOMMU mappings temporarily block the exception
+       </h3>
+       <p>
+        Rejects host-bridge exceptions while an IOMMU is present because the kernel could not yet map these peer addresses correctly. Hardware routing capability alone did not make the software mapping safe.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-08-16
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=494d63b0d5d0a481f6ac23bc61e94647ab9c4390">
+        494d63b0d5d0
+       </a>
+      </div>
+      <div>
+       <h3>
+        Tested Intel entries gain a same-host-bridge limit
+       </h3>
+       <p>
+        Introduces the table structure and REQ_SAME_HOST_BRIDGE for tested Intel bridges. Its rationale identifies poor performance across distinct host bridges via the CPU interconnect. The flag compares Linux pci_host_bridge objects; it does not require the two endpoints to share one Root Port.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-08-16
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=5daf40b039249ef98d49610d14293dca3464b91f">
+        5daf40b03924
+       </a>
+      </div>
+      <div>
+       <h3>
+        Correct DMA mappings remove the temporary IOMMU ban
+       </h3>
+       <p>
+        Removes the earlier iommu_present() restriction after the requests are mapped correctly. This is why the temporary 2019 guard is not advice to disable a current IOMMU. Supported translation and mapping still require qualification.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2019-12-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=bc123a515cb76c432293a6c4b4765b5ec0c813cf">
+        bc123a515cb7
+       </a>
+      </div>
+      <div>
+       <h3>
+        Another tested Intel platform enters the table
+       </h3>
+       <p>
+        Adds host-bridge entries after successful peer transactions spanning host and PCI bridges with the IOMMU enabled. These entries have no same-host-bridge flag. That is an explicit policy choice for those entries, not a rule for all Intel systems.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2020-03-18
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=7b94b53db34f78bb5e09f44e8827d45a8a88bf47">
+        7b94b53db34f
+       </a>
+      </div>
+      <div>
+       <h3>
+        Additional Root Ports receive tested coverage
+       </h3>
+       <p>
+        Adds three remaining Intel Root Port entries for the platform covered by the preceding change, after reported P2P tests. Enabling one port identifier did not automatically identify the other ports.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2020-07-30
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=dea286bb71baded7d2fb4f090e3b9fd2c1ccac58">
+        dea286bb71ba
+       </a>
+      </div>
+      <div>
+       <h3>
+        AMD admission becomes a CPU-family rule
+       </h3>
+       <p>
+        Replaces individual AMD bridge entries with an AMD CPU-family allowance. Linux can encode a documented family-level routing property instead of maintaining one bridge entry per product. Admission is therefore broader than an exact device-ID table on this path.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2022-02-25
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=feaea1fe8b36b2e5b12b2f9e6e050db28dfee789">
+        feaea1fe8b36
+       </a>
+      </div>
+      <div>
+       <h3>
+        A newer Intel server bridge is recognized
+       </h3>
+       <p>
+        Adds a bridge entry for another supported Intel server generation. It extends the recognized platform set; it does not infer capability from PCIe link generation or add a generic forwarding mechanism.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2022-04-11
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1af7c26c59ebcf241e865dd16dcc251e61472a37">
+        1af7c26c59eb
+       </a>
+      </div>
+      <div>
+       <h3>
+        Root Port discovery works beyond device zero
+       </h3>
+       <p>
+        Checks the first device on the root bus when it is either device/function zero or a PCIe Root Port. Previously, an allowed Root Port at a nonzero device/function could be missed. This repairs recognition of an existing allowance, not physical routing.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-04-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1a1f96e3e2a8dc1774c626bc6e15944c3e160393">
+        1a1f96e3e2a8
+       </a>
+      </div>
+      <div>
+       <h3>
+        The table can express vendor-wide platform support
+       </h3>
+       <p>
+        Adds wildcard device matching while retaining the vendor match and same-host-bridge constraint. This permits a platform-wide contract to be represented without adding every device identifier separately.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-04-10
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=70cf146a674c447753ceeb34246ad0afdd0064bb">
+        70cf146a674c
+       </a>
+      </div>
+      <div>
+       <h3>
+        Google SoCs use that wildcard mechanism
+       </h3>
+       <p>
+        Adds the vendor-wide SoC rule, with the commit stating that these SoCs support peer transactions between Root Ports. This records a vendor platform guarantee rather than making the PCIe base requirement universal.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-06-09
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=0ba76b19fd4c7256787eab0283c759b18eb76876">
+        0ba76b19fd4c
+       </a>
+      </div>
+      <div>
+       <h3>
+        Accelerator root buses gain their own recognition
+       </h3>
+       <p>
+        Adds Intel crypto, data-streaming and analytics accelerator entries because such an accelerator may be the first device on its own root bus. The commit discusses future ACPI HMAT capability reporting to avoid continual table growth; it does not implement that discovery mechanism.
+       </p>
+      </div>
+     </li>
+     <li>
+      <div class="history-meta">
+       2026-07-22
+       <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=894a78088fc3ddf7e582c814294afa4311900ccc">
+        894a78088fc3
+       </a>
+      </div>
+      <div>
+       <h3>
+        NVIDIA CPU platforms gain explicit entries
+       </h3>
+       <p>
+        Adds NVIDIA CPU-platform identifiers for supported peer transactions. These are host-platform allowances, not a blanket approval of every NVIDIA GPU, exporter or GPU/NVMe pair.
+       </p>
+      </div>
+     </li>
+    </ol>
+    <div class="note">
+     <strong>
+      An absent entry is an unqualified route, not a completed negative hardware test.
+     </strong>
+     Adding an entry only changes Linux admission. It adds no forwarding hardware, fixes no exporter and proves no payload integrity. Require documented platform support and independently verified reads and writes before proposing broader enablement.
+    </div>
+    <p>
+     See
+     <a href="https://docs.kernel.org/driver-api/pci/p2pdma.html">
+      Linux’s P2PDMA documentation
+     </a>
+     for topology and lifetime rules. Table entries, CPU-family rules and exporter-specific decisions must be checked against the running kernel; a policy prediction is not a transfer result.
+    </p>
+   </section><section id="reproduce">
+    <h2>
+     Build and test the pinned enablement stack
+    </h2>
+    <p>
+     The reproduction profile includes
+     <code>
+      defconfigs/io-uring-dmabuf
+     </code>
+     and
+     <code>
+      tools/reproduce/dmabuf/README.md
+     </code>
+     . The profile pins the kernel, LMCache, NIXL and vLLM revisions used by this review. Plain
+     <code>
+      make
+     </code>
+     prints the plan; fetching, builds, kernel installation and hardware tests are explicit stages.
+    </p>
+    <pre><code>make defconfig-io-uring-dmabuf
+make
+make dmabuf-fetch
+make dmabuf-kernel-config
+make dmabuf-kernel-build
+# Check drivers and signing.
+make dmabuf-kernel-install
+# Reboot into the test kernel.
+make dmabuf-doctor</code></pre>
+    <p>
+     The kernel configuration starts from the running machine's config, preserving its platform drivers. It adds the required I/O features and uses a distinct release suffix. The runner issues no reboot or boot-selection commands and does not alter peer policy or ACS/IOMMU settings. Distribution install hooks can update the boot menu; verify its default and keep the known-good kernel available.
+    </p>
+    <p>
+     Set
+     <code>
+      CONFIG_KNLP_DMABUF_SCRATCH
+     </code>
+     to an existing owned directory on NVMe-backed XFS/ext4. In a dedicated environment with matching Torch, compiler and GPU SDK dependencies, build LMCache and its Rust extension with
+     <code>
+      make dmabuf-lmcache-install
+     </code>
+     . Use the explicit targets below after coordinating GPU ownership where needed.
+    </p>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Target
+        </th>
+        <th>
+         Scope
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         <code>
+          dmabuf-cpu-test
+         </code>
+        </td>
+        <td>
+         MP publication/adoption/ACK and HTTP contracts on host-file storage. No GPU or custom kernel required.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-selftest-build
+         </code>
+         ,
+         <code>
+          dmabuf-storage-test
+         </code>
+        </td>
+        <td>
+         Kernel host-memory DMA-BUF read/write checks at 4 KiB and 8 MiB on new scratch files.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-mp-host-test
+         </code>
+        </td>
+        <td>
+         Opt-in registered host-memory MP I/O and ownership tests.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-peer-check
+         </code>
+        </td>
+        <td>
+         Source-pinned topology-policy diagnostic for explicitly configured PCI addresses. No payload qualification.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          dmabuf-gpu-test
+         </code>
+        </td>
+        <td>
+         Real connector, exporter, file I/O and V2/V3 ordering/padding checks. Explicit native or Vulkan/RM provider; no silent host fallback.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-lmcache-test
+         </code>
+        </td>
+        <td>
+         In-process publication, generation, ACK, restore coverage and causal-trace contracts. CPU only.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-mp-test
+         </code>
+        </td>
+        <td>
+         Shared-file MP publication/adoption and HTTP controls. CPU only; same selection as dmabuf-cpu-test.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-vllm-test
+         </code>
+        </td>
+        <td>
+         NIXL storage connector CPU coordinator, planning and pack/scatter contracts. Transfer doubles; hardware cases explicitly deselected.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         <code>
+          pd-timeline-check
+         </code>
+        </td>
+        <td>
+         Validate an existing single-host in-process serving JSONL receipt; require the selected payload path. Does not launch serving.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     Logs and JUnit reports remain in the configured work directory; skipped tests are not counted as qualification. These stages do not automate full model-serving MP P/D, cross-host shared storage or performance qualification. NIXL and vLLM sources are pinned and fetched; their builds and serving orchestration follow the linked upstream/source guides. Keep your current NIXL baseline separate.
+    </p>
+    <h3>
+     Run the P/D contracts separately from hardware qualification
+    </h3>
+    <pre><code>make defconfig-pd-storage
+make pd-test-plan
+make pd-lmcache-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-mp-test PYTHON=/path/to/lmcache-venv/bin/python
+make pd-vllm-test PYTHON=/path/to/vllm-venv/bin/python
+make pd-timeline-check PD_TIMELINE=/path/to/serving.jsonl</code></pre>
+    <p>
+     Fetch the pinned sources and prepare each application environment first.
+     <code>
+      pd-cpu-test
+     </code>
+     runs the three CPU selections in order when one environment can import both pinned projects. Unexpected skips fail qualification. The timeline target checks an existing in-process trace, with
+     <code>
+      dmabuf_fixed
+     </code>
+     required by default; it does not validate MP HTTP traces or launch model-serving P/D. See
+     <code>
+      tools/reproduce/dmabuf/README.md
+     </code>
+     for dependencies and scope.
+    </p>
+   </section><section id="source">
+    <h2>
+     Source and interfaces
+    </h2>
+    <ul class="source-list">
+     <li>
+      <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-dmabuf-full">
+       LMCache full dated stack: 50 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/mp/l2_storage/raw_block.rst">
+       MP configuration and HTTP contract
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-dmabuf-full">
+       NIXL native IO_URING backend: 2 commits
+      </a>
+      ·
+      <a href="https://github.com/mcgrof/nixl/blob/2026-10-15-io-uring-dmabuf-full/src/plugins/io_uring/README.md">
+       Backend parameters and limits
+      </a>
+     </li>
+     <li>
+      <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-full">
+       vLLM NIXL storage connector: 3 commits
+      </a>
+     </li>
+     <li>
+      <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=dmabuf-size-ceiling-v7.3-rc3">
+       Experimental kernel branch
+      </a>
+      , pin
+      <code>
+       856b6583ab2f4581e81670845eadb69de7a68b30
+      </code>
+     </li>
+    </ul>
+    <p>
+     Follow-up branches include their full feature stacks:
+     <a href="https://github.com/mcgrof/LMCache/tree/2026-10-15-io-uring-validation-fixes">LMCache b8845f7c</a>,
+     <a href="https://github.com/mcgrof/nixl/tree/2026-10-15-io-uring-validation-fixes">NIXL 711dcb4d</a>
+     and
+     <a href="https://github.com/mcgrof/vllm/tree/2026-10-15-storage-pd-validation-fixes">vLLM 2697fd5ead</a>.
+     NIXL adds a GCC15 test-header fix and documents initialized read extents and locked-memory requirements; it makes no production transfer change.
+    </p>
+    <p>
+     Kernel DMA-BUF
+     <a href="https://docs.kernel.org/driver-api/dma-buf.html">
+      sharing and synchronization documentation
+     </a>
+     describes the ownership interface; it does not establish that this experimental storage ABI is upstream. The dated userspace branches retain their original upstream bases.
+    </p>
+   </section>
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf-results.html">← Qualification & results</a><a href="io-uring-dmabuf.html">Back to overview →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="pd-disaggregation.html">Prefill / decode</a> ·
+<a href="kmesh.html">KMesh</a> ·
+<a href="io-uring-dmabuf-linux.html#source">Source revisions</a>
+<p>Experimental evaluation. Results apply to the stated exporter, kernel, storage target and platform route.</p>
+</footer>
+</main>
+</body>
+</html>

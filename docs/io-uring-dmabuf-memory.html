@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="What Vulkan, CUDA, ROCm, LMCache and NIXL each do in the io_uring DMA-BUF storage path.">
+<title>Allocation, export and userspace — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-memory.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html">Drivers</a>
+<a href="io-uring-dmabuf-memory.html" aria-current="page">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<h1>Allocation, export and userspace</h1>
+<p class="lead">Allocation chooses the memory. Export shares it. The storage backend submits I/O. The connector coordinates application data and completion. Keeping these roles separate explains what Vulkan does—and what cuFile and hipFile do not do here.</p>
+<nav class="toc" aria-label="On this page"><a href="#userspace">What changed in userspace?</a><a href="#path">What changes in the I/O path?</a><a href="#providers">The allocation and export choices</a><a href="#vulkan">What does vulkan_rm change?</a><a href="#portable-vulkan">Could Vulkan support both AMD and NVIDIA?</a><a href="#ordering">What work remains on the CPU and GPU?</a><a href="#implementations">Two independent ways to adopt it</a><a href="#nixl">A transition plan for existing NIXL users</a></nav>
+</div>
+<section id="userspace">
+<h2>What changed in userspace?</h2>
+
+<p><strong>The implemented storage backend submits io_uring itself.</strong>
+LMCache's Rust raw-block backend owns the storage transfer path; its GPU
+buffer provider supplies the staging allocation and exporter. The vLLM
+connector coordinates gathering key/value (KV) data into that pool and
+scattering restored data back into engine memory.</p>
+<p>There is no cuFile or hipFile modification in this implementation, and
+those libraries are not called by this path. Adding kernel DMA-BUF support
+does not automatically redirect their existing I/O. They could retain
+their public APIs and implement a new backend, but that is separate work.</p>
+<p>NIXL offers a second integration through its <code>IO_URING</code>
+plugin. Its consumer supplies an owned DMA-BUF registration and requests
+transfers through NIXL. LMCache direct storage does not require NIXL.</p>
+
+</section>
+<section id="path">
+    <h2>
+     What changes in the I/O path?
+    </h2>
+    <p>
+     A conventional GPU offload path may copy KV into host DRAM before storage. The direct profile gathers engine KV into an exported GPU staging arena, then lets the storage driver DMA that payload. Host code still submits I/O and handles metadata; GPU gather/scatter copies remain.
+    </p>
+    <div class="scroll">
+     <div aria-label="GPU KV gathered into GPU staging; registered io_uring transfers payload through the kernel to an NVMe file or block target" class="flow two-way" role="img">
+      <div class="node">
+       <strong>
+        Engine GPU KV
+       </strong>
+       Gather / scatter
+       <br/>
+       GPU completion fence
+      </div>
+      <div class="node">
+       <strong>
+        Exported GPU arena
+       </strong>
+       DMA-BUF FD
+       <br/>
+       Allocation owner retained
+      </div>
+      <div class="node">
+       <strong>
+        io_uring fixed slot
+       </strong>
+       Offset into DMA-BUF
+       <br/>
+       Native completion
+      </div>
+      <div class="node">
+       <strong>
+        NVMe target
+       </strong>
+       Initialized filesystem file
+       <br/>
+       or separately qualified block range
+      </div>
+     </div>
+    </div>
+    <p>
+     The first I/O may construct the device mapping. Later requests reuse it while valid; invalidation still matters. “Map once” does not mean a mapping can never change.
+    </p>
+    <p>
+     The LMCache and NIXL profiles described here use ordinary fixed-buffer reads and writes. The pinned experimental kernel also enables registered DMA-BUF buffers for NVMe
+     <code>
+      io_uring_cmd
+     </code>
+     passthrough through its
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/commit/?id=fac23af99b4d8398ad528a57572d8a0d497506ac">
+      fixed-buffer import change
+     </a>
+     and
+     <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/commit/?id=a8512c20994199877204d54b1052043a2d1d71f2">
+      block-request mapping change
+     </a>
+     . Host-exporter tests in an emulated NVMe guest validate that kernel path. GPU exporters and application-level passthrough still require separate qualification. A filesystem also needs a capable underlying importer; putting ext4 on a virtio disk does not supply NVMe DMA-BUF support.
+    </p>
+   </section><section id="providers">
+<h2>The allocation and export choices</h2>
+<div class="scroll"><table><caption>These choices feed the same experimental storage interface</caption><thead><tr><th scope="col">Provider</th><th scope="col">Allocation and export</th><th scope="col">Scope</th></tr></thead><tbody><tr><td>NVIDIA native CUDA</td><td>CUDA allocation → CUDA DMA-BUF export → io_uring registration.</td><td>Supported GPU and allocation on NVIDIA open kernel modules. Probe support and check the export result.</td></tr><tr><td>NVIDIA vulkan_rm</td><td>Vulkan allocation → CUDA import of the same memory; separate RM core DMA-BUF export → io_uring registration.</td><td>Explicit, experimental NVIDIA provider with a version-coupled helper. It does not use cuFile or a generic Vulkan DMA-BUF export.</td></tr><tr><td>AMD ROCm</td><td>GPU allocation → ROCr hsa_amd_portable_export_dmabuf → io_uring registration.</td><td>Preserve the returned export offset and keep the allocation alive. Export and peer mapping must retain the intended VRAM backing.</td></tr><tr><td>Portable Vulkan provider</td><td>Vulkan allocation → supported DMA_BUF_EXT export → io_uring registration.</td><td>A possible common implementation, requiring driver support and full storage qualification. Not established for both vendors by the current vulkan_rm results.</td></tr></tbody></table></div><p>Provider choice is separate from kernel route admission and from
+application correctness. The <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/kv_cache/storage_backends/raw_block_dmabuf.rst">LMCache DMA-BUF guide</a>
+describes the allocation ownership, export offsets and ordering contract.</p>
+</section>
+<section id="vulkan">
+<h2>What does vulkan_rm change?</h2>
+
+<pre><code>rust_raw_block.gpu_buffer_provider: vulkan_rm</code></pre>
+<p>This selects <strong>LMCache's external GPU staging allocator</strong>.
+It does not replace vLLM's KV-cache allocator or convert arbitrary existing
+Torch allocations into exportable buffers. The engine keeps its own KV
+memory; the connector copies between that memory and the staging pool.</p>
+<ol>
+<li>Vulkan allocates device-local, non-host-visible memory.</li>
+<li>The helper exports an <code>OPAQUE_FD</code> handle and imports that
+same allocation into CUDA. Sharing the allocation this way does not copy
+its payload.</li>
+<li>A separate NVIDIA RM core operation exports a DMA-BUF handle suitable
+for the tested storage importer.</li>
+<li>The Rust backend registers that DMA-BUF with io_uring and submits
+storage operations after GPU readiness has been established.</li>
+</ol>
+<p><code>OPAQUE_FD</code> and a Linux DMA-BUF are different external-handle
+types. The CUDA interop handle is not simply passed to the storage importer
+as if it were a DMA-BUF. The current helper depends on NVIDIA RM interfaces;
+the documented implementation is coupled to driver 615.71.09 and has
+bounded allocation limits. See the
+<a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/design/v1/memory_allocators/vulkan-rm-staging.md">provider design and restrictions</a>.</p>
+<p>This allocator change belongs to LMCache and its helper. A separate
+vLLM/NIXL storage connector is also part of the project, but it is not the
+component selected by this LMCache setting.</p>
+
+</section>
+<section id="portable-vulkan">
+<h2>Could Vulkan support both AMD and NVIDIA?</h2>
+
+<p><strong>Yes, Vulkan can be the common allocation API, if both driver
+stacks provide the required export and peer-access behavior.</strong>
+Vulkan is an API implemented by a userspace driver. That implementation
+talks to a kernel GPU driver; Vulkan itself is not a Linux kernel DRM
+driver. Mesa RADV and NVK are examples of userspace Vulkan drivers.</p>
+<p>The standard
+<a href="https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_external_memory_dma_buf.html">VK_EXT_external_memory_dma_buf</a>
+extension permits Vulkan memory import/export using DMA-BUF. An
+implementation must support the requested external handle, allocation
+type and buffer usage. The application then needs to show that NVMe can
+attach and map the allocation without host migration, and that writes are
+visible to the consuming GPU workload.</p>
+<p>A standalone Vulkan fill/check test can exercise GPU ↔ NVMe without
+CUDA or HIP. Existing CUDA/HIP inference applications still need compatible
+memory interop and synchronization, or a different compute implementation.
+Using Vulkan for allocation does not by itself replace those runtimes.</p>
+<p>The present <code>vulkan_rm</code> provider is one NVIDIA implementation
+of that allocation strategy with a custom export step. It is not evidence
+that one standard Vulkan exporter has already qualified both vendors.</p>
+
+</section>
+<section id="ordering">
+<h2>What work remains on the CPU and GPU?</h2>
+
+<p>CPU code still registers buffers, prepares requests, processes completions
+and manages metadata. The GPU still gathers KV into staging memory and
+scatters restored data back into engine allocations. The direct path aims
+to remove host-DRAM payload staging, not every copy or every CPU operation.</p>
+<p>The allocation owner and exported descriptor must outlive outstanding
+I/O. GPU production must complete before NVMe reads that memory; storage
+completion and the required visibility synchronization must precede GPU
+consumption. Reuse, invalidation, cancellation and shutdown are part of
+the contract. The <a href="io-uring-dmabuf-results.html#process">test ladder</a>
+checks these properties separately from registration success.</p>
+
+</section>
+<section id="implementations">
+    <h2>
+     Two independent ways to adopt it
+    </h2>
+    <div class="scroll">
+     <table>
+      <thead>
+       <tr>
+        <th>
+         Path
+        </th>
+        <th>
+         Owns application state
+        </th>
+        <th>
+         Owns byte transfer
+        </th>
+        <th>
+         Migration impact
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <td>
+         LMCache direct
+        </td>
+        <td>
+         LMCache owns keys, L1/serde buffers, checkpoints and storage lifetime.
+        </td>
+        <td>
+         Rust raw-block core → io_uring → kernel DMA-BUF importer.
+        </td>
+        <td>
+         Use LMCache's existing vLLM connector. NIXL is optional.
+        </td>
+       </tr>
+       <tr>
+        <td>
+         NIXL storage lane
+        </td>
+        <td>
+         The separate vLLM storage connector coordinates manifests, staging and handoff.
+        </td>
+        <td>
+         NIXL
+         <code>
+          IO_URING
+         </code>
+         plugin addresses byte ranges as
+         <code>
+          BLK_SEG
+         </code>
+         .
+        </td>
+        <td>
+         Retain NIXL's transfer API; qualify this new storage plugin and consumer together.
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p>
+     The older
+     <code>
+      XNVME_NVM
+     </code>
+     plugin is retained as a historical reproduction branch. It is distinct from the newer standalone
+     <code>
+      IO_URING
+     </code>
+     plugin and from the older NVMe key-value
+     <code>
+      XNVME_KV
+     </code>
+     work. The standalone plugin uses liburing directly; no new xNVMe port is included.
+    </p>
+   </section><section id="nixl">
+    <h2>
+     A transition plan for existing NIXL users
+    </h2>
+    <ol>
+     <li>
+      <strong>
+       Keep your current baseline.
+      </strong>
+      Record backend, model weights, layouts, chunk/block geometry, token IDs, chosen-token logprobs and transfer counters. Preserve the current network or GDS configuration for rollback.
+     </li>
+     <li>
+      <strong>
+       Qualify ordinary storage first.
+      </strong>
+      Use the dated plugin and matching API-v2 Python binding. The historical
+      <code>
+       nixl==1.5.0
+      </code>
+      API-v1 wheel is incompatible with this pinned plugin. Begin with
+      <code>
+       buffer_mode=host
+      </code>
+      on a fresh, initialized scratch file. Verify independent readback before serving.
+     </li>
+     <li>
+      <strong>
+       Measure classic registration separately.
+      </strong>
+      Select
+      <code>
+       buffer_mode=fixed
+      </code>
+      . Keep prompts, target, lengths and concurrency unchanged. Confirm the fixed path actually ran.
+     </li>
+     <li>
+      <strong>
+       Introduce DMA-BUF deliberately.
+      </strong>
+      Boot the experimental kernel, verify exporter/importer support, then select
+      <code>
+       buffer_mode=dmabuf
+      </code>
+      and register an owned export using
+      <code>
+       metaInfo="dmabuf:&lt;fd&gt;"
+      </code>
+      . This mode requires every memory registration on that engine to carry a DMA-BUF. Use separate engines if ordinary host buffers are also needed.
+     </li>
+     <li>
+      <strong>
+       Choose the higher layer.
+      </strong>
+      Stay with the separate vLLM/NIXL connector for a NIXL storage experiment, or use the direct LMCache backend for LMCache cache management. This is not a switch that turns stock
+      <code>
+       NixlConnector
+      </code>
+      network transfers into storage P/D.
+     </li>
+     <li>
+      <strong>
+       Roll back without sharing formats.
+      </strong>
+      Restore the original connector/backend configuration. LMCache and NIXL storage metadata are not interchangeable; use isolated targets and migrate/recompute cache contents explicitly.
+     </li>
+    </ol>
+    <details>
+     <summary>
+      Smallest native-NIXL configuration sketch
+     </summary>
+     <pre><code>backend = "IO_URING"
+params = {"device_name": "/mnt/scratch/kv.bin",
+          "buffer_mode": "host", "direct": "true"}
+# Then fixed; only then dmabuf after exporter/kernel qualification.
+# BLK_SEG describes offsets and lengths on this already initialized target.
+# A DMA-BUF memory registration adds metaInfo="dmabuf:&lt;fd&gt;".</code></pre>
+     <p>
+      This is a parameter sketch for the pinned plugin, not a complete serving launcher. Use the linked README for the actual agent API. Do not point it at a live filesystem device.
+     </p>
+    </details>
+   </section>
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf-drivers.html">← Drivers</a><a href="io-uring-dmabuf-results.html">Qualification & results →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="pd-disaggregation.html">Prefill / decode</a> ·
+<a href="kmesh.html">KMesh</a> ·
+<a href="io-uring-dmabuf-linux.html#source">Source revisions</a>
+<p>Experimental evaluation. Results apply to the stated exporter, kernel, storage target and platform route.</p>
+</footer>
+</main>
+</body>
+</html>
