@@ -73,6 +73,14 @@ Each configured run writes its resolved configuration and JSON outcome into a
 new results directory. Restore reports page-cache state as unknown. It does
 not claim physical storage traffic or latency improvement.
 
+`reader_probe.py --help` describes a separate CPU check for Memorilla's released
+reader. It uses unchanged author code and precomputed PubMedQA vectors. One
+writer process exits before a second process restores document vectors and
+compares reader outputs and persisted soft tokens exactly. It renders the
+author's prompt to bind real memory positions. It does not execute the decoder
+or verify generation quality. Run it with the author's pinned PyTorch and
+Transformers versions and a separately pinned CPU environment.
+
 Run the CPU contract and configuration tests with:
 
 ```sh
