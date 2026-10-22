@@ -84,13 +84,17 @@ def planes(cache, implementation):
         return cache
     if not isinstance(cache, torch.Tensor) or cache.ndim != 5:
         raise ValueError("Unsupported paged cache layout")
-    if implementation == "FlashInferImpl" and cache.shape[1] == 2:
+    if (
+        implementation in ("FlashInferImpl", "FlashAttentionImpl")
+        and cache.shape[1] == 2
+    ):
+        # Both pinned native backends declare [blocks, 2, tokens, heads, dim].
+        # Never guess from a leading size of two: a two-block cache has that
+        # size on both axes but still stores K/V on axis 1.
         return cache[:, 0], cache[:, 1]
     if implementation == "TritonAttentionImpl" and cache.shape[1] == 2:
         # Keep inline scale bytes in untimed snapshots and graph comparisons.
         return cache[:, 0], cache[:, 1]
-    if implementation == "FlashAttentionImpl" and cache.shape[0] == 2:
-        return cache[0], cache[1]
     raise ValueError("Backend layout differs from the frozen NHD contract")
 
 

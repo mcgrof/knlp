@@ -7,6 +7,8 @@ inventory alone cannot establish that an attention kernel consumed the cache.
 
 import math
 
+from .production_numerics import planes
+
 
 def audit_inline_layer(layer, geometry, blocks):
     """Check byte-addressed inline scales independently of a backend view."""
@@ -325,12 +327,9 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
                 raise ValueError(
                     "Symmetric/native cache must be a five-dimensional tensor"
                 )
-            if impl == "FlashInferImpl" and cache.shape[1] == 2:
-                k, v = cache[:, 0], cache[:, 1]
-            elif impl == "FlashAttentionImpl" and cache.shape[0] == 2:
-                k, v = cache[0], cache[1]
-            else:
+            if impl not in ("FlashInferImpl", "FlashAttentionImpl"):
                 raise ValueError("Unqualified backend cache layout")
+            k, v = planes(cache, impl)
         ki, vi = tensor_inventory(k)[0], tensor_inventory(v)[0]
         native = {"torch.float16"}
         fp8 = {"torch.float8_e4m3fn", "torch.uint8"}

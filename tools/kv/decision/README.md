@@ -149,6 +149,13 @@ allocated/reserved memory are reported separately. Unknown/custom allocations
 fail closed. CPU tests cover aliasing, rounding and inconsistent snapshots;
 actual kernel read/write behavior still requires worker qualification.
 
+The pinned native FlashAttention and FlashInfer backends expose NHD caches
+as `[blocks, 2, tokens, heads, dimension]`, with K/V on axis 1. Memory
+inventory and numerical snapshots share this explicit layout reader. They
+do not guess the component axis from a dimension of size two: a two-block
+cache has two such dimensions. Regression checks preserve block identity,
+component identity, strides and backing aliases before GPU accounting.
+
 `inline_scales.py` independently separates E4M3 codes from inline FP32
 token/head scales in an NHD cache and checks the backend scale views' exact
 aliases. The views share their original backing. The caller must still
