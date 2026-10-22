@@ -82,6 +82,84 @@ Matplotlib and the public renderer:</p>
 <p>This redraw reproduces the aggregate figures; it does not independently
 re-audit private per-item captures. Optimized worker quality, graph correctness,
 allocator capacity and useful serving performance require separate evidence.</p>
+<h2 id="actual-worker-comparison">Actual-worker comparison</h2>
+<p>The worker comparison uses dense Qwen3-8B revision
+<code>b968826d9c46dd6066d109eabc6255188de91218</code>, FP16 weights and queries,
+one H100 SXM80 and tensor parallel size one. Fixed per-layer/component
+K16/V8 and dynamic per-token/head K8/V8 compare against native FP16
+FlashInfer and FlashAttention-3. This compares complete deployment recipes:
+the two candidates differ in both key precision and scale policy. The
+separate seven-arm reference controls those factors within each policy.</p>
+<p>The measured <a href="https://github.com/mcgrof/knlp/commit/8dc2faed5485445342130ffd423911a505da2426">harness</a> is
+<code>8dc2faed5485445342130ffd423911a505da2426</code>, <a href="https://github.com/mcgrof/vllm/commit/e5c8d87fd6bbf9cdedf266d160890599d938abb0">vLLM</a> is
+<code>e5c8d87fd6bbf9cdedf266d160890599d938abb0</code>, and <a href="https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711">FlashInfer</a> is
+<code>800a550f8b736e49f8cfa136b82bfaf6d9d32711</code>. The runtime uses Torch
+2.11.0+cu129, Transformers 5.5.3, tokenizers 0.22.2, Triton 3.6.0,
+NumPy 1.26.4 and SciPy 1.17.1. The worker protocol SHA-256 is
+<code>097d1c75e9cb091f5deca5d8b1853bc851f96d32058af408b435c1f37bf4a94f</code>.
+Loaded shared objects, generated binaries, packages and worker identities
+are retained with the raw evidence. No serving invocation ran in this panel.</p>
+<p>The dynamic E4M3FN writer uses the reference's FP32 maximum floor of
+1e-12, rounded FP32 reciprocal of 448, round-to-nearest FP32 division,
+clipping and nearest-even FP8 conversion. Its opt-in mode leaves the
+existing writer default unchanged. Actual-worker numerical checks cover
+fresh prefill, decode, mixed traffic, changing physical slots and graph
+replay. Stored codes and scales are compared with independent oracles.
+Numerical qualification is separate from the full task-quality certificate.</p>
+<p>Each worker collects 64 paired documents at each of 1K and 8K, 128 scored
+targets per document, 200 retrieval instances per context and all 1,319
+GSM8K test questions. Quality uses cohorts of 32 and the retained answer
+parser and 2,048-token cap. Each quality objective allocates alpha 0.025
+across four candidate/control certificates, so each uses alpha 0.00625.
+No slot is removed if the symmetric backend has an engineering support gap.
+Both native comparisons must pass. The preservation objective uses the
+2% math gross-loss upper bound; aggregate math uses the paired net lower
+bound of minus one percentage point. Both retain native accuracy at least
+50%, both 5% retrieval gross-loss bounds and both 1% relative mean
+prediction-loss bounds. Binary gross loss uses all paired questions as its
+denominator. The matched-pair score intervals and 100,000 document bootstrap
+draws use the reference methods. The serving route is aggregate math and
+cannot switch to preservation after results.</p>
+<p>The engine permits 96 sequences, 65,536 batched tokens and length 10,240,
+with 16-token blocks. Prefix caching, chunked prefill and automatic KV-scale
+calculation are disabled. Full decode graphs use capture sizes
+1, 8, 32, 44, 45, 59, 60 and 96, with compilation mode zero. Eight server,
+two client and two control CPUs are disjoint; the descriptor limit is at
+least 8,192. These settings are common across arms.</p>
+<p>Memory accounting separates a 17,000-block equal-slot audit from a common
+40-GiB persistent-cache budget, including K, V and scales. The engine's
+payload request reserves 36 MiB for allocator tails and 55,296 bytes for
+scalar allocation allowance. Actual backing allocations determine whether
+the budget passes. Scratch, staging, weights, graph pools and inactive
+allocator pools remain separate from persistent-cache bytes. The graph
+memory figure reported by the runtime is a rounded allocation-change
+estimate already included in process memory; it must not be added again.</p>
+<p>The common whole-device ceiling is 76 GiB, with a 68-GiB Torch reserved
+ceiling. Driver-memory observations target a query start every 20 ms and
+must leave no conservative query-bounded gap over 500 ms. Observed peaks
+are sampled, not a claim of continuous measurement. Numerical checks have
+an explicit memory-ceiling exemption; quality and serving do not. Sampling
+coverage remains required during numerical checks. Complete captured
+resource and statistical analyses are replayed independently on CPU.</p>
+<h3 id="serving-was-gated-off">Serving was gated off</h3>
+<p>Fixed K16/V8 passes the complete preservation objective against both native
+backends. Neither candidate establishes the aggregate-math certificate
+against both: their math lower bounds against FlashInfer are -1.1131 and
+-1.0630 percentage points, outside the -1-point margin. Both pass that
+objective against FA3 alone. All retrieval and prediction-loss gates pass.
+These are unestablished certificates, not proof of aggregate degradation.</p>
+<p>The frozen serving route required aggregate math against both controls.
+No native pilot, candidate timing or ten-block serving confirmation ran.
+The objective was not switched after results. Physical cache capacity and
+quality collection time therefore establish no new serving-speed benefit.
+The earlier completed batch and HTTP performance studies remain separate.</p>
+<p><a href="asymmetric-results.html#decision-worker">Worker results and memory</a> include
+counts, adjusted bounds, exact physical allocations and the
+<a href="data/asymmetric-decision-worker-20261022.json">aggregate JSON</a>.
+<a href="https://github.com/mcgrof/knlp/blob/8dc2faed5485445342130ffd423911a505da2426/tools/kv/decision/README.md">Reproduction commands</a>
+cover source freezing, each actual-worker stage, equal-slot audits and
+independent CPU analysis. The dependency's exact tested revision is public
+on <code>2026-10-22-feature-fp8-reference-scales</code> in the vLLM fork.</p>
 <h2 id="current-8k-results">Current 8K results</h2>
 <p>Each study uses one H100 SXM 80 GB, FP16 compute, TP1, 22 CPU threads,
 8,192 input tokens, 32 requests and 128 forced output tokens. Native FP16

@@ -176,13 +176,17 @@ creation clamps the maximum before multiplying by the rounded FP32 reciprocal
 of 448, matching the reference's CUDA scalar-division path. Normalization
 uses FP32 division. Tests distinguish the one-ULP scale-construction cases
 and cover signed zero, subnormals, per-head independence and rounding ties.
-Actual GPU writer integration and byte comparisons remain required.
+Actual GPU writer integration and byte comparisons are checked in the
+separately reported worker qualification; support remains recipe-specific.
 
 ## Conditional actual-worker comparison
 
-The `production_*` tools implement the next experimental protocol; they do
-not yet establish a completed GPU qualification or serving result. Use them
-only after both full reference panels and their evidence audits finish. The
+The `production_*` tools implement a separate actual-worker protocol. The
+[completed Qwen3 comparison](../../../docs/asymmetric-results.html#decision-worker)
+qualifies numerical support and records full quality and physical-memory
+results; serving was gated off by the preselected aggregate-math objective.
+Use this protocol only after both full reference panels and evidence audits
+finish; implementation support alone is not a quality certificate. The
 worker panel selects fixed per-layer/component AF and dynamic per-token/head
 SD against native FlashInfer and FA3 controls. The Triton extension adds an
 opt-in writer with the reference scale arithmetic; its storage and attention

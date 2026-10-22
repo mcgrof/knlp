@@ -39,3 +39,5 @@ pre.expected{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--accent)}
 @media(max-width:850px){.overview-grid{grid-template-columns:1fr;gap:12px}.overview-grid>div{padding:18px 22px}.overview-grid p{margin-top:8px}.quality-label{min-height:0}}
 @media(max-width:480px){.overview-grid strong{font-size:20px}.state-label{font-size:12px}.state-saving{font-size:12px}}
 
+
+.paired-quality{overflow-wrap:normal}.paired-quality td:nth-child(n+3):nth-child(-n+7){white-space:nowrap}

@@ -2,11 +2,49 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asymmetric KV: results and data — knlp</title>
 <meta name="description" content="Asymmetric KV results by model and execution path: throughput, quality, physical memory and downloadable evidence.">
-<link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261020b"></head>
+<link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261022a"></head>
 <body><a class="skip" href="#main">Skip to content</a><header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
 <main id="main" class="reference"><h1>Asymmetric KV:<br>results and data</h1>
-<p>In-process batch-throughput evidence covers Qwen3-8B at 8K input and batch 32, in two weight formats. The completed dense HTTP studies and additional model transfers have separate quality, performance and reliability outcomes. The <a href="#decision-reference">complete seven-format reference</a> separates precision placement, scale policy and quality objective. This page also preserves the <a href="#recent-reference">Qwen3.8/Gemma 4 symmetric-versus-asymmetric reference</a>.</p>
-<nav aria-label="Results sections"><a href="#decision-reference">Format decisions</a><a href="#throughput">Throughput</a><a href="#quality">Quality</a><a href="#http">HTTP</a><a href="#memory">Memory</a><a href="#data">Data</a></nav>
+<p>In-process batch-throughput evidence covers Qwen3-8B at 8K input and batch 32, in two weight formats. The completed dense HTTP studies and additional model transfers have separate quality, performance and reliability outcomes. The <a href="#decision-worker">completed optimized-worker comparison</a> qualifies asymmetric answer preservation, with aggregate serving gated off. The <a href="#decision-reference">complete seven-format reference</a> separates precision placement, scale policy and quality objective. This page also preserves the <a href="#recent-reference">Qwen3.8/Gemma 4 symmetric-versus-asymmetric reference</a>.</p>
+<nav aria-label="Results sections"><a href="#decision-worker">Optimized workers</a><a href="#decision-reference">Format decisions</a><a href="#throughput">Throughput</a><a href="#quality">Quality</a><a href="#http">HTTP</a><a href="#memory">Memory</a><a href="#data">Data</a></nav>
+<section id="decision-worker" aria-labelledby="decision-worker-title">
+<p class="eyebrow">Completed optimized-worker comparison · October 22, 2026</p>
+<h2 id="decision-worker-title">Asymmetric qualifies for answer preservation; aggregate serving remains unqualified.</h2>
+<p>On dense Qwen3-8B FP16, <strong>fixed K16/V8 passes the full answer-preservation objective against both native FlashInfer and FA3</strong>. Dynamic K8/V8 has working optimized support, but does not establish that objective. Neither compressed recipe establishes the preselected aggregate-math certificate against both controls, so no new serving pilot or confirmation ran.</p>
+<p>All four workers pass numerical and resource checks and retain the full quality panel. Every worker retrieves 200/200 cases at each of 1K and 8K, and all relative prediction-loss bounds pass. The largest loss upper bound is below 0.286%. The remaining distinction is math: observed scores are native FlashInfer 1233, native FA3 1230, asymmetric 1229 and symmetric 1235, each out of 1319.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Complete actual-worker paired math results"><table class="paired-quality">
+<caption>Each complete certificate includes both loss and retrieval lengths · alpha 0.025/4 per certificate, separately for each objective</caption>
+<thead><tr><th scope="col">Candidate</th><th scope="col">Control</th><th scope="col">Correct / 1319</th><th scope="col">Lost / gained</th><th scope="col">Net pp</th><th scope="col">Net lower pp</th><th scope="col">Gross upper</th><th scope="col">Preservation</th><th scope="col">Aggregate math</th></tr></thead><tbody>
+<tr><th scope="row">Fixed K16/V8</th><td>Native FlashInfer</td><td>1233 → 1229</td><td>7 / 3</td><td>-0.303</td><td>-1.113</td><td>1.267%</td><td>Pass</td><td>Not established</td></tr>
+<tr><th scope="row">Fixed K16/V8</th><td>Native FA3</td><td>1230 → 1229</td><td>3 / 2</td><td>-0.076</td><td>-0.727</td><td>0.807%</td><td>Pass</td><td>Pass</td></tr>
+<tr><th scope="row">Dynamic K8/V8</th><td>Native FlashInfer</td><td>1233 → 1235</td><td>17 / 19</td><td>+0.152</td><td>-1.063</td><td>2.287%</td><td>Not established</td><td>Not established</td></tr>
+<tr><th scope="row">Dynamic K8/V8</th><td>Native FA3</td><td>1230 → 1235</td><td>15 / 20</td><td>+0.379</td><td>-0.804</td><td>2.091%</td><td>Not established</td><td>Pass</td></tr>
+</tbody></table></div>
+<p>Against FlashInfer, the aggregate lower bounds are −1.1131 points for asymmetric and −1.0630 for symmetric, just outside the fixed −1-point margin. Both pass aggregate math against FA3 alone. <strong>Not established does not mean degradation was proved.</strong> Symmetric gains more correct answers than it loses, but the uncertainty still crosses the declared margin. Preservation instead limits the proportion of all questions that change from native-correct to candidate-wrong; its upper limit is 2%.</p>
+<p>This compares complete deployment recipes with native FP16 queries: asymmetric uses fixed layer/component scales and symmetric uses dynamic token/head scales. The <a href="#decision-reference">seven-arm reference</a> separately controls precision and scaling. A difference in certificate status is not a direct significant candidate-to-candidate accuracy effect, and the reference's certificate cannot replace actual-worker qualification.</p>
+<h3 id="decision-worker-memory">Physical savings hold, including scales and allocation rounding</h3>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Actual cache bytes and physical token capacity"><table>
+<caption>Equal slots: 17,000 blocks × 16 tokens · separate equal-budget audit: 40 GiB for K, V and scales</caption>
+<thead><tr><th scope="col">Worker</th><th scope="col">Equal-slot backing GiB</th><th scope="col">Backing saved</th><th scope="col">40-GiB blocks</th><th scope="col">40-GiB token slots</th></tr></thead><tbody>
+<tr><th scope="row">Native FlashInfer</th><td>37.354</td><td>0.000%</td><td>18,188</td><td>291,008</td></tr>
+<tr><th scope="row">Native FA3</th><td>37.354</td><td>0.000%</td><td>18,188</td><td>291,008</td></tr>
+<tr><th scope="row">Fixed K16/V8</th><td>28.015</td><td>25.000%</td><td>24,251</td><td>388,016</td></tr>
+<tr><th scope="row">Dynamic K8/V8</th><td>19.265</td><td>48.427%</td><td>35,274</td><td>564,384</td></tr>
+</tbody></table></div>
+<p>Asymmetric uses actual FP16 K and one-byte FP8 V, with no persistent native-sized V shadow. Symmetric saves 48.427% of measured equal-slot backing after inline FP32 scales and allocation rounding. The 40-GiB inventories retain about 36 MiB of unused budget per arm. Physical token slots are not completed requests per second or a demonstrated useful-serving capacity increase.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Whole-process quality memory peaks"><table>
+<caption>Whole-process quality memory · GiB · all 59 cohorts per worker, with the same 40-GiB cache budget</caption>
+<thead><tr><th scope="col">Worker</th><th scope="col">Torch allocated peak</th><th scope="col">Torch reserved peak</th><th scope="col">Sampled device maximum</th></tr></thead><tbody>
+<tr><th scope="row">Native FlashInfer</th><td>62.698</td><td>65.775</td><td>66.991</td></tr>
+<tr><th scope="row">Native FA3</th><td>61.920</td><td>65.789</td><td>67.007</td></tr>
+<tr><th scope="row">Fixed K16/V8</th><td>62.682</td><td>66.479</td><td>67.696</td></tr>
+<tr><th scope="row">Dynamic K8/V8</th><td>61.923</td><td>64.156</td><td>65.374</td></tr>
+</tbody></table></div>
+<p>Allocator peaks cover quality cohorts and exclude numerical-oracle memory. Device observations target 20 ms and retain conservative gaps below 500 ms; shorter peaks can be missed. The common limits are 68 GiB Torch reserved and 76 GiB device memory. The aggregate data also preserve startup snapshots separately.</p>
+<p>Asymmetric staging has 256 MiB payload capacity, a 32 MiB floating-point workspace and 16 KiB of compact indices. Runtime graph-capture reports are approximately 0.10/0.15/0.18/0.10 GiB for native FlashInfer/native FA3/asymmetric/symmetric. These are rounded startup allocation changes, not independent exact graph inventories. Staging and graphs are already included in whole-process memory and must not be added again. Symmetric Triton scratch uses 2,129,920 bytes outside the persistent-cache budget.</p>
+<p><strong>Decision:</strong> recommend this fixed asymmetric worker when the full answer-preservation objective is the requirement. Under the declared aggregate-math objective against both native controls, keep native as the certified default. No general serving-speed advantage follows. The earlier batch gains and HTTP limits remain separate results.</p>
+<p><a href="data/asymmetric-decision-worker-20261022.json">All worker quality bounds, physical bytes and resource aggregates (JSON)</a> · <a href="asymmetric-methods.html#actual-worker-comparison">Exact sources, runtime, methods and reproduction</a>.</p>
+</section>
 <section id="decision-reference" aria-labelledby="decision-reference-title">
 <p class="eyebrow">Completed precision/scaling reference · October 22, 2026</p>
 <h2 id="decision-reference-title">The value of precise keys depends on the model and objective.</h2>
