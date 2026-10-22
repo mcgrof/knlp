@@ -15,7 +15,7 @@ indices 0, 1 and 2 are chosen in file order before observing answers. All
 selected answers are graded with exact rational arithmetic and a restricted
 syntax parser; model text is never executed. Report failed tasks too.
 
-The [first completed capture](https://knlp.io/kmesh.html#reasoning-demand)
+The [first completed capture](https://knlp.io/kmesh-retention.html#reasoning-demand)
 finishes 173 model calls but solves none of the three puzzles. Fifteen of
 eighteen later selections add only whitespace; all proposal replies stop at
 the output cap. The captured calls have zero additional exact-prefix cache

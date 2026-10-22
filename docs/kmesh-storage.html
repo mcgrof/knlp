@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="These five questions distinguish the transfer route, shared attention, cold restoration, singleflight and advance preparation. Sharing one engine copy and reading the SSD once are separate properties.">
+<title>KMesh: Storage and preparation</title>
+<link rel="canonical" href="https://knlp.io/kmesh-storage.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="KMesh navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="kmesh.html">overview</a>
+    <a href="kmesh-design.html">design</a>
+    <a href="kmesh-baselines.html">baselines</a>
+    <a href="kmesh-storage.html" aria-current="page">storage</a>
+    <a href="kmesh-retention.html">retention</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Storage and preparation</p>
+<span class="eyebrow">Questions 11–15</span>
+<h1>How does shared context reach the engine?</h1>
+<p class="lead">These five questions distinguish the transfer route, shared attention, cold restoration, singleflight and advance preparation. Sharing one engine copy and reading the SSD once are separate properties.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol start="11">
+<li><a href="#restore-latency">Does DMA-BUF reduce offloaded-ancestor latency?</a></li>
+<li><a href="#cascade">Does cascade reach the shared-prefix attention path?</a></li>
+<li><a href="#coldburst">Do cold siblings repeat storage reads and GPU copies?</a></li>
+<li><a href="#singleflight">How do follow-ups share one engine restoration?</a></li>
+<li><a href="#preload">Can loading context early make follow-ups start sooner?</a></li>
+</ol></div>
+<section id="restore-latency">
+<h2>11. Does DMA-BUF reduce offloaded-ancestor latency?</h2>
+<p><strong>Yes for transport readiness and a single restored child in this workload.</strong>
+Measured on October 17, 2026, with an RTX 4090 and the DMA-BUF-enabled stack,
+DMA-BUF reduces median GPU-consumer readiness by <strong>16.3%</strong> for a
+48 MiB ancestor and single-child time to first token by <strong>6.4%</strong>.
+The five-child burst has no stable latency benefit. All strict restoration
+and numerical gates pass with INFO logging.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">One 48 MiB ancestor restore</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
+<tr><td class="hi">Adapter load complete</td><td>8.063 / 8.204 ms</td><td>8.023 / 8.160 ms</td></tr>
+<tr><td class="hi">GPU consumer ready</td><td>11.006 / 11.165 ms</td><td>9.211 / 9.364 ms</td></tr>
+</table>
+</div>
+<p><strong>In everyday terms:</strong> the 48 MiB ancestor is a saved bundle
+of model state for the shared context. Restoring that bundle and completing
+a small GPU operation that reads it takes 9.211 ms with DMA-BUF versus
+11.006 ms with host staging: about 1.8 ms less on this measured path, or 16.3%.
+This table measures one bundle being restored and consumed,
+not five children generating answers. The median (p50) is the middle run;
+p95 is the time at or below which 95% of the measured runs finish.</p>
+<p>Four pairs alternate staged/direct order, with 100 measured restores per
+arm in each pair, giving 400 measured restores per arm. Five warmups per cell
+are excluded from timing summaries. Complete payload checks pass, and both
+deliberately corrupted payloads are rejected. The native
+submission/completion journal proves <code>dmabuf_fixed</code> versus
+<code>host_fixed</code>, with complete bytes and drained ownership.</p>
+<p>The adapter submits all sixteen chunks, waits for completion, then copies
+them into a GPU consumer that reduces every byte. The first timer ends at
+adapter completion; the second ends at the GPU consumer fence. Full byte
+comparison and SHA256 run outside timing. Destinations are poisoned before
+every restore. SSD ranges and registered mappings are warm. These measurements
+describe complete transfer paths; physical NVMe command splitting was not
+matched or traced.</p>
+
+<h3>What the model checks establish</h3>
+<p>The integration uses the production <code>LMCacheMPConnector</code>.
+One arm restores an owned NVMe file into registered host memory and copies
+to the engine. The other restores into a registered GPU DMA-BUF arena, then
+copies KV into the engine cache. Both test cold external-cache restoration.
+The resident prefix-sharing control and the CPU-backed shifted-span recovery
+control isolate different mechanisms.</p>
+<p>The serving comparison uses batch-invariant kernels, INFO logging and
+four alternating pairs, with 20 measured families per fanout and arm in each
+pair. Every one of its <strong>1,152 continuation observations</strong>,
+including smoke checks and warmups, restores the full 4,096-token ancestor,
+matches generated tokens and has zero chosen-token log-probability difference
+from recomputation. Model-KV digests, native routes, complete payloads and
+drained ownership also pass.</p>
+<h3>How long does a child wait for its first output?</h3>
+<p><strong>Time to first token (TTFT)</strong> is the wait from submitting a
+request until its first generated token. One child waits 23.403 ms with
+DMA-BUF versus 25.015 ms with staging: about 1.6 ms saved, or 6.4%. TTFT also
+includes serving work, so the transfer-path improvement does not translate
+directly into the same percentage improvement for the whole request.
+The second row submits five follow-up requests together and measures each
+child's wait. It is a separate workload, not five copies of the single-child
+timing added together.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Time to first token</th><th scope="col">Host staging, p50 / p95</th><th scope="col">GPU DMA-BUF, p50 / p95</th></tr>
+<tr><td class="hi">One child, 80 measured requests per arm</td><td>25.015 / 26.105 ms</td><td>23.403 / 24.412 ms</td></tr>
+<tr><td class="hi">Five-child burst, 400 measured requests per arm</td><td>55.183 / 75.137 ms</td><td>54.912 / 75.257 ms</td></tr>
+</table>
+</div>
+<p>Single-child median latency favors DMA-BUF in all four paired rounds.
+Five-child paired changes vary in sign; the pooled median changes by only
+0.5%, while median batch completion is 74.576 ms direct versus 73.883 ms
+staged. These measurements do not establish a stable burst benefit. The
+<a href="data/kmesh-restore-serving-20261017.json">serving result record</a>
+retains all percentiles, paired medians, counts and limits.</p>
+<p>Every retained five-child burst issues 80 backend chunk
+reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. A
+single child reads sixteen chunks, or 48 MiB. These
+counts motivate the cold-burst and load-coalescing experiments below. They count adapter
+requests and completed payload bytes, not physical NVMe commands, and do not
+prove how many ancestor copies occupy GPU memory simultaneously.</p>
+
+<h3>Reproduce the transport and serving comparison</h3>
+<p>The source inputs are the
+<a href="https://github.com/mcgrof/vllm/tree/1b76bf9dd9d52efbd75fb89bf2619898d8f01233">current vLLM serving branch</a>
+and
+<a href="https://github.com/mcgrof/LMCache/tree/007a3388331209737ee19c095e430907fc467952">LMCache restore-validation branch</a>.
+The latter extends the checksum endpoint to the current packed KV layouts.
+The
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
+gives native preparation, exact pins, queued execution and CPU rechecks.</p>
+<pre><code>make defconfig-kmesh-restore-cuda
+make kmesh-restore-plan
+
+# Set source, model and NVMe output paths in menuconfig or the environment.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_OUTPUT=/path/to/results make kmesh-restore-verify</code></pre>
+<p>The default preset selects the qualified adapter comparison and the
+experimental Vulkan/RM GPU provider. <code>KMESH_RESTORE_SECTION=all</code>
+also runs the strict serving qualification used for these timings. Keep
+both component log levels at INFO for the timing comparison. Run on a host with the
+<a href="io-uring-dmabuf.html">qualified experimental DMA-BUF kernel and storage route</a>;
+a stock RunPod container does not provide that host integration.</p>
+<p>The model is Qwen2.5-0.5B-Instruct at the baseline's pinned revision,
+BF16 with a 4,096-token ancestor and five distinct 512-token tails. Two K/V
+components &times; 24 layers &times; 256 tokens &times; two KV heads &times;
+64 values &times; two bytes make each 3 MiB chunk; sixteen make 48 MiB.
+Both arms configure 256 MiB L1 capacity, a 512 MiB engine KV pool, 4 MiB slots,
+ordinary file <code>O_DIRECT</code>, io_uring depth eight and one load/store
+worker. Equal configured capacity does not mean equal total process memory.</p>
+<p>Runtime: Python 3.13.15, PyTorch <code>2.13.0+cu130</code>, vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, NVIDIA 615.71.09, CUDA compiler
+13.4.92 and the experimental <code>7.3.0-rc3-dmabuf-mapfence-20261008</code>
+kernel. There are two OpenMP/MKL threads, without a CPU-affinity cap.
+Model startup and checksum controls are outside timed intervals.</p>
+<div class="note"><strong>The measured wins are GPU-consumer readiness and single-child latency.</strong>
+It does not establish cold-media behavior, general model quality, serving
+throughput, cascade-attention gains or cross-engine page sharing. Five-child
+burst latency has no stable improvement. Qualification is specific to
+batch-invariant kernels; default-kernel numerical equivalence is not established.
+An intermittent ancestor-admission miss remains an unresolved reliability limit
+in the <a href="data/kmesh-dmabuf-restore.json">qualification evidence</a>;
+the measured cohort contains no such miss. Passing this cohort does not establish
+that the condition cannot recur.</div>
+</section>
+
+<section id="cascade">
+<h2>12. Does cascade reach the shared-prefix attention path?</h2>
+<p><strong>Yes, with the cascade-capable runner and flag selected explicitly.</strong>
+The October 17 RTX 4090 experiment uses the current vLLM serving branch with
+Llama-3.1-8B-Instruct, an 8,192-token shared ancestor, 32 distinct 512-token
+tails and 128 greedy generated tokens per child. Automatic prefix caching
+shares capacity; cascade groups attention reads of that ancestor and merges
+each child's private suffix. This test uses GPU-resident KV only. It does
+not use LMCache or measure storage restoration.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Cascade policy</th><th scope="col">Observed layer-kernel calls</th><th scope="col">Median warm generation wall time</th><th scope="col">Changed continuations versus disabled</th></tr>
+<tr><td class="hi">Disabled</td><td>0</td><td>4,835.837 ms</td><td>0 / 96</td></tr>
+<tr><td class="hi">Enabled, natural heuristic</td><td>4,096</td><td>3,972.896 ms</td><td>24 / 96</td></tr>
+<tr><td class="hi">Enabled, forced heuristic</td><td>4,096</td><td>3,974.941 ms</td><td>27 / 96</td></tr>
+</table>
+</div>
+<p>The untimed engagement control observes an 8,192-token common prefix on
+all 128 runner steps: 128 steps &times; 32 layers gives 4,096 kernel calls.
+Every natural heuristic verdict is true, so forcing engagement adds nothing
+at this shape. The disabled control makes no cascade calls. Each timed
+request reuses 8,688 prompt tokens, including the complete ancestor.</p>
+<p>The natural path's median generation wall time is 17.8% lower in these
+three repetitions. Each policy has one fresh engine process, run in fixed
+disabled/enabled/forced order. This is exploratory evidence, without
+independent alternating process pairs. Timing includes cached-prefill
+scheduling and all 128 decode tokens, after removing the kernel-observation
+wrappers. It is not a measurement of attention bandwidth or decode-only
+latency.</p>
+<p>Cascade changes floating-point evaluation order. The natural and forced
+arms change 24 and 27 of their 96 retained continuations relative to the
+disabled arm; each arm contains three repetitions of 32 children. This
+passes engagement checks, but does not establish numerical equivalence or
+task quality. Batch-invariant arithmetic is disabled because current vLLM
+disables cascade under that policy; the preceding restore comparison uses
+batch-invariant arithmetic and remains a separate result.</p>
+<p>The reproducible profile explicitly selects the V1 runner and
+FlashAttention 2, BF16, eager execution, synchronous scheduling, 32 maximum
+sequences, 4,096 maximum batched tokens and a 4 GiB KV pool. Runtime is
+Python 3.13.15, PyTorch <code>2.13.0+cu130</code>, CUDA 13.0 and vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, with two OpenMP/MKL threads and
+no CPU-affinity cap. The Llama snapshot is
+<code>0e9e39f249a16976918f6564b8830bc894c89659</code>. The
+<a href="data/kmesh-cascade-20261017.json">sanitized result</a> retains
+all samples, engagement counters and source/model/native hashes.</p>
+<h3>Reproduce the cascade controls</h3>
+<pre><code>make defconfig-kmesh-cascade-cuda
+make kmesh-cascade-plan
+
+# Set model and source paths in menuconfig or the environment.
+make kmesh-cascade KMESH_CASCADE_PY=/path/to/prepared/python
+
+KMESH_CASCADE_OUTPUT=/path/to/results make kmesh-cascade-verify</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_cascade/README.md">cascade README</a>
+describes the authenticated inputs, process-local policy, rejected comparisons
+and CPU recheck. This tests an existing vLLM feature, with no family-aware
+scheduler or new attention kernel. The following section tests a
+cold external-cache burst versus a leader completed before its followers.</p>
+</section>
+
+<section id="coldburst">
+<h2>13. Do cold siblings repeat storage reads and GPU copies?</h2>
+<p><strong>Repeated NVMe payload reads remain; GPU-copy amplification varies.</strong>
+The October 17 experiment releases siblings together from an empty
+engine cache, with their 48 MiB ancestor available only through the NVMe-backed
+external cache. A separate control completes the leader before submitting
+three followers. Each case retains three families after three warmups, on
+both host-staged and GPU DMA-BUF paths.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Arrival case</th><th scope="col">Path</th><th scope="col">Backend ancestor reads per family</th><th scope="col">Observed live ready ancestor copies</th><th scope="col">Requests requiring external engine loads</th></tr>
+<tr><td class="hi">Two-child burst</td><td>Both</td><td>32 chunks / 96 MiB</td><td>1</td><td>1</td></tr>
+<tr><td class="hi">Four-child burst</td><td>Both</td><td>64 chunks / 192 MiB</td><td>1</td><td>1</td></tr>
+<tr><td class="hi">Eight-child burst</td><td>Host staged</td><td>128 chunks / 384 MiB</td><td>1</td><td>1</td></tr>
+<tr><td class="hi">Eight-child burst</td><td>GPU DMA-BUF</td><td>128 chunks / 384 MiB</td><td>1&ndash;3</td><td>1&ndash;3</td></tr>
+<tr><td class="hi">Leader, then three followers</td><td>Both</td><td>64 chunks / 192 MiB</td><td>1</td><td>1</td></tr>
+</table>
+</div>
+<p>Every retained family reads the ancestor once per child at the backend,
+even in the leader-first control. Yet that control has one external engine
+load: its three followers report a 4,096-token local prefix hit and require
+zero new external tokens. Live block tables confirm one shared ancestor.
+Most burst families also share one copy; one of the three retained
+eight-child DMA-BUF families uses three copies, with five followers reusing
+local pages. The remaining two use one copy and seven local followers.</p>
+<p>This separates storage work from engine-page sharing. In the pinned
+<a href="https://github.com/mcgrof/LMCache/blob/007a3388331209737ee19c095e430907fc467952/lmcache/integration/vllm/lmcache_mp_connector.py#L1218">connector lookup path</a>,
+ordinary lookup is submitted before subtracting the engine's local hit.
+The server's
+<a href="https://github.com/mcgrof/LMCache/blob/007a3388331209737ee19c095e430907fc467952/lmcache/v1/multiprocess/modules/lookup.py#L290">lookup handler starts prefetch</a>;
+the adapter requests a range starting at token zero. The optional eager-prefetch
+flag is already off. Turning that flag off is therefore not a fix for this
+observed repetition. The next optimization must address lookup-triggered
+storage reads and the residual admission race separately, rather than
+assuming that every backend read creates a private GPU ancestor.</p>
+<p>All <strong>216 checked continuations</strong>, including warmups, have
+the full 4,096-token cached ancestor and exactly match recomputation's eight
+generated tokens. All <strong>1,728 chosen-token log probabilities</strong>
+also match exactly. Restored model-KV digests, registered native routes,
+complete bytes and drained ownership pass. This table uses eight-token
+continuations and lookup observations. Request lifetimes and instrumentation can both affect
+admission timing; these samples do not establish a general race frequency.</p>
+<p>Allocation/free observations retain live block IDs, request status and
+computed-token counts. Each ancestor spans 256 engine blocks. A reserved
+destination waiting for remote KV is counted separately from a running or
+completed request with a ready ancestor. These observations do not measure
+HBM bandwidth; backend chunk reads do not count physical NVMe commands.
+No latency result is claimed for this instrumented test.</p>
+<p>The model, exact source pins, batch-invariant arithmetic, runtime and
+ordinary-file NVMe route match the restore comparison above. This profile
+uses seed 20260805, distinct 512-token tails, eight greedy output tokens,
+512 MiB server arenas in each path and a 512 MiB engine KV pool. Both caches
+are cleared before each family; the external index and SSD ranges remain
+warm. The
+<a href="data/kmesh-coldburst-20261017.json">sanitized evidence</a> retains
+each family's backend counts, live destinations, local-hit/load counts and
+source/model/native hashes.</p>
+<h3>Twenty-family arrival sample</h3>
+<p>A larger sample on the same RTX 4090 and frozen sources retains 20 families
+per case, again after three warmups. It passes all strict gates:
+<strong>828 continuations and 6,624 chosen-token log probabilities</strong>
+match recomputation exactly, including warmups. Every retained family still
+reads the ancestor once per child at the backend. The ready GPU-copy counts
+vary as follows; each histogram contains twenty retained families.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Case</th><th scope="col">Host-staged ready ancestor copies</th><th scope="col">DMA-BUF ready ancestor copies</th></tr>
+<tr><td class="hi">Two-child burst</td><td>1 copy: 19; 2 copies: 1</td><td>1 copy: 20</td></tr>
+<tr><td class="hi">Four-child burst</td><td>1 copy: 20</td><td>1 copy: 17; 2 copies: 2; 4 copies: 1</td></tr>
+<tr><td class="hi">Eight-child burst</td><td>1 copy: 15; 2 copies: 5</td><td>1 copy: 14; 3 copies: 4; 4 copies: 2</td></tr>
+<tr><td class="hi">Leader, then three followers</td><td>1 copy: 20</td><td>1 copy: 20</td></tr>
+</table>
+</div>
+<p>The leader-first control always shares one GPU ancestor while still reading
+192 MiB at the backend for the 48 MiB ancestor. Concurrent bursts occasionally
+need additional engine loads, including four-copy cases in the direct path.
+These observations strengthen the separation between repeated storage reads
+and the remaining admission race. Each mode/arrival combination uses one engine;
+the families are not independent process-paired trials and do not establish
+a general race rate or a difference in race probability between paths.
+The <a href="data/kmesh-coldburst-repeat20-20261017.json">twenty-family record</a>
+preserves the histograms and unchanged source/model/native identities.
+No coalescing change or latency qualification is included.</p>
+<h3>Reproduce the arrival controls</h3>
+<pre><code>make defconfig-kmesh-coldburst-cuda
+make kmesh-restore-plan
+
+# Set prepared runtime paths and explicit inputs as described in the README.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=coldburst KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md#cold-external-cache-arrival-controls">arrival-control instructions</a>
+describe the queued wrapper and independent CPU recheck. This control
+measures default loading without KMesh load coalescing. The next experiment
+enables that feature to test whether one loader eliminates duplicate GPU ancestors.</p>
+</section>
+
+<section id="singleflight">
+<h2>14. How do follow-ups share one engine restoration?</h2>
+<p>Imagine four follow-up requests about the same document. The model has
+already processed their shared context, and its saved computation
+(the <strong>KV cache</strong>) is on the SSD. In this test that shared state
+occupies 48 MiB. It must be restored to vLLM's GPU cache before the requests
+can reuse it.</p>
+<p><strong>The problem:</strong> if the requests arrive together, several
+can start restoring their own copy before any one copy is ready to share.
+They need the same state, but the loading process has not coordinated them.
+That can waste GPU cache space and duplicate restoration work.</p>
+<p><strong>KMesh adds coordination:</strong></p>
+<ol class="experiment-steps">
+<li><strong>Choose one request to load the shared state.</strong> This is the loader, also called the leader.</li>
+<li><strong>Make matching requests wait for that load.</strong> They wait before allocating their own destination in vLLM's GPU cache.</li>
+<li><strong>Let them reuse the completed copy.</strong> vLLM's existing prefix cache supplies the sharing. Each request still gets private space for its different continuation.</li>
+</ol>
+<p>This is called <strong>singleflight</strong>: one operation runs while
+other callers needing the same result wait for it. KMesh applies this
+established pattern in the LMCache connector. On this page, a <em>GPU ancestor</em>
+means the shared context's KV blocks in vLLM's GPU cache; it is not another
+model, GPU or agent.</p>
+<h3>What happened when we enabled it?</h3>
+<p>With coordination enabled, <strong>every tested family used one restoration
+into vLLM and one ready copy of the shared state in its cache</strong>.
+Without it, some simultaneous arrivals produced multiple ready copies.
+Each row below covers twenty measured groups of requests on each transfer
+path, after three warmup groups. A range such as 1&ndash;6 means the number
+of copies varied between groups.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">How follow-ups arrive</th><th scope="col">Copies in vLLM without coordination</th><th scope="col">Copies in vLLM with singleflight</th><th scope="col">Bytes read from storage, with or without</th></tr>
+<tr><td class="hi">2 follow-ups together</td><td>1</td><td>1</td><td>96 MiB</td></tr>
+<tr><td class="hi">4 follow-ups together</td><td>1&ndash;2</td><td>1</td><td>192 MiB</td></tr>
+<tr><td class="hi">8 follow-ups together</td><td>1&ndash;6 with host staging; 1&ndash;2 with DMA-BUF</td><td>1</td><td>384 MiB</td></tr>
+<tr><td class="hi">1 request finishes, then 3 follow-ups</td><td>1</td><td>1</td><td>192 MiB</td></tr>
+</table></div>
+<p><strong>Read the four-request row this way:</strong> singleflight leaves
+one usable 48 MiB copy in vLLM's cache. But storage still supplies
+192 MiB&mdash;four reads of the same 48 MiB state. The feature fixes duplicate
+copies inside the engine; this experiment does not fix repeated SSD reads.</p>
+<p>Why are reads still repeated? The connector asks the external cache for
+the data before the singleflight gate decides which request will load it
+into vLLM. That lookup already starts storage prefetching. A request can
+therefore trigger an SSD read and later reuse an existing vLLM copy.
+<a href="kmesh-retention.html#retained">Section 16</a> tests keeping the data in the external
+cache so those lookups no longer reread it from the SSD.</p>
+<div class="note"><strong>Result: one shared copy in vLLM, but still repeated storage reads.</strong>
+This establishes coordinated restoration and correct sharing for the tested
+workload. It does not yet establish faster replies. DMA-BUF changes the
+transfer route; singleflight coordinates who restores the state.</div>
+<details>
+<summary>Correctness checks, implementation limits and reproduction commands</summary>
+<p>The feature is opt-in and restricted to compatible exact text prefixes.
+It uses vLLM's existing scheduler retry mechanism and prefix cache. Disabled
+and enabled controls use identical sources and native binaries on an RTX 4090.
+The registry records 29 actual follower joins, including warmups. Every enabled
+family has one external engine load and one ready ancestor spanning 256 blocks;
+all remaining children hit the local prefix cache. Registry state drains when
+the family completes.</p>
+<p>Across both controls, all <strong>1,656 continuations</strong> and
+<strong>13,248 chosen-token log probabilities</strong> match recomputation
+exactly, including warmups. Every child has the full 4,096-token cached
+ancestor. Producer/restored KV checksums, native registered-buffer routes,
+complete byte receipts and drained ownership pass. The
+<a href="data/kmesh-singleflight-20261017.json">sanitized comparison</a>
+retains every backend count, copy/load histograms, exact source/model/native
+hashes and numerical bounds. Each control/path/arrival uses one engine;
+these are not independent randomized process pairs or a general race-rate
+estimate. No serving-speed claim follows from this instrumented replay.</p>
+<h3>Reproduce the singleflight experiment</h3>
+<p>Use public LMCache branch
+<a href="https://github.com/mcgrof/LMCache/tree/2026-10-17-feature-kmesh-external-singleflight"><code>2026-10-17-feature-kmesh-external-singleflight</code></a>
+at <code>100442de5a49</code>, with vLLM unchanged at
+<code>1b76bf9dd9d5</code>.</p>
+<pre><code>make defconfig-kmesh-singleflight-cuda
+make kmesh-restore-plan
+
+# Configure the prepared interpreter and authenticated model/source paths.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=singleflight KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>
+describes the pinned inputs and strict checks.</p>
+</details>
+<p style="margin-top:24px">Singleflight starts when follow-ups arrive.
+The next experiment asks whether we can start preparing their shared context
+before they arrive.</p>
+</section>
+
+<section id="preload">
+<h2>15. Can loading context early make follow-ups start sooner?</h2>
+<p>Suppose an application knows it will launch four follow-up requests after
+a tool finishes. All four will reuse the same context, whose saved model
+state is on the SSD. <strong>Could we load that state while the tool is still
+running, so the follow-ups spend less time waiting once they arrive?</strong>
+That is the idea tested here. The actual experiment uses controlled delays
+to represent this opportunity; it does not run a real tool workflow.</p>
+<h3>What an early declaration actually does</h3>
+<p>The application tells the connector, in effect: <strong>“These upcoming
+requests will reuse this exact context.”</strong> This advance notice is the
+<em>family declaration</em>. The shared cached context is called the ancestor.
+The declaration itself does not load data or reserve GPU memory.</p>
+<p>The current prototype prepares the context with a small real model request:</p>
+<ol class="experiment-steps">
+<li><strong>Declare the expected reuse.</strong> Identify the shared context and the expected number of follow-ups.</li>
+<li><strong>Submit a warm-up request that generates one token.</strong> This is an ordinary model request used to get the shared state loaded through LMCache into vLLM. It still performs real model work.</li>
+<li><strong>Release the follow-ups after a controlled delay.</strong> If the state is ready, they reuse it. If the warm request is still active and the state is not reusable, matching follow-ups wait.</li>
+</ol>
+<p>The time between starting the warm request and releasing the follow-ups
+is the <strong>head start</strong>, called the <em>fork gap</em> in the experiment.
+The intended advantage is to move work into time the application already has
+before those requests arrive. Delaying useful requests just to manufacture
+that gap would not establish an overall speedup.</p>
+<h3>What the timing table means</h3>
+<p><strong>Four follow-ups means four separate requests to the model.</strong>
+Call them A, B, C and D, in the order we submit them. They share the same
+4,096-token context, but each adds 512 input tokens of its own. The benchmark
+submits them together as one group and asks <strong>each request to generate
+8 output tokens</strong>. A token is a piece of text, sometimes only part of
+a word; eight tokens are not necessarily a complete answer. With eight
+follow-ups, the same experiment has requests A through H.</p>
+<p><strong>This section's table follows request A only:</strong> start its
+stopwatch when A is submitted; stop it when A produces its first output token.
+A means the first request submitted, even if another request produces output
+sooner. The diagram below shows that stopwatch. <a href="kmesh-retention.html#retained">Section 16</a> adds a second
+stopwatch for the time until every request has produced all 8 output tokens.</p>
+<figure class="prefetch-timeline" aria-labelledby="preload-diagram-caption">
+<div class="timeline-scroll" tabindex="0" role="region" aria-label="Shared-context preparation timeline; scroll horizontally on small screens">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 890" width="1100" height="890" role="img" aria-labelledby="preload-timeline-title preload-timeline-desc">
+<title id="preload-timeline-title">When we load shared context, and what the timing table measures</title>
+<desc id="preload-timeline-desc">Three timelines align at the first follow-up submission. Loading on arrival puts restoration inside the measured wait. Preparing early can finish before arrival, leaving only serving work after submission, or the context can still be unavailable and the request waits for the remaining preparation. Every green bracket ends at request A's first output token. A is the first request submitted. Preparation before submission is excluded from the table. Bar lengths are schematic, not measured durations.</desc>
+<defs>
+  <marker id="preload-time-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#93a59a"/></marker>
+</defs>
+<rect x="1" y="1" width="1098" height="888" rx="14" fill="#0c1410" stroke="#30483a"/>
+<g font-family="Arial, Helvetica, sans-serif">
+  <text x="32" y="41" fill="#e2ece5" font-size="25" font-weight="700">Same follow-ups. Different times to start loading.</text>
+  <text x="32" y="72" fill="#b5c5ba" font-size="17">A schematic of the experiment — bar lengths are not measured times or promised speedups.</text>
+  <text x="48" y="117" fill="#93a59a" font-size="15" font-weight="700" letter-spacing="1">BEFORE FOLLOW-UPS ARRIVE</text>
+  <text x="569" y="117" fill="#2ae6a3" font-size="15" font-weight="700" letter-spacing="1">AFTER ARRIVAL: THE TABLE'S TIMER RUNS</text>
+  <path d="M 52 151 H 421 M 644 151 H 1044" fill="none" stroke="#62736a" stroke-width="2" marker-end="url(#preload-time-arrow)"/>
+  <rect x="433" y="130" width="202" height="58" rx="8" fill="#163326" stroke="#2ae6a3"/>
+  <text x="534" y="154" fill="#e2ece5" font-size="17" font-weight="700" text-anchor="middle">Follow-ups submitted</text>
+  <text x="534" y="176" fill="#2ae6a3" font-size="16" text-anchor="middle">Timer starts here</text>
+  <path d="M 534 188 V 810" stroke="#2ae6a3" stroke-width="2" stroke-dasharray="5 6" opacity=".65"/>
+
+  <text x="32" y="224" fill="#e2ece5" font-size="22" font-weight="700">1 · Load on arrival</text>
+  <text x="32" y="250" fill="#93a59a" font-size="16">Wait until the follow-ups arrive, then restore their shared context.</text>
+  <text x="256" y="312" fill="#93a59a" font-size="19" text-anchor="middle">No loading yet</text>
+  <rect x="534" y="277" width="190" height="64" rx="7" fill="#4a3417" stroke="#f0b65c"/>
+  <text x="629" y="303" fill="#ffe0ac" font-size="18" text-anchor="middle">Restore shared</text>
+  <text x="629" y="326" fill="#ffe0ac" font-size="18" text-anchor="middle">context from SSD</text>
+  <rect x="732" y="277" width="218" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="841" y="303" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
+  <text x="841" y="326" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="950" cy="309" r="6" fill="#2ae6a3"/>
+  <text x="965" y="303" fill="#e2ece5" font-size="17">First token</text>
+  <text x="965" y="325" fill="#2ae6a3" font-size="16">Timer stops</text>
+  <path d="M 534 357 V 367 H 950 V 357" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="742" y="392" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <path d="M 32 412 H 1068" stroke="#263b2e"/>
+  <text x="32" y="444" fill="#e2ece5" font-size="22" font-weight="700">2 · Prepare early: context is ready when follow-ups arrive</text>
+  <rect x="64" y="482" width="390" height="64" rx="7" fill="#13363c" stroke="#62dce5"/>
+  <text x="259" y="508" fill="#b8f6fa" font-size="18" text-anchor="middle">Warm request: restore shared context</text>
+  <text x="259" y="531" fill="#b8f6fa" font-size="16" text-anchor="middle">+ generate 1 preparation token</text>
+  <path d="M 454 514 H 534" stroke="#62dce5" stroke-width="2" stroke-dasharray="4 5"/>
+  <text x="494" y="474" fill="#62dce5" font-size="16" text-anchor="middle">Ready</text>
+  <rect x="534" y="482" width="268" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="668" y="508" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
+  <text x="668" y="531" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="802" cy="514" r="6" fill="#2ae6a3"/>
+  <text x="817" y="508" fill="#e2ece5" font-size="17">First token</text>
+  <text x="817" y="530" fill="#2ae6a3" font-size="16">Timer stops</text>
+  <path d="M 64 564 V 574 H 534 V 564" fill="none" stroke="#62dce5" stroke-width="2"/>
+  <text x="299" y="599" fill="#62dce5" font-size="17" text-anchor="middle">Head start — excluded from the table's wait</text>
+  <path d="M 534 564 V 574 H 802 V 564" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="668" y="599" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <path d="M 32 622 H 1068" stroke="#263b2e"/>
+  <text x="32" y="655" fill="#e2ece5" font-size="22" font-weight="700">3 · Prepare early: context is still unavailable at arrival</text>
+  <rect x="302" y="694" width="232" height="64" rx="7" fill="#13363c" stroke="#62dce5"/>
+  <text x="418" y="720" fill="#b8f6fa" font-size="18" text-anchor="middle">Start warm request</text>
+  <text x="418" y="743" fill="#b8f6fa" font-size="16" text-anchor="middle">Preparation underway</text>
+  <rect x="534" y="694" width="218" height="64" rx="7" fill="#4a3417" stroke="#f0b65c"/>
+  <text x="643" y="720" fill="#ffe0ac" font-size="18" text-anchor="middle">Wait until shared</text>
+  <text x="643" y="743" fill="#ffe0ac" font-size="18" text-anchor="middle">context is usable</text>
+  <text x="752" y="686" fill="#62dce5" font-size="15" text-anchor="middle">Context ready</text>
+  <rect x="760" y="694" width="222" height="64" rx="7" fill="#302640" stroke="#c8b6ff"/>
+  <text x="871" y="720" fill="#e5d9ff" font-size="18" text-anchor="middle">Run request A</text>
+  <text x="871" y="743" fill="#e5d9ff" font-size="16" text-anchor="middle">+ other serving work</text>
+  <circle cx="982" cy="726" r="6" fill="#2ae6a3"/>
+  <text x="997" y="720" fill="#e2ece5" font-size="17">First token</text>
+  <text x="997" y="742" fill="#2ae6a3" font-size="15">Timer stops</text>
+  <path d="M 302 774 V 784 H 534 V 774" fill="none" stroke="#62dce5" stroke-width="2"/>
+  <text x="418" y="809" fill="#62dce5" font-size="17" text-anchor="middle">Head start — excluded</text>
+  <path d="M 534 774 V 784 H 982 V 774" fill="none" stroke="#2ae6a3" stroke-width="3"/>
+  <text x="758" y="809" fill="#2ae6a3" font-size="18" font-weight="700" text-anchor="middle">Wait reported in the table</text>
+
+  <text x="32" y="852" fill="#e2ece5" font-size="17">The timer follows request A, the first request submitted. Another request may produce output sooner.</text>
+  <text x="32" y="877" fill="#b5c5ba" font-size="16">The warm-up token is preparation output. It is not the follow-up token that stops the timer.</text>
+</g>
+</svg>
+</div>
+<figcaption id="preload-diagram-caption"><strong>Only the green brackets are measured by the timing table.</strong>
+Starting early moves some preparation before request submission. If the shared
+context is still unavailable when a follow-up arrives, its remaining wait counts.
+The 0, 25 and 100 ms columns request different head starts; they are not loading
+durations. The “already ready” control starts with the context available, as at
+the arrival line in row 2. The bars illustrate event order; the actual latency
+results are in the table below.</figcaption>
+<p class="timeline-scroll-hint">On a small screen, scroll the diagram sideways to follow the timeline.</p>
+</figure>
+<p>Every value below is <strong>request A's wait for its first output token,
+in milliseconds</strong>. Lower is better. A still has seven more tokens to
+generate after this timer stops; B, C and D have their own output to generate.</p>
+<ul class="experiment-steps">
+<li><strong>Load on arrival:</strong> use singleflight, but start restoring only when the follow-ups arrive.</li>
+<li><strong>Already ready:</strong> a comparison with the context fully warmed before the follow-ups are submitted.</li>
+<li><strong>Start 0, 25 or 100 ms early:</strong> request that much head start for the warm-up request. Actual release times are recorded because engine execution can delay submission.</li>
+</ul>
+<p>The head start is <strong>outside the displayed wait</strong>. For example,
+a 100 ms head start followed by a 34 ms request wait is not a 34 ms total
+workflow. Prefetch work, bytes read and unused preparations are recorded
+separately; this table measures the delay the follow-up sees after arrival.</p>
+<p>Host staging brings data through CPU RAM on its way to the GPU. The
+DMA-BUF path restores into a registered GPU buffer before copying into
+vLLM's cache. Both paths run the same preparation experiment.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Transfer path / follow-ups</th><th scope="col">Load on arrival</th><th scope="col">Already ready</th><th scope="col">Start 0 ms early</th><th scope="col">Start 25 ms early</th><th scope="col">Start 100 ms early</th></tr>
+<tr><td class="hi">Host staged / 4</td><td>46.631</td><td>54.893</td><td>58.093</td><td>32.493</td><td>34.220</td></tr><tr><td class="hi">Host staged / 8</td><td>48.592</td><td>34.118</td><td>85.430</td><td>57.333</td><td>49.814</td></tr><tr><td class="hi">DMA-BUF / 4</td><td>31.611</td><td>45.872</td><td>53.601</td><td>33.004</td><td>32.165</td></tr><tr><td class="hi">DMA-BUF / 8</td><td>40.851</td><td>40.565</td><td>76.435</td><td>45.818</td><td>41.324</td></tr>
+</table></div>
+<p><strong>Example:</strong> with four follow-ups and host staging, loading on
+arrival gives a 46.631 ms median wait. Giving the warm request a requested
+100 ms head start reduces that wait to 34.220 ms. But with DMA-BUF and four
+follow-ups, the corresponding wait is 31.611 ms versus 32.165 ms&mdash;no
+improvement in this sample.</p>
+<div class="note"><strong>Result: the coordination works; faster replies are not a consistent result.</strong>
+The 100 ms preparation finishes before follow-up arrival in all twenty measured
+groups, yet lowers median request wait in only one of the four comparisons.
+With no head start, the warm-request approach is slower in all four. Advance
+notice alone is not enough: preparation and coordination have costs, and the
+benefit must be measured. This experiment does not establish a general
+latency win from speculative prefetching.</div>
+<p>These are medians of five measured groups per case, after three warmups,
+on an RTX 4090 on October 17, 2026. Cases run in fixed order with one engine
+per transfer path and group size. The small sample and visible variation
+limit interpretation, including the sometimes slower “already ready” control.
+This is not a reliable ranking of the two transfer paths.</p>
+<details>
+<summary>Timing plots, wasted work, correctness checks and reproduction commands</summary>
+<p>The replay uses vLLM's public engine loop and requests head starts of
+0, 10, 25 and 100 ms. Every sample records the actual interval; children can
+arrive while the warm request is still running. The connector waits before
+LOOKUP while the warm request is active and the ancestor is not locally
+reusable. Completion, cancellation or expiry releases the wait. Reuse is
+credited only after allocation admits the child. vLLM's existing prefix cache
+creates the physical sharing. No unfinished-restore estimate is added to
+a measured warm-child time.</p>
+<figure style="margin:24px 0">
+<img src="images/kmesh-preload-20261017.svg" width="1000" height="650" style="width:100%;height:auto;border-radius:9px;background:white" alt="Four panels plot measured first-child latency against attained fork gap, with reactive and fully warm median references.">
+<figcaption style="color:var(--muted);font-size:13px;margin-top:12px">Points
+are every retained declared-preload sample; diamonds are medians grouped by
+requested gap. Each panel has its own vertical scale. The warm-completion value in the
+data measures a one-token warm request, including lookup, restoration,
+last-token computation and sampling; it is not an isolated DMA duration.</figcaption>
+</figure>
+<p><strong>Storage work remains separate.</strong> Each full family, including
+its warm request when present, uses one complete external engine ancestor
+load. The backend can still read that ancestor for later LOOKUPs even after
+vLLM has it locally. The
+<a href="data/kmesh-family-prefetch-20261017.json">verified public record</a>
+retains every retained family's backend read count, local-hit/load counts and timing
+samples. Four unused-preload controls release no children: each incurs
+16 native payload reads, 48 MiB, and one wasted declaration without a child
+hit. Preloading consumes real work; logical declaration bytes are not
+measured storage savings.</p>
+<p>All 1,152 child and
+164 warm continuations, including warmups
+and unused controls, match their references. All
+9,380 chosen-token log probabilities match exactly, maximum delta 0.0. Every child reuses
+the full 4,096-token ancestor. The first warmup of each case also checks
+producer/restored model-KV digests and live ready ancestor ownership.
+Registered native routes, complete bytes and drained ownership pass for every
+family; no I/O evidence eviction is accepted.
+412 children exercise
+pre-LOOKUP waiting. Immutable prefix identities are cached on the request
+tracker so repeated waiting polls do not copy and hash the prompt again.</p>
+<p>This is a caller-driven Python-connector prototype with synthetic exact
+prefixes, distinct 512-token tails, eight greedy child tokens, batch-invariant
+arithmetic, a 512 MiB engine KV pool and a 512 MiB external arena. Each
+path/fanout uses a fresh storage owner and engine to keep audit history
+bounded. Retained timings have allocation observation hooks removed. The
+NVMe index stays warm and both resident caches are cleared before each
+family. The test has no eviction-pressure workload and does not qualify
+HBM retention leases, task quality or cross-engine sharing.</p>
+<h3>Reproduce actual fork-gap preloading</h3>
+<p>Use LMCache <a href="https://github.com/mcgrof/LMCache/commit/44a52bda3b494e3d427e65b08d7196c70f631c47"><code>44a52bda3b49</code></a>
+and vLLM <code>1b76bf9dd9d5</code>, with the prepared model and native runtime
+specified in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_restore/README.md">restore README</a>.</p>
+<pre><code>make defconfig-kmesh-family-prefetch-cuda
+make kmesh-restore-plan
+
+# Set model/source paths and the prepared interpreter as described in the README.
+make kmesh-restore KMESH_RESTORE_PY=/path/to/prepared/python
+
+KMESH_RESTORE_SECTION=family KMESH_RESTORE_OUTPUT=/path/to/results \
+  make kmesh-restore-verify
+
+python tools/reproduce/kmesh_restore/publish_family.py /path/to/results \
+  --output public-results.json
+python tools/reproduce/kmesh_restore/plot_family.py public-results.json \
+  --output preload.svg</code></pre>
+<p>The following control uses LMCache's existing retained L2-to-L1 warm
+operation before the engine preload, asking whether external-L1 residency
+removes repeated NVMe reads. It counts HTTP work and extra residency
+separately from GPU sharing.</p>
+</details>
+<p style="margin-top:24px"><strong>What happens after fixing the repeated SSD reads?</strong>
+<a href="kmesh-retention.html#retained">Section 16 measures that follow-up</a>: it retains the
+state in LMCache and times the requests again. Both controls there preload
+250 ms early, so it tests retention's effect rather than repeating this
+on-demand-versus-prefetch head-start sweep.
+<a href="kmesh-retention.html#prefetch-demand">Section 20 completes that comparison with the
+read problem fixed in both approaches and finds a clear early-loading benefit.</a></p>
+</section>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh-baselines.html">&larr; Baselines and engine sharing</a><a href="kmesh-retention.html">Retention and early loading &rarr;</a></nav>
+<footer>
+<a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
+</footer>
+</main>
+</body>
+</html>

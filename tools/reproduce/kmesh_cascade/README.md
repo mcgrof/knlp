@@ -13,7 +13,7 @@ the normal heuristic. Natural versus disabled median warm generation is
 continuations change. This is exploratory timing and an engagement result,
 not a numerical-equivalence or quality claim. The forced arm does not
 override a single verdict at this shape. See the
-[complete result and limits](https://knlp.io/kmesh.html#cascade).
+[complete result and limits](https://knlp.io/kmesh-storage.html#cascade).
 
 The original synthetic workload is Llama-3.1-8B-Instruct with an 8,192-token
 ancestor, 32 different 512-token tails, seed 20260809 and 128 greedy generated

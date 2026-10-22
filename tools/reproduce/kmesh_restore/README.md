@@ -10,7 +10,7 @@ October 17 repeat. Adapter completion itself is nearly equal, 8.023 versus
 8.063 ms. Each arm has 400
 measured samples; byte checks, deliberate corruption rejection, actual native
 routes and drained ownership pass. This measures repeated warm SSD ranges.
-See the [results and limits](https://knlp.io/kmesh.html#restore-latency).
+See the [results and limits](https://knlp.io/kmesh-storage.html#restore-latency).
 
 The serving comparison enables vLLM's batch-invariant kernels in every arm,
 including recomputation. This fixes the arithmetic policy while external
@@ -273,7 +273,7 @@ one of three retained eight-child DMA-BUF families uses three copies.
 Ordinary lookup starts prefetch before local-hit subtraction, while the
 optional eager-prefetch flag is off. Storage reads and GPU destinations must
 therefore be assessed separately. See the
-[per-family results](https://knlp.io/kmesh.html#coldburst).
+[per-family results](https://knlp.io/kmesh-storage.html#coldburst).
 
 The larger twenty-family repeat also passes: all 828 continuations and 6,624
 chosen-token log probabilities match recomputation exactly, including warmups.
@@ -465,5 +465,5 @@ the reported waits. The host-DRAM and engine-resident controls are separate
 placement references. Follow [the three-phase instructions](PREFETCH.md)
 for native qualification, readiness-based lead selection, independent-process
 confirmation and saved-capture verification. The
-[public result](https://knlp.io/kmesh.html#prefetch-demand) keeps the first
+[public result](https://knlp.io/kmesh-retention.html#prefetch-demand) keeps the first
 child's first-token wait separate from the last child's eighth-token time.

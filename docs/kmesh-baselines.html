@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="These five questions separate the TokenDance-style reproduction from ordinary vLLM prefix sharing. The engine already shares compatible resident prefixes; each result states the additional mechanism it tests.">
+<title>KMesh: Baselines and engine sharing</title>
+<link rel="canonical" href="https://knlp.io/kmesh-baselines.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="KMesh navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="kmesh.html">overview</a>
+    <a href="kmesh-design.html">design</a>
+    <a href="kmesh-baselines.html" aria-current="page">baselines</a>
+    <a href="kmesh-storage.html">storage</a>
+    <a href="kmesh-retention.html">retention</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Baselines and engine sharing</p>
+<span class="eyebrow">Questions 6–10</span>
+<h1>What do the baseline and serving tests establish?</h1>
+<p class="lead">These five questions separate the TokenDance-style reproduction from ordinary vLLM prefix sharing. The engine already shares compatible resident prefixes; each result states the additional mechanism it tests.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol start="6">
+<li><a href="#baseline">What is the TokenDance-style baseline?</a></li>
+<li><a href="#reproduce">How can the baseline be reproduced?</a></li>
+<li><a href="#results">What do the baseline measurements establish?</a></li>
+<li><a href="#fork-accounting">Do reasoning forks need a new memory manager?</a></li>
+<li><a href="#serving-replay">Does sharing survive real serving?</a></li>
+</ol></div>
+<section id="baseline">
+<h2>6. What is the TokenDance-style baseline?</h2>
+<p>The controlled workload has five synthetic 512-token prompts containing the
+same content at different absolute positions. One request primes LMCache;
+four siblings then recover 416 tokens each. That is <strong>81.25% realized
+sharing</strong> after segment rounding from the nominal 80% generator setting.
+There are no matching prompt-aligned full blocks, so ordinary prefix reuse
+cannot explain the recovery.</p>
+<p>The vLLM and LMCache branches execute collective position-independent
+recovery: they adjust retrieved keys for each sibling's positions and batch
+rotary-position and difference-analysis calls across compatible requests.
+Selection masks, attention and destination slots remain request-local. A
+separate Master&ndash;Mirror codec stores one full cache and exact differences
+for the other family members. Its encoded-byte measurement runs offline on
+captured tensors.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Case</th><th scope="col">Purpose</th></tr>
+<tr><td class="hi">ordinary / serial oracle</td><td>Record full recomputation and the existing per-request recovery path as separate references.</td></tr>
+<tr><td class="hi">collective forward / reverse</td><td>Check collective recovery, request-order stability and request-local masks. Raw numerical parity is checked between serial and forward collective captures.</td></tr>
+<tr><td class="hi">cold miss / zero sharing</td><td>Require safe ordinary computation when there is nothing eligible to recover.</td></tr>
+<tr><td class="hi">incompatible partition</td><td>Decline a group whose compatibility metadata does not permit collective recovery.</td></tr>
+<tr><td class="hi">sibling failure</td><td>Inject a failure and check isolation, fallback, ownership release and terminal cleanup.</td></tr>
+</table>
+</div>
+<p>The independent verifier reloads the raw tensors and checks their hashes,
+K/V bits, logits, masks, operation ledgers and cleanup. A successful launcher
+exit or a self-reported driver flag does not establish a result.</p>
+</section>
+
+<section id="reproduce">
+<h2>7. How can the baseline be reproduced?</h2>
+<p>The current CUDA profile in
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">the reproducer README</a>
+runs the eight-case recovery experiment on one H100 with BF16, eager execution
+and Triton attention. The vLLM and LMCache branches include the current
+integration work; this particular control uses LocalCPU storage to isolate
+recovery correctness. It does not exercise DMA-BUF transfers.</p>
+<div class="table-wrap"><table>
+<tr><th scope="col">Component</th><th scope="col">Source for this experiment</th></tr>
+<tr><td class="hi">vLLM</td><td><a href="https://github.com/mcgrof/vllm/commit/21ad334d124ea9258e6fc37fa10a275f4e706930"><code>21ad334d124e</code></a></td></tr>
+<tr><td class="hi">LMCache</td><td><a href="https://github.com/mcgrof/LMCache/commit/643f8ca3962e0d02687ed9d0194e0915679b3c0b"><code>643f8ca3962e</code></a></td></tr>
+</table></div>
+<p>Both branches are named <code>2026-10-16-feature-kmesh-current-validation</code>.
+The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/profile.json">profile</a>
+pins source trees, the H100 runtime and model revision. Follow the README's
+image and compiler preparation before running:</p>
+<pre><code>bash tools/reproduce/tokendance/prepare_cuda.sh /workspace/kmesh-runtime
+. /workspace/kmesh-runtime/run.env
+make defconfig-tokendance-cuda
+make tokendance-plan
+TOKENDANCE_OUTPUT=/workspace/tokendance-h100 make tokendance-gpu</code></pre>
+<p>The model is <code>Qwen/Qwen2.5-0.5B-Instruct</code> at revision
+<code>7ae557604adf67be50417f59c2c2f167def9a775</code>. Set source and model paths
+explicitly and use a fresh output directory. The launcher checks contracts
+and resolved configuration, runs each case in a fresh process, and writes raw
+tensors, semantic ledgers, an independent verification and offline codec results.
+Instrumentation makes these capture times unsuitable for speed comparisons.</p>
+<h3>Validate the workload or recheck a capture on CPU</h3>
+<pre><code>make defconfig-tokendance-cpu
+make tokendance-plan
+make
+make tokendance-test</code></pre>
+<p>This CPU profile validates the synthetic workload and reports
+<code>executed_kv_reuse: false</code>; it executes no model. To independently
+verify a current GPU capture, use Python with PyTorch and safetensors:</p>
+<pre><code>TOKENDANCE_BUNDLE=/path/to/eight-case-capture \
+TOKENDANCE_SOURCE_PAIR=current \
+TOKENDANCE_OUTPUT=/path/to/fresh-verification \
+make tokendance-verify TOKENDANCE_PY=/path/to/torch-env/bin/python</code></pre>
+<p>Inspect <code>verified.json</code> for recovery checks and
+<code>codec/codec.json</code> for actual dense and encoded bytes. The GPU run's
+offline codec writes and reloads the family, requires bitwise restoration,
+and rejects a deliberately corrupted payload. These are correctness and
+storage-size measurements, not online GPU capacity or transfer results.</p>
+</section>
+
+<section id="results">
+<h2>8. What do the baseline measurements establish?</h2>
+<p><strong>H100 recovery experiment, October 16, 2026:</strong> all eight cases
+and the independent verifier pass on the component pins above. Serial and
+collective K/V match bit for bit, with zero maximum logit difference. The
+offline codec restores all four members exactly and rejects corruption.
+Full recomputation and recovery are not numerically equivalent. The
+<a href="data/tokendance-h100-retest.json">H100 result record</a>
+binds these findings to the exact sources and verifier digest.</p>
+<div class="stat-grid">
+  <div class="stat"><div class="val">8 / 8</div><div class="label">current H100 cases<br>independently verified</div></div>
+  <div class="stat"><div class="val cyan">bitwise</div><div class="label">collective vs serial K/V<br>four recovered siblings</div></div>
+  <div class="stat"><div class="val amber">30.4%</div><div class="label">fewer encoded bytes<br>offline family storage</div></div>
+</div>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Measurement</th><th scope="col">Result</th><th scope="col">What it establishes</th></tr>
+<tr><td class="hi">Serial vs collective</td><td>Raw K/V bits identical; maximum absolute logit difference 0.0.</td><td>Batching preserves this serial recovery baseline for four siblings in this synthetic case.</td></tr>
+<tr><td class="hi">Order, fallback, cleanup</td><td>All eight cases pass their independent checks.</td><td>Reversing request order, missing data, incompatible groups and injected failure obey the bounded contract.</td></tr>
+<tr><td class="hi">Ordinary vs serial</td><td>Maximum absolute logit difference 0.5625; numerical diagnostic fails.</td><td>Recovery is not numerically equivalent to full recomputation. That parity is not an accepted claim.</td></tr>
+<tr><td class="hi">Family codec</td><td>17,506,917 encoded bytes / 25,165,824 dense bytes = 69.566% of dense size.</td><td>Actual serialized storage saves 30.434%, including metadata, with exact restoration and corruption rejection.</td></tr>
+</table>
+</div>
+<p>The dense byte count is four siblings &times; two K/V planes &times; 512 tokens
+&times; 24 layers &times; 128 features &times; two BF16 bytes. Shared spans align
+by content before encoding. The current CUDA run includes offline codec measurement on the captured
+tensors. It does not measure how many GPU
+pages an online engine can share.</p>
+<p>The collective ledger records 24 cached-key recovery operations, 24 model
+rotary operations and one difference-analysis operation per participating
+member. Those are participation records for shared calls, not separate calls
+to sum across members. They demonstrate batching; they do not demonstrate
+constant work or a latency improvement.</p>
+<div class="note"><strong>Correctness and encoded bytes are the measured results.</strong>
+The one-token output check passes, but does not establish agent-task quality.
+Capture synchronization and tensor writes invalidate timing comparisons. No
+throughput, latency, live GPU capacity, cascade-attention gain, DMA-BUF gain or
+end-to-end storage-offload result is established by this recovery control. This small-model synthetic
+baseline is not the paper's larger-model, real-agent workload evaluation.</div>
+</section>
+
+<section id="fork-accounting">
+<h2>9. Do reasoning forks need a new memory manager?</h2>
+<p>The next question after the recovery baseline is simpler: could explicit
+tree ownership save KV-cache blocks during test-time scaling? Here a child is
+its parent's <em>exact</em> token sequence plus an independent tail. A common
+suffix after different private histories is a different causal context and
+cannot establish exact sharing.</p>
+<p><strong>Measured on 2026-10-16:</strong> stock vLLM automatic prefix caching
+already reaches the fork-oracle block count in the tested trees while the
+ancestor remains cached. The experiment drives the real
+<code>KVCacheManager</code> on CPU and records actual block IDs. It treats
+allocation as completed prefill, without a model, scheduler, KV tensors or GPU.
+The matrix covers five tree shapes, 25 scenarios and six eviction points.
+The serving replay below checks the real model and scheduler separately.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Primary fork tree</th><th scope="col">Written blocks</th><th scope="col">Peak pool usage</th><th scope="col">Failed admissions</th></tr>
+<tr><td class="hi">Concurrent siblings, prefix cache on</td><td>416</td><td>417</td><td>0</td></tr>
+<tr><td class="hi">Concurrent siblings, prefix cache off</td><td>1,696</td><td>1,441</td><td>0</td></tr>
+<tr><td class="hi">520-block pool, prefix cache on</td><td>416</td><td>417</td><td>0</td></tr>
+<tr><td class="hi">520-block pool, prefix cache off</td><td>544</td><td>289</td><td>4</td></tr>
+</table>
+</div>
+<p>The primary tree has a 4,096-token ancestor and five 512-token tails, using
+16-token blocks. Sharing needs 256 ancestor blocks + 5 &times; 32 tail blocks
+= 416. Independent root-to-leaf copies write 256 + 5 &times; 288 = 1,696 blocks
+over the tree lifetime. Written blocks accumulate simulated prefill work;
+peak pool usage measures allocator metadata at one instant, including the
+reserved null block. The parent is freed before its children arrive. Four
+failed admissions explain the smaller write count in the uncached pressure
+control.</p>
+<p>Non-aligned forks also reach their block oracle. A 4,101-token ancestor
+with five 509-token tails writes 422 blocks but recomputes five ancestor
+boundary tokens per child, 25 total. An explicit fork could clone that partial
+block; the tested capacity is the same. Tests check that full ancestor block
+IDs alias while sibling writable tails remain private.</p>
+<p>Eviction exposes a separate cost. After unrelated traffic churns a
+1,024-block pool, churn fractions 0, 0.25 and 0.50 preserve all 4,096 ancestor
+tokens for all five children. At 0.75, the first child hits 4,080 tokens and
+the next four hit 4,096. At 1.00 and 1.50, the first child misses the ancestor
+entirely and the next four hit fully. In this metadata admission sequence,
+the first child's simulated prefill repopulates the lost blocks. This does
+not establish a universal bound under interleaved traffic or preemption.</p>
+
+<p>The current capture uses the serving branch and CUDA software environment
+with GPU visibility disabled. All 25 scenarios pass, and all 174 prefix-cache
+tests pass without skips. The
+<a href="data/kmesh-fork-accounting-current.json">allocator capture</a>
+records the observed block IDs and accounting.</p>
+<h3>Reproduce this allocator check</h3>
+<p>Follow the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md#repeat-on-the-current-allocator">current allocator instructions</a>.
+Use vLLM <code>1b76bf9dd9d52efbd75fb89bf2619898d8f01233</code> from
+<a href="https://github.com/mcgrof/vllm/tree/2026-10-16-feature-kmesh-serving-replay">the serving branch</a>.
+This adds the benchmark and tests while using the production memory manager.
+LMCache is not involved in the allocator check.</p>
+<pre><code>make defconfig-kmesh-fork-accounting-current
+make kmesh-fork-plan
+make kmesh-fork-test
+
+export KMESH_FORK_VLLM_SOURCE=/absolute/path/to/pinned-vllm
+export KMESH_FORK_PYTHON=/absolute/path/to/prepared-venv/bin/python
+export KMESH_FORK_WHEEL_PACKAGE=/absolute/path/to/site-packages/vllm
+export KMESH_FORK_OUTPUT=/path/to/fresh-fork-results
+make
+KMESH_FORK_OUTPUT=/path/to/fresh-contract-results make kmesh-fork-contracts</code></pre>
+<p>The pinned environment uses Python 3.13.15, PyTorch
+<code>2.13.0+cu130</code> and matching vLLM native extensions. The runner checks
+source identity, imports and runtime versions, hides GPUs and verifies the
+output independently. The workload uses seed <code>20260805</code> and two
+OpenMP threads.</p>
+<div class="note"><strong>Shared capacity does not imply shared attention reads.</strong>
+These counters narrow the case for replacing the allocator in exact-prefix
+forks. They do not measure model quality, serving speed, attention traffic,
+GPU memory allocation or storage offload. Byte fields project model geometry;
+no corresponding KV tensors are allocated. Cascade attention, proactive
+retention, external caching and DMA-BUF remain separate questions.</div>
+</section>
+
+<section id="serving-replay">
+<h2>10. Does sharing survive real serving?</h2>
+<p><strong>Yes, for this exact-prefix fork tree.</strong> The H100 serving
+experiment runs seven cases on the current vLLM branch. All cases and the
+independent block-table verifier pass. A warm
+4,096-token ancestor is physically shared by all five children; their writable
+tails remain separate. This tests real model execution and scheduler admission,
+complementing the CPU allocator check.</p>
+<h3 id="prefix-sharing">What creates the shared ancestor?</h3>
+<p>vLLM's <strong>automatic prefix caching (APC)</strong> creates the physical
+sharing. The reproducer submits five ordinary requests. Each contains the
+same 4,096 token IDs, followed by a different 512-token tail. There is no
+special request-fork operation or family declaration in this replay.</p>
+<p>Within one engine, vLLM hashes each complete token block together with
+the preceding prefix's hash and relevant cache identity. Once its KV data
+has been computed, the block enters the prefix-cache index. A request with
+the same prefix finds that block and acquires a reference to the same
+physical block ID. Reference counts protect blocks while requests use them.
+Each divergent suffix receives separate writable blocks.</p>
+<pre><code>Child A block table: [shared ancestor blocks] + [private A blocks]
+Child B block table: [shared ancestor blocks] + [private B blocks]
+Child C block table: [shared ancestor blocks] + [private C blocks]</code></pre>
+<p>The harness supplies matching token prefixes; the production vLLM
+allocator supplies the sharing. See the pinned source for
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/kv_cache_utils.py#L684">block hashing</a>,
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/kv_cache_manager.py#L264">prefix lookup</a>
+and
+<a href="https://github.com/mcgrof/vllm/blob/1b76bf9dd9d52efbd75fb89bf2619898d8f01233/vllm/v1/core/block_pool.py#L755">reference acquisition</a>.
+Only complete cached blocks can be reused. Different earlier tokens,
+incompatible cache identities or eviction can prevent a hit.</p>
+<p>This result establishes exact-prefix capacity sharing inside one engine.
+It does not establish cross-engine sharing or reuse of a span after a
+different private history. Each child can still read the shared KV data
+again during attention. Cascade attention addresses repeated attention
+reads; DMA-BUF storage restoration addresses a separate transfer path.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Serving case</th><th scope="col">Child prefix hits, tokens</th><th scope="col">Peak used pool blocks</th></tr>
+<tr><td class="hi">Warm parent, cache on</td><td>4,096 &times; 5</td><td>437</td></tr>
+<tr><td class="hi">Warm parent, cache off</td><td>0 &times; 5</td><td>1,461</td></tr>
+<tr><td class="hi">Parent and children in one burst</td><td>4,096 &times; 5</td><td>423</td></tr>
+<tr><td class="hi">Cold sibling burst</td><td>0, then 4,096 &times; 4</td><td>422</td></tr>
+<tr><td class="hi">Half-pool churn</td><td>4,096 &times; 5</td><td>513</td></tr>
+<tr><td class="hi">Full-pool churn</td><td>0, then 4,096 &times; 4</td><td>897</td></tr>
+<tr><td class="hi">Fork after parent decode</td><td>4,208; 4,224; 4,224</td><td>364</td></tr>
+</table>
+</div>
+<p>The warm case observes shared prefix IDs in all ten live sibling pairs.
+Its peak includes the null block and 20 child decode blocks beyond the CPU
+allocator's 417-block peak. With caching off, sibling block tables are disjoint.
+Both controls produce the same generated token IDs for the parent and all
+five children in this run.</p>
+<p>A cold burst or full-pool churn makes one child compute the ancestor before
+the other four reuse it. The decode fork uses the parent's actual 128 generated
+tokens: the first child fills the last incomplete 16-token block, and the other
+two hit the complete 4,224-token prefix. These outcomes are specific to the
+tested workload and scheduling; they do not establish a bound under repeated
+interleaved eviction or preemption.</p>
+<h3>Reproduce the serving replay</h3>
+<p>Use the current CUDA preparation instructions in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#current-cuda-profile">baseline README</a>,
+then run these commands in a GPU reservation or on an explicitly owned pod:</p>
+<pre><code>. /workspace/kmesh-runtime/run.env
+make defconfig-kmesh-serving-cuda
+make kmesh-serving-plan
+KMESH_SERVING_OUTPUT=/workspace/serving-forks make
+make kmesh-fork-test</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md#replay-forks-through-the-serving-engine">serving instructions</a>
+describe the seven fresh processes and independent CPU recheck. The
+<a href="data/kmesh-serving-h100.json">sanitized result</a> binds the source,
+script and raw-result digests. The model is
+<code>Qwen/Qwen2.5-0.5B-Instruct</code> at the baseline's pinned revision.
+Runtime is Python 3.13.15, PyTorch
+<code>2.13.0+cu130</code>, CUDA 13.0 and vLLM
+<code>0.30.1rc1.dev624+g84bcbc626</code>, BF16 and eager execution with two
+OpenMP threads. Stock defaults resolve to FlashAttention, 16,384 maximum
+batched tokens, 1,024 maximum sequences, chunked prefill and asynchronous
+scheduling. The recorder checks allocation/free boundaries and also retains
+five-millisecond pool samples.</p>
+<div class="note"><strong>Engine-level prefix capacity sharing is confirmed.</strong>
+The measurements cover one model and fork tree. They do not establish serving
+speed, task quality, shared attention reads, cascade-attention gains or
+DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.</div>
+</section>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh-design.html">&larr; Design and scope</a><a href="kmesh-storage.html">Storage and preparation &rarr;</a></nav>
+<footer>
+<a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
+</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="The application knows which requests are related. KMesh explores how to pass that knowledge to the inference runtime while preserving cache compatibility.">
+<title>KMesh: Design and scope</title>
+<link rel="canonical" href="https://knlp.io/kmesh-design.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="KMesh navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="kmesh.html">overview</a>
+    <a href="kmesh-design.html" aria-current="page">design</a>
+    <a href="kmesh-baselines.html">baselines</a>
+    <a href="kmesh-storage.html">storage</a>
+    <a href="kmesh-retention.html">retention</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Design and scope</p>
+<span class="eyebrow">Questions 1–5</span>
+<h1>Why coordinate shared inference state?</h1>
+<p class="lead">The application knows which requests are related. KMesh explores how to pass that knowledge to the inference runtime while preserving cache compatibility.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol start="1">
+<li><a href="#redundancies">What redundant work do related requests repeat?</a></li>
+<li><a href="#current">What do TokenDance and ForkKV show?</a></li>
+<li><a href="#generalization">Can the shared object extend beyond KV cache?</a></li>
+<li><a href="#unresolved">Which parts of the architecture remain unresolved?</a></li>
+<li><a href="#milestone">What does the implementation test?</a></li>
+</ol></div>
+<section id="redundancies">
+<h2>1. What redundant work do related requests repeat?</h2>
+<p>Agentic inference exposes at least two distinct forms of KV-cache redundancy,
+and it is worth keeping them separate.
+<a href="https://arxiv.org/abs/2602.21548">DualPath</a> reports high cross-turn
+reuse in long-context, short-append agent trajectories — the same trajectory
+revisiting most of its own context turn after turn.
+<a href="https://arxiv.org/abs/2604.03143">TokenDance</a> reports high cross-agent
+KV-block similarity after position-independent recovery in synchronized
+All-Gather rounds — sibling agents that share most of a round's state. The former
+is temporal reuse within a trajectory; the latter is sibling-state redundancy
+across concurrent requests. They are related architectural pressures, not the same
+measurement or reuse mechanism, and collapsing them into a single "shared cache"
+number obscures both.</p>
+<p>What they share is the diagnosis. Request-centric execution usually flattens
+round, segment, branch, and lineage structure before it reaches the runtime. The
+serving engine sees token streams and has to rediscover relationships the agent
+orchestrator already knows — or misses them and recomputes state it could have
+reused. The opportunity is not that a clever cache would help; it is that the
+structure needed to exploit reuse safely is discarded at the door.</p>
+</section>
+
+<section id="current">
+<h2>2. What do TokenDance and ForkKV show?</h2>
+<p>Two lines of work recover that structure deliberately, and both point past
+their own scope.</p>
+<p><a href="https://arxiv.org/abs/2604.03143">TokenDance</a> lifts the unit of
+optimization from a single request to an agentic round. It is built from four
+separable mechanisms: round-aware segment indexing that preserves logical block
+boundaries even at different absolute positions; collective position-independent
+KV reuse that pays the recovery cost once per round instead of once per request;
+a Master&ndash;Mirror diff-aware storage scheme that encodes sibling caches as
+sparse differences against one dense master; and fused sparse restoration on
+transfer. KMesh implements an independent baseline of segment-aware collective
+recovery and exact family storage before testing broader abstractions. The
+bounded baseline below covers selected mechanisms; it is not a reproduction of
+the paper's complete serving system.</p>
+<p><a href="https://arxiv.org/abs/2604.06370">ForkKV</a> shows the opportunity is
+larger than the KV cache alone. Multi-LoRA agents co-hosted on one base model
+diverge in their KV because each adapter changes the activations for the same
+context, which defeats naive prefix caching. ForkKV borrows process semantics
+directly — fork the massive shared cache and apply copy-on-write for the
+lightweight, agent-specific remainder, tracked by a radix tree and reconstructed
+on chip. The lesson is that the shareable unit is the keyed inference state: the
+KV, the adapter-affected activations, and the prefixes they hang on.</p>
+</section>
+
+<section id="generalization">
+<h2>3. Can the shared object extend beyond KV cache?</h2>
+<p>The same shared-trunk, per-branch-diff structure is not agentic-specific.
+Chain-of-thought reasoning revisits and branches its own context; test-time
+scaling forks a common prefix into parallel samples, best-of-N, or tree search;
+speculative decoding branches and prunes. These are the same pattern that
+TokenDance and ForkKV exploit for agents, and there is no reason the machinery
+should stay agent-specific.</p>
+<p>KMesh investigates whether an inference engine — vLLM first — can expose
+explicit, keyed state relationships that let recovery, scheduling, storage, and
+later memory tiering operate on groups of related requests. The unit is the keyed
+inference state: a per-context artifact keyed by the context it derives from, so a
+workload that provably shares that context can share, fork, or diff the state
+instead of recomputing it. Agentic serving, chain-of-thought, and test-time
+scaling then become callers of one mechanism rather than three separate
+optimizations. Whether that unification holds is a question to answer with an
+implementation, not to assume.</p>
+</section>
+
+<section id="unresolved">
+<h2>4. Which parts of the architecture remain unresolved?</h2>
+<p>The long-term architecture is intentionally unresolved, and saying so is the
+point. Linux virtual-memory primitives, accelerator memory, CXL tiers, and a
+generalized inference-object model may eventually matter — but those are
+hypotheses, and announcing that the operating system needs new interfaces before
+an inference engine has shown which mechanism is actually missing puts the
+cathedral before the door. The immediate work is empirical: use a real vLLM
+implementation to identify the smallest reusable abstractions and the precise
+mechanisms current runtimes lack.</p>
+<p>One interface question is already concrete. TokenDance carries segment
+structure with a separator token in the prompt; that is a fine paper-compatibility
+mode, but a reasoning or sampling orchestrator already knows its own branch and
+segment boundaries and should not have to inject control tokens into a model
+prompt to tell the runtime about them. So the mechanism should consume explicit
+segment metadata, with the in-prompt separator as one encoding of it rather than
+the internal contract. Getting that boundary right is what keeps a TokenDance
+reproduction from foreclosing chain-of-thought support later.</p>
+</section>
+
+<section id="milestone">
+<h2>5. What does the implementation test?</h2>
+<p>The implementation separates collective recovery, physical prefix sharing,
+attention computation, external restoration and future-use coordination.
+The TokenDance-style baseline checks segment-aware recovery and
+Master&ndash;Mirror storage under controlled All-Gather workloads. The serving,
+DMA-BUF, singleflight and family experiments then test their own mechanisms
+with explicit controls.</p>
+<div class="table-wrap">
+<table>
+<tr><th scope="col">Stage</th><th scope="col">What it establishes</th></tr>
+<tr><td class="hi">Baselines</td><td>Ordinary vLLM with prefix caching off and on, and the existing serial position-independent recovery path, measured on controlled workloads.</td></tr>
+<tr><td class="hi">Observer</td><td>Typed request and segment metadata, compatibility grouping, and structural-overlap metrics that change nothing about scheduling or output — reporting how much workload structure the engine could exploit before any cache is touched.</td></tr>
+<tr><td class="hi">Collective reuse</td><td>Group recovery driven under one plan, validated to agree with the serial recovery baseline within declared tolerances, with operation counters that show whether the work is actually shared rather than merely batched.</td></tr>
+<tr><td class="hi">Master&ndash;Mirror</td><td>A codec that encodes a family of recovered caches as one dense master plus sparse mirror diffs, with exact round-trip tests and real serialized-byte accounting — not a changed-block oracle.</td></tr>
+</table>
+</div>
+<p>Exact-prefix forks and family declarations test the extension toward
+chain-of-thought and other test-time-scaling branches. Results on a single workstation-class GPU are labeled
+as functional or trend results; a comparison against the paper's numbers waits for
+comparable data-center-class hardware, with every material difference disclosed.
+The standard is not that the code runs — it is that the workload is controlled,
+the mechanism is observable, the comparison is fair, the fallback is safe, and the
+claim says no more than the evidence.</p>
+<div class="note amber"><strong>The abstraction is the deliverable, and it is not
+yet known.</strong> KMesh is a search for the smallest reusable structure that a
+runtime needs to share keyed inference state safely, run as experiments on an open
+vLLM baseline, not a finished system.</div>
+</section>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh.html">&larr; Overview</a><a href="kmesh-baselines.html">Baselines and engine sharing &rarr;</a></nav>
+<footer>
+<a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
+</footer>
+</main>
+</body>
+</html>
