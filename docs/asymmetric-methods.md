@@ -13,7 +13,7 @@ report client-visible latency, throughput, failures and model qualification.
 [Current guide](asymmetric-quantization.html) · [Install](asymmetric-install.md) ·
 [Historical results and failure record](asymmetric-history.html)
 
-## Precision/scaling reference
+## Precision and scaling reference
 
 The completed two-model reference compares native K16/V16 with K16/V8 (A),
 K8/V16 (R) and K8/V8 (S), each with fixed (F) and token/head (D) scales.
