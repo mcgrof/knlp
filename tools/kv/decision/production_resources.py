@@ -9,6 +9,7 @@ intervals are explicitly exempt from the production resource ceiling.
 import json
 import math
 from pathlib import Path
+import queue
 import threading
 import time
 
@@ -22,6 +23,7 @@ POLICY = {
     "client_cpus": 2,
     "control_cpus": 2,
 }
+MAX_PENDING_SAMPLES = 512
 
 
 def placement(allowed, cpu_quota=None):
@@ -48,8 +50,31 @@ def audit_window(rows, start_ns, end_ns, *, policy=POLICY, enforce=True):
         b <= a for a, b in zip(times, times[1:])
     ):
         raise ValueError("Device sample clocks are not strictly increasing")
+    versions = {r.get("sample_schema", 1) for r in rows}
+    if (
+        any(type(r.get("sample_schema", 1)) is not int for r in rows)
+        or len(versions) != 1
+        or not versions <= {1, 2}
+    ):
+        raise ValueError("Mixed or unknown device-sample schemas")
+    # A driver read can occur anywhere between entry and return. Preserve old
+    # point-timestamp captures, but use conservative bounds for new captures.
+    starts = times
+    if versions == {2}:
+        starts = [r.get("memory_query_started_ns") for r in rows]
+        if (
+            any(type(t) is not int for t in starts)
+            or any(
+                start > end
+                or type(row.get("memory_query_finished_ns")) is not int
+                or row["memory_query_finished_ns"] != end
+                for row, start, end in zip(rows, starts, times)
+            )
+            or any(a > b for a, b in zip(times, starts[1:]))
+        ):
+            raise ValueError("Invalid memory-query clock bounds")
     before = [i for i, t in enumerate(times) if t <= start_ns]
-    after = [i for i, t in enumerate(times) if t >= end_ns]
+    after = [i for i, t in enumerate(starts) if t >= end_ns]
     if not before or not after:
         raise ValueError("Device samples do not bracket the entire interval")
     selected = rows[before[-1] : after[0] + 1]
@@ -68,10 +93,8 @@ def audit_window(rows, start_ns, end_ns, *, policy=POLICY, enforce=True):
             raise ValueError("Invalid driver-memory sample")
         if row["driver_total_bytes"] < policy["driver_envelope_bytes"]:
             raise ValueError("Device capacity is smaller than the common envelope")
-    gaps = [
-        (b["monotonic_ns"] - a["monotonic_ns"]) / 1e9
-        for a, b in zip(selected, selected[1:])
-    ]
+    first, last = before[-1], after[0]
+    gaps = [(times[i + 1] - starts[i]) / 1e9 for i in range(first, last)]
     maximum = max(r["driver_used_bytes"] for r in selected)
     covered = max(gaps) <= policy["driver_maximum_sample_gap_seconds"]
     within = maximum <= policy["driver_envelope_bytes"]
@@ -96,7 +119,12 @@ def audit_window(rows, start_ns, end_ns, *, policy=POLICY, enforce=True):
 
 
 class DriverSampler:
-    """A CPU-only observer, with synchronous boundaries and surfaced errors."""
+    """Sample memory independently of logging, with lossless bounded delivery.
+
+    Utilization and power queries do not belong on this safety-critical path.
+    Slow log I/O is isolated from observation; errors, queue exhaustion and
+    failure to flush a boundary all reject the invocation rather than lose rows.
+    """
 
     def __init__(self, output, *, policy=POLICY):
         self.output = Path(output)
@@ -106,6 +134,11 @@ class DriverSampler:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread = None
+        self._writer_thread = None
+        self._writer_stop = threading.Event()
+        self._pending = queue.Queue(maxsize=MAX_PENDING_SAMPLES)
+        self._written = 0
+        self._write_condition = threading.Condition()
 
     def check(self):
         if self.error is not None:
@@ -116,22 +149,61 @@ class DriverSampler:
 
         self.check()
         with self._lock:
+            started = time.monotonic_ns()
             memory = nvml.nvmlDeviceGetMemoryInfo(self.handle)
-            utilization = nvml.nvmlDeviceGetUtilizationRates(self.handle)
+            finished = time.monotonic_ns()
             row = {
-                "monotonic_ns": time.monotonic_ns(),
+                "sample_schema": 2,
+                "monotonic_ns": finished,
+                "memory_query_started_ns": started,
+                "memory_query_finished_ns": finished,
                 "epoch_seconds": time.time(),
                 "uuid": self.identity["uuid"],
                 "name": self.identity["name"],
                 "driver_used_bytes": int(memory.used),
                 "driver_total_bytes": int(memory.total),
-                "utilization_percent": int(utilization.gpu),
-                "power_watts": nvml.nvmlDeviceGetPowerUsage(self.handle) / 1000,
             }
-            with self.output.open("a") as stream:
-                stream.write(json.dumps(row, allow_nan=False) + "\n")
+            try:
+                self._pending.put_nowait(row)
+            except queue.Full as error:
+                self.error = error
+                raise RuntimeError("Driver sample log queue is full") from error
             self.rows.append(row)
             return row
+
+    def _write(self, stream):
+        try:
+            while not self._writer_stop.is_set() or not self._pending.empty():
+                try:
+                    row = self._pending.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                stream.write(json.dumps(row, allow_nan=False) + "\n")
+                stream.flush()
+                with self._write_condition:
+                    self._written += 1
+                    self._write_condition.notify_all()
+        except Exception as error:
+            self.error = error
+            self._stop.set()
+        finally:
+            try:
+                stream.close()
+            except Exception as error:
+                self.error = self.error or error
+            with self._write_condition:
+                self._write_condition.notify_all()
+
+    def _flush_through(self, count):
+        deadline = time.monotonic() + 5
+        with self._write_condition:
+            while self._written < count:
+                self.check()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("Driver sample log missed its flush boundary")
+                self._write_condition.wait(min(remaining, 0.1))
+        self.check()
 
     def __enter__(self):
         import pynvml as nvml
@@ -164,7 +236,13 @@ class DriverSampler:
             if not math.isfinite(interval) or interval <= 0:
                 raise ValueError("Invalid NVML sampling interval")
             self.output.parent.mkdir(parents=True, exist_ok=True)
+            stream = self.output.open("x")
+            self._writer_thread = threading.Thread(
+                target=self._write, args=(stream,), daemon=True
+            )
+            self._writer_thread.start()
             self.sample()
+            self._flush_through(1)
 
             def observe():
                 try:
@@ -177,15 +255,19 @@ class DriverSampler:
             self._thread.start()
             return self
         except BaseException:
+            self._stop.set()
+            self._writer_stop.set()
+            if self._writer_thread is not None:
+                self._writer_thread.join(timeout=5)
             nvml.nvmlShutdown()
             raise
 
     def window(self, start_ns, end_ns, *, enforce=True):
         self.sample()
         with self._lock:
-            return audit_window(
-                self.rows, start_ns, end_ns, policy=self.policy, enforce=enforce
-            )
+            rows = list(self.rows)
+        self._flush_through(len(rows))
+        return audit_window(rows, start_ns, end_ns, policy=self.policy, enforce=enforce)
 
     def __exit__(self, kind, value, traceback):
         import pynvml as nvml
@@ -197,4 +279,9 @@ class DriverSampler:
                 raise RuntimeError("Driver sampler did not stop")
             self.sample()
         finally:
+            self._writer_stop.set()
+            self._writer_thread.join(timeout=5)
             nvml.nvmlShutdown()
+        if self._writer_thread.is_alive():
+            raise RuntimeError("Driver sample log writer did not stop")
+        self.check()

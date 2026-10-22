@@ -279,6 +279,14 @@ and a 76-GiB driver envelope sampled every 100 ms. Gaps above 500 ms fail
 the resource audit; shorter peaks can be missed. Staging, weights and graph
 pools are separate from persistent cache storage.
 
+Memory observation excludes optional utilization and power queries. A bounded
+writer queue keeps log I/O off the sampling path; write errors, queue exhaustion
+or an unflushed boundary reject the invocation. New samples record entry and
+return times around each memory query. The audit brackets the whole request
+window with those intervals and uses the largest possible gap between actual
+reads, retaining the 500-ms limit. Legacy point-timestamp captures keep their
+original audit semantics; they are not upgraded by the new collector.
+
 ## Gated serving plans and analysis
 
 `production_serving_plan --phase initial` creates a native-FA3-only soak

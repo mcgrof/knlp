@@ -49,6 +49,53 @@ def test_sampling_gap_disqualifies_even_without_observed_memory_overrun():
     assert not result["eligible"]
 
 
+def bounded_samples():
+    rows = samples()[:2]
+    for row, start, end in zip(rows, [0, 450_000_000], [350_000_000, 800_000_000]):
+        row.update(
+            sample_schema=2,
+            memory_query_started_ns=start,
+            memory_query_finished_ns=end,
+            monotonic_ns=end,
+        )
+    return rows
+
+
+def test_query_latency_cannot_hide_an_observation_gap():
+    # Return times are only 450 ms apart, but the actual reads could have
+    # occurred at opposite ends of their intervals, 800 ms apart.
+    result = audit_window(bounded_samples(), 360_000_000, 440_000_000)
+    assert result["largest_sample_gap_seconds"] == 0.8
+    assert not result["sampling_coverage_passed"]
+    assert not result["eligible"]
+
+
+def test_query_must_begin_after_the_observed_window_to_bracket_its_end():
+    with pytest.raises(ValueError, match="bracket"):
+        audit_window(bounded_samples(), 360_000_000, 500_000_000)
+
+
+@pytest.mark.parametrize(
+    "defect", ["missing", "overlap", "finish", "finish_type", "schema_type", "mixed"]
+)
+def test_invalid_query_bounds_cannot_qualify(defect):
+    rows = bounded_samples()
+    if defect == "missing":
+        del rows[1]["memory_query_started_ns"]
+    elif defect == "overlap":
+        rows[1]["memory_query_started_ns"] = 300_000_000
+    elif defect == "finish":
+        rows[1]["memory_query_finished_ns"] += 1
+    elif defect == "finish_type":
+        rows[1]["memory_query_finished_ns"] = float(rows[1]["memory_query_finished_ns"])
+    elif defect == "schema_type":
+        rows[1]["sample_schema"] = True
+    else:
+        del rows[1]["sample_schema"]
+    with pytest.raises(ValueError):
+        audit_window(rows, 360_000_000, 440_000_000)
+
+
 def test_numerical_exemption_is_explicit_and_does_not_change_observed_peak():
     rows = samples()
     rows[5]["driver_used_bytes"] = 77 * 1024**3
