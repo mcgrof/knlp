@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -14,6 +15,44 @@ from .cache import ARMS
 from .statistics import paired_binary, paired_nll
 
 ALPHA = 0.025 / 12
+
+
+def validate_nll(row):
+    """Check the serialized FP32 reduction, without changing its statistic.
+
+    A CPU FP64 mean need not match the GPU FP32 reduction to an absolute
+    1e-6 at every loss magnitude. For n nonnegative terms, gamma_n bounds
+    n-1 FP32 additions and one division: u=2**-24, gamma_n=n*u/(1-n*u).
+    Use the retained token losses to set that bound, never candidate quality.
+    This is a row-integrity check; endpoint margins and saved means are intact.
+    """
+    values = np.asarray(row["nll"], dtype=np.float64)
+    mean = row["mean_nll"]
+    if (
+        values.shape != (128,)
+        or not np.isfinite(values).all()
+        or (values < 0).any()
+        or not math.isfinite(mean)
+        or mean < 0
+    ):
+        raise ValueError("NLL row invalid")
+    fp32 = np.finfo(np.float32)
+    total = math.fsum(values)
+    if (
+        total > float(fp32.max)
+        or mean > float(fp32.max)
+        or not np.equal(values.astype(np.float32), values).all()
+    ):
+        raise ValueError("NLL values are not finite FP32 operands")
+    if float(np.float32(mean)) != mean:
+        raise ValueError("NLL mean is not a serialized FP32 reduction")
+    exact_mean = total / len(values)
+    u = fp32.eps / 2
+    gamma = len(values) * u / (1 - len(values) * u)
+    # Include an absolute underflow allowance for zero/subnormal FP32 terms.
+    bound = gamma * exact_mean + len(values) * float(fp32.smallest_subnormal)
+    if abs(exact_mean - mean) > math.nextafter(bound, math.inf):
+        raise ValueError("NLL mean exceeds its FP32 reduction rounding bound")
 
 
 def rows(path, expected):
@@ -53,12 +92,7 @@ def model_result(inputs, root):
             for i, r in rs.items():
                 item = expected[k][i]
                 if k == "nll":
-                    if (
-                        len(r["nll"]) != 128
-                        or not np.isfinite(r["nll"]).all()
-                        or abs(np.mean(r["nll"]) - r["mean_nll"]) > 1e-6
-                    ):
-                        raise ValueError("NLL row invalid")
+                    validate_nll(r)
                 else:
                     if k == "gsm8k":
                         matches = re.findall(data["gsm_regex"], r["text"])
