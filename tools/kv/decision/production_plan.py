@@ -89,7 +89,7 @@ def orders(arms):
     """Ten blocks with position-balanced arm orders, fixed before timing."""
     if len(arms) != len(set(arms)) or set(arms) not in (
         {"native_fi", "AF", "native_fa3"},
-        {"native_fi", "AF", "native_fa3", "SF"},
+        {"native_fi", "AF", "native_fa3", "SD"},
     ):
         raise ValueError("Timing requires asymmetric and both native controls")
     rng = np.random.default_rng(20261020)

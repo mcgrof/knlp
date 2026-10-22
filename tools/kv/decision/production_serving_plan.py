@@ -247,8 +247,8 @@ def confirmation(
     if any(c["slo"] != slo for c in native_plan["cells"]):
         raise ValueError("Load-selection SLOs differ from frozen calibration")
     arms = ["native_fi", "AF", "native_fa3"]
-    if "SF" in quality["serving_eligible_candidates"]:
-        arms.append("SF")
+    if "SD" in quality["serving_eligible_candidates"]:
+        arms.append("SD")
     arm_orders = orders(arms)
     rates = sorted(
         set(

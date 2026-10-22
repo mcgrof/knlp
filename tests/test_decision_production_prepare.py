@@ -40,14 +40,14 @@ def reports():
     return analysis, evidence
 
 
-def test_dynamic_reference_success_requires_worker_integration():
+def test_dynamic_reference_success_selects_the_explicit_worker_policy():
     selection = reference_gate(*reports(), "qwen3")
     assert selection["reference_candidates"]["SD"]["aggregate_math"]
     assert not selection["reference_candidates"]["SF"]["aggregate_math"]
-    assert selection["optimized_symmetric_policy"] == "fixed"
+    assert selection["optimized_symmetric_policy"] == "per_token_head"
     assert selection["requires_dynamic_worker"]
-    assert "TRITON_ATTN" in selection["dynamic_symmetric_support"]
-    assert "do not establish" in selection["scope"]
+    assert "opt-in reference writer" in selection["dynamic_symmetric_support"]
+    assert "do not qualify" in selection["scope"]
 
 
 def test_ineligible_dynamic_reference_does_not_require_dynamic_serving():
@@ -59,10 +59,13 @@ def test_ineligible_dynamic_reference_does_not_require_dynamic_serving():
     assert not selection["requires_dynamic_worker"]
 
 
-def test_fixed_launcher_cannot_freeze_around_qualified_dynamic_candidate(
+def test_dynamic_launcher_cannot_freeze_without_qualified_dynamic_candidate(
     tmp_path, monkeypatch
 ):
     analysis, evidence = reports()
+    analysis["models"]["qwen3"]["candidates"]["SD"][
+        "aggregate_math_certificate"
+    ] = False
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     raw = b"identity-only fixture; the dynamic gate precedes input decoding"
@@ -91,7 +94,7 @@ def test_fixed_launcher_cannot_freeze_around_qualified_dynamic_candidate(
             str(out),
         ],
     )
-    with pytest.raises(ValueError, match="Qualified SD requires a dynamic worker"):
+    with pytest.raises(ValueError, match="requires an aggregate-qualified SD"):
         main()
     assert not out.exists()
 
@@ -152,15 +155,16 @@ def test_generated_protocol_keeps_full_family_and_rejects_changed_objective():
 
 
 @pytest.mark.parametrize(
-    "bytes_per_pair,near_capacity_requests", [(4, 35), (3, 46), (2, 70)]
+    "bytes_per_pair,near_capacity_requests,inline_scale_bytes",
+    [(4, 35, 0), (3, 46, 0), (2, 68, 8)],
 )
 def test_payload_request_leaves_room_for_unsplit_allocator_tails(
-    bytes_per_pair, near_capacity_requests
+    bytes_per_pair, near_capacity_requests, inline_scale_bytes
 ):
     record = protocol(
         {"model": MODEL, "revision": REVISION, "scales": [{"K": 0.1, "V": 0.2}] * 36}
     )
-    per_block = 16 * 8 * 128 * bytes_per_pair
+    per_block = 16 * 8 * (128 * bytes_per_pair + inline_scale_bytes)
     layers = 36
     blocks = record["engine"]["kv_cache_memory_bytes"] // (layers * per_block)
     # Torch 2.11 native should_split leaves <=1 MiB attached to a large

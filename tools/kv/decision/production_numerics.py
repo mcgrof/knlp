@@ -86,6 +86,9 @@ def planes(cache, implementation):
         raise ValueError("Unsupported paged cache layout")
     if implementation == "FlashInferImpl" and cache.shape[1] == 2:
         return cache[:, 0], cache[:, 1]
+    if implementation == "TritonAttentionImpl" and cache.shape[1] == 2:
+        # Keep inline scale bytes in untimed snapshots and graph comparisons.
+        return cache[:, 0], cache[:, 1]
     if implementation == "FlashAttentionImpl" and cache.shape[0] == 2:
         return cache[0], cache[1]
     raise ValueError("Backend layout differs from the frozen NHD contract")

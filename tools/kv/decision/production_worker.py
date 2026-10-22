@@ -18,6 +18,7 @@ from tools.kv.native import instrument
 from tools.kv.native.memory_worker import ObservedWorker
 from tools.kv.native.serving_worker import ServingWorker
 from .paged_memory import inventory
+from .inline_scales import verify_inline_scale_aliases
 from .production import environment, read_inputs, sha, variant, verify_runner
 
 
@@ -49,6 +50,21 @@ class ProductionWorker(ServingWorker):
                     raise RuntimeError("Frozen worker scale changed: " + name)
             if module.calculate_kv_scales:
                 raise RuntimeError("Runtime scale calibration is enabled")
+            if self.decision_arm == "SD":
+                if (
+                    type(module.impl).__name__ != "TritonAttentionImpl"
+                    or module.kv_cache_dtype != "fp8_per_token_head"
+                    or not module.impl.reference_fp8_per_token_head
+                    or not module.impl._is_per_token_head_quant
+                    or not hasattr(module, "query_quant")
+                    or module.query_quant is not None
+                ):
+                    raise RuntimeError("Dynamic writer or native query policy differs")
+                verify_inline_scale_aliases(
+                    module.kv_cache,
+                    self.decision_protocol["geometry"],
+                    (module.impl._k_scale_cache, module.impl._v_scale_cache),
+                )
             records.append({"layer": name, **expected})
         if len(records) != self.decision_protocol["geometry"]["layers"]:
             raise RuntimeError("Incomplete worker scale inventory")
@@ -64,7 +80,7 @@ class ProductionWorker(ServingWorker):
         self.study_output = Path(os.environ["KNLP_DECISION_OUTPUT"])
         self.decision_arm = os.environ["KNLP_DECISION_ARM"]
         self.decision_allocation = os.environ["KNLP_DECISION_ALLOCATION"]
-        self.study_arm = {"AF": "k16_v8", "SF": "k8_v8"}.get(
+        self.study_arm = {"AF": "k16_v8", "SD": "k8_v8"}.get(
             self.decision_arm, "k16_v16"
         )
         protocol, _ = read_inputs(
@@ -92,15 +108,24 @@ class ProductionWorker(ServingWorker):
         if config.model_config.dtype != torch.float16:
             raise RuntimeError("Worker model arithmetic must remain FP16")
         if (
-            self.decision_arm != "native_fa3"
+            self.decision_arm in ("native_fi", "AF")
             and not config.attention_config.disable_flashinfer_q_quantization
         ):
             raise RuntimeError("Native query dtype was not requested")
         capture = self.study_output / "before-capture"
         capture.mkdir()
+        scales = protocol["scales"]
+        if self.decision_arm == "SD":
+            scales = {key: 1.0 for key in scales}
+            for _, module in self.model_runner.get_model().named_modules():
+                if hasattr(module, "_k_scale") and hasattr(module, "kv_cache"):
+                    if type(module.impl).__name__ != "TritonAttentionImpl":
+                        raise RuntimeError("Dynamic candidate did not select Triton")
+                    # Construct and initialize scale aliases before any graph.
+                    module.impl._ensure_scale_caches(module.kv_cache)
         instrument.configure(
             self.model_runner.get_model(),
-            protocol["scales"],
+            scales,
             self.study_arm,
             str(capture),
             {

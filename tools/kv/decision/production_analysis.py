@@ -191,9 +191,9 @@ def build_identity(server, receipt, label):
 
 
 def support_gap(root, declaration, protocol, digest):
-    """Retain an unfilled SF certificate slot without reallocating its alpha."""
-    if declaration["arm"] != "SF" or declaration["protocol_sha256"] != digest:
-        raise ValueError("Only the prospectively declared SF support gap is allowed")
+    """Retain an unfilled SD certificate slot without reallocating its alpha."""
+    if declaration["arm"] != "SD" or declaration["protocol_sha256"] != digest:
+        raise ValueError("Only the prospectively declared SD support gap is allowed")
     if declaration["source_sha"] != protocol["source_sha"] or declaration[
         "phase"
     ] not in ("startup", "numerical"):
@@ -210,11 +210,11 @@ def support_gap(root, declaration, protocol, digest):
         raise ValueError(
             "An explicit evidence-based support classification is required"
         )
-    base = root / "SF"
+    base = root / "SD"
     if (base / "quality").exists():
         raise ValueError("A started quality panel cannot be relabelled a support gap")
     if (base / "DONE.json").exists():
-        raise ValueError("A completed SF invocation is not a support gap")
+        raise ValueError("A completed SD invocation is not a support gap")
     required = {"server/launch.json", "server.log", "server-exit.json"}
     if declaration["phase"] == "numerical":
         required.add("numerical-command.json")
@@ -229,7 +229,7 @@ def support_gap(root, declaration, protocol, digest):
     if any(
         launch[k] != value
         for k, value in {
-            "arm": "SF",
+            "arm": "SD",
             "protocol_sha256": digest,
             "source_sha": protocol["source_sha"],
             "allocation": "capacity",
@@ -247,7 +247,7 @@ def support_gap(root, declaration, protocol, digest):
         **declaration,
         "quality_evaluated": False,
         "alpha_reallocated": False,
-        "scope": "Unqualified optimized SF implementation; no task-quality degradation or dynamic-S verdict follows. Serving conclusions must be restricted to the qualified available controls.",
+        "scope": "Unqualified optimized SD implementation; no task-quality degradation or reference-quality verdict follows. Serving conclusions must be restricted to the qualified available controls.",
     }
 
 
@@ -421,7 +421,7 @@ def main():
         if args.support_gap is not None
         else None
     )
-    measured = [arm for arm in ARMS if not (gap is not None and arm == "SF")]
+    measured = [arm for arm in ARMS if not (gap is not None and arm == "SD")]
     panels = {
         arm: load_arm(args.root, arm, data, protocol, args.protocol_sha256, tokenizer)
         for arm in measured
@@ -441,7 +441,7 @@ def main():
             control: compare(panels[control], panels[candidate], alpha)
             for control in ("native_fi", "native_fa3")
         }
-        for candidate in ("AF", "SF")
+        for candidate in ("AF", "SD")
         if candidate in panels
     }
     eligibility = {

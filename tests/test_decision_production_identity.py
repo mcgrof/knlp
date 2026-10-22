@@ -16,10 +16,11 @@ from tools.kv.decision.production import (
 )
 
 
-def test_http_installer_pins_match_the_worker_without_changing_batch_recipe():
-    assert {
-        name: pin[1] for name, pin in recipe_pins("decision-http").items()
-    } == SOURCES
+def test_worker_requires_explicit_installer_revision_and_keeps_other_recipes():
+    default = recipe_pins("decision-http")
+    assert default["vllm"][1] == "cca5181dd50b24ff58f114e3ee7d200293c9fbf6"
+    assert SOURCES["vllm"] == "e5c8d87fd6bbf9cdedf266d160890599d938abb0"
+    assert default["flashinfer"][1] == SOURCES["flashinfer"]
     assert (
         recipe_pins("current")["vllm"][1] == "276305b29e0d11f95ada503ba76323ab24992e59"
     )

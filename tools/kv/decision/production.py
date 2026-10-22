@@ -21,11 +21,11 @@ from tools.kv.native.graph import ExecutionVariant
 from .production_resources import POLICY as RESOURCE_POLICY
 from .production_plan import PILOT_RULES
 
-ARMS = ("native_fi", "AF", "native_fa3", "SF")
+ARMS = ("native_fi", "AF", "native_fa3", "SD")
 MODEL = "Qwen/Qwen3-8B"
 REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
 SOURCES = {
-    "vllm": "cca5181dd50b24ff58f114e3ee7d200293c9fbf6",
+    "vllm": "e5c8d87fd6bbf9cdedf266d160890599d938abb0",
     "flashinfer": "800a550f8b736e49f8cfa136b82bfaf6d9d32711",
 }
 GEOMETRY = {
@@ -47,7 +47,16 @@ NUMERICAL_BOUNDS = {
         "maximum_absolute_error": 0.001,
     },
 }
-SUPPORT_POLICY = "SF may remain unqualified after a documented startup/numerical failure before any quality item; keep all four certificate slots and their original alpha allocation"
+SUPPORT_POLICY = "SD may remain unqualified after a documented startup/numerical failure before any quality item; keep all four certificate slots and their original alpha allocation"
+SCALE_POLICIES = {"AF": "fixed", "SD": "per_token_head"}
+DYNAMIC_WRITER = {
+    "format": "e4m3fn",
+    "absmax_floor_fp32": 1e-12,
+    "scale_reciprocal_fp32": 0.0022321429569274187,
+    "normalization": "float32_div_rn",
+    "rounding": "nearest_even",
+    "environment": "VLLM_FP8_PER_TOKEN_HEAD_REFERENCE",
+}
 
 
 def sha(path):
@@ -162,6 +171,7 @@ def environment(arm):
         "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
         "VLLM_SERVER_DEV_MODE": "1",
         "VLLM_KV_CACHE_LAYOUT": "NHD",
+        "VLLM_FP8_PER_TOKEN_HEAD_REFERENCE": str(int(arm == "SD")),
         "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": "360",
         "VLLM_DISABLE_REQUEST_ID_RANDOMIZATION": "0",
         "KNLP_NATIVE_OBSERVER": "off",
@@ -172,6 +182,8 @@ def environment(arm):
 
 
 def validate(protocol, data, calibration):
+    if protocol["schema"] != 2:
+        raise ValueError("Worker protocol requires the mixed-scale schema")
     if protocol["symmetric_support_policy"] != SUPPORT_POLICY:
         raise ValueError("Prospective symmetric support-gap policy differs")
     if protocol["serving_pilot_rules"] != PILOT_RULES:
@@ -193,9 +205,10 @@ def validate(protocol, data, calibration):
     if (
         protocol["arms"] != list(ARMS)
         or protocol["query_dtype"] != "float16"
-        or protocol["scale_policy"] != "fixed"
+        or protocol["scale_policy"] != SCALE_POLICIES
+        or protocol["dynamic_writer"] != DYNAMIC_WRITER
     ):
-        raise ValueError("This worker protocol requires native Q and fixed scales")
+        raise ValueError("Worker requires native Q, fixed AF and per-token/head SD")
     if protocol["serving_qualification_route"] != "aggregate_math":
         raise ValueError("This study preselected the aggregate-math serving route")
     if protocol["torch"] != "2.11.0+cu129" or protocol["transformers"] != "5.5.3":
@@ -363,7 +376,11 @@ def prepare(install, inputs, output, arm, digest, allocation="capacity"):
     engine["attention_config"] = (
         {"backend": "FLASH_ATTN", "flash_attn_version": 3}
         if arm == "native_fa3"
-        else {"backend": "FLASHINFER", "disable_flashinfer_q_quantization": True}
+        else (
+            {"backend": "TRITON_ATTN"}
+            if arm == "SD"
+            else {"backend": "FLASHINFER", "disable_flashinfer_q_quantization": True}
+        )
     )
     settings = environment(arm)
     env = {**os.environ, **settings}
@@ -382,7 +399,11 @@ def prepare(install, inputs, output, arm, digest, allocation="capacity"):
             ),
         }
     )
-    cache = "auto,fp8_e4m3" if arm == "AF" else "fp8_e4m3" if arm == "SF" else "auto"
+    cache = (
+        "auto,fp8_e4m3"
+        if arm == "AF"
+        else "fp8_per_token_head" if arm == "SD" else "auto"
+    )
     argv = [
         sys.executable,
         "-m",

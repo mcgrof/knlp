@@ -78,7 +78,7 @@ def test_timing_gates_reject_changed_or_unqualified_work(defect):
     elif defect == "candidate_pilot":
         plan["arm"] = "AF"
     elif defect == "unqualified_symmetric":
-        plan.update(arm="SF", purpose="confirmation")
+        plan.update(arm="SD", purpose="confirmation")
     elif defect == "changed_input":
         plan["cells"][0]["trace"]["requests"][0]["prompt_token_ids"][1] = 2
     elif defect == "missing_slo":

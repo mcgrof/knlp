@@ -205,7 +205,7 @@ def test_resource_reader_rejects_inconsistent_retained_evidence(tmp_path, defect
         elif defect == "affinity":
             row["client_cpu_affinity"] = list(range(8))
         elif defect == "worker":
-            row["arm"] = "SF"
+            row["arm"] = "SD"
         else:
             row["returncode"] = 1
         path.write_text(json.dumps(row))

@@ -55,7 +55,7 @@ def inference(cells, arms, primary_rate):
 
 def analyze(folder, root, manifest, quality, quality_digest, protocol, digest, data):
     arms = ["native_fi", "AF", "native_fa3"] + (
-        ["SF"] if "SF" in quality["serving_eligible_candidates"] else []
+        ["SD"] if "SD" in quality["serving_eligible_candidates"] else []
     )
     expected_orders = orders(arms)
     entries = manifest["invocations"]
@@ -156,7 +156,7 @@ def analyze(folder, root, manifest, quality, quality_digest, protocol, digest, d
         "primary": decision,
         "cells": cells,
         "symmetric_support_gap": quality["symmetric_support_gap"],
-        "scope": "Dense Qwen3 FP16, exact fixed-scale native-query worker, common 40-GiB persistent budget and 76-GiB sampled driver envelope, forced 128-token outputs. Nonprimary loads and 1K are descriptive; no model-family or natural-length serving claim.",
+        "scope": "Dense Qwen3 FP16, exact fixed-AF and per-token/head-SD native-query workers, common 40-GiB persistent budget and 76-GiB sampled driver envelope, forced 128-token outputs. Nonprimary loads and 1K are descriptive; no model-family or natural-length serving claim.",
     }
 
 

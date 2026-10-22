@@ -8,6 +8,74 @@ inventory alone cannot establish that an attention kernel consumed the cache.
 import math
 
 
+def audit_inline_layer(layer, geometry, blocks):
+    """Check byte-addressed inline scales independently of a backend view."""
+    page, heads, width = (geometry[k] for k in ("block_size", "kv_heads", "head_dim"))
+    if width % 4 or layer.get("implementation") != "TritonAttentionImpl":
+        raise ValueError("Dynamic cache requires the aligned Triton NHD layout")
+    inline = layer.get("inline_scales", {})
+    if set(inline) != {"K", "V"}:
+        raise ValueError("Both dynamic scale planes are required")
+    row = width + 4
+    backing = 2 * blocks * page * heads * row
+    base = layer["K"]["storage_pointer"]
+    records = []
+    for index, side in enumerate(("K", "V")):
+        code, scale = layer[side], inline[side]
+        code_offset = index * page * heads * row
+        code_strides = [2 * page * heads * row, heads * row, row, 1]
+        if (
+            code["storage_offset"] != code_offset
+            or code["strides"] != code_strides
+            or scale["shape"] != [blocks, page, heads]
+            or scale["dtype"] != "torch.float32"
+            or scale["element_size"] != 4
+            or scale["storage_offset"] != (code_offset + width) // 4
+            or scale["strides"] != [s // 4 for s in code_strides[:3]]
+            or any(
+                t["storage_pointer"] != base
+                or t["storage_bytes"] != backing
+                or t["device"] != layer["K"]["device"]
+                for t in (code, scale)
+            )
+            or scale["device"] != code["device"]
+        ):
+            raise ValueError(
+                "Dynamic code/scale views do not span the declared backing"
+            )
+        records.append(scale)
+    return records
+
+
+def scratch_tensors(record, geometry):
+    """Audit the separate segmented-softmax buffers, outside the KV budget."""
+    builders = record["builders"]
+    if len(builders) != 1:
+        raise ValueError("Expected one Triton metadata builder for this cache group")
+    builder = builders[0]
+    if builder["sequence_threshold"] != 8 or builder["segments"] != 16:
+        raise ValueError("Triton scratch threshold differs from frozen graph shapes")
+    tensors = builder["tensors"]
+    expected = [
+        [8, geometry["query_heads"], 16, geometry["head_dim"]],
+        [8, geometry["query_heads"], 16],
+        [8, geometry["query_heads"], 16],
+    ]
+    if len(tensors) != 3 or any(
+        tensor["shape"] != shape
+        or tensor["dtype"] != "torch.float32"
+        or tensor["element_size"] != 4
+        or tensor["storage_offset"] != 0
+        or tensor["strides"] != [math.prod(shape[i + 1 :]) for i in range(len(shape))]
+        or tensor["logical_bytes"] != tensor["storage_bytes"]
+        for tensor, shape in zip(tensors, expected)
+    ):
+        raise ValueError("Unexpected Triton softmax scratch allocation geometry")
+    if len({(t["device"], t["storage_pointer"]) for t in tensors}) != 3:
+        raise ValueError("Segmented-softmax buffers unexpectedly alias one another")
+    return tensors
+
+
 def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks=None):
     """Recompute retained allocation totals on CPU without inferring allocator pools."""
     if (
@@ -31,11 +99,11 @@ def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks
     if record["token_slots_per_layer"] != blocks * geometry["block_size"]:
         raise ValueError("Token slots differ from actual blocks")
     shape = [blocks, geometry["block_size"], geometry["kv_heads"], geometry["head_dim"]]
-    payload, scales = [], []
+    payload, scales, inline = [], [], []
     for layer in layers:
         for side in ("K", "V"):
             tensor = layer[side]
-            compressed = arm == "SF" or arm == "AF" and side == "V"
+            compressed = arm in ("SF", "SD") or arm == "AF" and side == "V"
             dtypes = (
                 {"torch.float8_e4m3fn", "torch.uint8"}
                 if compressed
@@ -56,7 +124,14 @@ def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks
         ):
             raise ValueError("Missing native-Q or component FP32 scale")
         scales.extend(layer["scales"])
-    for tensor in payload + scales:
+        if arm == "SD":
+            inline.extend(audit_inline_layer(layer, geometry, blocks))
+        elif layer.get("inline_scales"):
+            raise ValueError("Fixed/native cache unexpectedly contains inline scales")
+    scratch = scratch_tensors(record["triton_scratch"], geometry) if arm == "SD" else []
+    if arm != "SD" and record.get("triton_scratch") is not None:
+        raise ValueError("Non-Triton worker unexpectedly reports Triton scratch")
+    for tensor in payload + scales + inline + scratch:
         if (
             not tensor["device"].startswith("cuda:")
             or tensor["logical_bytes"]
@@ -74,11 +149,22 @@ def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks
         )
         if (last + 1) * tensor["element_size"] > tensor["storage_bytes"]:
             raise ValueError("Tensor view exceeds its backing allocation")
-    for key, tensors in (
+    inventories = [
         ("KV", payload),
         ("scales_including_native_Q_constant", scales),
         ("persistent_combined", payload + scales),
-    ):
+    ]
+    if scratch:
+        if {t["device"] for t in scratch + payload + scales} != {payload[0]["device"]}:
+            raise ValueError(
+                "Attention storage spans more than the single worker device"
+            )
+        inventories.append(("triton_scratch", scratch))
+        if {t["storage_pointer"] for t in scratch} & {
+            t["storage_pointer"] for t in payload + scales
+        }:
+            raise ValueError("Attention scratch unexpectedly aliases persistent cache")
+    for key, tensors in inventories:
         expected = {}
         for tensor in tensors:
             address = (int(tensor["device"].split(":")[1]), tensor["storage_pointer"])
@@ -100,7 +186,13 @@ def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks
             for field in ("requested_bytes", "allocated_block_bytes", "rounding_bytes")
         ):
             raise ValueError("Retained allocation totals differ")
-    if record["KV"]["requested_bytes"] != sum(t["logical_bytes"] for t in payload):
+    inline_bytes = sum(t["logical_bytes"] for t in inline)
+    if record.get("inline_scale_logical_bytes", 0) != inline_bytes:
+        raise ValueError("Inline scale payload total differs")
+    if (
+        record["KV"]["requested_bytes"]
+        != sum(t["logical_bytes"] for t in payload) + inline_bytes
+    ):
         raise ValueError("KV backing includes oversized persistent storage")
     if (
         record["persistent_combined"]["allocation_count"]
@@ -127,6 +219,10 @@ def audit_record(record, arm, geometry, persistent_budget_bytes, *, equal_blocks
         "token_slots_per_layer": blocks * geometry["block_size"],
         "K_payload_bytes": record["K_payload_bytes"],
         "V_payload_bytes": record["V_payload_bytes"],
+        "inline_scale_logical_bytes": inline_bytes,
+        "triton_scratch_allocated_bytes": (
+            record["triton_scratch"]["allocated_block_bytes"] if scratch else 0
+        ),
         "persistent_allocated_bytes": used,
         "budget_slack_bytes": persistent_budget_bytes - used,
         "scale_allocated_bytes": record["scales_including_native_Q_constant"][
@@ -197,19 +293,33 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
 
     from tools.kv.native.instrument import native_memory_state, tensor_inventory
 
-    if arm not in ["AF", "SF", "native_fi", "native_fa3"]:
+    from .inline_scales import inline_fp8_views, verify_inline_scale_aliases
+
+    if arm not in ["AF", "SF", "SD", "native_fi", "native_fa3"]:
         raise ValueError("Unsupported paged-worker recipe")
     model = worker.model_runner.get_model()
-    layers, payload, scales = [], [], []
+    layers, payload, scales, inline = [], [], [], []
     for name, module in model.named_modules():
         if not hasattr(module, "_k_scale") or not hasattr(module, "kv_cache"):
             continue
         cache = module.kv_cache
         impl = type(module.impl).__name__
+        inline_record = {}
         if arm == "AF":
             if not isinstance(cache, tuple) or len(cache) != 2:
                 raise ValueError("Asymmetric cache must expose two physical planes")
             k, v = cache
+        elif arm == "SD":
+            if impl != "TritonAttentionImpl":
+                raise ValueError("Dynamic worker must use the frozen Triton backend")
+            (k, v), dynamic = inline_fp8_views(cache, geometry)
+            verify_inline_scale_aliases(
+                cache,
+                geometry,
+                (module.impl._k_scale_cache, module.impl._v_scale_cache),
+            )
+            inline_record = dict(zip(("K", "V"), tensor_inventory(dynamic)))
+            inline.extend(inline_record.values())
         else:
             if not isinstance(cache, torch.Tensor) or cache.ndim != 5:
                 raise ValueError(
@@ -224,9 +334,9 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
         ki, vi = tensor_inventory(k)[0], tensor_inventory(v)[0]
         native = {"torch.float16"}
         fp8 = {"torch.float8_e4m3fn", "torch.uint8"}
-        if ki["dtype"] not in (fp8 if arm == "SF" else native) or vi["dtype"] not in (
-            fp8 if arm in ["AF", "SF"] else native
-        ):
+        if ki["dtype"] not in (fp8 if arm in ("SF", "SD") else native) or vi[
+            "dtype"
+        ] not in (fp8 if arm in ["AF", "SF", "SD"] else native):
             raise ValueError("Physical K/V dtype differs from selected recipe")
         if ki["shape"] != vi["shape"] or ki["shape"][1:] != [
             geometry["block_size"],
@@ -249,6 +359,7 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
                 "K": ki,
                 "V": vi,
                 "scales": side_scales,
+                "inline_scales": inline_record,
             }
         )
         payload.extend([ki, vi])
@@ -261,10 +372,31 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
     # Synchronize only outside measured request intervals.
     torch.cuda.synchronize()
     snapshot = torch.cuda.memory_snapshot()
+    scratch = None
+    if arm == "SD":
+        builders = [
+            builder
+            for groups in worker.model_runner.attn_groups
+            for group in groups
+            for builder in group.metadata_builders
+        ]
+        builder_records = [
+            {
+                "sequence_threshold": b.seq_threshold_3D,
+                "segments": b.num_par_softmax_segments,
+                "tensors": tensor_inventory(
+                    (b.softmax_segm_output, b.softmax_segm_max, b.softmax_segm_expsum)
+                ),
+            }
+            for b in builders
+        ]
+        scratch = {"builders": builder_records}
+        scratch.update(allocation_sizes(scratch_tensors(scratch, geometry), snapshot))
     kv = allocation_sizes(payload, snapshot)
     sf = allocation_sizes(scales, snapshot)
     combined = allocation_sizes([*payload, *scales], snapshot)
-    if kv["requested_bytes"] != sum(r["logical_bytes"] for r in payload):
+    inline_bytes = sum(r["logical_bytes"] for r in inline)
+    if kv["requested_bytes"] != sum(r["logical_bytes"] for r in payload) + inline_bytes:
         raise ValueError("Paged-cache backing includes unused or oversized storage")
     if combined["allocation_count"] != kv["allocation_count"] + sf["allocation_count"]:
         raise ValueError("KV and scale allocations unexpectedly alias")
@@ -281,6 +413,8 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
         "token_slots_per_layer": blocks * geometry["block_size"],
         "K_payload_bytes": sum(r["K"]["logical_bytes"] for r in layers),
         "V_payload_bytes": sum(r["V"]["logical_bytes"] for r in layers),
+        "inline_scale_logical_bytes": inline_bytes,
+        "triton_scratch": scratch,
         "KV": kv,
         "scales_including_native_Q_constant": sf,
         "persistent_combined": combined,
@@ -289,5 +423,5 @@ def inventory(worker, arm, *, geometry, persistent_budget_bytes):
         - combined["allocated_block_bytes"],
         "workspace": None if workspace is None else workspace.receipt(),
         "whole_process": native_memory_state(worker),
-        "scope": "Live unique KV and scale allocator blocks; inactive allocator pools, model weights, graph pools and staging are outside this persistent-cache budget and reported separately. Actual kernel read/write qualification is required independently.",
+        "scope": "Live unique KV and scale allocator blocks. Dynamic inline scales share KV backing and are counted once; scalar constants are separate. Inactive allocator pools, weights, graph pools and staging are outside this cache budget and reported separately. Actual kernel read/write qualification is required independently.",
     }

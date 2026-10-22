@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: MIT
-"""Freeze a fixed-scale worker protocol after both complete reference panels.
+"""Freeze fixed AF and dynamic SD after both complete reference panels.
 
 This prepares files only. It does not allocate a GPU or establish that the
 selected optimized backend supports or qualifies either compressed recipe.
-Dynamic per-token/head scale storage is outside this launcher's interface.
-The pinned Triton backend does provide that storage, so a qualified dynamic
-reference candidate must be integrated and frozen before this study proceeds.
+The symmetric candidate uses native queries and inline per-token/head scales.
+Both the explicit writer policy and actual-worker quality need qualification.
 """
 
 import argparse
@@ -16,12 +15,14 @@ import subprocess
 
 from .production import (
     ARMS,
+    DYNAMIC_WRITER,
     GEOMETRY,
     MODEL,
     NUMERICAL_BOUNDS,
     RESOURCE_POLICY,
     REVISION,
     SOURCES,
+    SCALE_POLICIES,
     SUPPORT_POLICY,
     read_inputs,
     sha,
@@ -71,12 +72,12 @@ def reference_gate(analysis, evidence, input_digest):
             }
             for arm in ("AF", "SF", "SD")
         },
-        "optimized_symmetric_policy": "fixed",
-        "dynamic_symmetric_support": "The pinned TRITON_ATTN backend provides fp8_per_token_head storage and reads. Its scale floor and reciprocal-multiply writer differ from the reference; numerical and quality qualification remain required.",
+        "optimized_symmetric_policy": "per_token_head",
+        "dynamic_symmetric_support": "The pinned Triton extension provides an opt-in reference writer policy over existing fp8_per_token_head storage and reads. Actual-worker numerical and quality qualification remain required.",
         "requires_dynamic_worker": qwen["candidates"]["SD"][
             "aggregate_math_certificate"
         ],
-        "scope": "Fixed-scale launcher only. A qualified dynamic symmetric reference requires extending the worker comparison before freezing its protocol; scalar FlashInfer limitations do not establish a vLLM-wide support gap.",
+        "scope": "Select current fixed AF and dynamic SD with both optimized native controls. AD reference eligibility does not qualify AF. Reference certificates do not qualify either worker implementation.",
     }
 
 
@@ -86,7 +87,7 @@ def protocol(scales):
     # large active block. All four workers use one KV backing per layer.
     kv_allowance = 36 * 1024**2
     return {
-        "schema": 1,
+        "schema": 2,
         "arms": list(ARMS),
         "backend_sources": SOURCES,
         "geometry": GEOMETRY,
@@ -95,7 +96,8 @@ def protocol(scales):
         "numerical_extra_long_cases": EXTRA_LONG_CASES,
         "numerical_output_tokens": 32,
         "query_dtype": "float16",
-        "scale_policy": "fixed",
+        "scale_policy": SCALE_POLICIES,
+        "dynamic_writer": DYNAMIC_WRITER,
         "symmetric_support_policy": SUPPORT_POLICY,
         "scales": transferred_scales(scales),
         "serving_qualification_route": "aggregate_math",
@@ -160,10 +162,9 @@ def main():
     input_path = args.reference_inputs / "inputs.json.gz"
     analysis, evidence = read(args.analysis), read(args.evidence)
     selection = reference_gate(analysis, evidence, sha(input_path))
-    if selection["requires_dynamic_worker"]:
+    if not selection["requires_dynamic_worker"]:
         raise ValueError(
-            "Qualified SD requires a dynamic worker comparison; integrate and "
-            "freeze the pinned Triton route before preparing this protocol"
+            "This panel requires an aggregate-qualified SD reference candidate"
         )
     source = Path(__file__).resolve().parents[3]
     if subprocess.check_output(

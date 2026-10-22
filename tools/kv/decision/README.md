@@ -140,7 +140,7 @@ control family and reports conservative simultaneous Bonferroni median
 lower bounds. A practical claim also requires a 5% median relative gain.
 These tools do not select SLOs or establish a completed serving result.
 
-`paged_memory.py` reconciles live paged K/V and scalar-scale tensor storages
+`paged_memory.py` reconciles live paged K/V, inline-scale and scalar-scale tensor storages
 with Torch's CUDA allocator snapshot. It counts each shared backing once,
 includes active-block rounding, and keeps inactive segment space separate.
 The worker inventory rejects oversized backing storage and enforces the
@@ -176,16 +176,18 @@ Actual GPU writer integration and byte comparisons remain required.
 The `production_*` tools implement the next experimental protocol; they do
 not yet establish a completed GPU qualification or serving result. Use them
 only after both full reference panels and their evidence audits finish. The
-worker interface is fixed per-layer/component scaling. The pinned vLLM
-Triton backend supplies per-token/head FP8 scales, but its writer policy
-differs from the reference and its integration needs separate qualification.
-The preparer refuses a fixed-only protocol when the complete reference
-qualifies SD under aggregate-math. SF cannot substitute for that candidate.
+worker panel selects fixed per-layer/component AF and dynamic per-token/head
+SD against native FlashInfer and FA3 controls. The Triton extension adds an
+opt-in writer with the reference scale arithmetic; its storage and attention
+paths already support per-token/head FP8. The preparer requires a complete
+aggregate-math-qualified SD reference. Numerical checks and actual-worker
+quality must still qualify both compressed implementations.
 
 The worker pins the HTTP vLLM source
-`cca5181dd50b24ff58f114e3ee7d200293c9fbf6` and FlashInfer
+`e5c8d87fd6bbf9cdedf266d160890599d938abb0` and FlashInfer
 `800a550f8b736e49f8cfa136b82bfaf6d9d32711`. The installer's `decision-http`
-recipe selects those sources directly, with Torch 2.11.0+cu129 and
+recipe supplies the original base; explicitly select the worker revision
+shown below. It uses Torch 2.11.0+cu129 and
 Transformers 5.5.3. The separate `current` batch recipe keeps its existing
 source pins. Production requires one H100 80GB HBM3, at least twelve usable
 CPU cores of affinity and quota, and an otherwise idle device.
@@ -204,7 +206,8 @@ python -m tools.kv.decision.production_prepare \
   --reference-inputs inputs/qwen3 \
   --reference-scales calibration/scales.json \
   --official-model-files official-model-files.json --out production-inputs
-python -m tools.kv.native.october_setup install --recipe decision-http
+python -m tools.kv.native.october_setup install --recipe decision-http \
+  --vllm-revision e5c8d87fd6bbf9cdedf266d160890599d938abb0
 ```
 
 The installer can transfer an unpublished dependency change for qualification.
@@ -226,7 +229,7 @@ cache used by the installed environment, then keep model access offline.
 The installer and full setup/package/source receipts remain part of the
 evidence. A helper creates no cloud allocation.
 
-For each of `native_fi`, `AF`, `native_fa3`, `SF`, run one fresh numerical and
+For each of `native_fi`, `AF`, `native_fa3`, `SD`, run one fresh numerical and
 quality invocation. Use the installed Python for all worker commands:
 
 ```sh
@@ -239,11 +242,15 @@ install/env/bin/python -m tools.kv.decision.production_analysis \
 ```
 
 Q remains FP16 in every arm; fixed K/V scales transfer before warmup and
-graph capture. Native controls keep normal optimized dispatch. Numerical
+graph capture. SD uses inline FP32 token/head scales with native queries.
+Native controls keep normal optimized dispatch. Numerical
 probes check raw page/slot routing, physical codes, independent FP32 causal
 attention, fresh/mixed/decode execution, near-capacity 8K batches and repeated
 graph/eager replay. They sample selected rows and do not prove every possible
 operand. Their bounds and case lists are frozen before worker outcomes.
+For SD, probes retain the actually launched writer and 2D/3D attention
+kernels, exact scale aliases, and code-plus-scale byte checks. Graph checks
+also retain inline scales; segmented-softmax buffers are audited separately.
 Numerical instrumentation has an explicit memory exemption; quality and
 timing do not. The full quality panel retains 64 documents/context, 200
 retrieval cases/context and all 1,319 GSM8K questions with the original parser
@@ -252,7 +259,7 @@ and truncation semantics.
 The two quality objectives each retain four candidate/control slots at
 alpha .025/4. Serving preselects aggregate-math and requires the candidate
 to qualify against both native controls. Strict preservation is reported
-separately. A declared SF support gap requires retained launch/log/exit
+separately. A declared SD support gap requires retained launch/log/exit
 evidence from a failure before any quality item; its unused alpha slots
 remain unused. Neither a support failure nor an unestablished certificate
 is proof of task-quality degradation.

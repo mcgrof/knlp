@@ -54,7 +54,7 @@ def test_confirmation_replays_exact_cells_across_every_qualified_arm(
             for rate in PILOT_RULES["load_selection_rates"]
         ]
     }
-    quality = {"serving_eligible_candidates": ["AF", "SF"] if symmetric else ["AF"]}
+    quality = {"serving_eligible_candidates": ["AF", "SD"] if symmetric else ["AF"]}
     result = planner.confirmation(
         None,
         previous,
@@ -69,7 +69,7 @@ def test_confirmation_replays_exact_cells_across_every_qualified_arm(
     assert result["primary_stress_load"]["rate"] == 3.2
     assert result["rates_8k"] == [1.0, 2.9, 3.2, 4.0]
     assert len(written) == (40 if symmetric else 30)
-    assert ("SF" in result["inference"]["controls"]) == symmetric
+    assert ("SD" in result["inference"]["controls"]) == symmetric
     seeds = set()
     for block in range(10):
         values = [
@@ -101,11 +101,11 @@ def block_cells(arms):
 
 
 def test_practical_claim_requires_both_native_controls_and_symmetric_when_qualified():
-    arms = ["AF", "native_fi", "native_fa3", "SF"]
+    arms = ["AF", "native_fi", "native_fa3", "SD"]
     rows = block_cells(arms)
     assert inference(rows, arms, 2.9)["practical_improvement_established"]
     for row in rows:
-        if row["arm"] == "SF":
+        if row["arm"] == "SD":
             row["summary"]["goodput_requests_per_second"] = 1.2
     result = inference(rows, arms, 2.9)
     assert result["paired_inference"]["family_size"] == 3

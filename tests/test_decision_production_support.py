@@ -10,12 +10,12 @@ from tools.kv.decision.production_analysis import build_identity, support_gap
 
 
 def failed_worker(tmp_path, phase="numerical"):
-    base = tmp_path / "SF"
+    base = tmp_path / "SD"
     (base / "server").mkdir(parents=True)
     protocol = {"source_sha": "source"}
     records = {
         "server/launch.json": {
-            "arm": "SF",
+            "arm": "SD",
             "source_sha": "source",
             "protocol_sha256": "protocol",
             "allocation": "capacity",
@@ -28,7 +28,7 @@ def failed_worker(tmp_path, phase="numerical"):
     for name, value in records.items():
         (base / name).write_text(json.dumps(value))
     declaration = {
-        "arm": "SF",
+        "arm": "SD",
         "source_sha": "source",
         "protocol_sha256": "protocol",
         "phase": phase,

@@ -54,7 +54,7 @@ def analyze(root, quality, protocol, digest):
             }
             for arm, record in equal.items()
         },
-        "scope": "Allocator block bytes include KV and scalar scales. More physical token slots do not establish more successful requests per second. Weights, graphs, staging and inactive pools remain separate whole-process observations.",
+        "scope": "Allocator block bytes include KV, inline dynamic scales counted once, and separate scalar constants. Triton softmax scratch is reported outside the persistent-cache budget. More physical token slots do not establish more successful requests per second. Weights, graphs, staging and inactive pools remain separate whole-process observations.",
     }
 
 

@@ -13,7 +13,7 @@ from tools.kv.decision.serving import validate
     "arms",
     [
         ["native_fi", "AF", "native_fa3"],
-        ["native_fi", "AF", "native_fa3", "SF"],
+        ["native_fi", "AF", "native_fa3", "SD"],
     ],
 )
 def test_ten_arm_orders_balance_positions_and_include_every_control(arms):

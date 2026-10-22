@@ -15,6 +15,8 @@ import numpy as np
 import torch
 
 from .oracle import oracle
+from .inline_scales import decode_inline_fp8_snapshot, verify_inline_scale_aliases
+from .production_dynamic_oracle import dynamic_bytes
 from .production_numerics import attention, comparison, decoded, planes, slots, within
 
 
@@ -29,12 +31,15 @@ def check_worker(worker, destination):
     from vllm.config.compilation import CUDAGraphMode
     from vllm.v1.attention.backends.flash_attn import FlashAttentionImpl
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
+    from vllm.v1.attention.backends.triton_attn import TritonAttentionImpl
     from vllm.v1.worker.gpu.cudagraph_utils import CudaGraphManager
 
     destination = Path(destination)
     destination.mkdir()
     runner = worker.model_runner
     bounds = worker.decision_protocol["numerical_bounds"]
+    geometry = worker.decision_protocol["geometry"]
+    dynamic = worker.decision_arm == "SD"
     state, rows, originals = {}, [], []
     layers = [
         m
@@ -47,6 +52,88 @@ def check_worker(worker, destination):
         with (destination / "checks.jsonl").open("a") as stream:
             stream.write(json.dumps(value, allow_nan=False) + "\n")
         rows.append(value)
+
+    if dynamic:
+        from vllm.v1.attention.ops import (
+            triton_reshape_and_cache_flash as writer_module,
+        )
+        from vllm.v1.attention.ops import triton_unified_attention as attention_module
+        from vllm.v1.kv_cache_interface import KVQuantMode
+
+        binaries = destination / "launched-kernels"
+        binaries.mkdir()
+
+        class KernelProbe:
+            def __init__(self, kernel, kind):
+                self.kernel, self.kind = kernel, kind
+
+            def __getitem__(self, grid):
+                launch = self.kernel[grid]
+
+                def checked(**kwargs):
+                    layer = state[self.kind + "_layer"]
+                    if self.kind == "attention":
+                        if (
+                            kwargs["query_ptr"].dtype != torch.float16
+                            or kwargs["Q_IS_FP8"]
+                            or kwargs["KV_QUANT_MODE"] != KVQuantMode.FP8_PER_TOKEN_HEAD
+                            or any(
+                                kwargs[k] is not None
+                                for k in ("q_scale", "k_scale", "v_scale")
+                            )
+                        ):
+                            raise RuntimeError(
+                                "Actual Triton launch changed query or scale policy"
+                            )
+                        verify_inline_scale_aliases(
+                            layer.kv_cache,
+                            geometry,
+                            (kwargs["k_scale_cache_ptr"], kwargs["v_scale_cache_ptr"]),
+                        )
+                        details = {
+                            "route": "3D" if kwargs["IS_3D"] else "2D",
+                            "metadata_num_sequences": kwargs["num_seqs"],
+                            "segments": kwargs["NUM_SEGMENTS_PER_SEQ"],
+                            "query_dtype": str(kwargs["query_ptr"].dtype),
+                            "query_fp8": False,
+                        }
+                    else:
+                        if kwargs["REFERENCE_FP8"] is not True:
+                            raise RuntimeError(
+                                "Actual writer did not select reference arithmetic"
+                            )
+                        details = {"reference_fp8": True}
+                    compiled = launch(**kwargs)
+                    files = {}
+                    for extension in ("ptx", "cubin"):
+                        value = compiled.asm[extension]
+                        raw = value.encode() if isinstance(value, str) else value
+                        digest = hashlib.sha256(raw).hexdigest()
+                        path = binaries / (digest + "." + extension)
+                        if not path.exists():
+                            path.write_bytes(raw)
+                        files[extension] = digest
+                    emit(
+                        {
+                            "kind": self.kind + "_kernel",
+                            "layer": layer.layer_name,
+                            "phase": state["phase"],
+                            "generated_sha256": files,
+                            "metadata": str(compiled.metadata),
+                            **details,
+                        }
+                    )
+                    return compiled
+
+                return checked
+
+        for module, name, kind in (
+            (writer_module, "_reshape_cache_per_token_head", "writer"),
+            (attention_module, "kernel_unified_attention", "attention"),
+        ):
+            original = getattr(module, name)
+            originals.append((module, name, original))
+            setattr(module, name, KernelProbe(original, kind))
 
     original_prepare = runner.prepare_attn
 
@@ -144,7 +231,11 @@ def check_worker(worker, destination):
                 x.reshape(-1, 8, 128).index_select(0, ids).detach().cpu()
                 for x in (key, value)
             ]
-            result = original_write(impl, layer, key, value, cache, mapping)
+            state["writer_layer"] = layer
+            try:
+                result = original_write(impl, layer, key, value, cache, mapping)
+            finally:
+                state.pop("writer_layer")
             records = []
             for component, plane, operand in zip(
                 ("k", "v"), planes(cache, type(impl).__name__), operands
@@ -156,11 +247,17 @@ def check_worker(worker, destination):
                     assigned // 16, assigned % 16
                 ].cpu()
                 quantized = plane.dtype in (torch.uint8, torch.float8_e4m3fn)
-                expected_bytes = (
-                    torch.from_numpy(oracle(operand, scale))
-                    if quantized
-                    else operand.contiguous().view(torch.uint8)
-                )
+                if dynamic:
+                    scale, codes = dynamic_bytes(operand)
+                    expected_bytes = torch.from_numpy(
+                        np.concatenate((codes, scale.view(np.uint8)), axis=-1)
+                    )
+                else:
+                    expected_bytes = (
+                        torch.from_numpy(oracle(operand, scale))
+                        if quantized
+                        else operand.contiguous().view(torch.uint8)
+                    )
                 if not torch.equal(actual_bytes, expected_bytes):
                     np.savez_compressed(
                         destination / (layer.layer_name + "-writer-failure.npz"),
@@ -175,7 +272,11 @@ def check_worker(worker, destination):
                 records.append(
                     {
                         "component": component,
-                        "scale": scale,
+                        "scale": None if dynamic else scale,
+                        "scale_policy": "per_token_head" if dynamic else "scalar",
+                        "inline_scale_bytes_checked": (
+                            operand.shape[0] * operand.shape[1] * 4 if dynamic else 0
+                        ),
                         "dtype": str(plane.dtype),
                         "bytes_checked": actual_bytes.numel(),
                         "sha256": byte_hash(actual_bytes),
@@ -198,6 +299,8 @@ def check_worker(worker, destination):
         ):
             if query.dtype != torch.float16 or layer._q_scale_float != 1.0:
                 raise RuntimeError("Actual query arithmetic changed from native FP16")
+            if dynamic and layer.query_quant is not None:
+                raise RuntimeError("Outer attention would quantize the native query")
             if type(impl).__name__ == "FlashInferImpl" and any(
                 getattr(metadata, "q_data_type_" + phase) != torch.float16
                 for phase in ("prefill", "decode")
@@ -220,9 +323,22 @@ def check_worker(worker, destination):
                 )
                 raw = [p.view(torch.uint8).index_select(0, ids).clone() for p in cached]
                 snapshots.append((index, length, ids, raw))
-            result = original_forward(
-                impl, layer, query, key, value, cache, metadata, output, *args, **kwargs
-            )
+            state["attention_layer"] = layer
+            try:
+                result = original_forward(
+                    impl,
+                    layer,
+                    query,
+                    key,
+                    value,
+                    cache,
+                    metadata,
+                    output,
+                    *args,
+                    **kwargs
+                )
+            finally:
+                state.pop("attention_layer")
             for index, length, ids, raw in snapshots:
                 for plane, before in zip(cached, raw):
                     if not torch.equal(
@@ -231,12 +347,18 @@ def check_worker(worker, destination):
                         raise RuntimeError(
                             "Attention read changed persistent cache bytes"
                         )
-                values = [
-                    decoded(
-                        x.view(plane.dtype), getattr(layer, "_" + side + "_scale_float")
-                    ).reshape(-1, 8, 128)[:length]
-                    for x, plane, side in zip(raw, cached, ("k", "v"))
-                ]
+                if dynamic:
+                    values = [
+                        decode_inline_fp8_snapshot(x, geometry, length) for x in raw
+                    ]
+                else:
+                    values = [
+                        decoded(
+                            x.view(plane.dtype),
+                            getattr(layer, "_" + side + "_scale_float"),
+                        ).reshape(-1, 8, 128)[:length]
+                        for x, plane, side in zip(raw, cached, ("k", "v"))
+                    ]
                 q = query.reshape(-1, 32, 128)[index]
                 observed = output.reshape(-1, 32, 128)[index]
                 ideal = attention(q, *values, softmax_scale=impl.scale)
@@ -260,7 +382,8 @@ def check_worker(worker, destination):
                         "decode_dispatch": str(
                             getattr(getattr(metadata, "decode", None), "kernel", None)
                         ),
-                        "scalar_scale_fp32": numerical,
+                        "scaled_operand_fp32": numerical,
+                        "scale_policy": "per_token_head" if dynamic else "scalar",
                         "native_reconstruction_diagnostic": diagnostic,
                         "bounds": bounds["attention"],
                         "passed": within(numerical, bounds["attention"]),
@@ -277,6 +400,8 @@ def check_worker(worker, destination):
 
     install(FlashInferImpl)
     install(FlashAttentionImpl)
+    if dynamic:
+        install(TritonAttentionImpl)
     original_graph = CudaGraphManager.run_fullgraph
 
     def graph(manager, desc):
