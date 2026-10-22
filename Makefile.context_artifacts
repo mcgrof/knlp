@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT
+CA_PYTHON ?= $(PYTHON)
+CA_RUN = $(CA_PYTHON) -m tools.reproduce.context_artifacts.run
+
+# Keep dependent stages in one recipe, including under make -j.
+.PHONY: context-artifacts context-artifacts-doctor context-artifacts-fetch \
+ context-artifacts-build context-artifacts-ingest context-artifacts-import \
+ context-artifacts-baseline context-artifacts-load context-artifacts-restore \
+ context-artifacts-test context-artifacts-report
+context-artifacts:
+	@$(CA_RUN) doctor --config $(CONFIG_FILE)
+	@$(CA_RUN) test --config $(CONFIG_FILE)
+	@$(CA_RUN) report --config $(CONFIG_FILE)
+
+$(foreach stage,doctor fetch build ingest import baseline load test report,\
+ $(eval context-artifacts-$(stage): ; @$(CA_RUN) $(stage) --config $(CONFIG_FILE)))
+
+context-artifacts-restore:
+	@$(CA_RUN) restore --config $(CONFIG_FILE) --restore-kind $(RESTORE_KIND)
+
+ifeq ($(CONFIG_KNLP_CONTEXT_ARTIFACTS),y)
+CA_CONFLICTS := $(foreach v,MODEL_GNN GOOGLE_MUVERA_SMALL MUVERA_SMALL \
+ SUBLIMINAL_LEARNING RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE \
+ KNLP_REPRODUCE_CARTRIDGES KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO \
+ MOT_AUTHOR_BASELINE KNLP_REPRODUCE_KVIO KNLP_REPRODUCE_PD \
+ KNLP_REPRODUCE_TOKENDANCE KNLP_REPRODUCE_KMESH_TRACE \
+ KNLP_REPRODUCE_KMESH_RESIDENCY KNLP_REPRODUCE_KMESH_FORK \
+ KNLP_REPRODUCE_KMESH_SERVING KNLP_REPRODUCE_KMESH_RESTORE \
+ KNLP_REPRODUCE_KMESH_CASCADE KNLP_DMABUF KVTIDE KNLP_QUANT_FP8 \
+ KNLP_TF_REPRO KNLP_MODULAR_REPRO MATCHED_MICRO,\
+ $(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
+ifneq ($(strip $(CA_CONFLICTS)),)
+$(error Conflicting context artifact workloads: $(strip $(CA_CONFLICTS)))
+endif
+.DEFAULT_GOAL := context-artifacts
+endif

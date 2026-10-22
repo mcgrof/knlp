@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: MIT
+menuconfig KNLP_CONTEXT_ARTIFACTS
+	bool "Context artifact file transport"
+	default n
+	help
+	  Import immutable tensor artifacts and verify file load/restore.
+	  Engine integration and LMCache acceptance fail until qualified.
+
+if KNLP_CONTEXT_ARTIFACTS
+
+choice
+	prompt "Method"
+config KNLP_CA_METHOD_LPC
+	bool "lpc"
+config KNLP_CA_METHOD_MEMORILLA
+	bool "memorilla"
+endchoice
+
+choice
+	prompt "Control or generalized artifact"
+config KNLP_CA_PROFILE_BASELINE
+	bool "baseline"
+config KNLP_CA_PROFILE_PORT_CONTROL
+	bool "port control"
+config KNLP_CA_PROFILE_ARTIFACT
+	bool "artifact"
+endchoice
+
+choice
+	prompt "Representation"
+config KNLP_CA_REP_PREFIX_KV
+	bool "prefix kv"
+config KNLP_CA_REP_DOCUMENT_EMBEDDINGS
+	bool "document embeddings"
+config KNLP_CA_REP_INPUT_EMBEDDINGS
+	bool "input embeddings"
+endchoice
+
+choice
+	prompt "Storage backend"
+config KNLP_CA_BACKEND_FILES
+	bool "files"
+config KNLP_CA_BACKEND_LMCACHE
+	bool "lmcache"
+endchoice
+
+choice
+	prompt "Test operation"
+config KNLP_CA_OP_SMOKE
+	bool "smoke"
+config KNLP_CA_OP_LOAD_ONLY
+	bool "load only"
+config KNLP_CA_OP_EVICT_RESTORE
+	bool "evict restore"
+config KNLP_CA_OP_RESTART_RESTORE
+	bool "restart restore"
+config KNLP_CA_OP_ISOLATION
+	bool "isolation"
+config KNLP_CA_OP_ALL
+	bool "all"
+endchoice
+
+config KNLP_CA_WORK_ROOT
+	string "Persistent source root"
+	default ""
+
+config KNLP_CA_BUILD_ROOT
+	string "Persistent build root"
+	default ""
+
+config KNLP_CA_RESULTS_ROOT
+	string "Persistent run evidence root"
+	default ""
+
+config KNLP_CA_STORE_ROOT
+	string "Persistent artifact store"
+	default ""
+
+config KNLP_CA_SOURCE_LOCK
+	string "Source lock JSON"
+	default ""
+
+config KNLP_CA_MANIFEST
+	string "Import manifest JSON"
+	default ""
+
+config KNLP_CA_PAYLOAD
+	string "Import safetensors payload"
+	default ""
+
+config KNLP_CA_ARTIFACT_ID
+	string "Required immutable artifact ID"
+	default ""
+
+config KNLP_CA_CONSUMER
+	string "Consumer model ID"
+	default ""
+
+config KNLP_CA_CONSUMER_REVISION
+	string "Exact consumer revision"
+	default ""
+
+endif

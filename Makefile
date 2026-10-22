@@ -67,13 +67,15 @@ include Makefile.tensorflow
 include Makefile.modular
 include Makefile.subliminal
 include Makefile.residual_reproduction
+include Makefile.context_artifacts
 
 # MUVERA presets use their own runners rather than the model training path.
 MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
 	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
 ifneq ($(strip $(MUVERA_SELECTED)),)
 MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
-	RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
+	RESIDUAL_REPRODUCTION KNLP_CONTEXT_ARTIFACTS KNLP_REPRODUCE_DECODE \
+	KNLP_REPRODUCE_CARTRIDGES \
 	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
 	KNLP_REPRODUCE_KVIO \
 	KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
