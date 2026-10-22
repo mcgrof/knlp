@@ -32,7 +32,11 @@ def bundle_identity(path, expected_sha256, base, target):
         raise ValueError("require a full lowercase bundle SHA-256")
     path = Path(path).resolve(strict=True)
     with path.open("rb") as stream:
-        if hashlib.file_digest(stream, "sha256").hexdigest() != expected_sha256:
+        # This bootstrap runs before the installer creates its Python 3.12 env.
+        digest = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+        if digest.hexdigest() != expected_sha256:
             raise ValueError("bundle SHA-256 differs")
         stream.seek(0)
         if stream.readline(256) != b"# v2 git bundle\n":

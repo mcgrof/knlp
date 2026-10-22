@@ -62,6 +62,15 @@ def test_imports_exact_commit_without_fetching_origin_or_changing_head(repositor
     assert git(consumer, "branch", "--list", "feature") == ""
 
 
+def test_bootstrap_supports_hashlib_before_python_311(repositories, monkeypatch):
+    _, consumer, bundle, base, target = repositories
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    receipt = import_bundle(consumer, bundle, digest(bundle), base, target)
+    assert receipt["target"] == target
+    with pytest.raises(ValueError, match="SHA-256 differs"):
+        bundle_identity(bundle, "0" * 64, base, target)
+
+
 @pytest.mark.parametrize("field", ["digest", "base", "target"])
 def test_rejects_changed_identity_before_import(repositories, field):
     _, consumer, bundle, base, target = repositories
