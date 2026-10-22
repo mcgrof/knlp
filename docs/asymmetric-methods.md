@@ -46,6 +46,9 @@ and relative mean NLL upper bounds ≤1% at both lengths. Preservation adds a
 math gross-loss upper bound ≤2%. Aggregate math instead requires the paired
 net accuracy lower bound ≥−1 percentage point. Gross bounds are exact binomial;
 net bounds invert Tango's matched-pair score with approximate coverage.
+For binary endpoints, gross loss is the number of native-correct to
+candidate-wrong transitions divided by all paired questions. Net change
+uses gains minus losses over that same denominator.
 NLL uses 100,000 paired document-bootstrap draws, seed 20261020, linear quantiles.
 No certificate slot was removed or margin changed after results.
 
