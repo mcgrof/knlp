@@ -17,7 +17,7 @@ import time
 POLICY = {
     "device_name": "NVIDIA H100 80GB HBM3",
     "driver_envelope_bytes": 76 * 1024**3,
-    "driver_sample_interval_seconds": 0.1,
+    "driver_sample_interval_seconds": 0.02,
     "driver_maximum_sample_gap_seconds": 0.5,
     "server_cpus": 8,
     "client_cpus": 2,
@@ -205,6 +205,25 @@ class DriverSampler:
                 self._write_condition.wait(min(remaining, 0.1))
         self.check()
 
+    def _observe(self):
+        """Target query-start cadence and recover immediately after a slow read.
+
+        A synchronous driver query can occupy most of the allowed coverage
+        gap. Its latency must not be followed by an unconditional extra sleep.
+        Start the next query when its target is due, without accumulating a
+        burst of missed historical deadlines. The audit still uses the full
+        entry/return bounds and rejects inadequate coverage.
+        """
+        interval = self.policy["driver_sample_interval_seconds"]
+        deadline = time.monotonic() + interval
+        try:
+            while not self._stop.wait(max(0.0, deadline - time.monotonic())):
+                started = time.monotonic()
+                self.sample()
+                deadline = started + interval
+        except Exception as error:
+            self.error = error
+
     def __enter__(self):
         import pynvml as nvml
 
@@ -244,14 +263,7 @@ class DriverSampler:
             self.sample()
             self._flush_through(1)
 
-            def observe():
-                try:
-                    while not self._stop.wait(interval):
-                        self.sample()
-                except Exception as error:
-                    self.error = error
-
-            self._thread = threading.Thread(target=observe, daemon=True)
+            self._thread = threading.Thread(target=self._observe, daemon=True)
             self._thread.start()
             return self
         except BaseException:

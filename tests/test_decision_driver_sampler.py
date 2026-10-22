@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools.kv.decision.production_resources import DriverSampler, POLICY
+from tools.kv.decision.production_resources import DriverSampler, POLICY, audit_window
 from tools.kv.decision import production_resources as resources
 
 
@@ -155,3 +155,96 @@ def test_log_write_failure_is_surfaced_before_model_work(tmp_path, monkeypatch, 
         with DriverSampler(path):
             pytest.fail("A broken observation log must prevent model startup")
     assert nvml["shutdown"] == 1
+
+
+def virtual_observations(tmp_path, monkeypatch, durations, *, interval=None):
+    """Run the real scheduling loop with controlled query wall times."""
+    clock = SimpleNamespace(seconds=0.0, stopped=False)
+
+    class Stop:
+        def wait(self, timeout):
+            if clock.stopped:
+                return True
+            assert timeout >= 0
+            clock.seconds += timeout
+            return False
+
+    policy = dict(POLICY)
+    if interval is not None:
+        policy["driver_sample_interval_seconds"] = interval
+    sampler = DriverSampler(tmp_path / "unused.jsonl", policy=policy)
+    sampler._stop = Stop()
+
+    def sample():
+        start = round(clock.seconds * 1e9)
+        clock.seconds += durations[len(sampler.rows)]
+        end = round(clock.seconds * 1e9)
+        sampler.rows.append(
+            {
+                "sample_schema": 2,
+                "monotonic_ns": end,
+                "memory_query_started_ns": start,
+                "memory_query_finished_ns": end,
+                "uuid": "GPU-fixed",
+                "name": POLICY["device_name"],
+                "driver_used_bytes": 60 * 1024**3,
+                "driver_total_bytes": 80 * 1024**3,
+            }
+        )
+        clock.stopped = len(sampler.rows) == len(durations)
+
+    sampler.sample = sample
+    monkeypatch.setattr(
+        resources, "time", SimpleNamespace(monotonic=lambda: clock.seconds)
+    )
+    sampler._observe()
+    assert sampler.error is None
+    assert len(sampler.rows) == len(durations)
+    audit = audit_window(
+        sampler.rows,
+        sampler.rows[0]["monotonic_ns"] + 1,
+        sampler.rows[-1]["memory_query_started_ns"] - 1,
+        policy=policy,
+    )
+    return sampler.rows, audit
+
+
+def test_query_cost_does_not_accumulate_into_target_cadence(tmp_path, monkeypatch):
+    rows, audit = virtual_observations(tmp_path, monkeypatch, [0.005] * 4)
+    starts = [r["memory_query_started_ns"] for r in rows]
+    assert starts == [20_000_000, 40_000_000, 60_000_000, 80_000_000]
+    assert audit["eligible"]
+
+
+def test_long_query_is_followed_by_immediate_recovery(tmp_path, monkeypatch):
+    rows, audit = virtual_observations(
+        tmp_path, monkeypatch, [0.0001, 0.433589902, 0.0001, 0.0001]
+    )
+    assert rows[2]["memory_query_started_ns"] == rows[1]["memory_query_finished_ns"]
+    assert (
+        rows[3]["memory_query_started_ns"] - rows[2]["memory_query_started_ns"]
+        == 20_000_000
+    )
+    assert audit["largest_sample_gap_seconds"] == pytest.approx(0.453589902)
+    assert audit["eligible"]
+
+
+def test_slow_query_exposes_insufficient_headroom_at_old_cadence(tmp_path, monkeypatch):
+    _, audit = virtual_observations(
+        tmp_path,
+        monkeypatch,
+        [0.0001, 0.433589902, 0.0001, 0.0001],
+        interval=0.1,
+    )
+    assert audit["largest_sample_gap_seconds"] == pytest.approx(0.533589902)
+    assert not audit["eligible"]
+
+
+def test_more_frequent_queries_do_not_relax_the_coverage_gate(tmp_path, monkeypatch):
+    _, audit = virtual_observations(
+        tmp_path, monkeypatch, [0.0001, 0.49, 0.0001, 0.0001]
+    )
+    assert POLICY["driver_maximum_sample_gap_seconds"] == 0.5
+    assert audit["largest_sample_gap_seconds"] == pytest.approx(0.51)
+    assert not audit["sampling_coverage_passed"]
+    assert not audit["eligible"]

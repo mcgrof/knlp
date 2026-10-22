@@ -282,7 +282,7 @@ the pinned [Torch 2.11 native allocator's splitting rule](https://github.com/pyt
 The live allocator inventory, rather than this request bound, determines
 whether the physical budget passes. The worker uses
 eight server, two client and two control CPUs, a 68-GiB Torch reserved cap,
-and a 76-GiB driver envelope sampled every 100 ms. Gaps above 500 ms fail
+and a 76-GiB driver envelope with a 20-ms query-start target. Gaps above 500 ms fail
 the resource audit; shorter peaks can be missed. Staging, weights and graph
 pools are separate from persistent cache storage.
 
@@ -293,6 +293,15 @@ return times around each memory query. The audit brackets the whole request
 window with those intervals and uses the largest possible gap between actual
 reads, retaining the 500-ms limit. Legacy point-timestamp captures keep their
 original audit semantics; they are not upgraded by the new collector.
+
+The observer targets query starts rather than sleeping a full interval after
+each query returns. A slow synchronous read is followed by an immediate new
+read, without a burst of missed deadlines. The finer target leaves more
+headroom for driver-query latency; it cannot guarantee timely observations.
+Long queries or scheduling delays can still fail the unchanged coverage gate.
+This cadence revision changes the observer and its overhead, so all compared
+arms need fresh invocations under one frozen protocol. Earlier 100-ms captures
+retain their original failed or passed audits and must not be pooled with them.
 
 ## Gated serving plans and analysis
 
