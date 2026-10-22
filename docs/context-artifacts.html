@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Typed, reusable context artifacts for learned KV prefixes and Memorilla memory. CPU restore evidence, sharing boundaries, and a comparison with REFRAG.">
+<title>Context Artifacts: Learned Prefixes and Latent Memory | knlp</title>
+<style>
+:root{color-scheme:dark;--bg:#080d16;--panel:#111b2a;--line:#2b3c51;--text:#eaf1fa;--muted:#a8b7ca;--cyan:#5ce1cf;--amber:#f5c46a;--blue:#82b8ff}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:radial-gradient(ellipse at top left,#143142 0,transparent 48%),var(--bg);color:var(--text);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--cyan);text-underline-offset:4px}a:hover{color:white}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{font-size:.88em}nav{background:#080d16f2;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}.nav-inner{max-width:1180px;margin:auto;padding:14px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}.brand{font-weight:800;color:var(--text);text-decoration:none}.nav-inner a{font-size:14px}.wrap{width:min(1140px,calc(100% - 48px));margin:auto}header{padding:88px 0 52px}.eyebrow{color:var(--cyan);font:700 13px/1.5 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase}h1{font-size:clamp(44px,6.8vw,78px);line-height:1.05;letter-spacing:-.045em;max-width:950px;margin:20px 0 25px}h2{font-size:clamp(28px,3.5vw,38px);line-height:1.2;letter-spacing:-.025em;margin:0 0 22px}h3{font-size:21px;line-height:1.3;margin:0 0 12px}p{max-width:880px}.lede{font-size:clamp(20px,2.4vw,26px);line-height:1.45;max-width:910px}.muted,small{color:var(--muted)}.tags{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.tag{border:1px solid var(--line);border-radius:30px;padding:6px 12px;font-size:13px;color:var(--muted)}.tag.ok{color:var(--cyan)}.tag.pending{color:var(--amber)}section{padding:48px 0;border-top:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.card{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.card p{font-size:16px;margin-bottom:0}.card code{color:var(--cyan)}.notice{border-left:3px solid var(--amber);background:#252119;padding:18px 22px;border-radius:0 10px 10px 0}.notice p{margin:0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;margin:24px 0}table{width:100%;border-collapse:collapse;font-size:15px;min-width:690px;text-align:left}th,td{padding:15px 17px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--cyan);background:#132333}tr:last-child td{border-bottom:0}td:first-child{font-weight:650;min-width:160px}.status{font-weight:650;color:var(--cyan)}.pending-text{color:var(--amber)}.lane{display:grid;grid-template-columns:170px 1fr 26px 1fr 26px 1fr;align-items:center;gap:10px;margin:16px 0}.lane-label{font-weight:750}.node{border:1px solid #377b76;background:#102d31;border-radius:10px;padding:16px;font-size:15px;line-height:1.4}.node.future{border:1px dashed #6b7d93;background:#142033}.node b{display:block;margin-bottom:6px}.arrow{color:var(--muted);text-align:center}.caption{font-size:14px;color:var(--muted);max-width:100%}pre{padding:20px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#080f1a;font-size:14px;line-height:1.7}.steps{counter-reset:step;display:grid;gap:15px}.step{padding-left:48px;position:relative}.step:before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;color:var(--cyan);font-weight:800;border:1px solid var(--line);width:30px;height:30px;border-radius:50%;text-align:center;line-height:28px}.step p{margin:0 0 12px}.refs li{margin-bottom:13px}footer{padding:36px 0 64px;color:var(--muted);font-size:14px}
+@media(max-width:820px){header{padding-top:50px}.grid{grid-template-columns:1fr}.lane{grid-template-columns:1fr;gap:8px;padding:18px 0;border-top:1px solid var(--line)}.lane-label{color:var(--cyan)}.arrow{transform:rotate(90deg);line-height:1}.wrap{width:calc(100% - 32px)}.nav-inner{gap:12px;padding:12px 16px}section{padding:36px 0}table{font-size:14px}}
+</style>
+</head>
+<body>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#evidence">What ran</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
+<header class="wrap">
+<div class="eyebrow">Context reuse · CPU proof of concept · October 2026</div>
+<h1>Reusable context,<br>typed by its consumer.</h1>
+<p class="lede">A learned key/value prefix, a document-vector bank, and a query’s soft memory tokens can share a storage contract. Each still needs its own model interface and cache identity.</p>
+<p class="muted">This work extends the <a href="learned_prefix_caches.html">Learned Prefix Cache (LPC) architecture</a> toward Memorilla’s latent memory. The implementation verifies durable file transport and a released reader on CPU. Serving through a common engine and LMCache remains a target.</p>
+<div class="tags"><span class="tag ok">43 CPU/configuration checks</span><span class="tag ok">8 released-reader examples</span><span class="tag pending">Decoder integration pending</span></div>
+<div class="notice"><p><strong>Current result:</strong> restored tensors and reader outputs match exactly in the tested cases. No generation-quality, shared GPU allocation, LMCache restore, or storage-speed result follows from those checks.</p></div>
+</header>
+<main class="wrap">
+<section id="architecture">
+<div class="eyebrow">01 / The shared contract</div><h2>Separate storage from model execution.</h2>
+<p>A context artifact is a versioned tensor payload plus the information needed to use it correctly. Its immutable ID binds the payload digest, representation, producer, and compatible consumers. File location and working-copy residency can change while that semantic identity stays fixed.</p>
+<div class="grid">
+<article class="card"><h3>Learned prefix</h3><code>prefix_kv</code><p>Per-layer key and value tensors for a particular model. Preserve exact logical positions, layer/head geometry, rotary-position settings, dtype, layout, and padding.</p></article>
+<article class="card"><h3>Document bank</h3><code>document_embeddings</code><p>Vectors produced by a pinned encoder and preprocessing pipeline. A compatible memory reader consumes the bank; it does not enter the decoder’s key/value cache directly.</p></article>
+<article class="card"><h3>Soft memory tokens</h3><code>input_embeddings</code><p>Vectors in the decoder’s input space. Bind their reader, bank, question, prompt placement, and positions. Prefill must still turn the assembled input into layer-specific key/value state.</p></article>
+</div>
+<p>The file registry implements import, resolve, load, working-copy eviction, and restore. It validates safetensors before synchronizing payload files and directories, then publishes metadata in a synchronous SQLite transaction. Missing, corrupt, or incompatible required artifacts fail explicitly. Existing cartridge connector APIs remain unchanged.</p>
+</section>
+<section id="sharing">
+<div class="eyebrow">02 / Sharing prospects</div><h2>Reuse the stable representation.</h2>
+<p>The useful sharing boundary depends on what produced the bytes. The following are architectural prospects; CPU file reuse does not establish physical GPU aliasing or an engine cache hit.</p>
+<div class="table-wrap"><table><thead><tr><th>Artifact</th><th>Potential reuse</th><th>Identity that must stay bound</th></tr></thead><tbody>
+<tr><td>LPC key/value prefix</td><td>Many requests to the same compatible decoder can attach one trained artifact. Avoid training or reconstructing it on a cache miss.</td><td>Checkpoint bytes, model weights, positions, geometry, layout, and ordered composition with the request.</td></tr>
+<tr><td>Memorilla document bank</td><td>Different questions can reuse the same query-independent collection. New or changed source material needs a new version.</td><td>Source content, encoder revision, preprocessing, namespace, and compatible reader.</td></tr>
+<tr><td>Memorilla readout</td><td>An identical readout can be restored when its complete dependencies match. A shared bank alone is insufficient.</td><td>Actual soft-token bytes, question/readout dependencies, reader checkpoint, decoder, template, and placement.</td></tr>
+<tr><td>Derived decoder key/value state</td><td>Potential reuse after exact prompt-embedding prefill. This bridge is not implemented here.</td><td>All preceding inputs, their order, model identity, positions, and the derived payload.</td></tr>
+</tbody></table></div>
+<p>An ID gives consumers a common object to resolve. It does not make vectors interchangeable across models, enforce access control, or make independently trained prefixes composable. Namespace is part of identity; an actual service still needs authorization. Multiple runtime users, resident-memory deduplication, and cache-key propagation require separate engine tests.</p>
+</section>
+<section id="paths">
+<div class="eyebrow">03 / Where the bytes go</div><h2>One lifecycle, different attachment paths.</h2>
+<div class="lane"><div class="lane-label">Learned prefix</div><div class="node"><b>Stored layer KV</b>Verified CPU import / restore</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Compatible KV attachment</b>Engine integration pending</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Decoder execution</b>Not exercised by this PoC</div></div>
+<div class="lane"><div class="lane-label">Memorilla</div><div class="node"><b>Document bank + question</b>Released cached vectors</div><div class="arrow" aria-hidden="true">→</div><div class="node"><b>Released memory reader</b>16 soft tokens; CPU parity</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Exact prompt-embedding prefill</b>Decoder integration pending</div></div>
+<p class="caption">Solid boxes are the CPU stages exercised here. Dashed boxes describe intended integration. Soft-token serialization was also checked separately; newly computed readouts do not need a mandatory storage round trip.</p>
+</section>
+<section id="evidence">
+<div class="eyebrow">04 / Evidence</div><h2>What was tested.</h2>
+<p>The comparison asks whether storage preserves an artifact and its reader behavior. It does not compare LPC quality with Memorilla quality: their checkpoints and model paths differ.</p>
+<div class="table-wrap"><table><thead><tr><th>Check</th><th>Observed result</th><th>Scope</th></tr></thead><tbody>
+<tr><td>Contract and configuration</td><td class="status">43 checks passed</td><td>Format validation, identity separation, corruption rejection, interrupted/concurrent publication, tail lengths, fresh-process bytes, and all seven preset round trips.</td></tr>
+<tr><td>Real LPC checkpoint</td><td class="status">All layer tensors exact</td><td>BF16 Llama-3.2-3B-Instruct artifact: 28 layers, 4,096 positions, eight KV heads of width 128. One frozen leading position plus 4,095 trained positions. Fresh-process payload digest matched.</td></tr>
+<tr><td>Released Memorilla reader</td><td class="status">8 of 8 examples exact</td><td>First eight PubMedQA test rows, complete selected collections, FP16 stored vectors, BF16 reader. Document tensors, reader outputs, and 16 × 4,096 soft-token tensors matched after restore.</td></tr>
+<tr><td>File command lifecycle</td><td class="status">Passed</td><td>Import, load, registry working-copy eviction, and restart. Reader writer process exited before a new process restored and recomputed its outputs.</td></tr>
+<tr><td>Engine / LMCache acceptance</td><td class="pending-text">Incomplete</td><td>Control, LMCache, and default inference-acceptance paths fail explicitly until implemented. No silent skip becomes a pass.</td></tr>
+</tbody></table></div>
+<p>The LPC byte check ran an unchanged loader function extracted from pinned source; it did not import a built vLLM engine. Its training-time model revision remains unverified. The reader used <a href="https://github.com/snap-stanford/memorilla/tree/005854d13ced2dfe56588fb721eb78db5ec13f6a">unchanged Memorilla source</a>, the <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/tree/f6b15af56aa687861c8d2d03b1cd8f7979881361/stage3">released stage3 checkpoint</a>, PyTorch 2.7.0+cpu, and Transformers 4.53.3. This is a reader-stage check, not the complete author serving environment.</p>
+<p>Numerical acceptance was exact tensor equality, with no tolerance widened after the result. The <a href="data/context-artifacts/cpu-restore-summary.json">sanitized result summary</a> records the tested geometry, versions, and acceptance flags. Page-cache state was unknown. No physical NVMe traffic, device transfer, latency improvement, power-loss guarantee, or generation score was measured.</p>
+</section>
+<section id="comparison">
+<div class="eyebrow">05 / Papers and interfaces</div><h2>Memorilla and REFRAG shorten context differently.</h2>
+<p><a href="https://arxiv.org/abs/2610.21375v1">Memorilla</a> reads a query-independent document-vector bank with a learned, query-conditioned module. Its released Qwen configuration emits 16 input-space memory tokens for a frozen decoder. Reading the whole selected collection is part of that method; replacing it with top-k retrieval would change the algorithm.</p>
+<p><a href="https://arxiv.org/abs/2509.01092v2">REFRAG</a>, from Meta and academic collaborators, encodes fixed token chunks, projects their vectors into decoder input space, and can expand selected chunks back to text. Its reconstruction stage freezes the decoder; later continual pretraining unfreezes it. Its mixed-input path therefore needs the corresponding trained decoder, encoder, projection, and policy.</p>
+<div class="table-wrap"><table><thead><tr><th>Question</th><th>Memorilla</th><th>REFRAG</th></tr></thead><tbody>
+<tr><td>Reusable unit</td><td>Document embeddings</td><td>Encoded chunks</td></tr>
+<tr><td>Query-time context</td><td>Fixed-size learned memory readout</td><td>Ordered mixture of compressed chunks and expanded text</td></tr>
+<tr><td>Decoder dependency</td><td>Frozen decoder paired with the trained reader</td><td>Decoder aligned through the paper’s training recipe</td></tr>
+<tr><td>Context budget</td><td>Fixed memory-token count</td><td>Depends on chunk count, compression, and expansion decisions</td></tr>
+</tbody></table></div>
+<p>These are method differences, not a matched accuracy or speed comparison. The papers use different models, tasks, training, and controls. Neither paper’s headline performance is a measured result of this implementation.</p>
+</section>
+<section id="target">
+<div class="eyebrow">06 / Engineering target</div><h2>Make context durable, compatible, and reusable.</h2>
+<p>Our target is a common lifecycle for context representations: publish verified bytes, resolve an immutable handle, load the representation its consumer expects, and recover it after eviction or restart. Training remains a producer’s separate responsibility. A missing LPC must not launch training, and storage must not disguise document vectors as layer KV.</p>
+<div class="steps">
+<div class="step"><h3>Preserve each control.</h3><p>Establish the real LPC engine/checkpoint baseline and the unmodified Memorilla decoder path. Keep engine-version changes separate from artifact/storage changes.</p></div>
+<div class="step"><h3>Attach context through the right interface.</h3><p>Use the existing LPC attachment for KV and exact template-aware input embeddings for Memorilla. Retain engine ownership of allocations and scheduling.</p></div>
+<div class="step"><h3>Qualify sharing and restore.</h3><p>Test equal-length different payloads, different questions over one bank, native and external cache keys, and actual inference after GPU eviction and process restart. File parity is the prerequisite already explored.</p></div>
+<div class="step"><h3>Measure the complete cost.</h3><p>Separate encoding, readout, serialization, storage completion, transfer, prefill, and decode. Compare matched tensors and cache states before making a storage or end-to-end speed claim.</p></div>
+</div>
+<p>A possible REFRAG adapter belongs at the chunk-bank and mixed-input boundaries, with its own typed metadata. Whether that adapter is worthwhile needs a separate compatibility and quality evaluation. It is not part of the CPU pass reported here.</p>
+</section>
+<section id="reproduce">
+<div class="eyebrow">07 / Code</div><h2>Inspect and reproduce the CPU contract.</h2>
+<p><a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">Source and instructions</a> explain environment setup, manifests, source locks, and the import/load/restore commands. Presets distinguish original controls, generalized file storage, and future LMCache paths.</p>
+<pre><code>python -m pytest tools/reproduce/context_artifacts/tests -q
+make defconfig DEFCONFIG=context-artifacts-memorilla-files
+make olddefconfig
+python -m tools.reproduce.context_artifacts.reader_probe --help</code></pre>
+<p class="muted">The file preset needs explicit paths, a source lock, a manifest, and a payload. Selecting it does not download models or establish serving support. The real LPC transport fixture requires a supplied compatible checkpoint; its weights are not distributed here.</p>
+</section>
+<section id="sources">
+<div class="eyebrow">08 / Primary sources</div><h2>Read the methods and the implementation.</h2>
+<ol class="refs">
+<li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
+<li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
+<li><a href="https://arxiv.org/abs/2509.01092v2">REFRAG: Rethinking RAG based Decoding, v2</a>, §2–3 and Appendix A.1 — chunk embeddings, decoder alignment, and selective expansion.</li>
+<li><a href="data/context-artifacts/cpu-restore-summary.json">CPU result summary</a> and <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">the file-artifact implementation</a> — measured scope and unimplemented acceptance paths.</li>
+</ol>
+</section>
+</main>
+<footer class="wrap">knlp · CPU file-artifact exploration · October 22, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
+</body>
+</html>
