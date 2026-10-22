@@ -13,6 +13,80 @@ report client-visible latency, throughput, failures and model qualification.
 [Current guide](asymmetric-quantization.html) · [Install](asymmetric-install.md) ·
 [Historical results and failure record](asymmetric-history.html)
 
+## Precision/scaling reference
+
+The completed two-model reference compares native K16/V16 with K16/V8 (A),
+K8/V16 (R) and K8/V8 (S), each with fixed (F) and token/head (D) scales.
+[Complete results and aggregate data](asymmetric-results.html#decision-reference)
+separate reference quality, physical backing and actual-worker support.
+
+Qwen/Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218` uses
+FP16 weights and compute. Qwen/Qwen2.5-7B-Instruct revision
+`a09a35458c702b33eeacc393d103063234e8bc28` uses BF16. Queries remain
+native in every arm. Compressed components persist as E4M3FN codes and
+FP32 scales; each layer temporarily reconstructs native attention operands.
+No stored codes are requantized. Fixed scales use native cache-write operands
+after normalization/RoPE, over 32 independent documents at 1K and 8K,
+including 128 decode steps. Scale construction clamps the FP32 absolute
+maximum at 1e-12, multiplies by the rounded FP32 reciprocal of 448, divides
+operands in FP32, clips to ±448 and rounds E4M3FN to nearest/even.
+Dynamic scaling applies this rule per fresh token/head vector.
+
+Calibration, development and confirmation documents are disjoint. Confirmation
+uses 64 paired documents at each context with 128 scored targets each, 200
+retrieval instances per context and all 1,319 GSM8K test items. GSM8K is an
+exposed standard benchmark. The original last-numeric-answer-label parser,
+2,048-token cap and truncation semantics are retained. Correct labeled answers
+at the cap count; errors, missing parses and truncations remain in the records.
+
+Two certificate families each allocate alpha .025 across all 12 model/recipe
+combinations (.025/12 per certificate). Every certificate requires native math
+accuracy at least 50%, retrieval gross-loss upper bounds ≤5% at both lengths
+and relative mean NLL upper bounds ≤1% at both lengths. Preservation adds a
+math gross-loss upper bound ≤2%. Aggregate math instead requires the paired
+net accuracy lower bound ≥−1 percentage point. Gross bounds are exact binomial;
+net bounds invert Tango's matched-pair score with approximate coverage.
+NLL uses 100,000 paired document-bootstrap draws, seed 20261020, linear quantiles.
+No certificate slot was removed or margin changed after results.
+
+Direct A−R and A−S comparisons use eight contrasts across models and scale
+policies within each of five endpoint families. Exact McNemar tests cover
+binary endpoints; centered paired bootstrap tests cover document NLL. Holm
+adjustment is per named endpoint. Descriptive paired 95% intervals differ
+from certificate bounds. A nonsignificant difference does not establish
+equivalence, and failure to certify does not automatically prove degradation.
+
+The measured reference source is
+[`782a4c5cd69b575b4736c14285477e306e176421`](https://github.com/mcgrof/knlp/commit/782a4c5cd69b575b4736c14285477e306e176421).
+One redundant row-integrity comparison between a saved GPU FP32 mean and a
+CPU FP64 reduction exceeded an absolute 1e-6 check by 5.47e-8. The documented
+[reader correction](https://github.com/mcgrof/knlp/commit/ccdf17062c9e6897777b80ecaddcc3c87e9f92c0)
+uses the FP32 summation rounding bound gamma_n = n·u/(1−n·u), n=128 and
+u=2^-24, while requiring finite nonnegative exact-FP32 losses and mean.
+All 1,792 NLL rows pass. Saved means, samples, statistical calculations,
+seeds and gates are unchanged; no GPU sample was rerun.
+
+Physical backing includes FP32 scales and unique shared storage once.
+A/R backing and allocation-size multisets match within each policy.
+CUDA allocation rounding, temporary layer reconstruction and process peaks
+remain separate. Reference execution time cannot rank fused serving kernels.
+
+[The harness README](https://github.com/mcgrof/knlp/blob/9837bff48a3b8e4ff2af90956b279bc927131d37/tools/kv/decision/README.md)
+contains preparation, source freezing, calibration, independent oracle,
+confirmation and CPU evidence-analysis commands. The published aggregate JSON
+records model/input/source and reader-result hashes. Redraw its figures with
+Matplotlib and the public renderer:
+
+```sh
+python -m tools.kv.decision.figures \
+  --data docs/data/asymmetric-decision-reference-20261022.json \
+  --out redrawn-reference
+```
+
+This redraw reproduces the aggregate figures; it does not independently
+re-audit private per-item captures. Optimized worker quality, graph correctness,
+allocator capacity and useful serving performance require separate evidence.
+
 ## Current 8K results
 
 Each study uses one H100 SXM 80 GB, FP16 compute, TP1, 22 CPU threads,

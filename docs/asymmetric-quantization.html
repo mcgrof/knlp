@@ -2,25 +2,39 @@
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asymmetric KV Cache Quantization — knlp</title>
-<meta name="description" content="Asymmetric KV storage, measured serving tradeoffs, and Qwen3.8/Gemma 4 comparisons against symmetric FP8. Quality, state memory, installation and limits.">
+<meta name="description" content="Choose native, asymmetric or symmetric KV by model and quality objective. Complete precision/scaling references, physical memory and measured serving limits.">
 <link rel="canonical" href="https://knlp.io/asymmetric-quantization.html">
 <link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261020b">
 <script src="assets/asymmetric-guide.js?v=20261019b" defer></script>
 </head><body>
 <a class="skip" href="#main">Skip to content</a>
-<header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Page navigation"><a href="#results">Results</a><a href="#recent-models">Recent models</a><a href="#models">Compatibility</a><a href="#install">Install</a><a href="#upstream">Upstream</a></nav></header>
+<header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Page navigation"><a href="#decision">Choose a format</a><a href="#results">Results</a><a href="#recent-models">Recent models</a><a href="#models">Compatibility</a><a href="#install">Install</a><a href="#upstream">Upstream</a></nav></header>
 <main id="main">
 <section class="hero" aria-labelledby="page-title">
 <p class="eyebrow">Inference · memory, quality and speed</p>
 <h1 id="page-title">Asymmetric KV<br>Cache Quantization</h1>
-<p class="lead">Use 16-bit keys and 8-bit values to shrink the KV cache. The tested Qwen3-8B implementation preserves quality and gives small batch-throughput gains. The best cache format depends on the model and workload.</p>
-<div class="hero-actions"><a class="button" href="#install">Install the tested recipe <span aria-hidden="true">↗</span></a><a href="#recent-models">Compare cache formats ↓</a></div>
+<p class="lead">Use 16-bit keys and 8-bit values to shrink the KV cache. Keeping keys precise helps in some model recipes. Symmetric FP8 is a better memory choice when it passes the required quality objective. Serving speed needs its own measurement.</p>
+<div class="hero-actions"><a class="button" href="#install">Install the tested recipe <span aria-hidden="true">↗</span></a><a href="#decision">Compare cache formats ↓</a></div>
 <div class="overview-grid" aria-label="What to expect">
 <div><span class="overview-label">Memory</span><strong>25% less payload</strong><p>At equal token slots, with equally sized key and value tensors.</p></div>
 <div><span class="overview-label">Performance</span><strong>Workload dependent</strong><p>Batch gains are measured. HTTP serving has latency and reliability tradeoffs.</p></div>
 <div><span class="overview-label">Availability</span><strong>Public forks</strong><p>Try the pinned Qwen3 recipe. <a href="#upstream">Upstream integration is pending.</a></p></div>
 </div>
 <p class="scope"><strong>When to choose it:</strong> choose K16/V8 when it passes your quality checks and K8/V8 does not. When symmetric FP8 also passes, it can save more memory—as the <a href="#recent-models">Qwen3.8 reference comparison</a> shows.</p>
+</section>
+<section id="decision" aria-labelledby="decision-title">
+<p class="eyebrow">Precision placement · two complete seven-format references</p>
+<h2 id="decision-title">Keep precise keys when the measured objective needs them.</h2>
+<p>On Qwen3-8B, dynamic symmetric FP8 qualifies for aggregate math accuracy and saves more cache memory. On Qwen2.5-7B-Instruct, quantizing keys severely damages math and retrieval under both tested scaling policies. Preserving keys avoids that collapse, but its smaller math differences still do not clear the full certification rule.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Cache-format decisions by model and objective"><table>
+<caption>Physical reference decisions · native queries and attention arithmetic · optimized deployment needs separate qualification</caption>
+<thead><tr><th scope="col">Model / scale policy</th><th scope="col">Quality objective</th><th scope="col">Decision</th><th scope="col">Evidence and limit</th></tr></thead><tbody>
+<tr><th scope="row">Qwen3-8B FP16 · dynamic token/head</th><td>Aggregate math + loss + retrieval</td><td><strong>Prefer symmetric</strong></td><td>K8/V8 and K16/V8 both pass. Including scales, K8/V8 saves 48.44% of cache backing versus 24.22% for K16/V8.</td></tr>
+<tr><th scope="row">Qwen3-8B FP16 · dynamic token/head</th><td>Answer preservation + loss + retrieval</td><td><strong>Recommend asymmetric</strong></td><td>K16/V8 passes; K8/V8 is not certified. This certificate difference does not establish direct accuracy superiority.</td></tr>
+<tr><th scope="row">Qwen3-8B FP16 · fixed layer/component</th><td>Answer preservation + loss + retrieval</td><td><strong>Recommend asymmetric</strong></td><td>K16/V8 passes and saves about 25% of cache backing. Its aggregate-math certificate is not established.</td></tr>
+<tr><th scope="row">Qwen2.5-7B-Instruct BF16 · either policy</th><td>Either complete certificate</td><td><strong>Keep native</strong></td><td>K16/V8 stays close to native but is not certified. Key-quantized arms degrade sharply; there is no qualified compressed default here.</td></tr>
+</tbody></table></div>
+<p class="scope"><strong>Two different objectives:</strong> preservation limits native-correct answers lost; aggregate math allows new correct answers to offset losses. Both also require prediction-loss and retrieval bounds. These recommendations concern the tested reference recipe, not a fused serving-speed claim. <a href="asymmetric-results.html#decision-reference">All counts, direct comparisons and confidence bounds →</a></p>
 </section>
 <section id="results" aria-labelledby="results-title">
 <p class="eyebrow">Measured inference value</p><h2 id="results-title">Cache savings and speed are separate results.</h2>
@@ -73,7 +87,7 @@
 </div>
 <p class="scope" id="recent-state-caption">Measured after 8,192 input + 128 continuation tokens, with original BF16 weights and compute. Here K16 means BF16; the optimized Qwen3 recipe uses FP16. Each model’s bars are scaled to its own native state size. Sizes include FP32 scales; weights, temporary reconstruction and allocator reservations are separate.</p>
 <p>Every arm ran all <strong>1,319 GSM8K math questions</strong>, retrieval at 1K and 8K, and prediction-loss checks. The direct math comparison does not establish an accuracy advantage for either compressed format. Passing these tests is not a guarantee for every task.</p>
-<div class="callout"><strong>Why this does not transfer automatically to the optimized stack</strong><p>The reference uses a separate dynamic scale for each token and attention head. It stores real FP8 tensors, then temporarily reconstructs BF16 inputs for attention. The optimized Qwen3 implementation uses calibrated fixed scales and direct mixed-precision decode. Because <em>both the model and the quantizer change</em>, this comparison cannot tell us which change makes symmetric FP8 viable.</p></div>
+<div class="callout"><strong>Why this does not transfer automatically to the optimized stack</strong><p>The reference uses a separate dynamic scale for each token and attention head. It stores real FP8 tensors, then temporarily reconstructs BF16 inputs for attention. The optimized Qwen3 implementation uses calibrated fixed scales and direct mixed-precision decode. This older comparison changes both model and quantizer relative to the optimized recipe. The <a href="#decision">separate precision/scaling experiment</a> controls these choices within Qwen3-8B and Qwen2.5; neither reference alone establishes serving performance.</p></div>
 <p><a href="asymmetric-results.html#recent-reference">Full quality results, state breakdown and reproduction →</a></p>
 </section>
 <section id="models" aria-labelledby="models-title">

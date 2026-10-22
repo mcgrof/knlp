@@ -13,6 +13,12 @@ bounds. It establishes no distinctive asymmetric advantage or fused
 serving support. See the [completed comparison](asymmetric-quantization.html#recent-models)
 for quality, state memory and reproduction.
 
+The [precision/scaling reference](asymmetric-results.html#decision-reference)
+adds matched fixed and dynamic policies on Qwen3-8B and Qwen2.5-7B-Instruct.
+It identifies model-dependent value from preserving keys and distinguishes
+answer preservation from aggregate accuracy. It does not extend optimized
+support to any of the architectures below.
+
 | Model | Actual test | Result |
 | --- | --- | --- |
 | Ministral-3-8B-Instruct-2512 | Physical K16/V8, both native controls, production checks and full task quality on H200 | Preservation not established on the frozen GSM8K task; no performance confirmation |
