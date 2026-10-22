@@ -198,6 +198,10 @@ shown below. It uses Torch 2.11.0+cu129 and
 Transformers 5.5.3. The separate `current` batch recipe keeps its existing
 source pins. Production requires one H100 80GB HBM3, at least twelve usable
 CPU cores of affinity and quota, and an otherwise idle device.
+The worker also requires a soft file-descriptor limit of at least 8,192.
+Set it in the launching shell so every child inherits it; the hard limit
+must permit this value. The worker rejects insufficient resources before
+starting a model process.
 
 Create `official-model-files.json` from the pinned checkpoint's immutable
 Git objects for `config.json`, `generation_config.json` and
@@ -237,9 +241,17 @@ The installer and full setup/package/source receipts remain part of the
 evidence. A helper creates no cloud allocation.
 
 For each of `native_fi`, `AF`, `native_fa3`, `SD`, run one fresh numerical and
-quality invocation. Use the installed Python for all worker commands:
+quality invocation. Activate the installed environment so JIT subprocesses
+also find its `ninja` and `cmake` executables. The CUDA toolkit's `nvcc` and
+a C++ compiler must be available on `PATH`. Use the installed Python for
+all worker commands. Set `CUDA_HOME` to the installed toolkit directory;
+the example uses its standard location:
 
 ```sh
+ulimit -Sn 8192
+export CUDA_HOME=/usr/local/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+. install/env/bin/activate
 install/env/bin/python -m tools.kv.decision.production_stage \
   --install install --inputs production-inputs --protocol-sha256 "$PROTOCOL_SHA" \
   --arm native_fi --phase numerical_quality --output worker-quality/native_fi
