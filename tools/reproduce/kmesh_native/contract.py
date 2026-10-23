@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Check complete native-cache test receipts without importing a GPU runtime."""
+"""Check complete native-layout or copy receipts without GPU runtime imports."""
 
 import hashlib
 import json
@@ -16,10 +16,19 @@ SELECTORS = (
     EXECUTOR + "::test_overlap_slot_reuse_is_bit_exact",
     EXECUTOR + "::test_grouped_layout_rotation_preserves_raw_values",
 )
+PROFILES = {
+    "paged-cache": HERE / "profile.json",
+    "registered-copy": HERE / "profiles" / "registered-copy.json",
+}
 
 
-def expected_cases() -> set[str]:
+def expected_cases(name: str = "paged-cache") -> set[str]:
     """Enumerate the selected cases; missing or skipped cases cannot qualify."""
+    if name != "paged-cache":
+        cases = profile(name)["cases"]
+        if not cases or len(set(cases)) != len(cases):
+            raise ValueError("empty or duplicate native case selection")
+        return set(cases)
     basic = {
         SELECTORS[1] + f"[{chunks}-{batch}-{fmt}]"
         for chunks, batch in ((12, 4), (96, 16), (44, 16))
@@ -40,21 +49,35 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def profile() -> dict:
+def profile_path(name: str = "paged-cache") -> Path:
+    """Select one packaged, reviewed source profile."""
+    if type(name) is not str or name not in PROFILES:
+        raise ValueError("unknown native qualification profile")
+    return PROFILES[name]
+
+
+def profile(name: str = "paged-cache") -> dict:
     """Load the pinned source, native binaries and test configuration."""
-    return json.loads((HERE / "profile.json").read_text())
+    return json.loads(profile_path(name).read_text())
 
 
-def verify(root: Path) -> dict:
+def selectors(name: str = "paged-cache") -> list[str]:
+    """Keep the original paged-cache selection or use the named profile's cases."""
+    return list(SELECTORS) if name == "paged-cache" else profile(name)["selectors"]
+
+
+def verify(root: Path, name: str = "paged-cache") -> dict:
     """Reject partial, skipped, mismatched or failed native captures.
 
     Saved-file checks establish consistency with the pinned test program.
     They do not independently authenticate the machine that produced it.
     """
-    cfg = profile()
+    cfg = profile(name)
     receipt = json.loads((root / "receipt.json").read_text())
-    cases = expected_cases()
-    if receipt["profile_sha256"] != digest(HERE / "profile.json"):
+    cases = expected_cases(name)
+    if receipt["profile_name"] != name or receipt["profile_sha256"] != digest(
+        profile_path(name)
+    ):
         raise ValueError("wrong native qualification profile")
     if receipt["harness_files_sha256"] != {
         name: digest(HERE / name) for name in HARNESS_FILES
@@ -73,7 +96,7 @@ def verify(root: Path) -> dict:
         raise ValueError("native execution failed or used another backend")
     if receipt["device"]["count"] != 1:
         raise ValueError("select exactly one CUDA device")
-    if receipt["selectors"] != list(SELECTORS):
+    if receipt["selectors"] != selectors(name):
         raise ValueError("different test selectors")
     collected = receipt["collected"]
     if len(collected) != len(cases) or set(collected) != cases:
@@ -108,6 +131,7 @@ def verify(root: Path) -> dict:
     if xml_names != names:
         raise ValueError("test XML names differ from captured cases")
     return {
+        "profile": name,
         "source_commit": cfg["lmcache_commit"],
         "executed_cases": len(cases),
         "geometry": cfg["geometry"],

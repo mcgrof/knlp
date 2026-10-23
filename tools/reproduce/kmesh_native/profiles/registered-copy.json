@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "lmcache_commit": "6776516b3efd156df1fa014bc6f346adce374379",
+  "source_files_sha256": {
+    "csrc/cuda/blend_kernels.cu": "e779457cca2de4e9d2f255ee70d286d05d9d56a69147c27f817b8bcf688c634d",
+    "csrc/cuda/pos_kernels.cu": "d9aba684db30c9c99aa10d45b7f08e93ddc93fc72983d2ab554f05cc6d2963c4",
+    "csrc/cuda/pybind.cpp": "462473868d6dd378f794055ea4a28e75b1a7b16cdfffdf9bbe057719122ca81e",
+    "csrc/engine_kv_format.h": "5aff0fad9ff11c6daf03b9cb4da8d530bc4ab02ee6bcf7e061599e1f8abcb096",
+    "lmcache/v1/gpu_connector/kv_format/__init__.py": "fda8c8b23f147ca35055958780e89631b398d094d94dbfa864a62cc18ce0d4fe",
+    "lmcache/v1/multiprocess/context_ownership.py": "ff936e0bd27ffe33646d2e1b586996413f1f16429505cd7aada5654bcebc1bf9",
+    "lmcache/v1/multiprocess/kmesh_device_copy.py": "237373fb0ab94e321317fefdd1784fb4a671bb298e21f80b6373fec94fa3d3a1",
+    "lmcache/v1/multiprocess/modules/blend/module.py": "2c9fe87a92af69b281450af591dfe28dc8be71f754f6b5c77371bc477f37c4f2",
+    "lmcache/v1/multiprocess/modules/blend/registration.py": "5875b165813d5371b6bd9ef021fdc9cd49ef6e7fd2fc9e45db9f916d56c35bd1",
+    "lmcache/v1/multiprocess/modules/blend/retrieve.py": "846750b118ea330215d026949fbba0f0fc61da72381967436c0fe1e1f09fb9f8",
+    "lmcache/v1/multiprocess/modules/blend/rope.py": "b100cecf760893e6b4333fcacdc167c0e06fa9df1cbe761889163fff0a755655",
+    "lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py": "2f93a86482f944724c67160c16887fb2071f9b66091ed73cdbed1900ecb8a0ad",
+    "lmcache/v1/platform/base/device_spec.py": "14b38a3b493fbc15499bba79be85c468430e84ea78da2cf0a57d3a3c9920ee10",
+    "lmcache/v1/platform/base/event_ipc.py": "2bdebfb2d62dec1fe4c631dd5654abdf338b2e4e47a6ae1f725d1c0828663164",
+    "lmcache/v1/platform/devices/cuda/cache_context.py": "25326e4393f1717b071efe3dacb5463a31eceeca76b1ef4171edc366566b530c",
+    "lmcache/v1/platform/devices/cuda/ipc_wrapper.py": "7e41baa2a317899bd6ae33d58a2783a71888cdcffd6f64d25aa451fed887f978",
+    "lmcache/v1/platform/stream.py": "75d88267a4261c2b7935ab9f7c57c6e83d6dbd901c118815f854920007b97687",
+    "tests/v1/multiprocess/test_cb_plan_executor_gpu.py": "c9005ed991252522364d7de7f03af8f7e7bd8042ba661b6ce72a0d0fbb057b6f",
+    "tests/v1/test_fused_rerope.py": "bdf7aa52af99dac9d54cea1c3c864c5ea3a878b5cd6ce6a33dbe86a45bdf642c",
+    "tests/v1/test_kmesh_device_copy_gpu.py": "ff9c37845f760137870eba06439c0368c8ef95e5d09a5ddf86a29ea0428da32e"
+  },
+  "native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b"
+  },
+  "required_symbols": [
+    "CBGroupSpec",
+    "execute_cb_retrieve_plan_flat",
+    "rotary_embedding_k_fused",
+    "rotary_embedding_k_fused_strided"
+  ],
+  "selectors": [
+    "tests/v1/test_kmesh_device_copy_gpu.py::test_registered_ipc_copy_and_failed_drain_retain_the_exporter"
+  ],
+  "cases": [
+    "tests/v1/test_kmesh_device_copy_gpu.py::test_registered_ipc_copy_and_failed_drain_retain_the_exporter[success]",
+    "tests/v1/test_kmesh_device_copy_gpu.py::test_registered_ipc_copy_and_failed_drain_retain_the_exporter[copy-drained]",
+    "tests/v1/test_kmesh_device_copy_gpu.py::test_registered_ipc_copy_and_failed_drain_retain_the_exporter[copy-undrained]"
+  ],
+  "geometry": {
+    "paged_dtype": "bfloat16",
+    "paged_shape": [
+      2,
+      16,
+      4,
+      2,
+      8
+    ],
+    "rotary_dtype": "float32",
+    "rotary_shape": [
+      64,
+      8
+    ],
+    "rotary_copy_bytes": 2048,
+    "dram_store_bytes": 8388608,
+    "producer_stream": "non-default",
+    "producer_delay_fixture": {
+      "operation": "FP32 matrix multiply",
+      "matrix_shape": [
+        2048,
+        2048
+      ],
+      "repetitions": 512,
+      "purpose": "Challenge an actually pending producer event, not simulate model serving."
+    }
+  },
+  "limits": [
+    "Separate exporter and server processes with real legacy CUDA IPC tensors, streams and events; test receive identity is supplied explicitly.",
+    "Legacy rotary registration begins with drained inputs. The event challenge covers a later write, not ordered registration before its first read.",
+    "Copy-submission and stream-drain errors are injected around actual copies; device faults and exporter death are not qualified.",
+    "The producer must still be pending on server receipt; an already-drained challenge cannot qualify.",
+    "No KMesh runtime-discovery admission, namespace/data execution, model serving, DMA-BUF I/O or performance claim."
+  ]
+}

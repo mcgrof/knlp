@@ -13,12 +13,14 @@ from tools.reproduce.kmesh_native import cell, contract, run
 
 
 class NativeReceiptTests(unittest.TestCase):
+    profile_name = "paged-cache"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        cfg = contract.profile()
-        cases = sorted(contract.expected_cases())
+        cfg = contract.profile(self.profile_name)
+        cases = sorted(contract.expected_cases(self.profile_name))
         xml = ET.Element("testsuites")
         suite = ET.SubElement(xml, "testsuite")
         for case in cases:
@@ -31,7 +33,8 @@ class NativeReceiptTests(unittest.TestCase):
             )
         ET.ElementTree(xml).write(self.root / "junit.xml")
         self.receipt = {
-            "profile_sha256": contract.digest(contract.HERE / "profile.json"),
+            "profile_name": self.profile_name,
+            "profile_sha256": contract.digest(contract.profile_path(self.profile_name)),
             "harness_files_sha256": {
                 name: contract.digest(contract.HERE / name)
                 for name in contract.HARNESS_FILES
@@ -41,7 +44,7 @@ class NativeReceiptTests(unittest.TestCase):
             "native_sha256": cfg["native_sha256"],
             "exit_code": 0,
             "device": {"backend": "cuda", "count": 1},
-            "selectors": list(contract.SELECTORS),
+            "selectors": contract.selectors(self.profile_name),
             "collected": cases,
             "reports": [
                 {"nodeid": name, "when": when, "outcome": "passed", "wasxfail": None}
@@ -53,10 +56,19 @@ class NativeReceiptTests(unittest.TestCase):
 
     def check_receipt(self, receipt):
         (self.root / "receipt.json").write_text(json.dumps(receipt))
-        return contract.verify(self.root)
+        return contract.verify(self.root, self.profile_name)
 
     def test_complete_synthetic_receipt(self):
-        self.assertEqual(self.check_receipt(self.receipt)["executed_cases"], 32)
+        self.assertEqual(
+            self.check_receipt(self.receipt)["executed_cases"],
+            len(contract.expected_cases(self.profile_name)),
+        )
+
+    def test_named_profile_is_required_and_cannot_select_an_external_file(self):
+        with self.assertRaisesRegex(ValueError, "profile"):
+            self.check_receipt(self.receipt | {"profile_name": "unknown-profile"})
+        with self.assertRaises(ValueError):
+            contract.profile("../other-profile")
 
     def test_skip_cannot_qualify(self):
         self.receipt["reports"][0]["outcome"] = "skipped"
@@ -127,6 +139,10 @@ class NativeReceiptTests(unittest.TestCase):
                 ["cell", "--source", str(source), "--output", str(source / "results")],
             ), self.assertRaisesRegex(RuntimeError, "outside"):
                 cell.main()
+
+
+class RegisteredCopyReceiptTests(NativeReceiptTests):
+    profile_name = "registered-copy"
 
 
 if __name__ == "__main__":

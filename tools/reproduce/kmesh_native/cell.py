@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Execute pinned native-cache controls in a prepared CUDA environment."""
+"""Execute pinned native-layout or registered-copy controls on CUDA."""
 
 import argparse
 import importlib.metadata
@@ -11,9 +11,10 @@ from pathlib import Path
 
 from tools.reproduce.kmesh_native.contract import (
     HARNESS_FILES,
-    SELECTORS,
     digest,
     profile,
+    profile_path,
+    selectors,
 )
 
 
@@ -42,6 +43,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profile", default="paged-cache")
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     checkout = Path(__file__).resolve().parents[3]
@@ -53,8 +55,8 @@ def main() -> None:
     ):
         raise RuntimeError("test capture already exists")
     output.mkdir(parents=True, exist_ok=True)
-    cfg = profile()
-    profile_hash = digest(Path(__file__).with_name("profile.json"))
+    cfg = profile(args.profile)
+    profile_hash = digest(profile_path(args.profile))
     helper_hashes = {
         name: digest(Path(__file__).with_name(name)) for name in HARNESS_FILES
     }
@@ -108,7 +110,7 @@ def main() -> None:
                 "no:cacheprovider",
                 "--junitxml",
                 str(output / "junit.xml"),
-                *SELECTORS,
+                *selectors(args.profile),
             ],
             plugins=[capture],
         )
@@ -124,7 +126,7 @@ def main() -> None:
     }:
         raise RuntimeError("native extensions changed during execution")
     if (
-        profile_hash != digest(Path(__file__).with_name("profile.json"))
+        profile_hash != digest(profile_path(args.profile))
         or helper_hashes
         != {name: digest(Path(__file__).with_name(name)) for name in HARNESS_FILES}
         or subprocess.check_output(
@@ -138,6 +140,7 @@ def main() -> None:
     ):
         raise RuntimeError("qualification program or checkout changed during execution")
     receipt = {
+        "profile_name": args.profile,
         "profile_sha256": profile_hash,
         "harness_files_sha256": helper_hashes,
         "source": {"commit": commit, "clean": not dirty},
@@ -159,8 +162,9 @@ def main() -> None:
             "count": torch.cuda.device_count(),
             "capability": list(torch.cuda.get_device_capability(0)),
             "capacity_bytes": torch.cuda.get_device_properties(0).total_memory,
+            "name": torch.cuda.get_device_properties(0).name,
         },
-        "selectors": list(SELECTORS),
+        "selectors": selectors(args.profile),
         "collected": capture.collected,
         "reports": capture.reports,
         "exit_code": code,

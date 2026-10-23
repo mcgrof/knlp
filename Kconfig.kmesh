@@ -42,6 +42,13 @@ config KNLP_REPRODUCE_KMESH_NATIVE
 
 if KNLP_REPRODUCE_KMESH_NATIVE
 
+config KNLP_KMESH_NATIVE_PROFILE
+	string "Native source profile (paged-cache or registered-copy)"
+	default "paged-cache"
+	help
+	  Select native paged-cache rotation or separate-process registered
+	  tensor copying. Each profile pins its source, binaries and cases.
+
 config KNLP_KMESH_NATIVE_SOURCE
 	string "Clean pinned LMCache source with matching native extensions"
 	default ""

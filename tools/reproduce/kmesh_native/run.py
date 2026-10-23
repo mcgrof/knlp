@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Plan, run or verify native paged-cache correctness qualification."""
+"""Plan, run or verify native-layout and registered-copy qualification."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.reproduce.kmesh_native.contract import SELECTORS, profile, verify
+from tools.reproduce.kmesh_native.contract import profile, selectors, verify
 
 
 def main() -> None:
@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("action", choices=("plan", "run", "verify"))
     parser.add_argument("--config", type=Path, default=Path(".config"))
     args = parser.parse_args()
-    settings = {"SOURCE": "", "OUTPUT": ""}
+    settings = {"SOURCE": "", "OUTPUT": "", "PROFILE": "paged-cache"}
     if args.config.is_file():
         for line in args.config.read_text().splitlines():
             if line.startswith("CONFIG_KNLP_KMESH_NATIVE_"):
@@ -30,7 +30,9 @@ def main() -> None:
     if args.action == "plan":
         print(
             json.dumps(
-                profile() | {"selectors": SELECTORS, "settings": settings}, indent=2
+                profile(settings["PROFILE"])
+                | {"selectors": selectors(settings["PROFILE"]), "settings": settings},
+                indent=2,
             )
         )
         return
@@ -41,7 +43,7 @@ def main() -> None:
     if output == checkout or checkout in output.parents:
         parser.error("experiment output must be outside the knlp source checkout")
     if args.action == "verify":
-        print(json.dumps(verify(output), indent=2))
+        print(json.dumps(verify(output, settings["PROFILE"]), indent=2))
         return
     if not settings["SOURCE"]:
         parser.error("set KMESH_NATIVE_SOURCE to the pinned LMCache checkout")
@@ -70,6 +72,8 @@ def main() -> None:
                 str(source),
                 "--output",
                 str(output),
+                "--profile",
+                settings["PROFILE"],
             ],
             env=env,
             stdout=log,
@@ -77,7 +81,7 @@ def main() -> None:
             check=True,
             timeout=900,
         )
-    result = verify(output)
+    result = verify(output, settings["PROFILE"])
     (output / "verified.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 
