@@ -72,6 +72,11 @@ vLLM pin replace that explicitly selected runtime.
 The worker checks catalog and LMCache source revisions and tracked changes,
 and records the separately imported engine path/version. Full fork-engine
 qualification is distinct from testing these catalog modules.
+The recorded port qualification exercises PubMedQA's polarity scorer.
+Choice-scored tasks additionally require the author encoder API
+(`LLM(task="embed")`), which newer engines may remove. The original runtime
+preset retains that API; a ported engine needs separate encoder/scorer
+qualification before running the complete eight-benchmark suite.
 LMCache arena size is `KNLP_MEM_POOL_BYTES`; this bounds artifact allocations,
 not total application memory or the Linux page cache. Existing precomputed
 collections are converted and verified before generation. Publication and
