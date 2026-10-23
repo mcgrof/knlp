@@ -93,6 +93,15 @@ make defconfig DEFCONFIG=context-artifacts-memorilla-files
 make olddefconfig
 python -m tools.reproduce.context_artifacts.reader_probe --help</code></pre>
 <p class="muted">The file preset needs explicit paths, a source lock, a manifest, and a payload. Selecting it does not download models or establish serving support. The real LPC transport fixture requires a supplied compatible checkpoint; its weights are not distributed here.</p>
+<h3>Checkpoint inference and reusable stress replay</h3>
+<p>The dated <a href="https://github.com/mcgrof/knlp/tree/2026-10-23-feature-context-artifacts/tools/reproduce/memorilla">checkpoint runner</a> provides <code>memorilla-author</code>, <code>memorilla-port-control</code>, and <code>memorilla-lmcache</code> defconfigs. The default evaluates the complete 100-question PubMedQA test with released weights and original scorers. Select <code>all</code> for the eight supervised benchmarks. No training is required.</p>
+<pre><code>make defconfig DEFCONFIG=memorilla-author
+make olddefconfig
+make menuconfig
+make memorilla-fetch MEMORILLA_PYTHON=/path/to/python
+make memorilla-benchmark MEMORILLA_PYTHON=/path/to/python
+make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
+<p>The same stress command works with the adapter preset and can replay a saved request trace. Public dated branches of <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-context-artifacts">vLLM</a> and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-context-artifacts">LMCache</a> supply the catalog and storage dependencies. Read the runner instructions for exact commits, environments, saved-trace comparison, and the distinction between the original CUDA runtime and a separately qualified runtime. Released checkpoint lineage does not establish an exact reproduction of every paper score. These commands are separate from the CPU transport results above.</p>
 </section>
 <section id="sources">
 <div class="eyebrow">08 / Primary sources</div><h2>Read the methods and the implementation.</h2>
