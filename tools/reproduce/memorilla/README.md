@@ -119,6 +119,11 @@ before treating an exact mismatch as evidence of wrong-bank reuse.
 Reports include synchronous batch p50/p95/p99, completed requests per second,
 whole-worker time, driver RSS/page faults and process I/O observations, plus
 LMCache logical range loads/hits. Batch latency is not individual latency.
+`KNLP_MEM_DIAGNOSTICS=y` additionally hashes collated tensors, per-request
+reader outputs and exact decoder prompt embeddings. It synchronizes GPU-to-CPU
+copies and changes timing, so use it to locate correctness differences, not
+to claim performance. Comparison reports these tensor differences separately;
+equal decoder inputs do not override a failed output-string comparison.
 Driver usage excludes engine-child totals. Page-cache state is unknown;
 logical bytes and process counters are not attributed NVMe commands.
 

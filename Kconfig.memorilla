@@ -56,6 +56,13 @@ config KNLP_MEM_BANK_SWAP
 	  Synthetic inference isolation workload. Keep question zero and
 	  replay the selected collection schedule. These pairs are not scored
 	  as paper benchmark examples. Compare them against native inference.
+config KNLP_MEM_DIAGNOSTICS
+	bool "Hash collated inputs, reader outputs and decoder prompt tensors"
+	default n
+	help
+	  Diagnostic replay only. Copy intermediate tensors to CPU and hash
+	  them per request to locate output mismatches. Extra synchronization
+	  changes timing; do not use this mode to claim a performance result.
 config KNLP_MEM_SEED
 	int "Request and evaluation seed"
 	default 23

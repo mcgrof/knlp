@@ -2,6 +2,7 @@
 """Checkpoint evaluator and deterministic replay using unchanged author modules."""
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,42 @@ from pathlib import Path
 
 from .run import BENCHMARKS, DATA, ENCODER, LMCACHE, READER, VLLM, digest, write
 from .workloads import fingerprint, percentile, request_record, schedule
+
+
+def tensor_digest(tensor):
+    """Hash tensor values with dtype and shape, including bfloat16."""
+    import torch
+
+    owned = tensor.detach().cpu().contiguous()
+    return fingerprint(
+        {
+            "dtype": str(owned.dtype),
+            "shape": list(owned.shape),
+            "sha256": hashlib.sha256(
+                owned.reshape(-1).view(torch.uint8).numpy().tobytes()
+            ).hexdigest(),
+        }
+    )
+
+
+def observe_tensors(model):
+    """Observe reader output and exact prompt embeddings without changing them."""
+    observed = {}
+
+    def reader_hook(module, args, output):
+        observed["reader_sha256"] = [tensor_digest(row) for row in output]
+
+    hook = model.memory.register_forward_hook(reader_hook)
+    original = model.engine.generate
+
+    def generate(requests, *args, **kwargs):
+        observed["prompt_sha256"] = [
+            tensor_digest(request["prompt_embeds"]) for request in requests
+        ]
+        return original(requests, *args, **kwargs)
+
+    model.engine.generate = generate
+    return observed, hook
 
 
 def catalog_class(root):
@@ -278,6 +315,12 @@ def main():
         "vllm_engine_tree_sha256": fingerprint(engine_files),
         "catalog_source_revision": VLLM if cfg["profile"] == "lmcache" else None,
         "engine_options": cfg.get("engine_options", {}),
+        "diagnostics": cfg.get("diagnostics") == "y",
+        "torch_precision": {
+            "matmul_tf32": torch.backends.cuda.matmul.allow_tf32,
+            "float32_matmul": torch.get_float32_matmul_precision(),
+            "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        },
         "protocol": asdict(protocols[name]),
         "page_cache_state": "unknown",
         "training": False,
@@ -378,6 +421,9 @@ def main():
             suffix=benchmark.suffix,
             train=False,
         )
+        observed, hook = (
+            observe_tensors(model) if cfg.get("diagnostics") == "y" else ({}, None)
+        )
         durations, inconsistent = [], []
         seen = {}
         total_generation = 0
@@ -393,17 +439,31 @@ def main():
                         for entry in current
                     ]
                 )
+                diagnostics = {}
+                if observed or hook is not None:
+                    diagnostics["batch_input_sha256"] = fingerprint(
+                        {key: tensor_digest(value) for key, value in batch.items()}
+                    )
                 texts = model.generate(**batch, max_new_tokens=benchmark.max_new_tokens)
                 torch.cuda.synchronize()
                 elapsed = time.monotonic() - tick
                 durations.append(elapsed)
                 total_generation += elapsed
-                for request, text in zip(current, texts, strict=True):
+                for position, (request, text) in enumerate(
+                    zip(current, texts, strict=True)
+                ):
                     prediction = clean_generation(text)
                     semantic_key = request["input_digest"]
                     if semantic_key in seen and seen[semantic_key] != prediction:
                         inconsistent.append(request["request_id"])
                     seen[semantic_key] = prediction
+                    if hook is not None:
+                        diagnostics["reader_sha256"] = observed["reader_sha256"][
+                            position
+                        ]
+                        diagnostics["prompt_sha256"] = observed["prompt_sha256"][
+                            position
+                        ]
                     receipt.write(
                         json.dumps(
                             request
@@ -411,6 +471,7 @@ def main():
                                 "prediction": prediction,
                                 "batch_seconds": elapsed,
                                 "batch_size": len(current),
+                                **diagnostics,
                             }
                         )
                         + "\n"
@@ -436,6 +497,8 @@ def main():
             },
         )
         del model, memory
+        if hook is not None:
+            hook.remove()
         release_gpu_memory()
     write(
         opts.output / "resources.json",

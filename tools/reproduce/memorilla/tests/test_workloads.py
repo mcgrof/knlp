@@ -99,3 +99,28 @@ def test_request_identity_uses_collection_without_raw_document_column():
     assert original["input_digest"] != swapped["input_digest"]
     assert original["row"] == swapped["row"] == 0
     assert swapped["collection_id"] == 901
+
+
+def test_bfloat16_diagnostics_bind_values_shape_and_dtype():
+    import torch
+
+    from tools.reproduce.memorilla.worker import tensor_digest
+
+    x = torch.tensor([[1.0, 2.0]], dtype=torch.bfloat16)
+    assert tensor_digest(x) == tensor_digest(x.clone())
+    assert tensor_digest(x) != tensor_digest(x.reshape(2, 1))
+    assert tensor_digest(x) != tensor_digest(x.float())
+    assert tensor_digest(x) != tensor_digest(x + 1)
+
+
+def test_tensor_equality_does_not_hide_changed_generated_text():
+    ref = {
+        "request_id": "q:0",
+        "input_digest": "same",
+        "prediction": "yes",
+        "prompt_sha256": "same",
+    }
+    result = compare([ref], [ref | {"prediction": "no"}])
+    assert result["exact_decoder_inputs"]
+    assert not result["exact"]
+    assert result["tensor_differences"]["reader_sha256"] is None

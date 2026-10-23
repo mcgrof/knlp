@@ -95,10 +95,22 @@ def compare(reference, observed):
     bad_inputs = [
         key for key in common if left[key]["input_digest"] != right[key]["input_digest"]
     ]
+    tensors = {}
+    for field in ["batch_input_sha256", "reader_sha256", "prompt_sha256"]:
+        tensors[field] = (
+            sorted(key for key in common if left[key][field] != right[key][field])
+            if common
+            and all(field in left[key] and field in right[key] for key in common)
+            else None
+        )
     return {
         "missing": sorted(left.keys() - right.keys()),
         "unexpected": sorted(right.keys() - left.keys()),
         "changed_predictions": sorted(changed),
         "changed_inputs": sorted(bad_inputs),
         "exact": left.keys() == right.keys() and not changed and not bad_inputs,
+        "tensor_differences": tensors,
+        "exact_decoder_inputs": left.keys() == right.keys()
+        and tensors["prompt_sha256"] == []
+        and not bad_inputs,
     }
