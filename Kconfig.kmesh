@@ -1,6 +1,26 @@
 # SPDX-License-Identifier: MIT
 menu "Exact-prefix reasoning forks"
 
+config KNLP_REPRODUCE_KMESH_CONTRACTS
+	bool "Qualify CPU ownership, sessions and registered-context lifetime"
+	default n
+	help
+	  Run the pinned LMCache CPU ownership controls and transport suites.
+	  Require every selected case and test phase to execute successfully.
+	  GPUs are hidden. This does not qualify KMesh serving or device I/O.
+
+if KNLP_REPRODUCE_KMESH_CONTRACTS
+
+config KNLP_KMESH_CONTRACTS_SOURCE
+	string "Clean pinned LMCache source with its shared native extension"
+	default ""
+
+config KNLP_KMESH_CONTRACTS_OUTPUT
+	string "Fresh result directory outside both source checkouts"
+	default ""
+
+endif
+
 config KNLP_REPRODUCE_KMESH_NATIVE
 	bool "Qualify native paged-cache layouts and position recovery"
 	default n
