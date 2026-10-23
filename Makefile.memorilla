@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+MEMORILLA_PYTHON ?= $(PYTHON)
+MEMORILLA_RUN = $(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.run
+.PHONY: memorilla memorilla-fetch memorilla-doctor memorilla-benchmark \
+ memorilla-stress memorilla-compare
+memorilla memorilla-doctor:
+	@$(MEMORILLA_RUN) doctor --config $(CONFIG_FILE)
+memorilla-fetch:
+	@$(MEMORILLA_RUN) fetch --config $(CONFIG_FILE)
+memorilla-benchmark:
+	@$(MEMORILLA_RUN) benchmark --config $(CONFIG_FILE)
+memorilla-stress:
+	@$(MEMORILLA_RUN) stress --config $(CONFIG_FILE) $(if $(TRACE),--trace "$(TRACE)")
+memorilla-compare:
+	@$(MEMORILLA_RUN) compare --reference $(REFERENCE) --observed $(OBSERVED)
+ifeq ($(CONFIG_KNLP_REPRODUCE_MEMORILLA),y)
+MEMORILLA_CONFLICTS := $(foreach v,KNLP_CONTEXT_ARTIFACTS MODEL_GNN \
+ GOOGLE_MUVERA_SMALL MUVERA_SMALL SUBLIMINAL_LEARNING \
+ RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
+ KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
+ KNLP_REPRODUCE_KVIO KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
+ KNLP_REPRODUCE_KMESH_TRACE KNLP_REPRODUCE_KMESH_RESIDENCY \
+ KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \
+ KNLP_REPRODUCE_KMESH_RESTORE KNLP_REPRODUCE_KMESH_CASCADE \
+ KNLP_DMABUF KVTIDE KNLP_QUANT_FP8 KNLP_TF_REPRO KNLP_MODULAR_REPRO \
+ MATCHED_MICRO,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
+ifneq ($(strip $(MEMORILLA_CONFLICTS)),)
+$(error Conflicting Memorilla workloads: $(strip $(MEMORILLA_CONFLICTS)))
+endif
+.DEFAULT_GOAL := memorilla
+endif

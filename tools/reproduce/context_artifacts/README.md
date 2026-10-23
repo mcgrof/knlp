@@ -145,3 +145,8 @@ python -m tools.reproduce.context_artifacts.reader_probe --help
 The integration tests use the real cartridge registry and LMCache host
 allocator. They cover all three representations, packed ranges, concurrent
 misses, consumer rejection, corrupt/short files, and active/idle eviction.
+
+Full checkpoint inference and reusable request replay use the separate
+[`memorilla-author`, `memorilla-port-control`, and `memorilla-lmcache`
+defconfigs](../memorilla/README.md). They run decoder generation and original
+scorers; the artifact import/load commands above retain their transport scope.

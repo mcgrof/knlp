@@ -1,0 +1,169 @@
+# Memorilla checkpoint evaluation and stress replay
+
+This runner uses the released checkpoints. It never trains. The original
+control runs the author's unchanged evaluation driver, mmap embedding store,
+reader, prompt construction, frozen decoder and scorers. The storage adapter
+uses the same driver with document collections supplied by LMCache. It does
+not convert Memorilla into a KV prefix or replace its learned reader.
+
+Start from the public knlp branch `2026-10-23-feature-context-artifacts`.
+Select one preset:
+
+| Defconfig | Purpose |
+| --- | --- |
+| `memorilla-author` | Original source and pinned author CUDA dependencies. |
+| `memorilla-port-control` | Original mmap collections on a separately qualified engine. Record runtime differences separately. |
+| `memorilla-lmcache` | Same engine with the common cartridge catalog and leased LMCache host storage. |
+
+```sh
+make defconfig DEFCONFIG=memorilla-author
+make olddefconfig
+make menuconfig
+# Select a persistent KNLP_MEM_ROOT and a benchmark (pubmedqa or all).
+make memorilla-fetch MEMORILLA_PYTHON=/path/to/python
+```
+
+Fetching needs `huggingface_hub>=0.36,<1` and Git. It downloads only selected
+test splits, their precomputed embeddings, released readers, decoder weights,
+and the scoring encoder when required. It saves exact revision and SHA-256
+inventories in `inputs.json`. No training data or training job is needed.
+The fetch source pins are in `run.py`; changed or mismatched source/assets
+fail validation. Keep the work root and its input manifest together.
+
+For the original author runtime, use a separate Python 3.11 environment and
+install the fetched project using its `pyproject.toml`. It pins Torch 2.7.0,
+vLLM 0.9.1, Transformers 4.53.3 and datasets 4.1.1. Evaluation does not need
+FlashAttention. The author's supported recipes use CUDA and an 80 GiB GPU.
+An environment with other versions must use the explicitly separate port
+control; it cannot pass the original-runtime doctor.
+
+```sh
+/path/to/python -m pip install /path/to/work/source/memorilla-author
+make memorilla-doctor MEMORILLA_PYTHON=/path/to/python
+make memorilla-benchmark MEMORILLA_PYTHON=/path/to/python
+```
+
+Plain `make` performs readiness checks only. `memorilla-benchmark` explicitly
+runs inference. Each invocation gets a new run directory with resolved
+configuration, input/runtime identities, stdout/stderr, predictions, original
+metrics and deltas from the paper. Failures retain partial evidence. The
+complete 100-row PubMedQA test is the default, not the earlier eight-row
+reader-only probe. Set `KNLP_MEM_BENCHMARK="all"` for all eight benchmarks.
+Each benchmark starts a separate engine so its released checkpoint is explicit.
+
+## Public adapter dependencies
+
+The port control and LMCache presets fetch these source branches, then detach
+at the exact commits below. Install LMCache in a separate environment using its supported instructions
+for the selected Torch/GPU build. The catalog consists of independent Python
+modules loaded explicitly from the pinned vLLM checkout under their normal
+module names. Only the three catalog files are loaded; the engine package
+search path stays unchanged. An existing catalog at another location is
+rejected. This does not replace or pretend to rebuild an installed vLLM
+engine. Build/install the desired engine separately; preserve its exact runtime
+identity. Install Memorilla's remaining dependencies without letting its CUDA
+vLLM pin replace that explicitly selected runtime.
+
+| Repository | Public branch | Exact commit |
+| --- | --- | --- |
+| [vLLM](https://github.com/mcgrof/vllm/tree/2026-10-23-feature-context-artifacts) | `2026-10-23-feature-context-artifacts` | `21a71b62a2a72a12dcf23e44c3fac21143d7b9ee` |
+| [LMCache](https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-context-artifacts) | `2026-10-23-feature-context-artifacts` | `d8d0fd7fa5869880384eea883c8f7b59a64cf29f` |
+
+The worker checks catalog and LMCache source revisions and tracked changes,
+and records the separately imported engine path/version. Full fork-engine
+qualification is distinct from testing these catalog modules.
+LMCache arena size is `KNLP_MEM_POOL_BYTES`; this bounds artifact allocations,
+not total application memory or the Linux page cache. Existing precomputed
+collections are converted and verified before generation. Publication and
+conversion time are included in whole-worker time, but not replay batch time.
+The unchanged author collator expects owned CPU tensors, so this adapter copies
+out of a lease before returning a collection. That ownership copy is explicit.
+Question embeddings retain the author's mmap path. No automatic KV attachment,
+remote StorageManager routing or speed advantage is claimed.
+
+## Reusable stress command
+
+```sh
+make memorilla-stress MEMORILLA_PYTHON=/path/to/python
+# Replay the same saved requests with another preset or batch size:
+make memorilla-stress TRACE=/path/to/control/trace.json \
+  MEMORILLA_PYTHON=/path/to/python
+make memorilla-compare REFERENCE=/path/to/control/requests.jsonl \
+  OBSERVED=/path/to/adapter/requests.jsonl MEMORILLA_PYTHON=/path/to/python
+```
+
+The same stress command works with every preset. Configure request count,
+seed, question working set, batch size, and sequential/shuffled/random/hot
+accesses in menuconfig. A shuffle visits every selected question before
+repeating; hot traffic puts about 90% of requests in the first 10% of questions.
+Working-set size counts questions, which can share collections; it is not a
+byte budget. `KNLP_MEM_BANK_SWAP=y` holds question zero fixed while changing
+the document bank. This is a synthetic input-isolation test, not a scored
+paper example. It uses the same original collator, reader and decoder. `KNLP_MEM_EVICT_EVERY` explicitly clears adapter residency every N
+batches and leaves the Linux page cache unchanged.
+
+A `TRACE` replay validates its row bounds, collection, checkpoint, data and
+prompt identities before running. It does not silently regenerate a new
+schedule. Every replay saves its complete request schedule and append-only predictions,
+with stable request IDs, row/collection IDs and input digests. Comparisons
+reject duplicate IDs, missing requests, changed inputs and changed predictions.
+Keep seed, pattern, request count and working set fixed when changing storage
+or batching. Repeated-question output changes are reported.
+`KNLP_MEM_ENGINE_JSON` accepts only explicit port-runtime options
+(`enforce_eager`, `attention_config`, `max_num_seqs`). They are recorded in
+provenance; original author mode rejects them. Model, prompts and sampling
+cannot be overridden through this setting. Greedy generation
+can differ numerically across batch shapes and devices; investigate changes
+before treating an exact mismatch as evidence of wrong-bank reuse.
+
+Reports include synchronous batch p50/p95/p99, completed requests per second,
+whole-worker time, driver RSS/page faults and process I/O observations, plus
+LMCache logical range loads/hits. Batch latency is not individual latency.
+Driver usage excludes engine-child totals. Page-cache state is unknown;
+logical bytes and process counters are not attributed NVMe commands.
+
+This first stressor covers sustained synchronous batched inference, workload
+order, shared collections and adapter eviction. It does not yet implement
+paced concurrent clients, asynchronous cancellation, process-kill recovery,
+corruption injection or automatic resource sweeps. The separate artifact
+integration suite tests corruption, short files, concurrent misses and lease
+pressure. These should later share the inference trace, rather than silently
+relabeling transport-only checks as end-to-end stress results.
+
+## What the paper result contains
+
+[Paper v1](https://arxiv.org/html/2610.21375v1), Table 11 and Appendix D,
+provide these primary targets. Scores below are percentages, except ROUGE-L,
+which the code also reports on a 0–100 scale.
+
+| Benchmark | Questions | Primary metric | Memorilla target |
+| --- | ---: | --- | ---: |
+| PubMedQA | 100 | Accuracy | 59.00 |
+| FactKG | 9,041 | Accuracy | 84.33 |
+| TriviaQA | 500 | Exact match | 57.00 |
+| NarrativeQA | 10,557 | ROUGE-L | 19.31 |
+| LaMP-4 | 1,925 | ROUGE-L | 18.15 |
+| LaMP-7 | 1,500 | ROUGE-L | 48.37 |
+| PersonaMem-v2 | 5,000 | Short-answer accuracy | 44.60 |
+| PersonalizationV4 | 4,237 | Short-answer accuracy | 66.65 |
+
+There are 32,860 questions in total. The code additionally writes F1, BLEU,
+ROUGE and METEOR where registered, and PV4 hard-subset accuracy. Choice scoring
+embeds generated answers and candidate answers; it does not ask an external
+judge. Released `test` files include the paper's selected development/test
+partitions. Validate row counts rather than changing their splits or sampling.
+
+Six benchmarks use released `stage3`; PMv2 and PV4 use their named released
+folders. The paper describes further personalization training from the
+multi-task checkpoint, but the released README labels those folders as trained
+from Stage 1 and labels stage3 as epoch-00. Therefore these commands reproduce
+*released-checkpoint inference*. Exact checkpoint equivalence to every paper
+row remains unverified. Deltas are reported honestly; passing execution is not
+proof of matching the table. Preserve checkpoint bytes and investigate a gap
+before changing prompts, scoring, generation budgets or checkpoints.
+
+The author's evaluation guide reports about 15 minutes on one H100 after
+inputs are cached. Our per-benchmark process isolation adds startup overhead;
+that figure is not a prediction for another GPU. The eight-benchmark suite
+excludes retraining, ablations that require new weights, other methods' full
+baseline sweeps, TextWorld RL evaluation, and the separate H100 latency curve.

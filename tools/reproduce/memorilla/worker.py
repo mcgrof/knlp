@@ -1,0 +1,455 @@
+# SPDX-License-Identifier: MIT
+"""Checkpoint evaluator and deterministic replay using unchanged author modules."""
+
+import argparse
+import importlib.util
+import json
+import os
+import resource
+import subprocess
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+
+from .run import BENCHMARKS, DATA, ENCODER, LMCACHE, READER, VLLM, digest, write
+from .workloads import fingerprint, percentile, request_record, schedule
+
+
+def catalog_class(root):
+    """Load the fork's CPU-only catalog without replacing a built engine."""
+    source = Path(root) / "source/vllm"
+    revision = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if revision != VLLM:
+        raise ValueError("catalog source revision mismatch")
+    subprocess.run(
+        ["git", "-C", str(source), "diff", "--exit-code", "HEAD", "--"], check=True
+    )
+    # Load exactly three independent modules. Do not change the engine's
+    # package search path or resolve its implementation from another tree.
+    for name in ["artifact_registry", "cartridge_manifest", "cartridge_registry"]:
+        filename = source / "vllm" / f"{name}.py"
+        key = f"vllm.{name}"
+        module = sys.modules.get(key)
+        if module is not None:
+            if Path(module.__file__).resolve() != filename.resolve():
+                raise ValueError(
+                    "an existing catalog shadows the pinned implementation"
+                )
+        else:
+            spec = importlib.util.spec_from_file_location(key, filename)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[key] = module
+            spec.loader.exec_module(module)
+    return module.CartridgeRegistry
+
+
+class ArtifactEmbeddingStore:
+    """Author collator API backed by leased LMCache collections.
+
+    The collator expects owned tensors after documents() returns. Copy while
+    leased, then let its unchanged padding code consume that owned tensor.
+    Document conversion/publication precedes measured generation.
+    """
+
+    def __init__(self, native, cfg, checkpoint, output):
+        from lmcache.v1.memory_allocators.host_memory_allocator import (
+            HostMemoryAllocator,
+        )
+        from safetensors.torch import save_file
+
+        from tools.reproduce.context_artifacts.artifacts import (
+            ConsumerIdentity,
+            ContextArtifactManifest,
+            DocumentMetadata,
+            inspect_payload,
+        )
+        from tools.reproduce.context_artifacts.lmcache_adapter import (
+            LMCacheArtifactRegistry,
+        )
+
+        self.native = native
+        self.consumer = ConsumerIdentity("memorilla/Memorilla-Qwen3-8B", READER)
+        directory = Path(cfg["root"]) / "artifacts" / native.config
+        directory.mkdir(parents=True, exist_ok=True)
+        self.catalog = catalog_class(cfg["root"])(directory / "cartridges.sqlite3")
+        self.registry = LMCacheArtifactRegistry(
+            self.catalog, HostMemoryAllocator(cfg["pool_bytes"])
+        )
+        self.ids = {}
+        checkpoint_hash = digest(checkpoint / "memory.pt")
+        for collection in native.collection_ids.tolist():
+            source = directory / f"{DATA}-{int(collection)}.safetensors"
+            vectors = native.documents(collection)
+            if not source.exists():
+                save_file({"embeddings": vectors.contiguous()}, str(source))
+            # A retained bank must still match its pinned native source.
+            import torch
+            from safetensors.torch import load_file
+
+            if not torch.equal(load_file(str(source))["embeddings"], vectors):
+                raise ValueError(
+                    "retained collection differs from pinned author source"
+                )
+            manifest = ContextArtifactManifest(
+                1,
+                "memorilla-evaluation",
+                "document_embeddings",
+                "Memorilla",
+                cfg["source_revision"],
+                checkpoint_hash,
+                (self.consumer,),
+                digest(source),
+                inspect_payload(source),
+                DocumentMetadata(
+                    ConsumerIdentity("Qwen/Qwen3-Embedding-4B", ENCODER),
+                    fingerprint(
+                        {
+                            "data": DATA,
+                            "benchmark": native.config,
+                            "split": native.split,
+                        }
+                    ),
+                    fingerprint(
+                        {
+                            "data": DATA,
+                            "benchmark": native.config,
+                            "collection": collection,
+                        }
+                    ),
+                    vectors.shape[0],
+                    vectors.shape[1],
+                ),
+            )
+            self.ids[int(collection)] = self.registry.register(manifest, source)
+        write(output / "artifacts.json", self.ids)
+
+    def documents(self, collection):
+        with self.registry.lease(self.ids[int(collection)], self.consumer) as tensors:
+            return tensors["embeddings"].clone()
+
+    def question(self, row):
+        return self.native.question(row)
+
+    def evict(self):
+        for artifact in self.ids.values():
+            self.registry.evict(artifact)
+
+    def stats(self):
+        store = self.registry.storage
+        return {
+            "range_loads": store.read_count,
+            "logical_bytes": store.read_bytes,
+            "resident_hits": store.cache_hits,
+            "resident_objects": len(store.resident),
+        }
+
+    def close(self):
+        self.registry.storage.close()
+        self.catalog.close()
+
+
+def usage():
+    observed = resource.getrusage(resource.RUSAGE_SELF)
+    result = {
+        "max_rss_kib": observed.ru_maxrss,
+        "major_faults": observed.ru_majflt,
+        "minor_faults": observed.ru_minflt,
+    }
+    try:
+        result["proc_io"] = dict(
+            line.split(": ", 1)
+            for line in Path("/proc/self/io").read_text().splitlines()
+        )
+    except OSError:
+        pass
+    return result
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--inputs", type=Path, required=True)
+    p.add_argument("--benchmark", required=True)
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--mode", choices=["benchmark", "stress"], required=True)
+    opts = p.parse_args()
+    cfg, inputs = json.loads(opts.config.read_text()), json.loads(
+        opts.inputs.read_text()
+    )
+    cfg["source_revision"] = inputs["source_revision"]
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_HOME"] = str(Path(cfg["root"]) / "hf")
+    source = Path(inputs["source"])
+    sys.path.insert(0, str(source))
+    spec = importlib.util.spec_from_file_location(
+        "memorilla_author_evaluate", source / "evaluate.py"
+    )
+    author = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(author)
+    import memorilla
+    import torch
+    import vllm
+    from memorilla.benchmarks import BENCHMARKS as protocols
+    from memorilla.data import MemoryCollator, MemoryDataset
+    from memorilla.metrics import clean_generation
+    from memorilla.utils import release_gpu_memory, seed_everything
+    from memorilla.vllm import MemoryVLLM
+
+    if cfg.get("engine_options"):
+        from functools import partial
+
+        import memorilla.vllm as serving
+
+        serving.LLM = partial(serving.LLM, **cfg["engine_options"])
+
+    if cfg["profile"] == "lmcache":
+        import lmcache
+
+        for module, expected in [(lmcache, LMCACHE)]:
+            checkout = Path(module.__file__).resolve().parent.parent
+            actual = subprocess.check_output(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
+            ).strip()
+            if actual != expected:
+                raise ValueError(
+                    f"{module.__name__} checkout must be {expected}, got {actual}"
+                )
+            subprocess.run(
+                ["git", "-C", str(checkout), "diff", "--exit-code", "HEAD", "--"],
+                check=True,
+            )
+
+    if cfg["profile"] == "author" and (
+        torch.version.hip is not None or not torch.cuda.is_available()
+    ):
+        raise ValueError("the original author profile requires the pinned CUDA runtime")
+    if Path(memorilla.__file__).resolve().parent != (source / "memorilla").resolve():
+        raise ValueError("imported author package differs from pinned source")
+    name = opts.benchmark
+    folder = name if name in {"pmv2", "pv4"} else "stage3"
+    checkpoint = Path(inputs["assets"]["reader"]["path"]) / folder
+    decoder = inputs["assets"]["decoder"]["path"]
+    engine_root = Path(vllm.__file__).resolve().parent
+    engine_files = {
+        str(path.relative_to(engine_root)): digest(path)
+        for path in sorted(engine_root.rglob("*"))
+        if path.is_file() and path.suffix in {".py", ".so"}
+    }
+    write(opts.output / "engine-files.json", engine_files)
+    args = argparse.Namespace(
+        benchmark=name,
+        config=None,
+        split="test",
+        scoring="generation",
+        checkpoint=str(checkpoint),
+        decoder=decoder,
+        encoder="Qwen/Qwen3-Embedding-4B",
+        system_prompt=None,
+        system_prompt_from=None,
+        max_length=None,
+        max_new_tokens=None,
+        batch_size=cfg["batch"],
+        gpu_memory_utilization=cfg["gpu_fraction"],
+        scorer_gpu_memory_utilization=cfg["scorer_fraction"],
+        data_repo=inputs["assets"]["data"]["path"],
+        data_dir=inputs["assets"]["data"]["path"],
+        cache_dir=str(Path(cfg["root"]) / "hf/hub"),
+        output_dir=str(opts.output / "author-results"),
+        seed=cfg["seed"],
+    )
+    provenance = {
+        "author_source": inputs["source_revision"],
+        "runner_sha256": digest(Path(__file__)),
+        "workloads_sha256": digest(Path(__file__).with_name("workloads.py")),
+        "checkpoint_folder": folder,
+        "checkpoint_sha256": digest(checkpoint / "memory.pt"),
+        "data_revision": DATA,
+        "decoder_revision": inputs["assets"]["decoder"]["revision"],
+        "encoder_revision": ENCODER,
+        "runtime_profile": cfg["profile"],
+        "torch": torch.__version__,
+        "hip": torch.version.hip,
+        "author_module": memorilla.__file__,
+        "vllm_engine_module": vllm.__file__,
+        "vllm_engine_version": vllm.__version__,
+        "vllm_engine_tree_sha256": fingerprint(engine_files),
+        "catalog_source_revision": VLLM if cfg["profile"] == "lmcache" else None,
+        "engine_options": cfg.get("engine_options", {}),
+        "protocol": asdict(protocols[name]),
+        "page_cache_state": "unknown",
+        "training": False,
+    }
+    write(opts.output / "provenance.json", provenance)
+    original_load = author.load_target
+    stores = []
+
+    def load_target(benchmark, settings):
+        benchmark, dataset, native = original_load(benchmark, settings)
+        expected = BENCHMARKS[name][0]
+        if len(dataset) != expected:
+            raise ValueError(f"expected {expected} rows, got {len(dataset)}")
+        if cfg["profile"] == "lmcache":
+            native = ArtifactEmbeddingStore(native, cfg, checkpoint, opts.output)
+            stores.append(native)
+        return benchmark, dataset, native
+
+    author.load_target = load_target
+    before = usage()
+    start = time.monotonic()
+    if opts.mode == "benchmark":
+        # The original driver constructs its collator/reader/engine, generates
+        # the complete split and calls its original scorers.
+        author.main(args)
+        metric_path = opts.output / "author-results" / name / "metrics.json"
+        metrics = json.loads(metric_path.read_text())
+        key, target = BENCHMARKS[name][1:]
+        write(
+            opts.output / "paper-comparison.json",
+            {
+                "paper_table": 11,
+                "metric": key,
+                "paper_percent": target,
+                "observed_percent": metrics[key],
+                "delta_percentage_points": metrics[key] - target,
+                "checkpoint_lineage_verified_against_paper": False,
+                "claim": "released-checkpoint evaluation; scores are observations, not an exact-reproduction gate",
+            },
+        )
+    else:
+        seed_everything(cfg["seed"])
+        benchmark, dataset, store = load_target(protocols[name], args)
+        items = MemoryDataset([(benchmark.config, benchmark.split, dataset)])
+        rows = min(len(items), cfg["rows"] or len(items))
+        order = schedule(rows, cfg["requests"], cfg["seed"], cfg["pattern"])
+
+        def request(row, request_id, bank_row):
+            if type(bank_row) is not int or not 0 <= bank_row < len(items):
+                raise ValueError("trace bank row is outside the selected split")
+            return request_record(
+                dataset[row],
+                dataset[bank_row],
+                row,
+                bank_row,
+                request_id,
+                {
+                    "data": DATA,
+                    "checkpoint": provenance["checkpoint_sha256"],
+                    "decoder_revision": provenance["decoder_revision"],
+                    "encoder_revision": ENCODER,
+                    "protocol": provenance["protocol"],
+                },
+            )
+
+        trace = [
+            request(0 if cfg.get("bank_swap") == "y" else row, f"{name}:{i}", row)
+            for i, row in enumerate(order)
+        ]
+        if cfg.get("trace"):
+            from .workloads import validate_trace
+
+            supplied = json.loads(Path(cfg["trace"]).read_text())
+            validate_trace(supplied, len(items))
+            for entry in supplied:
+                if entry != request(
+                    entry["row"], entry["request_id"], entry.get("bank_row")
+                ):
+                    raise ValueError(
+                        "trace input identity differs from the selected checkpoint/data/protocol"
+                    )
+            trace = supplied
+        write(opts.output / "trace.json", trace)
+        memory = author.MemoryModule.from_pretrained(checkpoint)
+        model = MemoryVLLM(
+            decoder,
+            memory,
+            max_model_len=benchmark.max_length,
+            gpu_memory_utilization=cfg["gpu_fraction"],
+            cache_dir=args.cache_dir,
+        )
+        collator = MemoryCollator(
+            model.tokenizer,
+            {(benchmark.config, benchmark.split): store},
+            num_memories=model.memory.num_memories,
+            max_length=benchmark.max_length,
+            system_prompt=benchmark.system_prompt,
+            suffix=benchmark.suffix,
+            train=False,
+        )
+        durations, inconsistent = [], []
+        seen = {}
+        total_generation = 0
+        with (opts.output / "requests.jsonl").open("w") as receipt:
+            for index, offset in enumerate(range(0, len(trace), cfg["batch"])):
+                current = trace[offset : offset + cfg["batch"]]
+                if cfg["evict_every"] and index % cfg["evict_every"] == 0 and stores:
+                    store.evict()
+                tick = time.monotonic()
+                batch = collator(
+                    [
+                        items[entry["row"]] | {"collection_id": entry["collection_id"]}
+                        for entry in current
+                    ]
+                )
+                texts = model.generate(**batch, max_new_tokens=benchmark.max_new_tokens)
+                torch.cuda.synchronize()
+                elapsed = time.monotonic() - tick
+                durations.append(elapsed)
+                total_generation += elapsed
+                for request, text in zip(current, texts, strict=True):
+                    prediction = clean_generation(text)
+                    semantic_key = request["input_digest"]
+                    if semantic_key in seen and seen[semantic_key] != prediction:
+                        inconsistent.append(request["request_id"])
+                    seen[semantic_key] = prediction
+                    receipt.write(
+                        json.dumps(
+                            request
+                            | {
+                                "prediction": prediction,
+                                "batch_seconds": elapsed,
+                                "batch_size": len(current),
+                            }
+                        )
+                        + "\n"
+                    )
+                receipt.flush()
+        write(
+            opts.output / "stress-summary.json",
+            {
+                "requests": len(trace),
+                "unique_inputs": len(seen),
+                "unique_questions": len({entry["row"] for entry in trace}),
+                "unique_collections": len({entry["collection_id"] for entry in trace}),
+                "synthetic_bank_pairs": any(
+                    entry["row"] != entry["bank_row"] for entry in trace
+                ),
+                "batch_seconds_p50": percentile(durations, 0.5),
+                "batch_seconds_p95": percentile(durations, 0.95),
+                "batch_seconds_p99": percentile(durations, 0.99),
+                "generation_seconds": total_generation,
+                "requests_per_second": len(trace) / total_generation,
+                "repeated_question_prediction_changes": inconsistent,
+                "note": "Synchronous batched replay; batch latency is not individual request latency. Numeric output changes are reported, not silently tolerated.",
+            },
+        )
+        del model, memory
+        release_gpu_memory()
+    write(
+        opts.output / "resources.json",
+        {
+            "before": before,
+            "after": usage(),
+            "elapsed_seconds": time.monotonic() - start,
+            "note": "Driver-process usage only; engine children and device I/O are not fully attributed.",
+        },
+    )
+    for store in stores:
+        write(opts.output / "storage.json", store.stats())
+        store.close()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: MIT
+menuconfig KNLP_REPRODUCE_MEMORILLA
+	bool "Memorilla checkpoint inference and stress replay"
+	default n
+	help
+	  Run released author checkpoints with the original prompts, reader,
+	  decoder and scorers. No training target is provided.
+
+if KNLP_REPRODUCE_MEMORILLA
+choice
+	prompt "Memorilla inference path"
+config KNLP_MEM_AUTHOR
+	bool "Original author runtime and mmap store"
+config KNLP_MEM_PORT_CONTROL
+	bool "Original mmap store on a separately recorded runtime"
+config KNLP_MEM_LMCACHE
+	bool "Shared artifact catalog and LMCache embedding store"
+endchoice
+config KNLP_MEM_ROOT
+	string "Local persistent source, model and run root"
+	default "build/memorilla"
+config KNLP_MEM_BENCHMARK
+	string "Benchmark name or all"
+	default "pubmedqa"
+config KNLP_MEM_BATCH
+	int "Generation batch size"
+	range 1 256
+	default 32
+config KNLP_MEM_GPU_FRACTION
+	string "Decoder GPU memory fraction"
+	default "0.6"
+config KNLP_MEM_SCORER_FRACTION
+	string "Scoring encoder GPU memory fraction"
+	default "0.3"
+config KNLP_MEM_POOL_BYTES
+	int "LMCache host arena bytes"
+	default 67108864
+config KNLP_MEM_ENGINE_JSON
+	string "Port-only vLLM engine options JSON"
+	default "{}"
+	help
+	  Explicit engine options for the port control and LMCache path only.
+	  For example, enforce_eager can qualify an existing native build.
+	  Original author mode rejects overrides. Sampling stays unchanged.
+config KNLP_MEM_REQUESTS
+	int "Stress requests per benchmark"
+	range 1 10000000
+	default 1000
+config KNLP_MEM_PATTERN
+	string "Stress pattern: sequential, shuffle, random, hot"
+	default "shuffle"
+config KNLP_MEM_BANK_SWAP
+	bool "Stress one question against different document collections"
+	default n
+	help
+	  Synthetic inference isolation workload. Keep question zero and
+	  replay the selected collection schedule. These pairs are not scored
+	  as paper benchmark examples. Compare them against native inference.
+config KNLP_MEM_SEED
+	int "Request and evaluation seed"
+	default 23
+config KNLP_MEM_ROWS
+	int "Stress working set in questions; zero means full split"
+	range 0 1000000
+	default 0
+config KNLP_MEM_EVICT_EVERY
+	int "Evict adapter residency every N batches; zero disables"
+	range 0 1000000
+	default 0
+endif

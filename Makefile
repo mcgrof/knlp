@@ -68,6 +68,7 @@ include Makefile.modular
 include Makefile.subliminal
 include Makefile.residual_reproduction
 include Makefile.context_artifacts
+include Makefile.memorilla
 
 # MUVERA presets use their own runners rather than the model training path.
 MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
