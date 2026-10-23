@@ -8,12 +8,13 @@
 <link rel="canonical" href="https://knlp.io/qwen2.5-use-openrouter.html">
 <link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261020b">
 <style>
+.usage-figure{max-width:none;text-align:left;padding:22px}.usage-figure h3{margin-bottom:8px}.plot-scroll{overflow-x:auto;margin:20px 0;background:#fff;border-radius:4px}.plot-scroll img{display:block;width:100%;height:auto;min-width:850px}.usage-figure figcaption{font-size:14px}.plot-help{font-size:13px;color:var(--muted)}@media(max-width:700px){.usage-figure{padding:16px}}
 .usage-table{min-width:680px}.usage-table small{display:block;color:var(--muted);font-weight:400;font-size:12px;overflow-wrap:anywhere}.usage-table td{font-variant-numeric:tabular-nums}.usage-table time{white-space:nowrap}.usage-table .reference-model{background:#17372a}.periods{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:28px 0}.periods>div{border:1px solid var(--line);border-top:3px solid var(--accent);padding:20px;background:var(--surface);border-radius:6px}.periods .unknown{border-top-color:#a5b9ac}.periods strong{display:block;font-size:21px}.periods p{font-size:14px;margin:8px 0 0}.periods span{font-size:12px;color:var(--muted)}@media(max-width:700px){.periods{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<header><a class="brand" href="./">knlp<span> / model usage</span></a><nav aria-label="Page navigation"><a href="#findings">Findings</a><a href="#meaning">What this means</a><a href="#method">Method</a></nav></header>
+<header><a class="brand" href="./">knlp<span> / model usage</span></a><nav aria-label="Page navigation"><a href="#graphs">Graphs</a><a href="#findings">Findings</a><a href="#meaning">What this means</a><a href="#method">Method</a></nav></header>
 <main id="main">
 <section class="hero" aria-labelledby="page-title">
 <p class="eyebrow">OpenRouter · snapshot collected October 23, 2026</p>
@@ -26,6 +27,22 @@
 <div><span>January–December 2025</span><strong>7 model IDs observed</strong><p>Rankings exist on 363 days. Qwen2.5’s final observed appearance is November 19.</p></div>
 <div><span>January 1–October 22, 2026</span><strong>0 top-50 appearances</strong><p>All 295 daily rankings are present. Zero appearances does not mean zero tokens.</p></div>
 </div>
+</section>
+<section id="graphs" aria-labelledby="graphs-title">
+<p class="eyebrow">September 2024–October 2026 · seven observed model IDs</p>
+<h2 id="graphs-title">From regular appearances to no top-50 entries</h2>
+<p>The monthly view shows how often each variant reached the rankings. The daily view shows token volume only when a model was individually reported. Neither graph fills unknown traffic with zero.</p>
+<p class="plot-help">On a narrow screen, scroll each graph sideways or open the full-size image.</p>
+<figure class="usage-figure" aria-labelledby="monthly-title" aria-describedby="monthly-caption">
+<h3 id="monthly-title">Days in the top 50, by month</h3>
+<div class="plot-scroll" tabindex="0" role="region" aria-label="Scrollable monthly top-50 appearances graph"><img src="assets/qwen25-openrouter-monthly-top50-days.svg" width="1600" height="640" alt="Monthly heatmap of seven Qwen2.5 model IDs. The original 72B, 7B and Coder-32B variants appear frequently in early 2025, then less often. All variants have zero top-50 appearances in 2026 through October 22."></div>
+<figcaption id="monthly-caption">Each cell counts reported days, not tokens. <strong>0 means no top-50 appearance, not zero usage.</strong> Gray cells and dashes mark unavailable 2024 history. The coverage counts above the graph account for the two missing days in 2025; October 2026 contains only 22 days. <a href="assets/qwen25-openrouter-monthly-top50-days.svg">Open full-size monthly graph →</a></figcaption>
+</figure>
+<figure class="usage-figure" aria-labelledby="daily-title" aria-describedby="daily-caption">
+<h3 id="daily-title">Daily input plus output token volume</h3>
+<div class="plot-scroll" tabindex="0" role="region" aria-label="Scrollable daily token volume graph"><img src="assets/qwen25-openrouter-daily-tokens.svg" width="1400" height="1470" loading="lazy" alt="Seven panels show daily input plus output tokens for Qwen2.5 variants on a shared logarithmic scale. Observations become sparse during 2025 and end in November. Gray shading marks unavailable 2024 history; two amber lines mark missing dataset dates."></div>
+<figcaption id="daily-caption">Each dot is one model’s reported total for one day. The vertical axis is <strong>millions of tokens on a logarithmic scale</strong>; each major step is ten times the previous value. Blank dates have unknown individual traffic. Gray marks history outside the API’s range. The yellow/amber lines mark <strong>June 15 and July 15, 2025</strong>, when no dataset rows were returned for any model. Their cause is unknown. <a href="assets/qwen25-openrouter-daily-tokens.svg">Open full-size daily graph →</a></figcaption>
+</figure>
 </section>
 <section id="findings" aria-labelledby="findings-title">
 <p class="eyebrow">Seven observed IDs · free alias kept separate</p>
