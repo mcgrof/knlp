@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("action", choices=("plan", "run", "verify"))
     parser.add_argument("--config", type=Path, default=Path(".config"))
     args = parser.parse_args()
-    settings = {"SOURCE": "", "OUTPUT": ""}
+    settings = {"SOURCE": "", "OUTPUT": "", "PROFILE": "contexts", "VLLM_SOURCE": ""}
     if args.config.is_file():
         for line in args.config.read_text().splitlines():
             if line.startswith("CONFIG_KNLP_KMESH_CONTRACTS_"):
@@ -28,8 +28,9 @@ def main() -> None:
         key: os.environ.get("KMESH_CONTRACTS_" + key, value)
         for key, value in settings.items()
     }
+    cfg = profile(settings["PROFILE"])
     if args.action == "plan":
-        print(json.dumps(profile() | {"settings": settings}, indent=2))
+        print(json.dumps(cfg | {"settings": settings}, indent=2))
         return
     if not settings["OUTPUT"]:
         parser.error("set KMESH_CONTRACTS_OUTPUT to an external result directory")
@@ -38,13 +39,25 @@ def main() -> None:
     if output == checkout or checkout in output.parents:
         parser.error("experiment output must be outside the knlp source checkout")
     if args.action == "verify":
-        print(json.dumps(verify(output), indent=2))
+        print(json.dumps(verify(output, settings["PROFILE"]), indent=2))
         return
     if not settings["SOURCE"]:
         parser.error("set KMESH_CONTRACTS_SOURCE to the pinned LMCache checkout")
     source = Path(settings["SOURCE"]).resolve()
     if output == source or source in output.parents:
         parser.error("experiment output must be outside the LMCache source checkout")
+    additional_args = []
+    additional_paths = []
+    if cfg.get("additional_sources"):
+        if set(cfg["additional_sources"]) != {"vllm"} or not settings["VLLM_SOURCE"]:
+            parser.error("this profile requires KMESH_CONTRACTS_VLLM_SOURCE")
+        vllm = Path(settings["VLLM_SOURCE"]).resolve()
+        if output == vllm or vllm in output.parents:
+            parser.error("experiment output must be outside the vLLM source checkout")
+        additional_args = ["--vllm-source", str(vllm)]
+        additional_paths = [str(vllm)]
+    elif settings["VLLM_SOURCE"]:
+        parser.error("the selected profile has no additional vLLM source pin")
     output.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
     env.update(
@@ -56,11 +69,12 @@ def main() -> None:
         OMP_NUM_THREADS="2",
         MKL_NUM_THREADS="2",
         LMCACHE_TRACK_USAGE="false",
+        VLLM_TARGET_DEVICE="cpu",
     )
     # CPU is a fallback in the pinned platform registry, not an explicit backend.
     env.pop("LMCACHE_DEVICE_BACKEND", None)
     env["PYTHONPATH"] = os.pathsep.join(
-        (str(source), str(checkout), env.get("PYTHONPATH", ""))
+        (str(source), *additional_paths, str(checkout), env.get("PYTHONPATH", ""))
     )
     with (output / "execution.log").open("x") as log:
         subprocess.run(
@@ -72,14 +86,17 @@ def main() -> None:
                 str(source),
                 "--output",
                 str(output),
+                "--profile",
+                settings["PROFILE"],
+                *additional_args,
             ],
             env=env,
             stdout=log,
             stderr=subprocess.STDOUT,
             check=True,
-            timeout=180,
+            timeout=240,
         )
-    result = verify(output)
+    result = verify(output, settings["PROFILE"])
     (output / "verified.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 

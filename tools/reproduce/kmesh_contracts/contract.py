@@ -18,11 +18,22 @@ HELPERS = (
     "tools/reproduce/kmesh_native/cell.py",
     "tools/reproduce/kmesh_native/contract.py",
 )
+PROFILES = {
+    "contexts": HERE / "profile.json",
+    "registered-state": HERE / "profiles" / "registered-state.json",
+}
 
 
-def profile() -> dict:
+def profile_path(name: str = "contexts") -> Path:
+    """Select a reviewed, packaged source profile."""
+    if type(name) is not str or name not in PROFILES:
+        raise ValueError("unknown CPU ownership profile")
+    return PROFILES[name]
+
+
+def profile(name: str = "contexts") -> dict:
     """Load source configuration and its explicit required case selection."""
-    return json.loads((HERE / "profile.json").read_text())
+    return json.loads(profile_path(name).read_text())
 
 
 def helper_hashes() -> dict:
@@ -30,21 +41,23 @@ def helper_hashes() -> dict:
     return {name: digest(CHECKOUT / name) for name in HELPERS}
 
 
-def verify(root: Path) -> dict:
+def verify(root: Path, name: str = "contexts") -> dict:
     """Reject missing, skipped, failed, or mismatched CPU test phases.
 
     These saved-file checks establish consistency, not independent hardware or
     build attestation. Native extensions are recorded, while this profile tests
     CPU contracts and does not qualify their GPU kernels.
     """
-    cfg = profile()
+    cfg = profile(name)
     if cfg["schema_version"] != 1 or not cfg["cases"]:
         raise ValueError("unsupported or empty source profile")
     receipt = json.loads((root / "receipt.json").read_text())
     cases = set(cfg["cases"])
     if len(cases) != len(cfg["cases"]):
         raise ValueError("duplicate case in source profile")
-    if receipt["profile_sha256"] != digest(HERE / "profile.json"):
+    if receipt["profile_name"] != name or receipt["profile_sha256"] != digest(
+        profile_path(name)
+    ):
         raise ValueError("wrong CPU ownership profile")
     if receipt["harness_files_sha256"] != helper_hashes():
         raise ValueError("qualification helper hashes differ")
@@ -52,6 +65,20 @@ def verify(root: Path) -> dict:
         raise ValueError("wrong or edited source")
     if receipt["source_files_sha256"] != cfg["source_files_sha256"]:
         raise ValueError("source file hashes differ")
+    expected_additional = {
+        package: {
+            "commit": pin["commit"],
+            "clean": True,
+            "source_files_sha256": pin["source_files_sha256"],
+        }
+        for package, pin in cfg.get("additional_sources", {}).items()
+    }
+    if receipt["additional_sources"] != expected_additional:
+        raise ValueError("additional source identity differs")
+    if receipt["protobuf_descriptors_sha256"] != cfg.get(
+        "protobuf_descriptors_sha256", {}
+    ):
+        raise ValueError("generated protobuf descriptors differ")
     hashes = receipt["native_sha256"]
     if set(hashes) != {"lmcache_native"} or any(
         not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
@@ -96,6 +123,7 @@ def verify(root: Path) -> dict:
     if actual != expected:
         raise ValueError("test XML names differ")
     return {
+        "profile": name,
         "source_commit": cfg["lmcache_commit"],
         "executed_cases": len(cases),
         "limits": cfg["limits"],
