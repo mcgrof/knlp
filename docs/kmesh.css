@@ -104,6 +104,7 @@ footer a { color: var(--muted); }
 .page-toc li { padding: 4px 0; }
 .page-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 18px; margin: 32px 0; font: 13px/1.6 var(--mono); }
 nav [aria-current="page"] { color: var(--green); }
+h3[id] { scroll-margin-top: 110px; }
 caption { padding: 16px; color: var(--text); text-align: left; font-weight: 600; }
 @media (max-width: 700px) { .page-links { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .question-group, .page-toc { padding: 18px; } .page-intro h1 { font-size: 36px; } }

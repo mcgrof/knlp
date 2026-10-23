@@ -451,6 +451,12 @@ piece in the storage path.</strong> Singleflight lets related requests share
 one restored ancestor inside vLLM. In the earlier preloading tests, LMCache
 could still read that ancestor from SSD again when later lookups arrived.
 Keeping its external copy turns those lookups into memory hits.</p>
+<p>This extends cascade's shared-prefix principle through offloading:
+the shared ancestor and private branches also guide restoration, external
+residency and advance preparation. The
+<a href="kmesh.html#cascade-offload">connection to cascade</a> explains
+how these layers fit together. The combined performance benefit of
+cascade attention and these storage controls remains unmeasured.</p>
 <div class="table-wrap"><table>
 <caption>How retention completes the existing singleflight path</caption>
 <tr><th scope="col">Comparison</th><th scope="col">What was already working</th><th scope="col">What changed and what it showed</th></tr>

@@ -48,9 +48,25 @@ cache serve later lookups without reading the SSD again?
 <strong>External retention keeps the restored objects in LMCache</strong>,
 in host RAM or an external GPU arena. Application notice can then move
 preparation before the follow-ups arrive. KMesh investigates this
-coordination and the lifetime of shared inference state. Cascade attention
-addresses the separate cost of repeatedly reading shared KV during
-attention.</p>
+coordination and the lifetime of shared inference state.</p>
+<h3 id="cascade-offload">How does this extend cascade's idea?</h3>
+<p><strong>This part of KMesh extends cascade's shared-prefix principle
+through offloading and restoration.</strong> Both organize work around a
+shared ancestor and its private branches.
+<a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade
+attention</a> reuses shared-prefix KV reads across queries during decoding.
+It computes attention for their private suffixes separately, then merges
+the prefix and suffix results for each query.</p>
+<p>The offload work carries that structure through the memory hierarchy:
+singleflight coordinates one restoration and shared engine copy; external
+retention keeps the external copy available for later lookups; advance
+preparation makes that shared state ready before the branches arrive.
+The common goal is to avoid repeating work for each branch at every layer.
+The attention and storage experiments measure these layers separately;
+their combined performance benefit remains unmeasured. See the
+<a href="kmesh-storage.html#cascade">cascade controls</a> and
+<a href="kmesh-retention.html#prefetch-demand">retained early-loading
+comparison</a> for the measured results.</p>
 </section>
 
 <section id="conclusions">
