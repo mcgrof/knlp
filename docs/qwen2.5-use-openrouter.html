@@ -19,9 +19,10 @@
 <section class="hero" aria-labelledby="page-title">
 <p class="eyebrow">OpenRouter · snapshot collected October 23, 2026</p>
 <h1 id="page-title">How much is Qwen2.5<br>still used?</h1>
-<p class="lead">Qwen2.5 has disappeared from OpenRouter’s daily text top 50 in our snapshot. The 7B-Instruct model last appears on <strong>November 9, 2025</strong>. The last appearance of any matching Qwen2.5 model ID is <strong>November 19, 2025</strong>, for 72B-Instruct. None appears again through October 22, 2026.</p>
+<p class="lead"><strong>About 14 months from release to the final top-50 appearance.</strong> Qwen2.5 <a href="https://qwenlm.github.io/blog/qwen2.5-llm/">launched on September 19, 2024</a>. The 7B-Instruct model last appeared on November 9, 2025, just under 14 months later. The family’s final appearance was 72B-Instruct on November 19, 2025, exactly 14 months after launch.</p>
+<p><strong>No matching Qwen2.5 model has appeared in OpenRouter’s daily text top 50 since November 20, 2025.</strong> We checked through October 22, 2026. The 14 months measure time since release, not continuous time in the rankings; this API has no history before January 2025.</p>
 <p>We asked because Qwen2.5-7B provides a strong example of why precise keys can matter in <a href="asymmetric-quantization.html#decision">our asymmetric KV-cache experiments</a>. That raises a separate question: how much current traffic might such a result affect?</p>
-<div class="callout"><strong>The evidence shows reduced ranking prominence.</strong><p>It does not show that Qwen2.5 has no users, that its absolute traffic fell by a particular amount, or that the result describes deployments outside OpenRouter.</p></div>
+<div class="callout"><strong>OpenRouter’s rankings API does not show individual model usage below the top 50.</strong><p>It combines all those models into one <code>other</code> total. Qwen2.5 may still receive traffic, but we cannot measure its share of that total. Leaving the top 50 does not mean the model stopped being used.</p></div>
 <div class="periods" aria-label="Coverage across the requested timeline">
 <div class="unknown"><span>September–December 2024</span><strong>No API history</strong><p>We requested this period, but the endpoint starts in January 2025.</p></div>
 <div><span>January–December 2025</span><strong>7 model IDs observed</strong><p>Rankings exist on 363 days. Qwen2.5’s final observed appearance is November 19.</p></div>
