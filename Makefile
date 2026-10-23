@@ -314,6 +314,7 @@ mechint: check-config generate-config
 # Quick check to catch configuration/architecture errors before GPU training
 .PHONY: check
 check: FORCE
+	@python3 scripts/check_tracked_artifacts.py
 	@echo "============================================================"
 	@echo "Running dry-run architecture validation"
 	@echo "============================================================"

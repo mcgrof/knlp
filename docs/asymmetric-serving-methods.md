@@ -28,7 +28,7 @@ about the latest released vLLM.
 
 [Current guide](asymmetric-quantization.html) · [Installation](asymmetric-install.html) ·
 [Earlier batched results](asymmetric-methods.html) ·
-[Exact public arrival traces](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving)
+[Arrival-trace reproduction instructions](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving)
 
 ## Qualification before timing
 
@@ -268,7 +268,7 @@ Durations are sums over GPU kernels classified by name, including kernels
 outside matched phase ranges. Their units are milliseconds across the
 whole capture, not per-request latency. CUDA correlations join matched
 kernels to actual scheduler metadata; unmatched kernels remain explicit.
-The linked JSON separates prefill/mixed and decode work, all kernel names,
+The archived result separates prefill/mixed and decode work, all kernel names,
 host execute ranges and CUDA API calls. Different scheduler-step counts
 mean the arms realize different schedules under the same offered trace.
 Host execute ranges can overlap and include waits or asynchronous work;
@@ -330,7 +330,7 @@ per-cell preemption counts come from worker receipts.
 
 Memory maxima here are across the captured arm invocations at their documented observation points. Their different scopes must not be treated as simultaneous allocations or subtracted to infer an unmeasured component. Logical slots are not a measured maximum resident request count.
 
-The separate [1K driver sample supplement](data/asymmetric-dense-1k-http-driver-20261019.json) covers all 33 full command windows, including startup and shutdown. Its observed maxima are 57.276, 56.995 and 56.993 GiB for K16/V8, FlashInfer and FA3. All windows meet the stated sampling-coverage flag and every observed value remains inside its driver envelope. These one-second observations can miss shorter peaks. The 8K sampler did not cover confirmation; its boundary observations above do not establish a continuous driver peak.
+The separate 1K driver sample supplement covers all 33 full command windows, including startup and shutdown. Its observed maxima are 57.276, 56.995 and 56.993 GiB for K16/V8, FlashInfer and FA3. All windows meet the stated sampling-coverage flag and every observed value remains inside its driver envelope. These one-second observations can miss shorter peaks. The 8K sampler did not cover confirmation; its boundary observations above do not establish a continuous driver peak.
 
 | Component | Exact revision |
 | --- | --- |
@@ -344,18 +344,18 @@ The separate [1K driver sample supplement](data/asymmetric-dense-1k-http-driver-
 
 Python 3.12.11, Torch 2.11.0+cu129, Transformers 5.5.3, NumPy 1.26.4. The full model snapshot was verified before the 1K study, which uses offline loading; 8K retained its original online startup environment. Per-arm protocol hashes and physical memory inventories are retained in the data.
 
-- **8K:** [full independent evidence JSON](data/asymmetric-dense-8k-http-20261019.json), [unpooled matrix CSV](data/asymmetric-dense-8k-http-matrix-20261019.csv), [scheduler admission JSON](data/asymmetric-dense-8k-http-admission-20261019.json), [matched profile JSON](data/asymmetric-dense-8k-http-profiles-20261019.json), [plot SVG](assets/asymmetric-http-8k-20261019.svg).
-- **1K:** [full independent evidence JSON](data/asymmetric-dense-1k-http-20261019.json), [unpooled matrix CSV](data/asymmetric-dense-1k-http-matrix-20261019.csv), [scheduler admission JSON](data/asymmetric-dense-1k-http-admission-20261019.json), [matched profile JSON](data/asymmetric-dense-1k-http-profiles-20261019.json), [plot SVG](assets/asymmetric-http-1k-20261019.svg).
+- **8K:** full independent evidence JSON, unpooled matrix CSV, scheduler admission JSON, matched profile JSON, [plot SVG](assets/asymmetric-http-8k-20261019.svg).
+- **1K:** full independent evidence JSON, unpooled matrix CSV, scheduler admission JSON, matched profile JSON, [plot SVG](assets/asymmetric-http-1k-20261019.svg).
 
 
 The [CPU evidence tools](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving)
 independently replay raw clients, worker admission and source/input hashes.
-The public trace catalog restores every original byte and rejects changed
+The separately supplied trace catalog restores every original byte and rejects changed
 inputs. Two CPU reader corrections validate the measured structured FP16
 weight inventory and distinguish resumed requests that the pinned V2
 scheduler sends through its new-request field. Neither correction changes
-GPU execution or the statistical rule. The [complete 1K replay check](data/asymmetric-http-analysis-audit-20261019.json) reproduces every result
+GPU execution or the statistical rule. The complete 1K replay check reproduces every result
 field except the reader's own hash; its original profile parent is retained. A new execution is a replication, with its own qualification and
 frozen plan; historical success receipts do not qualify changed code.
 
-The [complete public replication procedure](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/serving/REPRODUCE.md) provides the exact source checkout, full-snapshot preparation, all three production/quality/reference commands, fixed design and independent result reader. Its CPU plan builder reruns both evidence audits before emitting plans.
+The [replication procedure](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/serving/REPRODUCE.md) requires separately supplied archived inputs and original measured source. It describes source checkout, full-snapshot preparation, all three production/quality/reference commands, fixed design and independent result reader. Its CPU plan builder reruns both evidence audits before emitting plans.

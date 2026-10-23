@@ -1,7 +1,7 @@
 # Frozen Qwen3 inputs
 
-These downloadable inputs support the current Qwen3-8B asymmetric KV recipe.
-The `awq` and `fp16` directories contain the actual prompt manifests and
+Separately archived frozen inputs support the current Qwen3-8B asymmetric KV recipe.
+The external `current/awq` and `current/fp16` directories contain the actual prompt manifests and
 GSM8K tasks used by the measured 8K/batch-32 comparisons. Decompress
 `gsm8k-frozen.json.gz` and `scales.json.gz` once; keep `qwen.json.gz`
 compressed. Each `manifest.json` binds both stored and decompressed bytes.

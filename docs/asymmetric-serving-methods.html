@@ -121,8 +121,7 @@ paths use dense FP16 Qwen3-8B weights and FP16 compute on one H100 SXM
 controls store FP16 keys and values and use either native FlashInfer or
 verified native FlashAttention 3 (FA3). These are pinned experimental
 sources, not a claim about the latest released vLLM.</p>
-<p><a href="asymmetric-quantization.html">Current guide</a> · <a href="asymmetric-install.html">Installation</a> · <a href="asymmetric-methods.html">Earlier batched results</a> · <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving">Exact
-public arrival traces</a></p>
+<p><a href="asymmetric-quantization.html">Current guide</a> · <a href="asymmetric-install.html">Installation</a> · <a href="asymmetric-methods.html">Earlier batched results</a> · <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving">Arrival-trace reproduction instructions</a></p>
 <h2 id="qualification-before-timing">Qualification before timing</h2>
 <p>The 8K actual HTTP worker passes production qualification,
 prediction-loss (NLL), retrieval and the full GSM8K preservation gate
@@ -882,7 +881,7 @@ confirmation — table 8</caption>
 kernels outside matched phase ranges. Their units are milliseconds
 across the whole capture, not per-request latency. CUDA correlations
 join matched kernels to actual scheduler metadata; unmatched kernels
-remain explicit. The linked JSON separates prefill/mixed and decode
+remain explicit. The archived result separates prefill/mixed and decode
 work, all kernel names, host execute ranges and CUDA API calls.
 Different scheduler-step counts mean the arms realize different
 schedules under the same offered trace. Host execute ranges can overlap
@@ -1003,8 +1002,8 @@ documented observation points. Their different scopes must not be
 treated as simultaneous allocations or subtracted to infer an unmeasured
 component. Logical slots are not a measured maximum resident request
 count.</p>
-<p>The separate <a href="data/asymmetric-dense-1k-http-driver-20261019.json">1K driver
-sample supplement</a> covers all 33 full command windows, including
+<p>The separate 1K driver
+sample supplement covers all 33 full command windows, including
 startup and shutdown. Its observed maxima are 57.276, 56.995 and 56.993
 GiB for K16/V8, FlashInfer and FA3. All windows meet the stated
 sampling-coverage flag and every observed value remains inside its
@@ -1055,33 +1054,34 @@ offline loading; 8K retained its original online startup environment.
 Per-arm protocol hashes and physical memory inventories are retained in
 the data.</p>
 <ul>
-<li><strong>8K:</strong> <a href="data/asymmetric-dense-8k-http-20261019.json">full independent
-evidence JSON</a>, <a href="data/asymmetric-dense-8k-http-matrix-20261019.csv">unpooled matrix
-CSV</a>, <a href="data/asymmetric-dense-8k-http-admission-20261019.json">scheduler
-admission JSON</a>, <a href="data/asymmetric-dense-8k-http-profiles-20261019.json">matched
-profile JSON</a>, <a href="assets/asymmetric-http-8k-20261019.svg">plot
+<li><strong>8K:</strong> full independent
+evidence JSON, unpooled matrix
+CSV, scheduler
+admission JSON, matched
+profile JSON, <a href="assets/asymmetric-http-8k-20261019.svg">plot
 SVG</a>.</li>
-<li><strong>1K:</strong> <a href="data/asymmetric-dense-1k-http-20261019.json">full independent
-evidence JSON</a>, <a href="data/asymmetric-dense-1k-http-matrix-20261019.csv">unpooled matrix
-CSV</a>, <a href="data/asymmetric-dense-1k-http-admission-20261019.json">scheduler
-admission JSON</a>, <a href="data/asymmetric-dense-1k-http-profiles-20261019.json">matched
-profile JSON</a>, <a href="assets/asymmetric-http-1k-20261019.svg">plot
+<li><strong>1K:</strong> full independent
+evidence JSON, unpooled matrix
+CSV, scheduler
+admission JSON, matched
+profile JSON, <a href="assets/asymmetric-http-1k-20261019.svg">plot
 SVG</a>.</li>
 </ul>
 <p>The <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/serving">CPU
 evidence tools</a> independently replay raw clients, worker admission
-and source/input hashes. The public trace catalog restores every
+and source/input hashes. The separately supplied trace catalog restores every
 original byte and rejects changed inputs. Two CPU reader corrections
 validate the measured structured FP16 weight inventory and distinguish
 resumed requests that the pinned V2 scheduler sends through its
 new-request field. Neither correction changes GPU execution or the
-statistical rule. The <a href="data/asymmetric-http-analysis-audit-20261019.json">complete 1K
-replay check</a> reproduces every result field except the reader's own
+statistical rule. The complete 1K
+replay check reproduces every result field except the reader's own
 hash; its original profile parent is retained. A new execution is a
 replication, with its own qualification and frozen plan; historical
 success receipts do not qualify changed code.</p>
-<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/serving/REPRODUCE.md">complete
-public replication procedure</a> provides the exact source checkout,
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/serving/REPRODUCE.md">replication
+procedure</a> requires separately supplied archived inputs and original measured
+source. It describes source checkout,
 full-snapshot preparation, all three production/quality/reference
 commands, fixed design and independent result reader. Its CPU plan
 builder reruns both evidence audits before emitting plans.</p>

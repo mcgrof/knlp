@@ -11,8 +11,8 @@ CPU-only command. The output directory must not already exist:
 
 ```sh
 python -m tools.kv.native.serving_trace_bundle \
-  --catalog tools/kv/native/fixtures/serving/fp16-8k/catalog.json.gz \
-  --manifest tools/kv/native/fixtures/current/fp16/qwen.json.gz \
+  --catalog ${KNLP_KV_FIXTURES}/serving/fp16-8k/catalog.json.gz \
+  --manifest ${KNLP_KV_FIXTURES}/current/fp16/qwen.json.gz \
   --output restored-http-traces
 ```
 

@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 
-from .current import FIXTURES, save
+from .current import fixture_root, save
 from .serving_pilot import URL, post, rpc
 
 
@@ -159,7 +159,7 @@ def run(args):
     from .gsm8k import read
 
     manifest = json.loads(
-        gzip.decompress((FIXTURES / args.format / "qwen.json.gz").read_bytes())
+        gzip.decompress((fixture_root() / args.format / "qwen.json.gz").read_bytes())
     )
     task = read(args.output / "server/inputs/gsm8k-frozen.json")
     samples = [

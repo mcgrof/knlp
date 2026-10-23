@@ -126,10 +126,11 @@ exact fork commits, checks the base wheel and records a package lock. No LMCache
 private inputs are required.</p>
 <pre><code>git clone https://github.com/mcgrof/knlp.git
 cd knlp
-git checkout --detach 5a3d9d74edc87ce763e741859dfc32bd01d452d4
+git switch main
 export FLASHINFER_WORKSPACE_BASE="$PWD/stack/jit"
 uv run --python 3.12.11 --no-project \
   -m tools.kv.native.october_setup "$PWD/stack" --recipe current
+export KNLP_KV_FIXTURES=/path/to/experiment-inputs
 stack/env/bin/python -m tools.kv.native.current download \
   --format awq --output awq-download.json
 stack/env/bin/python -m tools.kv.native.current smoke \

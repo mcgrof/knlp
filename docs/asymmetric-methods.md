@@ -60,10 +60,10 @@ from certificate bounds. A nonsignificant difference does not establish
 equivalence, and failure to certify does not automatically prove degradation.
 
 The measured reference source is
-[`782a4c5cd69b575b4736c14285477e306e176421`](https://github.com/mcgrof/knlp/commit/782a4c5cd69b575b4736c14285477e306e176421).
+[`782a4c5cd69b575b4736c14285477e306e176421`](https://github.com/mcgrof/knlp/commit/32952a7914efe546ac50cc085289886843d25430).
 One redundant row-integrity comparison between a saved GPU FP32 mean and a
 CPU FP64 reduction exceeded an absolute 1e-6 check by 5.47e-8. The documented
-[reader correction](https://github.com/mcgrof/knlp/commit/ccdf17062c9e6897777b80ecaddcc3c87e9f92c0)
+[reader correction](https://github.com/mcgrof/knlp/commit/45744906bed133e7f8f7f6a3d1639325b2d487a4)
 uses the FP32 summation rounding bound gamma_n = n·u/(1−n·u), n=128 and
 u=2^-24, while requiring finite nonnegative exact-FP32 losses and mean.
 All 1,792 NLL rows pass. Saved means, samples, statistical calculations,
@@ -74,15 +74,15 @@ A/R backing and allocation-size multisets match within each policy.
 CUDA allocation rounding, temporary layer reconstruction and process peaks
 remain separate. Reference execution time cannot rank fused serving kernels.
 
-[The harness README](https://github.com/mcgrof/knlp/blob/9837bff48a3b8e4ff2af90956b279bc927131d37/tools/kv/decision/README.md)
+[The harness README](https://github.com/mcgrof/knlp/blob/b967e9c76f8f7de3baa2d6616ef294ce4f601627/tools/kv/decision/README.md)
 contains preparation, source freezing, calibration, independent oracle,
-confirmation and CPU evidence-analysis commands. The published aggregate JSON
+confirmation and CPU evidence-analysis commands. An externally supplied aggregate result
 records model/input/source and reader-result hashes. Redraw its figures with
 Matplotlib and the public renderer:
 
 ```sh
 python -m tools.kv.decision.figures \
-  --data docs/data/asymmetric-decision-reference-20261022.json \
+  --data /path/to/experiment-data/asymmetric-decision-reference-20261022.json \
   --out redrawn-reference
 ```
 
@@ -100,7 +100,7 @@ FlashInfer and FlashAttention-3. This compares complete deployment recipes:
 the two candidates differ in both key precision and scale policy. The
 separate seven-arm reference controls those factors within each policy.
 
-The measured [harness](https://github.com/mcgrof/knlp/commit/8dc2faed5485445342130ffd423911a505da2426) is
+The measured [harness](https://github.com/mcgrof/knlp/commit/c9d527d70cb092b396cb618a8479deb1c4af9ddb) is
 `8dc2faed5485445342130ffd423911a505da2426`, [vLLM](https://github.com/mcgrof/vllm/commit/e5c8d87fd6bbf9cdedf266d160890599d938abb0) is
 `e5c8d87fd6bbf9cdedf266d160890599d938abb0`, and [FlashInfer](https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711) is
 `800a550f8b736e49f8cfa136b82bfaf6d9d32711`. The runtime uses Torch
@@ -173,9 +173,9 @@ quality collection time therefore establish no new serving-speed benefit.
 The earlier completed batch and HTTP performance studies remain separate.
 
 [Worker results and memory](asymmetric-results.html#decision-worker) include
-counts, adjusted bounds, exact physical allocations and the
-[aggregate JSON](data/asymmetric-decision-worker-20261022.json).
-[Reproduction commands](https://github.com/mcgrof/knlp/blob/8dc2faed5485445342130ffd423911a505da2426/tools/kv/decision/README.md)
+counts, adjusted bounds and exact physical allocations. Machine-readable
+results are retained separately in the experiment archive.
+[Reproduction commands](https://github.com/mcgrof/knlp/blob/c9d527d70cb092b396cb618a8479deb1c4af9ddb/tools/kv/decision/README.md)
 cover source freezing, each actual-worker stage, equal-slot audits and
 independent CPU analysis. The dependency's exact tested revision is public
 on `2026-10-22-feature-fp8-reference-scales` in the vLLM fork.
@@ -203,8 +203,7 @@ with a practical median threshold; it is not a confidence-bound test of
 at least 1% gain. Fixed pilot blocks are excluded. No extra confirmation
 blocks are added after observing the results.
 
-[AWQ block data and qualification](data/mixed-fresh-prefill-20261017.json) ·
-[Dense block data, quality, physical storage and profiles](data/dense-fp16-routing-20261018.json)
+AWQ and dense block data, qualification receipts and profiles are retained in the experiment archive.
 
 The request rate includes prefill, scheduling and decode. The source change
 routes eligible fresh prompts inside a mixed decode/prefill batch through
@@ -234,8 +233,8 @@ quality was not substituted for actual HTTP quality.
 
 No AWQ HTTP performance confirmation was run. Excluded pilot timings are
 not confirmed HTTP gains. The earlier batch-throughput results retain their
-own execution scope. [Full report](https://github.com/mcgrof/knlp/blob/dc4cce41c1541bac943aa3776f71c2e3bcfd3832/docs/asymmetric-awq-http-quality.md) ·
-[Exact identities, intervals and evidence hashes](data/asymmetric-awq-http-quality-20261019.json).
+own execution scope. [Full report](https://github.com/mcgrof/knlp/blob/99df2dad01d7c7a88acd8404e211500eca73d2c8/docs/asymmetric-awq-http-quality.md) ·
+Exact identities, intervals and evidence hashes.
 
 ## What “quality passes” means
 
@@ -286,7 +285,7 @@ allocator overhead, graph pools, weights and other runtime allocations are
 additional. The dense clean observation records 69,533,171,712 bytes of
 peak reserved Torch memory and 70,341,623,808 bytes of sampled driver usage.
 Instrumentation's temporary oracle workspace is excluded from that window.
-See the downloadable dense data for per-allocation receipts.
+Per-allocation receipts are retained in the experiment archive.
 
 This is not a 25% total-HBM saving. No new maximum resident batch, capacity
 sweep or service-latency endpoint was measured. Historical 44/58/59 batch
@@ -336,7 +335,7 @@ not saved. This supports the scoped host-endpoint analysis above, not a full
 original-protocol pass or per-step CUDA-duration claim. All failures remain
 in the retained record.
 
-[Complete 1K result data, including pilot and confirmation blocks](data/dense-1k-routing-20261019.json)
+The experiment archive retains complete 1K result data, including pilot and confirmation blocks.
 
 ## Reproduction
 
@@ -346,14 +345,15 @@ It records its source separately from the original measured harnesses:
 | Role | Immutable source |
 | --- | --- |
 | AWQ measured harness | [f91b3c3f](https://github.com/mcgrof/knlp/commit/f91b3c3f1b59090a40398ebf1a9b4a980c2215a0) |
-| Dense measured harness | [a3996c8f](https://github.com/mcgrof/knlp/commit/a3996c8fa73e4596a99f49fc52a3afa78e4b8c6d) |
+| Dense measured harness | [a3996c8f](https://github.com/mcgrof/knlp/commit/1d2838e47ba6e98cc0b898af42c574d8940fc5fd) |
 | Current vLLM candidate | [276305b2](https://github.com/mcgrof/vllm/commit/276305b29e0d11f95ada503ba76323ab24992e59) |
 | Preceding compact vLLM | [26cd429b](https://github.com/mcgrof/vllm/commit/26cd429bac01d07909ed91e353f564d7aaa8d38f) |
 | Native vLLM | [c21c0878](https://github.com/mcgrof/vllm/commit/c21c0878210695db7b108cdc285aaf0cf890190a) |
 | Shared FlashInfer | [800a550f](https://github.com/mcgrof/flashinfer/commit/800a550f8b736e49f8cfa136b82bfaf6d9d32711) |
-| 1K measured harness | [c02c4447](https://github.com/mcgrof/knlp/commit/c02c4447e1c4ded8433a1ff5c6f676df0dd602ad) |
+| 1K measured harness | [c02c4447](https://github.com/mcgrof/knlp/commit/f05a4b526b506dac58e13d71635a52fd4d8c5e9b) |
 
-Download the [frozen input artifacts](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/current).
+Supply the archived frozen inputs outside the checkout, following the
+[input format documentation](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures).
 Their README gives dataset licenses and the exact export transformation.
 Prompt IDs, token arrays, scoring tasks and effective calibration values are
 unchanged. The dense scale export removes machine paths; both original and

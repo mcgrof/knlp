@@ -30,10 +30,11 @@ export OMP_NUM_THREADS=22 MKL_NUM_THREADS=22
 
 git clone https://github.com/mcgrof/knlp.git
 cd knlp
-git checkout --detach 5a3d9d74edc87ce763e741859dfc32bd01d452d4
+git switch main
 export FLASHINFER_WORKSPACE_BASE="$PWD/stack/jit"
 uv run --python 3.12.11 --no-project -m tools.kv.native.october_setup \
   "$PWD/stack" --recipe current
+export KNLP_KV_FIXTURES=/path/to/experiment-inputs
 stack/env/bin/python -m tools.kv.native.current download \
   --format awq --output awq-download.json
 stack/env/bin/python -m tools.kv.native.current smoke \
@@ -95,7 +96,7 @@ Serving validation includes engine setup, remaining first-use compilation,
 numerical instrumentation and profiling. These elapsed times describe this
 installation; they are not throughput benchmarks or portable runtime promises.
 
-The [compact install receipt](data/asymmetric-install-20261019.json) records
+The compact install receipt records
 source and binary hashes, package-lock identity, storage, workspace buffers,
 clean memory, both generations and stage timings. The full performance and
 quality evidence is in the [methods](asymmetric-methods.md).
@@ -122,8 +123,8 @@ records actually loaded libraries and
 retains their bytes. An installed package's version string alone is insufficient.
 
 The complete engine configurations are in the
-[AWQ protocol](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/current/awq/measured-protocol.json)
-and [dense protocol](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/current/fp16/measured-protocol.json).
+AWQ protocol
+and dense protocol.
 Both use FP16 compute, TP1, NHD layout, page size 16, Q32/KV8/D128,
 96 maximum sequences, 65,536 scheduled tokens, a 10,240-token model limit,
 and disabled prefix caching and chunked prefill. Compilation mode is 0 with
@@ -142,9 +143,10 @@ the eligible mixed calls to take the optimized route.
 
 ## Try versus reproduce
 
-The quick start uses the [actual frozen inputs](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/current)
-and effective scales, so it needs no private repository, local cache or manual
-source edit. The bundled manifests disclose export hashes and original hashes.
+The quick start requires separately supplied frozen inputs and effective
+scales. Set `KNLP_KV_FIXTURES` to their external directory before running it.
+The [input documentation](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures)
+describes the layout. Archived manifests bind both export and original hashes.
 It does not produce the published performance table. Full replay requires the
 original measured harness pins, controls, quality gates and fresh counterbalanced
 blocks described in the [methods and reproduction reference](asymmetric-methods.md). The quick start records

@@ -9,8 +9,8 @@ Restore all 75,021,321 original bytes on CPU into a new directory:
 
 ```sh
 python -m tools.kv.native.serving_trace_bundle \
-  --catalog tools/kv/native/fixtures/serving/fp16-1k/catalog.json.gz \
-  --manifest tools/kv/native/fixtures/current/fp16/qwen.json.gz \
+  --catalog ${KNLP_KV_FIXTURES}/serving/fp16-1k/catalog.json.gz \
+  --manifest ${KNLP_KV_FIXTURES}/current/fp16/qwen.json.gz \
   --output restored-http-1k-traces
 ```
 

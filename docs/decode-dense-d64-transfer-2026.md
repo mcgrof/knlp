@@ -55,10 +55,10 @@ The effective scale SHA-256 is
 The frozen input manifest SHA-256 is
 `26f3249f56612cba18fc94ddf5d28273804c3426983bc81374052e0ce68c9e2b`.
 
-[All arm rates, orders, ratios, quality bounds, physical tensor layouts
-and component measurements](data/dense-fp16-routing-20261018.json)
+All arm rates, orders, ratios, quality bounds, physical tensor layouts
+and component measurements
 are available as sanitized JSON. Use the pinned harness's
-[`tools/kv/native`](https://github.com/mcgrof/knlp/tree/a3996c8fa73e4596a99f49fc52a3afa78e4b8c6d/tools/kv/native)
+[`tools/kv/native`](https://github.com/mcgrof/knlp/tree/1d2838e47ba6e98cc0b898af42c574d8940fc5fd/tools/kv/native)
 commands with these exact source and input identities. Model execution
 must use immutable revisions. Later reader fixes do not change this
 measured source pin. The measured environment uses Python 3.12.11,
@@ -242,7 +242,7 @@ production evidence without converting the recorded quality failure into
 a pass. The earlier failed historical model row retains its original
 sources and workload; this is a new repaired-source result.
 
-[Sanitized D64 fixtures, quality bounds and exact source/input identities](data/d64-model-quality-20261018.json)
+Sanitized D64 fixtures, quality bounds and exact source/input identities
 retain the measured scope. Contiguous/ragged APIs, symmetric FP8 numerical
 forms, BF16 and the combined routing-plus-D64 serving stack remain
 unqualified. There is no full-model D64 speed claim or upstream PR here.

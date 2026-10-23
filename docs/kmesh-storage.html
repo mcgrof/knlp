@@ -106,7 +106,7 @@ timing added together.</p>
 Five-child paired changes vary in sign; the pooled median changes by only
 0.5%, while median batch completion is 74.576 ms direct versus 73.883 ms
 staged. These measurements do not establish a stable burst benefit. The
-<a href="data/kmesh-restore-serving-20261017.json">serving result record</a>
+serving result record
 retains all percentiles, paired medians, counts and limits.</p>
 <p>Every retained five-child burst issues 80 backend chunk
 reads, totaling 240 MiB for a 48 MiB ancestor, in both transfer paths. A
@@ -155,7 +155,7 @@ throughput, cascade-attention gains or cross-engine page sharing. Five-child
 burst latency has no stable improvement. Qualification is specific to
 batch-invariant kernels; default-kernel numerical equivalence is not established.
 An intermittent ancestor-admission miss remains an unresolved reliability limit
-in the <a href="data/kmesh-dmabuf-restore.json">qualification evidence</a>;
+in the qualification evidence;
 the measured cohort contains no such miss. Passing this cohort does not establish
 that the condition cannot recur.</div>
 </section>
@@ -203,7 +203,7 @@ Python 3.13.15, PyTorch <code>2.13.0+cu130</code>, CUDA 13.0 and vLLM
 <code>0.30.1rc1.dev624+g84bcbc626</code>, with two OpenMP/MKL threads and
 no CPU-affinity cap. The Llama snapshot is
 <code>0e9e39f249a16976918f6564b8830bc894c89659</code>. The
-<a href="data/kmesh-cascade-20261017.json">sanitized result</a> retains
+sanitized result retains
 all samples, engagement counters and source/model/native hashes.</p>
 <h3>Reproduce the cascade controls</h3>
 <pre><code>make defconfig-kmesh-cascade-cuda
@@ -274,7 +274,7 @@ uses seed 20260805, distinct 512-token tails, eight greedy output tokens,
 512 MiB server arenas in each path and a 512 MiB engine KV pool. Both caches
 are cleared before each family; the external index and SSD ranges remain
 warm. The
-<a href="data/kmesh-coldburst-20261017.json">sanitized evidence</a> retains
+sanitized evidence retains
 each family's backend counts, live destinations, local-hit/load counts and
 source/model/native hashes.</p>
 <h3>Twenty-family arrival sample</h3>
@@ -300,7 +300,7 @@ These observations strengthen the separation between repeated storage reads
 and the remaining admission race. Each mode/arrival combination uses one engine;
 the families are not independent process-paired trials and do not establish
 a general race rate or a difference in race probability between paths.
-The <a href="data/kmesh-coldburst-repeat20-20261017.json">twenty-family record</a>
+The twenty-family record
 preserves the histograms and unchanged source/model/native identities.
 No coalescing change or latency qualification is included.</p>
 <h3>Reproduce the arrival controls</h3>
@@ -382,7 +382,7 @@ the family completes.</p>
 exactly, including warmups. Every child has the full 4,096-token cached
 ancestor. Producer/restored KV checksums, native registered-buffer routes,
 complete byte receipts and drained ownership pass. The
-<a href="data/kmesh-singleflight-20261017.json">sanitized comparison</a>
+sanitized comparison
 retains every backend count, copy/load histograms, exact source/model/native
 hashes and numerical bounds. Each control/path/arrival uses one engine;
 these are not independent randomized process pairs or a general race-rate
@@ -590,7 +590,7 @@ last-token computation and sampling; it is not an isolated DMA duration.</figcap
 its warm request when present, uses one complete external engine ancestor
 load. The backend can still read that ancestor for later LOOKUPs even after
 vLLM has it locally. The
-<a href="data/kmesh-family-prefetch-20261017.json">verified public record</a>
+verified archived record
 retains every retained family's backend read count, local-hit/load counts and timing
 samples. Four unused-preload controls release no children: each incurs
 16 native payload reads, 48 MiB, and one wasted declaration without a child

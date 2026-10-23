@@ -158,7 +158,7 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 </div>
 <div class="grid2" style="margin-top:22px">
 <div class="card"><h3>Recall runtime</h3><p>One NVIDIA H100 80 GB GPU; Python 3.11.12; PyTorch 2.9.1 with CUDA 12.8; Triton 3.8.0; Flash Linear Attention 0.5.2; FP32 with TF32 disabled. AdamW uses peak LR 0.001, 200 warmup updates, betas 0.9/0.95, weight decay 0.1, and gradient clipping at 1.0. MoM adds a 0.01 balance objective.</p></div>
-<div class="card"><h3>Public evidence</h3><p>The <a href="data/mom-gdn-results.json">machine-readable aggregate bundle</a> contains exact counts, configs, paper anchors, and timing rows. No W&amp;B tracker was used for the recall cohort. The exact runtime source snapshot, checkpoints, and row-level predictions remain outside this public repository, so the original runs cannot yet be reproduced from the public tree alone.</p></div>
+<div class="card"><h3>Evidence scope</h3><p>The archived aggregate bundle contains exact counts, configs, paper anchors, and timing rows. No W&amp;B tracker was used for the recall cohort. The exact runtime source snapshot, checkpoints, and row-level predictions remain outside this public repository, so the original runs cannot yet be reproduced from the public tree alone.</p></div>
 </div>
 </section>
 
@@ -172,6 +172,6 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <p class="lead" style="margin-top:30px"><strong>Supported conclusion:</strong> the tested MoM recipes have not produced a reliable advantage over GDN. Recall varies sharply across seeds, and the measured language-model implementation has slower updates. This result is limited to the tested configurations.</p>
 </section>
 </main>
-<footer><div style="max-width:1180px;margin:auto">Related: <a href="linear_attention.html">linear attention and bounded memory</a> · <a href="https://arxiv.org/abs/2502.13685">MoM paper</a> · <a href="https://github.com/OpenSparseLLMs/MoM">official MoM code</a> · <a href="data/mom-gdn-results.json">data</a> · <a href="index.html">knlp</a></div></footer>
+<footer><div style="max-width:1180px;margin:auto">Related: <a href="linear_attention.html">linear attention and bounded memory</a> · <a href="https://arxiv.org/abs/2502.13685">MoM paper</a> · <a href="https://github.com/OpenSparseLLMs/MoM">official MoM code</a> · <a href="index.html">knlp</a></div></footer>
 </body>
 </html>

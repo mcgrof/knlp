@@ -120,7 +120,7 @@ and the independent verifier pass on the component pins above. Serial and
 collective K/V match bit for bit, with zero maximum logit difference. The
 offline codec restores all four members exactly and rejects corruption.
 Full recomputation and recovery are not numerically equivalent. The
-<a href="data/tokendance-h100-retest.json">H100 result record</a>
+H100 result record
 binds these findings to the exact sources and verifier digest.</p>
 <div class="stat-grid">
   <div class="stat"><div class="val">8 / 8</div><div class="label">current H100 cases<br>independently verified</div></div>
@@ -201,7 +201,7 @@ not establish a universal bound under interleaved traffic or preemption.</p>
 <p>The current capture uses the serving branch and CUDA software environment
 with GPU visibility disabled. All 25 scenarios pass, and all 174 prefix-cache
 tests pass without skips. The
-<a href="data/kmesh-fork-accounting-current.json">allocator capture</a>
+allocator capture
 records the observed block IDs and accounting.</p>
 <h3>Reproduce this allocator check</h3>
 <p>Follow the
@@ -302,7 +302,7 @@ KMESH_SERVING_OUTPUT=/workspace/serving-forks make
 make kmesh-fork-test</code></pre>
 <p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_forks/README.md#replay-forks-through-the-serving-engine">serving instructions</a>
 describe the seven fresh processes and independent CPU recheck. The
-<a href="data/kmesh-serving-h100.json">sanitized result</a> binds the source,
+sanitized result binds the source,
 script and raw-result digests. The model is
 <code>Qwen/Qwen2.5-0.5B-Instruct</code> at the baseline's pinned revision.
 Runtime is Python 3.13.15, PyTorch

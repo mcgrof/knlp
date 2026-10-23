@@ -15,7 +15,6 @@ import time
 from .october import VARIANTS, check_protocol, check_scales
 from .october_setup import recipe_pins
 
-FIXTURES = Path(__file__).parent / "fixtures/current"
 FLAGS = {
     "VLLM_ASYM_SINGLE_WRITER": "1",
     "FLASHINFER_FUSE_V_SCALE": "1",
@@ -29,6 +28,24 @@ FLAGS = {
     "KNLP_NATIVE_OBSERVER": "off",
     "TOKENIZERS_PARALLELISM": "false",
 }
+
+
+def fixture_root():
+    """Locate captured inputs supplied outside the source checkout."""
+    value = os.environ.get("KNLP_KV_FIXTURES")
+    if not value:
+        raise ValueError(
+            "set KNLP_KV_FIXTURES to the external experiment-input directory "
+            "containing current/awq and current/fp16"
+        )
+    root = Path(value).expanduser().resolve()
+    repository = Path(__file__).resolve().parents[3]
+    if root.is_relative_to(repository):
+        raise ValueError("captured experiment inputs must be outside the checkout")
+    current = root / "current"
+    if not current.is_dir():
+        raise ValueError("KNLP_KV_FIXTURES must contain a current directory")
+    return current
 
 
 def sha(path):
@@ -63,7 +80,7 @@ def validate_install(record, protocol, env):
 
 def prepare(install, output, weight_format):
     source = Path(__file__).resolve().parents[3]
-    fixture = FIXTURES / weight_format
+    fixture = fixture_root() / weight_format
     protocol = json.loads((fixture / "measured-protocol.json").read_text())
     env = environment(os.environ)
     validate_install(json.loads((install / "setup.json").read_text()), protocol, env)
@@ -107,7 +124,7 @@ def prepare(install, output, weight_format):
 def download(weight_format, output):
     from huggingface_hub import snapshot_download
 
-    raw = (FIXTURES / weight_format / "qwen.json.gz").read_bytes()
+    raw = (fixture_root() / weight_format / "qwen.json.gz").read_bytes()
     manifest = json.loads(gzip.decompress(raw))
     started = time.perf_counter()
     path = snapshot_download(

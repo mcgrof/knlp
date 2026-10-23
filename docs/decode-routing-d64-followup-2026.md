@@ -87,8 +87,8 @@ endpoint is measured, and sampled driver observations are not continuous peaks.
 The study retains three counterbalanced pilot blocks, ten new confirmation
 blocks and three B8 engineering blocks. Every arm has its own warmup and
 synchronized complete-request timer. No selective retry or extra timing
-block follows a negative observation. [All sanitized ratios, arm rates,
-quality summaries and component measurements](data/mixed-fresh-prefill-20261017.json)
+block follows a negative observation. All sanitized ratios, arm rates,
+quality summaries and component measurements
 retain the frozen orders. Component profiles run separately after the
 primary observations, on one H100 for all three profile arms. Kernel unions
 and correlated kernel-launch API time remain separate. Residual layer and

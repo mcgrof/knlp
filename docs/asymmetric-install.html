@@ -34,10 +34,11 @@ export OMP_NUM_THREADS=22 MKL_NUM_THREADS=22
 
 git clone https://github.com/mcgrof/knlp.git
 cd knlp
-git checkout --detach 5a3d9d74edc87ce763e741859dfc32bd01d452d4
+git switch main
 export FLASHINFER_WORKSPACE_BASE=&quot;$PWD/stack/jit&quot;
 uv run --python 3.12.11 --no-project -m tools.kv.native.october_setup \
   &quot;$PWD/stack&quot; --recipe current
+export KNLP_KV_FIXTURES=/path/to/experiment-inputs
 stack/env/bin/python -m tools.kv.native.current download \
   --format awq --output awq-download.json
 stack/env/bin/python -m tools.kv.native.current smoke \
@@ -105,7 +106,7 @@ They occur inside the check commands, so do not add them to the table.
 Serving validation includes engine setup, remaining first-use compilation,
 numerical instrumentation and profiling. These elapsed times describe this
 installation; they are not throughput benchmarks or portable runtime promises.</p>
-<p>The <a href="data/asymmetric-install-20261019.json">compact install receipt</a> records
+<p>The compact install receipt records
 source and binary hashes, package-lock identity, storage, workspace buffers,
 clean memory, both generations and stage timings. The full performance and
 quality evidence is in the <a href="asymmetric-methods.html">methods</a>.</p>
@@ -160,8 +161,8 @@ JIT cache avoids reusing kernels compiled from another checkout. The smoke
 records actually loaded libraries and
 retains their bytes. An installed package's version string alone is insufficient.</p>
 <p>The complete engine configurations are in the
-<a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/current/awq/measured-protocol.json">AWQ protocol</a>
-and <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/fixtures/current/fp16/measured-protocol.json">dense protocol</a>.
+AWQ protocol
+and dense protocol.
 Both use FP16 compute, TP1, NHD layout, page size 16, Q32/KV8/D128,
 96 maximum sequences, 65,536 scheduled tokens, a 10,240-token model limit,
 and disabled prefix caching and chunked prefill. Compilation mode is 0 with
@@ -177,9 +178,10 @@ at most 8,192 tokens and 4,096 referenced pages use bounded compact staging;
 serving retains its guarded fallback for unsupported calls. This smoke requires
 the eligible mixed calls to take the optimized route.</p>
 <h2 id="try-versus-reproduce">Try versus reproduce</h2>
-<p>The quick start uses the <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/current">actual frozen inputs</a>
-and effective scales, so it needs no private repository, local cache or manual
-source edit. The bundled manifests disclose export hashes and original hashes.
+<p>The quick start requires separately supplied frozen inputs and effective
+scales. Set <code>KNLP_KV_FIXTURES</code> to their external directory before running it.
+The <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures">input documentation</a>
+describes the layout. Archived manifests bind both export and original hashes.
 It does not produce the published performance table. Full replay requires the
 original measured harness pins, controls, quality gates and fresh counterbalanced
 blocks described in the <a href="asymmetric-methods.html">methods and reproduction reference</a>. The quick start records

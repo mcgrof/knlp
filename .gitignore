@@ -268,3 +268,18 @@ checkpoints/
 **/.pytest_cache/
 gpt2/output/
 research/linear_attention/config.json
+
+# Experiment downloads and captured inputs belong in the external archive.
+/docs/**/*.json
+/docs/**/*.jsonl
+/docs/**/*.ndjson
+/docs/**/*.csv
+/docs/**/*.tsv
+/docs/**/*.json.gz
+/tools/kv/native/fixtures/**/*.json
+/tools/kv/native/fixtures/**/*.jsonl
+/tools/kv/native/fixtures/**/*.gz
+/rgsa_*results*/
+/rgsa_compare_*/
+/fim_traces_marin8b_wikitext.json
+/gnn/canonical_results_*.json

@@ -7,18 +7,29 @@ quality, serial-parity and fixed-plan checks. It uses one H100 SXM 80 GB,
 It can take several GPU-hours. The two context studies have separate designs;
 these commands reproduce **8K**, not the earlier batched 1K experiment.
 
+Exact historical replay requires separately supplied archived inputs and a
+Git bundle retaining the original measured source. These are not downloads
+from this source repository. Set `KNLP_KV_FIXTURES` as described in the
+[external-input instructions](../README.md), and set `KNLP_HISTORY_BUNDLE`
+to the supplied bundle outside the checkout.
+
 The CPU readers in the current checkout are later analysis tools. Run the
-GPU entry points from their measured source, in a clean separate worktree:
+GPU entry points from the original archived source in a separate directory.
+Its original commit identity and bundled inputs are required by the frozen
+design; the cleaned public history has different commit identities:
 
 ```sh
 git fetch origin
-git checkout --detach 5cb60f69d68a390f139a268b5160db3de57ea275
+git switch main
+git merge --ff-only origin/main
 TOOLS_SOURCE="$PWD"
 STACK="$PWD/stack"                    # Existing validated installation
 MEASURED_SOURCE="$PWD/../knlp-http-measured"
 CAPTURES="$PWD/../http-replication-captures"
 PLAN="$PWD/../http-replication-plan"
-git worktree add --detach "$MEASURED_SOURCE" \
+test -n "$KNLP_KV_FIXTURES" && test -f "$KNLP_HISTORY_BUNDLE" || exit 1
+git clone --no-checkout "$KNLP_HISTORY_BUNDLE" "$MEASURED_SOURCE"
+git -C "$MEASURED_SOURCE" checkout --detach \
   0e34f048a82420a3a7b7a5d6d27254d4cd7692b8
 mkdir "$CAPTURES"
 export OMP_NUM_THREADS=22 MKL_NUM_THREADS=22
@@ -47,7 +58,7 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 Use the same `HF_HOME` for the download and all engines if you override it.
 Model files remain separate downloads under the publisher's license. The
-public fixtures contain the original effective scales and tokenized tasks.
+external archived fixtures contain the original effective scales and tokenized tasks.
 
 ## Qualify each arm on the replication machine
 
@@ -89,9 +100,9 @@ whether this replication qualifies. The output directory must not exist:
 ```sh
 cd "$TOOLS_SOURCE"
 "$STACK/env/bin/python" -m tools.kv.native.serving_replay_plan \
-  --design tools/kv/native/fixtures/serving/fp16-8k/DESIGN.json \
-  --catalog tools/kv/native/fixtures/serving/fp16-8k/catalog.json.gz \
-  --manifest tools/kv/native/fixtures/current/fp16/qwen.json.gz \
+  --design "$KNLP_KV_FIXTURES/serving/fp16-8k/DESIGN.json" \
+  --catalog "$KNLP_KV_FIXTURES/serving/fp16-8k/catalog.json.gz" \
+  --manifest "$KNLP_KV_FIXTURES/current/fp16/qwen.json.gz" \
   --captures "$CAPTURES" --prefix fp16 --production-tag pilot \
   --source-tree "$MEASURED_SOURCE" --output "$PLAN"
 ```

@@ -461,7 +461,8 @@ What belongs here:
 - Scripts (`scripts/`)
 - Defconfigs and Kconfig files
 - Documentation (`docs/`)
-- Small CSV/JSON files that are actively used by scripts
+- Small source configurations, schemas, and synthetic test fixtures
+- Package and dependency manifests needed to build the source
 
 What does NOT belong here:
 - Result directories (`bpa_v*_results/`, `results/`)
@@ -470,6 +471,17 @@ What does NOT belong here:
 - Generated plots and PNGs (except `images/` for README)
 - Final reports and scoreboards (archive to key-results)
 - Large experiment output
+- Result JSON/CSV, capture receipts, calibrated scales, frozen prompt corpora,
+  or downloadable experiment bundles, even when summarized or compressed
+
+Keep experiment evidence in the separate results archive. Public pages may
+summarize measurements in tables and display figures, but must not offer
+in-tree result-file downloads. Reproduction tools take explicit external
+input locations and verify their hashes. Do not rename captured data to
+another extension or embed it in source to bypass this rule. `make check`
+rejects artifacts in the index and reachable history for the documented
+output and captured-input paths. Rebase old branches onto cleaned main;
+merging their old history can restore deleted artifacts.
 
 ### `/data/results-archive/` — Artifact Archive
 Stores all historical results, artifacts, and bulk data.

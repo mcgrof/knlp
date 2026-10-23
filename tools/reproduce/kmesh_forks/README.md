@@ -141,7 +141,7 @@ skips. Both profiles retain seed `20260805` and two OpenMP threads.
 
 ## Read the results
 
-The complete [CPU capture](../../../docs/data/kmesh-fork-accounting.json) was
+The complete CPU capture was
 repeated on 2026-10-16. Its counters match the archived experiment across five
 trees, five admission/cache scenarios per tree and six eviction points. Block
 size is 16 tokens. The primary tree has a 4,096-token root and five 512-token
@@ -195,7 +195,7 @@ establishes no quality, latency, throughput or end-to-end capacity result.
 
 ## Verify and test
 
-The [current allocator capture](../../../docs/data/kmesh-fork-accounting-current.json)
+The current allocator capture
 matches every historical scenario summary, hit vector and eviction point.
 The current prefix-cache suite passes all 174 collected tests without skips.
 Uncached block ID allocation order differs in some rows, while cached ancestor
@@ -282,7 +282,7 @@ make kmesh-serving-verify
 
 All seven cases and the independent physical-block checks pass on the rebased
 source branch. The
-[sanitized serving record](../../../docs/data/kmesh-serving-h100.json) gives
+sanitized serving record gives
 the source tree, script and result digests. Raw operational captures remain
 separately retained; knlp distributes the reproducer and bounded summary.
 

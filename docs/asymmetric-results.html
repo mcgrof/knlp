@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asymmetric KV: results and data — knlp</title>
-<meta name="description" content="Asymmetric KV results by model and execution path: throughput, quality, physical memory and downloadable evidence.">
+<meta name="description" content="Asymmetric KV results by model and execution path: throughput, quality, physical memory and detailed methods.">
 <link rel="canonical" href="https://knlp.io/asymmetric-results.html"><link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261022a"></head>
 <body><a class="skip" href="#main">Skip to content</a><header><a class="brand" href="./">knlp<span> / inference</span></a><nav aria-label="Reference navigation"><a href="asymmetric-quantization.html">Overview</a><a href="asymmetric-install.html">Install</a><a href="asymmetric-methods.html">Methods</a></nav></header>
 <main id="main" class="reference"><h1>Asymmetric KV:<br>results and data</h1>
@@ -52,7 +52,7 @@
 <p class="scope">All eight contrasts across model and policy share one Holm family for each named endpoint. Models and compute dtypes differ, so this does not isolate attention bias as the cause. Very small Qwen2.5 binary p-values underflow to zero in the machine-readable output; zero is not a literal exact probability.</p>
 <figure aria-describedby="decision-math-caption"><img class="state-plot" src="assets/asymmetric-decision-math-20261022.svg" width="1248" height="499" loading="lazy" alt="Paired math accuracy changes versus native for all six recipes on both models. Qwen3 stays near native; Qwen2.5 key-quantized arms lose about 91 percentage points."><figcaption id="decision-math-caption">Descriptive paired 95% score intervals, not the multiplicity-adjusted certificate bounds. Both panels use the same horizontal scale. <a href="assets/asymmetric-decision-math-20261022.svg">Full-size plot</a>.</figcaption></figure>
 <figure aria-describedby="decision-memory-caption"><img class="state-plot" src="assets/asymmetric-decision-memory-20261022.svg" width="1152" height="518" loading="lazy" alt="Physical cache backing at 8320 tokens. Dynamic K16/V8 and reverse K8/V16 save 24.22%; dynamic K8/V8 saves 48.44%, including FP32 scales."><figcaption id="decision-memory-caption">Physical backing at 8,192 input + 128 consumed continuation tokens. Fixed AF/RF save about 25%, fixed SF about 50%, dynamic AD/RD 24.21875%, and dynamic SD 48.4375%. FP32 scales are included; allocation rounding, temporary reconstruction and total process memory are separate. <a href="assets/asymmetric-decision-memory-20261022.svg">Full-size plot</a>.</figcaption></figure>
-<p><a href="data/asymmetric-decision-reference-20261022.json">All aggregate endpoints, bounds, direct contrasts and exact source/input identities (JSON)</a> · <a href="asymmetric-methods.html#precision-and-scaling-reference">Frozen methods and reproduction</a>.</p>
+<p><a href="asymmetric-methods.html#precision-and-scaling-reference">Frozen methods and reproduction</a>.</p>
 </section>
 <section id="decision-worker" aria-labelledby="decision-worker-title">
 <p class="eyebrow">Completed optimized-worker comparison · October 22, 2026</p>
@@ -91,7 +91,7 @@
 <p>Allocator peaks cover quality cohorts and exclude numerical-oracle memory. Device observations target 20 ms and retain conservative gaps below 500 ms; shorter peaks can be missed. The common limits are 68 GiB Torch reserved and 76 GiB device memory. The aggregate data also preserve startup snapshots separately.</p>
 <p>Asymmetric staging has 256 MiB payload capacity, a 32 MiB floating-point workspace and 16 KiB of compact indices. Runtime graph-capture reports are approximately 0.10/0.15/0.18/0.10 GiB for native FlashInfer/native FA3/asymmetric/symmetric. These are rounded startup allocation changes, not independent exact graph inventories. Staging and graphs are already included in whole-process memory and must not be added again. Symmetric Triton scratch uses 2,129,920 bytes outside the persistent-cache budget.</p>
 <p><strong>Practical verdict:</strong> fixed K16/V8 is a qualified memory-saving option when the tested answer-preservation objective is the requirement. Under the separate aggregate-math requirement against both controls, neither compressed worker is qualified; that leaves the compressed choice unresolved. A deployment requiring that evidence should retain native K/V. This does not establish native quality superiority, and it does not decide which compressed worker is faster.</p>
-<p><a href="data/asymmetric-decision-worker-20261022.json">All worker quality bounds, physical bytes and resource aggregates (JSON)</a> · <a href="asymmetric-methods.html#actual-worker-comparison">Exact sources, runtime, methods and reproduction</a>.</p>
+<p><a href="asymmetric-methods.html#actual-worker-comparison">Exact sources, runtime, methods and reproduction</a>.</p>
 </section>
 
 <h2 id="quality-objectives">Preserving answers is different from preserving aggregate accuracy</h2>
@@ -105,7 +105,7 @@
 </tbody></table></div>
 <p>Symmetric AWQ loses 33/1319 answers (2.502%) while gaining 37, so total correct increases by four. Its failed preservation rule remains failed; it also misses retrieval preservation. That recipe quantizes Q as well as K/V and cannot isolate key precision. Direct asymmetric-minus-symmetric math intervals for AWQ, Qwen3.8 and Gemma all include zero; none establishes asymmetric superiority.</p>
 <p><strong>Gemma raw-text loss:</strong> all 32 documents remain in each estimate. Native mean NLL is 5.1990 at 1K and 8.0550 at 8K. The largest positive document contributes 61.6% of asymmetric 1K's mean increase, but even omitting it diagnostically leaves the upper bound at 3.976%, above 1%. Omitting the largest symmetric 1K increase would leave 3.448%. These leave-one-out diagnostics are not replacement results. The full-panel lower bounds include negative changes, so missing certification does not establish broad degradation. No outlier, prompt or gate was changed.</p>
-<p><a href="data/asymmetric-quality-objectives-20261022.json">All paired aggregate comparisons and Gemma influence summaries (JSON)</a>. Score intervals use Tango's matched-pair method with approximate coverage. These descriptive post hoc intervals cannot retroactively qualify a failed recipe.</p>
+<p>Score intervals use Tango's matched-pair method with approximate coverage. These descriptive post hoc intervals cannot retroactively qualify a failed recipe.</p>
 <h2 id="throughput">Complete-request throughput</h2>
 <p>One H100 SXM 80 GB, FP16 compute, in-process execution, 128 forced output tokens. Native controls store FP16 K and V. The candidate physically stores FP16 K and E4M3 FP8 V. Each comparison matches its model, inputs, scheduler and KV byte budget.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Throughput results"><table><caption>Median paired throughput changes; the gain rule includes statistical and practical-effect gates</caption><thead><tr><th scope="col">Model / workload</th><th scope="col">Native FlashInfer</th><th scope="col">Native FA3</th><th scope="col">Verdict</th></tr></thead><tbody>
@@ -168,7 +168,7 @@
 <figcaption id="recent-state-caption">Unique backing bytes include FP32 scales and unchanged recurrent state. They exclude weights, temporary reconstruction and allocator reservations. At 1,152 tokens, K16/V8 saves 11.99% for Qwen and 24.63% for Gemma; symmetric FP8 saves 23.98% and 49.26%. These are state savings, not whole-GPU-memory or serving-capacity gains. <a href="assets/asymmetric-recent-state-20261020.svg">Open full-size plot →</a></figcaption>
 </figure>
 <p class="scope"><strong>Scope:</strong> the two candidates have different memory budgets, and no equal-budget K8/V16 control was tested. This quantizer and runtime differ from the <a href="asymmetric-quantization.html#install">optimized serving recipe</a>. The study establishes no fused-backend support or production-speed benefit. All 9,226 saved generation outputs and physical-cache accounting passed validation; 13 CPU cache tests also pass.</p>
-<p><a href="https://github.com/mcgrof/knlp/blob/592db3793de8a38b0d7ea6fcfbd5844f09f1191e/tools/kv/recent/RESULTS.md">Complete results, bounds and failure diagnostics →</a> · <a href="https://github.com/mcgrof/knlp/blob/592db3793de8a38b0d7ea6fcfbd5844f09f1191e/tools/kv/recent/README.md">Pinned checkpoints, methods and reproduction commands →</a></p>
+<p><a href="https://github.com/mcgrof/knlp/blob/734fa6e6c29665c366fb8d44736723bbafc528ab/tools/kv/recent/RESULTS.md">Complete results, bounds and failure diagnostics →</a> · <a href="https://github.com/mcgrof/knlp/blob/734fa6e6c29665c366fb8d44736723bbafc528ab/tools/kv/recent/README.md">Pinned checkpoints, methods and reproduction commands →</a></p>
 </section>
 <h2 id="integration">Capacity planning and related integrations</h2>
 <p>The <a href="asymmetric-upstream.html">upstream integration reference</a> separates FlashInfer and vLLM serving dependencies from LMCache’s merged split-SerDes foundation and ongoing MP-mode storage series.</p>
@@ -176,18 +176,6 @@
 <p>The public <a href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2">aiconfigurator byte-accounting branch</a> and <a href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2">InferenceX dtype-provenance branch</a> keep representation explicit in planning and records. They are separate integration work, not additional serving benchmarks. <a href="cartridge-asymmetric-quantization.html">Asymmetric cartridge KV</a> has its own learned-prefix quality and sharing results.</p>
 <h2 id="data">Data, methods and source identities</h2>
 <div class="detail-links">
-<a href="data/asymmetric-dense-8k-http-20261019.json">Dense 8K HTTP: full independent result <span>JSON ↗</span></a>
-<a href="data/asymmetric-dense-8k-http-matrix-20261019.csv">Dense 8K HTTP: all unpooled arm/cell summaries <span>CSV ↗</span></a>
-<a href="data/asymmetric-dense-1k-http-20261019.json">Dense 1K HTTP: full independent result <span>JSON ↗</span></a>
-<a href="data/asymmetric-dense-1k-http-matrix-20261019.csv">Dense 1K HTTP: all unpooled arm/cell summaries <span>CSV ↗</span></a>
-
-<a href="data/mixed-fresh-prefill-20261017.json">Qwen3 AWQ 8K: raw blocks and qualification <span>JSON ↗</span></a>
-<a href="data/dense-fp16-routing-20261018.json">Qwen3 dense 8K: raw blocks and physical bytes <span>JSON ↗</span></a>
-<a href="data/dense-1k-routing-20261019.json">Qwen3 dense 1K: all three comparisons <span>JSON ↗</span></a>
-<a href="data/asymmetric-awq-http-quality-20261019.json">AWQ HTTP: task-quality evidence <span>JSON ↗</span></a>
-<a href="data/asymmetric-phi4-quality-20261019.json">Phi-4: quality and storage transfer <span>JSON ↗</span></a>
-<a href="data/asymmetric-ministral-quality-20261019.json">Ministral 3: tasks and preserved failures <span>JSON ↗</span></a>
-<a href="data/asymmetric-recent-models-20261019.json">Recent models: native capability and layout limits <span>JSON ↗</span></a>
 <a href="asymmetric-methods.html">Frozen gates, source pins and numerical contracts <span>→</span></a>
 <a href="asymmetric-history.html">Historical model matrix and earlier experiments <span>→</span></a>
 <a href="bias-aware-kv-quantization.html">Separate bias-aware symmetric-KV repair study <span>→</span></a>

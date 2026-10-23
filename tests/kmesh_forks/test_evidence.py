@@ -4,6 +4,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import unittest
 
@@ -18,8 +19,14 @@ spec.loader.exec_module(verifier)
 class EvidenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        capture_root = os.environ.get("KNLP_CAPTURE_ROOT")
+        if not capture_root:
+            raise unittest.SkipTest(
+                "set KNLP_CAPTURE_ROOT for archived-capture integration tests"
+            )
+        cls.capture_root = Path(capture_root)
         cls.capture = json.loads(
-            (ROOT / "docs/data/kmesh-fork-accounting.json").read_text()
+            (cls.capture_root / "docs/data/kmesh-fork-accounting.json").read_text()
         )
 
     def setUp(self):
@@ -71,7 +78,9 @@ class EvidenceTests(unittest.TestCase):
 
     def test_current_capture_requires_its_explicit_profile(self):
         current = json.loads(
-            (ROOT / "docs/data/kmesh-fork-accounting-current.json").read_text()
+            (
+                self.capture_root / "docs/data/kmesh-fork-accounting-current.json"
+            ).read_text()
         )
         report = verifier.verify(current, "current")
         self.assertEqual(report["status"], "pass")

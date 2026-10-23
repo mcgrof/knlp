@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .current import FIXTURES, save
+from .current import fixture_root, save
 from .serving_client import replay
 from .serving_trace import trace
 from .serving_verify import verify
@@ -85,7 +85,7 @@ def main():
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     manifest = json.loads(
-        gzip.decompress((FIXTURES / args.format / "qwen.json.gz").read_bytes())
+        gzip.decompress((fixture_root() / args.format / "qwen.json.gz").read_bytes())
     )
     base = trace(manifest, length=args.length, count=32, concurrency=32)
     prompts = [row["prompt_token_ids"] for row in base["requests"]]

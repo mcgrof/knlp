@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .current import FIXTURES, FLAGS, save, sha
+from .current import fixture_root, FLAGS, save, sha
 from .october import VARIANTS, check_scales
 
 
@@ -26,7 +26,7 @@ def prepare(install, output, weight_format, arm, cache_bytes=None):
     output.mkdir(parents=True, exist_ok=False)
     inputs = output / "inputs"
     inputs.mkdir()
-    fixture = FIXTURES / weight_format
+    fixture = fixture_root() / weight_format
     protocol = json.loads((fixture / "measured-protocol.json").read_text())
     files = json.loads((fixture / "manifest.json").read_text())
     for name, item in files.items():

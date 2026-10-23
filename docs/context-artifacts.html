@@ -60,7 +60,7 @@
 <tr><td>Engine / LMCache acceptance</td><td class="pending-text">Incomplete</td><td>Control, LMCache, and default inference-acceptance paths fail explicitly until implemented. No silent skip becomes a pass.</td></tr>
 </tbody></table></div>
 <p>The LPC byte check ran an unchanged loader function extracted from pinned source; it did not import a built vLLM engine. Its training-time model revision remains unverified. The reader used <a href="https://github.com/snap-stanford/memorilla/tree/005854d13ced2dfe56588fb721eb78db5ec13f6a">unchanged Memorilla source</a>, the <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/tree/f6b15af56aa687861c8d2d03b1cd8f7979881361/stage3">released stage3 checkpoint</a>, PyTorch 2.7.0+cpu, and Transformers 4.53.3. This is a reader-stage check, not the complete author serving environment.</p>
-<p>Numerical acceptance was exact tensor equality, with no tolerance widened after the result. The <a href="data/context-artifacts/cpu-restore-summary.json">sanitized result summary</a> records the tested geometry, versions, and acceptance flags. Page-cache state was unknown. No physical NVMe traffic, device transfer, latency improvement, power-loss guarantee, or generation score was measured.</p>
+<p>Numerical acceptance was exact tensor equality, with no tolerance widened after the result. The sanitized result summary records the tested geometry, versions, and acceptance flags. Page-cache state was unknown. No physical NVMe traffic, device transfer, latency improvement, power-loss guarantee, or generation score was measured.</p>
 </section>
 <section id="comparison">
 <div class="eyebrow">05 / Papers and interfaces</div><h2>Memorilla and REFRAG shorten context differently.</h2>
@@ -100,7 +100,7 @@ python -m tools.reproduce.context_artifacts.reader_probe --help</code></pre>
 <li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
 <li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
 <li><a href="https://arxiv.org/abs/2509.01092v2">REFRAG: Rethinking RAG based Decoding, v2</a>, §2–3 and Appendix A.1 — chunk embeddings, decoder alignment, and selective expansion.</li>
-<li><a href="data/context-artifacts/cpu-restore-summary.json">CPU result summary</a> and <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">the file-artifact implementation</a> — measured scope and unimplemented acceptance paths.</li>
+<li>CPU result summary and <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">the file-artifact implementation</a> — measured scope and unimplemented acceptance paths.</li>
 </ol>
 </section>
 </main>

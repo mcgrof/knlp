@@ -34,7 +34,7 @@ NLL uses 32 documents per context and 128 cached target steps per document;
 prefill step zero is excluded. The 1K upper bounds on paired delta NLL
 are −0.000308 and −0.000238 against FlashInfer and FA3. The 8K bounds are
 +0.000510 and +0.000606. All are below the frozen `ln(1.01)` margin.
-The [machine-readable result](data/asymmetric-phi4-quality-20261019.json)
+The archived result
 includes paired accuracy intervals, all task counts, source identities and
 raw evidence hashes. Passing these tasks is not a universal accuracy claim.
 
@@ -54,8 +54,8 @@ The stated 74 GiB allocator and 78 GiB driver envelopes are larger than
 the persistent KV budget; production-profile peaks are labeled separately
 from startup-through-measurement telemetry.
 
-The [exact public inputs](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/phi4)
-include the original scales, both context panels, complete GSM8K task,
+The separately archived inputs, described in the
+[input documentation](https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/phi4), include the original scales, both context panels, complete GSM8K task,
 all six measured protocols, byte hashes and dataset attribution. This
 experimental transfer has its own geometry port and qualification; the
 [current Qwen installer](asymmetric-install.md) retains its stated scope.
@@ -90,7 +90,7 @@ block was replaced and no extra block was added. The frozen rule requires
 the full schedule, a 1% median gain screen and Holm correction over both
 native comparisons. A positive descriptive median does not pass that rule;
 an incomplete schedule does not prove absence of a benefit either.
-The [full performance record](data/asymmetric-phi4-performance-20261019.json)
+The full performance record
 retains each valid arm, all failures, frozen designs and source hashes.
 The [independent CPU reader](https://github.com/mcgrof/knlp/blob/main/tools/kv/native/cohort_confirmation.py)
 checks the raw completions, actual active decode batches and memory before

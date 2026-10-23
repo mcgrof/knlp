@@ -117,7 +117,7 @@ arrives later: 71.071 &rarr; 82.974 ms. But the group reaches everyone's
 eighth token sooner: 181.381 &rarr; 170.288 ms. Both observations can be true.
 Across the four rows, A's first-token wait is mixed, while the median time
 until everyone has generated 8 tokens improves in every row.
-The <a href="data/kmesh-retained-prefetch-20261017.json">published result data</a>
+The published result data
 contains both measurements. There are five measured paired groups per case,
 after three warmups, with alternating order and one engine per path/group size.
 These are useful bounded observations, not a general latency or throughput guarantee.</p>
@@ -257,7 +257,7 @@ and completion times, engine identity or physical cache events. There are
 and spacing between record timestamps cannot establish fork gaps, simultaneous
 inference or eviction pressure. This audit therefore requires invocation
 capture before a trace-backed pressure comparison; it predicts no latency gain.
-The <a href="data/kmesh-trace-audit-20261018.json">complete derived audit</a>
+The complete derived audit
 contains field coverage, counts and input hashes, without prompts or answers.</p>
 <h3>Reproduce the CPU audit</h3>
 <pre><code>git clone https://github.com/LMCache/lmcache-agent-trace.git /path/to/traces
@@ -313,7 +313,7 @@ boundaries, six exact parent-child edges, allocations, evictions and reference
 counts. The parent-to-child intervals include the competing requests, with no
 invented idle delay. Allocation observation remains active, so the durations
 are not a latency benchmark. The
-<a href="data/kmesh-family-residency-20261019.json">complete compact result</a>
+complete compact result
 retains every sample, runtime/source identities and original capture hashes.</p>
 <h3>Reproduce the controller and model capture</h3>
 <p>Use the <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_residency/README.md">prepared source, model and runtime instructions</a>.
@@ -375,7 +375,7 @@ before drawing conclusions about useful reasoning workloads.</div>
 <p>The October 20, 2026 (PDT) capture runs on a CUDA GPU with a configured 512 MiB
 cache and two CPU threads. The observed pool contains 585 blocks,
 including one reserved null block, leaving 584 usable blocks.
-The <a href="data/kmesh-reasoning-demand-20261020.json">aggregate result</a>
+The aggregate result
 records exact model, search, vLLM and runtime identities plus raw capture
 hashes. 173 model calls complete: 21 proposal calls and
 152 value calls. Application memoization avoids 84 further value
@@ -606,7 +606,7 @@ child delivery to final-only output.
 Whole-group completion stops when the caller observes the last child's eighth token;
 later terminal acknowledgements and ownership cleanup have separate clocks.
 Eight tokens need not form a complete useful answer. The
-<a href="data/kmesh-prefetch-demand-20261021.json">aggregate record</a>
+aggregate record
 also retains every child's first-token and submission-delay observations,
 preparation costs, empirical percentiles and warmups.</p>
 <p>All four path/group-size combinations meet the declared engineering rule on

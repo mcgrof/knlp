@@ -84,8 +84,7 @@ terminal-dot limitation remains.</p>
 document; prefill step zero is excluded. The 1K upper bounds on paired
 delta NLL are −0.000308 and −0.000238 against FlashInfer and FA3. The 8K
 bounds are +0.000510 and +0.000606. All are below the frozen
-<code>ln(1.01)</code> margin. The <a href="data/asymmetric-phi4-quality-20261019.json">machine-readable
-result</a> includes paired accuracy intervals, all task counts, source
+<code>ln(1.01)</code> margin. The archived result includes paired accuracy intervals, all task counts, source
 identities and raw evidence hashes. Passing these tasks is not a
 universal accuracy claim.</p>
 <p>Production checks verify calibrated scales inside the engine before
@@ -104,8 +103,8 @@ in total GPU memory. The stated 74 GiB allocator and 78 GiB driver
 envelopes are larger than the persistent KV budget; production-profile
 peaks are labeled separately from startup-through-measurement
 telemetry.</p>
-<p>The <a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/phi4">exact
-public inputs</a> include the original scales, both context panels,
+<p>The separately archived inputs, described in the
+<a href="https://github.com/mcgrof/knlp/tree/main/tools/kv/native/fixtures/phi4">input documentation</a>, include the original scales, both context panels,
 complete GSM8K task, all six measured protocols, byte hashes and dataset
 attribution. This experimental transfer has its own geometry port and
 qualification; the <a href="asymmetric-install.html">current Qwen
@@ -162,8 +161,8 @@ set.</strong> No failed block was replaced and no extra block was added.
 The frozen rule requires the full schedule, a 1% median gain screen and
 Holm correction over both native comparisons. A positive descriptive
 median does not pass that rule; an incomplete schedule does not prove
-absence of a benefit either. The <a href="data/asymmetric-phi4-performance-20261019.json">full performance
-record</a> retains each valid arm, all failures, frozen designs and
+absence of a benefit either. The full performance
+record retains each valid arm, all failures, frozen designs and
 source hashes. The <a href="https://github.com/mcgrof/knlp/blob/main/tools/kv/native/cohort_confirmation.py">independent
 CPU reader</a> checks the raw completions, actual active decode batches
 and memory before any statistical inference.</p>

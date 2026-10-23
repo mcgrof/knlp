@@ -8,7 +8,7 @@ compute use FP16. The K16/V8 candidate uses model-specific frozen scales.
 
 Keep `qwen.json.gz` compressed; its historical filename does not identify
 the model. Decompress the other three `.json.gz` files once. Each entry in
-`manifest.json` binds the downloaded bytes and the restored input bytes.
+`manifest.json` binds the archived bytes and the restored input bytes.
 All four restored files are byte-identical to the measured inputs. No
 scale provenance was removed and no new calibration was performed.
 

@@ -48,7 +48,7 @@ HTTP throughput or tail-latency claim, and no additional blocks were added
 to rescue this quality result. The fixed KV pool also does not measure
 a 25% reduction in total GPU memory.
 
-The [machine-readable result](data/asymmetric-awq-http-quality-20261019.json)
+The archived result
 contains exact model and source revisions, paired estimates and intervals,
 protocol limits, and raw evidence hashes. The independent reader is
 [`serving_quality_audit.py`](../tools/kv/native/serving_quality_audit.py),

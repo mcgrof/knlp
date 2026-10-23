@@ -63,14 +63,14 @@
           <h3>SnapStream</h3>
           <p>Query-dependent selection changes the saved object even when the source prefix is the same. A prefix-only cache key therefore permits unsafe cross-query reuse.</p>
           <p>Adding the query to the key resolves that collision. The compact per-head layout, logical positions, padding and mutable ring still need a method-aware connector and request-local state.</p>
-          <div class="auto-links"><a href="https://arxiv.org/abs/2511.03092">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/ce32cd86777681b1d22a678dbe008f59c182cbfd">Modeled adapter &amp; checks ↗</a></div>
+          <div class="auto-links"><a href="https://arxiv.org/abs/2511.03092">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/4c29e61a9aa423a2bbe4c9781efa8635dfed167b">Modeled adapter &amp; checks ↗</a></div>
         </article>
         <article class="auto-finding">
           <p class="auto-verdict pass">Complete backing history passes</p>
           <h3>HiSparse</h3>
           <p>The complete host-memory backing prefix passes the modeled contract. The records selected for a particular attention step are request-time reads.</p>
           <p>Saving only those query-dependent reads under a prefix-only key fails the misuse control. That exposes a reuse mistake; it is not a defect in HiSparse&rsquo;s complete-history design.</p>
-          <div class="auto-links"><a href="https://arxiv.org/html/2608.07009v1#S3">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/00070dbc5a6aef004d2c6c18ab194d9283c32a9b">Modeled adapters &amp; checks ↗</a></div>
+          <div class="auto-links"><a href="https://arxiv.org/html/2608.07009v1#S3">Primary paper ↗</a><a href="https://github.com/mcgrof/knlp/commit/97812cfc7727b3663710da61a296b66b7a326f6e">Modeled adapters &amp; checks ↗</a></div>
         </article>
       </div>
       <p class="auto-note">These are two useful integrity findings, with different verdicts. The screens use Cartridge geometry and block manifests; they load no model or KV tensors. They establish the modeled contract, while model quality and accelerator performance remain separate measurements.</p>

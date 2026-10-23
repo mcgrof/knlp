@@ -67,7 +67,7 @@ candidate routing. At both 1K and 8K, NLL and retrieval checks passed
 against both controls; all arms retrieved 100/100 answers. Those passing
 checks do not override the failed GSM8K preservation gate.
 
-The [complete machine-readable quality result](data/asymmetric-ministral-quality-20261019.json)
+The complete archived quality result
 contains model and source pins, counts, intervals, protocol settings and
 raw evidence hashes. The [serving study](asymmetric-serving-study.md)
 keeps quality, production qualification and performance evidence separate.

@@ -59,7 +59,7 @@ loading, execution and calibration under those settings, not production
 quality, graph qualification or throughput. Some recurrent parameters
 remain FP32 as required by the native implementation.
 
-The [machine-readable record](data/asymmetric-recent-models-20261019.json)
+The archived record
 contains exact checkpoint and harness revisions, runtime policy, measured
 geometry, cache backing sizes and raw evidence hashes. Model definitions
 are available from [Qwen](https://huggingface.co/Qwen/Qwen3.5-9B),

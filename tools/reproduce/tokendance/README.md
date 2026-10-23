@@ -319,5 +319,5 @@ fails, with maximum absolute logit difference 0.5625. The offline codec again
 uses 17,506,917 bytes, restores all four members exactly and rejects corruption.
 This qualifies the current LocalCPU recovery baseline; it establishes no
 DMA-BUF or prefill/decode transfer result. The sanitized
-[H100 retest record](../../../docs/data/tokendance-h100-retest.json) binds these
+H100 retest record binds these
 findings to their source commits and verifier digest.
