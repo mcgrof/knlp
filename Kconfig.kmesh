@@ -1,6 +1,26 @@
 # SPDX-License-Identifier: MIT
 menu "Exact-prefix reasoning forks"
 
+config KNLP_REPRODUCE_KMESH_NATIVE
+	bool "Qualify native paged-cache layouts and position recovery"
+	default n
+	help
+	  Check the pinned LMCache executor and registered retrieve handlers
+	  with synthetic BF16 payloads. Require every selected test to run;
+	  skips cannot qualify a native result. No serving speed is measured.
+
+if KNLP_REPRODUCE_KMESH_NATIVE
+
+config KNLP_KMESH_NATIVE_SOURCE
+	string "Clean pinned LMCache source with matching native extensions"
+	default ""
+
+config KNLP_KMESH_NATIVE_OUTPUT
+	string "Fresh output directory outside the source checkout"
+	default ""
+
+endif
+
 config KNLP_REPRODUCE_KMESH_TRACE
 	bool "Audit trace evidence for family residency on CPU"
 	default n

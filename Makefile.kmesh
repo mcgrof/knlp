@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-KMESH_SELECTED := $(strip $(foreach v,TRACE RESIDENCY FORK SERVING RESTORE CASCADE,\
+KMESH_SELECTED := $(strip $(foreach v,TRACE RESIDENCY FORK SERVING RESTORE CASCADE NATIVE,\
 	$(if $(filter y,$(CONFIG_KNLP_REPRODUCE_KMESH_$(v))),$(v))))
 ifneq ($(word 2,$(KMESH_SELECTED)),)
 $(error Select one KMesh workload: $(KMESH_SELECTED))
@@ -98,4 +98,17 @@ kmesh-cascade kmesh-cascade-plan kmesh-cascade-verify:
 
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_CASCADE),y)
 .DEFAULT_GOAL := kmesh-cascade
+endif
+
+KMESH_NATIVE_PY ?= $(PYTHON)
+.PHONY: kmesh-native kmesh-native-plan kmesh-native-verify kmesh-native-test
+.NOTPARALLEL: kmesh-native
+kmesh-native kmesh-native-plan kmesh-native-verify:
+	@"$(KMESH_NATIVE_PY)" -m tools.reproduce.kmesh_native.run --config "$(CONFIG_FILE)" $(if $(filter kmesh-native,$@),run,$(patsubst kmesh-native-%,%,$@))
+
+kmesh-native-test:
+	@"$(PYTHON)" -m unittest discover -s tests -p test_kmesh_native.py -v
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_NATIVE),y)
+.DEFAULT_GOAL := kmesh-native
 endif
