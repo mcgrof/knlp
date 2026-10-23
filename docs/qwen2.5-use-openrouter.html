@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How much is Qwen2.5 still used? OpenRouter rankings — knlp</title>
+<meta name="description" content="Qwen2.5-7B last appeared in OpenRouter's daily text top 50 on November 9, 2025. A dated analysis of seven model IDs, with coverage and interpretation limits.">
+<link rel="canonical" href="https://knlp.io/qwen2.5-use-openrouter.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261020b">
+<style>
+.usage-table{min-width:680px}.usage-table small{display:block;color:var(--muted);font-weight:400;font-size:12px;overflow-wrap:anywhere}.usage-table td{font-variant-numeric:tabular-nums}.usage-table time{white-space:nowrap}.usage-table .reference-model{background:#17372a}.periods{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:28px 0}.periods>div{border:1px solid var(--line);border-top:3px solid var(--accent);padding:20px;background:var(--surface);border-radius:6px}.periods .unknown{border-top-color:#a5b9ac}.periods strong{display:block;font-size:21px}.periods p{font-size:14px;margin:8px 0 0}.periods span{font-size:12px;color:var(--muted)}@media(max-width:700px){.periods{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="./">knlp<span> / model usage</span></a><nav aria-label="Page navigation"><a href="#findings">Findings</a><a href="#meaning">What this means</a><a href="#method">Method</a></nav></header>
+<main id="main">
+<section class="hero" aria-labelledby="page-title">
+<p class="eyebrow">OpenRouter · snapshot collected October 23, 2026</p>
+<h1 id="page-title">How much is Qwen2.5<br>still used?</h1>
+<p class="lead">Qwen2.5 has disappeared from OpenRouter’s daily text top 50 in our snapshot. The 7B-Instruct model last appears on <strong>November 9, 2025</strong>. The last appearance of any matching Qwen2.5 model ID is <strong>November 19, 2025</strong>, for 72B-Instruct. None appears again through October 22, 2026.</p>
+<p>We asked because Qwen2.5-7B provides a strong example of why precise keys can matter in <a href="asymmetric-quantization.html#decision">our asymmetric KV-cache experiments</a>. That raises a separate question: how much current traffic might such a result affect?</p>
+<div class="callout"><strong>The evidence shows reduced ranking prominence.</strong><p>It does not show that Qwen2.5 has no users, that its absolute traffic fell by a particular amount, or that the result describes deployments outside OpenRouter.</p></div>
+<div class="periods" aria-label="Coverage across the requested timeline">
+<div class="unknown"><span>September–December 2024</span><strong>No API history</strong><p>We requested this period, but the endpoint starts in January 2025.</p></div>
+<div><span>January–December 2025</span><strong>7 model IDs observed</strong><p>Rankings exist on 363 days. Qwen2.5’s final observed appearance is November 19.</p></div>
+<div><span>January 1–October 22, 2026</span><strong>0 top-50 appearances</strong><p>All 295 daily rankings are present. Zero appearances does not mean zero tokens.</p></div>
+</div>
+</section>
+<section id="findings" aria-labelledby="findings-title">
+<p class="eyebrow">Seven observed IDs · free alias kept separate</p>
+<h2 id="findings-title">When each variant last appeared</h2>
+<p>The table counts days when OpenRouter reported each model individually. All appearances were in 2025. The highlighted row corresponds to the model name used in our reference experiment; the rankings do not identify its serving precision.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Qwen2.5 ranking observations"><table class="usage-table">
+<caption>Daily text rankings · January 1, 2025–October 22, 2026 · dates in UTC</caption>
+<thead><tr><th scope="col">Model · OpenRouter ID</th><th scope="col">Last appearance</th><th scope="col">Days in top 50</th><th scope="col">Best daily rank</th></tr></thead>
+<tbody>
+<tr class="reference-model"><th scope="row">Qwen2.5-7B-Instruct · reference model<small>qwen/qwen-2.5-7b-instruct</small></th><td><time datetime="2025-11-09">Nov 9, 2025</time></td><td>133</td><td>9</td></tr>
+<tr><th scope="row">Qwen2.5-72B-Instruct<small>qwen/qwen-2.5-72b-instruct</small></th><td><time datetime="2025-11-19">Nov 19, 2025</time></td><td>184</td><td>9</td></tr>
+<tr><th scope="row">Qwen2.5-Coder-32B-Instruct<small>qwen/qwen-2.5-coder-32b-instruct</small></th><td><time datetime="2025-07-13">Jul 13, 2025</time></td><td>104</td><td>9</td></tr>
+<tr><th scope="row">Qwen2.5-32B-Instruct<small>qwen/qwen2.5-32b-instruct</small></th><td><time datetime="2025-03-08">Mar 8, 2025</time></td><td>1</td><td>45</td></tr>
+<tr><th scope="row">Qwen2.5-VL-32B-Instruct<small>qwen/qwen2.5-vl-32b-instruct</small></th><td><time datetime="2025-09-20">Sep 20, 2025</time></td><td>3</td><td>42</td></tr>
+<tr><th scope="row">Qwen2.5-VL-72B-Instruct<small>qwen/qwen2.5-vl-72b-instruct</small></th><td><time datetime="2025-10-25">Oct 25, 2025</time></td><td>17</td><td>21</td></tr>
+<tr><th scope="row">Qwen2.5-72B-Instruct · free alias<small>qwen/qwen-2.5-72b-instruct:free</small></th><td><time datetime="2025-07-27">Jul 27, 2025</time></td><td>1</td><td>48</td></tr>
+</tbody></table></div>
+<p class="scope">These seven IDs are the variants observed in the rankings, not a complete catalog of Qwen2.5 checkpoints. Days in the table need not be consecutive. An absent model has unknown individual volume; it is not assigned zero.</p>
+</section>
+<section id="meaning" aria-labelledby="meaning-title">
+<h2 id="meaning-title">A useful reference, with limited evidence of current reach</h2>
+<p>The Qwen2.5 quantization result still describes the tested model and recipes. This usage analysis does not weaken that measurement. It does limit the case for treating Qwen2.5 alone as evidence of a broad benefit for today’s serving workloads. The <a href="asymmetric-quantization.html#recent-models">comparisons on newer models</a> matter for that question.</p>
+<p>A model can leave the top 50 while still handling substantial traffic. Other models can grow faster, and a model may also become unavailable. These rankings cannot distinguish those explanations or establish why users changed models. They do not measure direct provider traffic, local deployments, or private deployments outside OpenRouter.</p>
+<p><strong>There is no provider breakdown in this dataset.</strong> Providers are pooled under each model ID. It cannot tell us which provider serves most Qwen2.5 traffic, or whether a provider uses BF16, quantized weights, or a particular KV-cache format.</p>
+</section>
+<section id="method" aria-labelledby="method-title">
+<p class="eyebrow">Scope, missing dates and source</p>
+<h2 id="method-title">What we measured</h2>
+<p>We collected <a href="https://openrouter.ai/docs/api/api-reference/datasets/daily-token-totals-for-top-50-models">OpenRouter’s daily rankings API</a> on October 23, 2026, using <code>period=day</code> and <code>modality=text</code>. Each reported total is input plus output tokens summed across requests for one model on one day. It is not a session total, initial-prompt size, request count, or user count.</p>
+<p>The endpoint reports 50 model IDs and combines the remainder into <code>other</code>. We selected IDs matching <code>^qwen/qwen-?2\.5(?:-|:|$)</code> and ranked the named models by daily token totals, excluding <code>other</code>. We kept the free 72B alias separate. Third-party fine-tunes and distillations are not inferred to belong to the family. Text-output filtering can include VL models receiving multimodal inputs.</p>
+<p>We requested September 1, 2024–October 22, 2026. The 2024-only request was rejected because history begins on January 1, 2025. Within the available period, <strong>June 15 and July 15, 2025 return no rows for any model</strong>. Those are dataset gaps with an unknown cause, not evidence of zero traffic or a service outage. We did not interpolate them.</p>
+<p>The snapshot contains 658 daily rankings and 443 Qwen2.5 model/day observations. Counts and last-appearance dates above come from those observations. Raw responses, request metadata, checksums and analysis scripts were retained for this snapshot. Historical API revisions or a newer collection may change the findings; this page is dated rather than a live tracker.</p>
+<p class="scope">Source: <a href="https://openrouter.ai/rankings">OpenRouter (openrouter.ai/rankings)</a>, as of 2026-10-23. Dataset licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. knlp’s analysis filters model IDs, computes ranks and appearance counts, and labels missing coverage. Tokenizers differ across providers, so tokens are a workload measure rather than an exact comparison of text quantity.</p>
+<p><a href="asymmetric-quantization.html#decision">← Return to the asymmetric KV-cache comparison</a></p>
+</section>
+</main>
+<footer>knlp · Open research, measured claims · <a href="https://github.com/mcgrof/knlp/blob/main/docs/qwen2.5-use-openrouter.html">Page source</a></footer>
+</body>
+</html>
