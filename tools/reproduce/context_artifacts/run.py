@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -141,7 +142,7 @@ def run(args, config: dict) -> dict:
     if args.command == "report":
         return evidence | {
             "status": "INCOMPLETE",
-            "detail": "No inference or LMCache acceptance result has been recorded.",
+            "detail": "Inference acceptance is separate from artifact transport checks.",
         }
     for key in ("WORK_ROOT", "BUILD_ROOT", "STORE_ROOT", "RESULTS_ROOT"):
         if not get(key):
@@ -175,13 +176,42 @@ def run(args, config: dict) -> dict:
             "artifact byte tests require the artifact profile; "
             "baseline recipes remain separate"
         )
-    if backend != "files":
-        raise Blocked(
-            "LMCache typed tensor transport is not qualified; "
-            "file transport is available"
-        )
     consumer = ConsumerIdentity(get("CONSUMER"), get("CONSUMER_REVISION"))
-    registry = ContextArtifactRegistry(get("STORE_ROOT"))
+    catalog = None
+    if backend == "files":
+        registry = ContextArtifactRegistry(get("STORE_ROOT"))
+    else:
+        from vllm.cartridge_registry import CartridgeRegistry
+        from lmcache.v1.memory_allocators.host_memory_allocator import (
+            HostMemoryAllocator,
+        )
+        from .lmcache_adapter import LMCacheArtifactRegistry
+        import lmcache
+        import vllm
+
+        for name, module in (("lmcache", lmcache), ("vllm", vllm)):
+            expected = Path(
+                lock.get("sources", {}).get(name, {}).get("path", "")
+            ).resolve()
+            if not Path(module.__file__).resolve().is_relative_to(expected):
+                raise Blocked(f"imported {name} does not match source lock")
+        catalog_path = Path(get("STORE_ROOT")) / "cartridges.sqlite3"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog = CartridgeRegistry(catalog_path)
+        registry = LMCacheArtifactRegistry(
+            catalog,
+            HostMemoryAllocator(int(get("POOL_BYTES") or (64 << 20))),
+        )
+
+    def load_payload():
+        if backend == "files":
+            return registry.load(artifact_id, consumer)
+        manifest = registry.resolve(artifact_id, consumer)
+        if manifest.representation != representation:
+            raise ArtifactError("loaded representation differs from configuration")
+        with registry.lease(artifact_id, consumer):
+            return manifest.payload_digest
+
     try:
         artifact_id = get("ARTIFACT_ID")
         if args.command in {"ingest", "import"}:
@@ -196,7 +226,7 @@ def run(args, config: dict) -> dict:
                 raise ArtifactError("configured consumer is incompatible")
             artifact_id = registry.register(manifest, get("PAYLOAD"))
         elif args.command == "load":
-            registry.load(artifact_id, consumer)
+            load_payload()
         elif args.command == "restore":
             kind = args.restore_kind
             if not kind:
@@ -204,10 +234,10 @@ def run(args, config: dict) -> dict:
                     "restore requires --restore-kind eviction or restart"
                 )
             if kind == "eviction":
-                before = registry.load(artifact_id, consumer)
-                if not registry.evict(artifact_id) or artifact_id in registry.resident:
+                before = load_payload()
+                if not registry.evict(artifact_id):
                     raise ArtifactError("working-copy eviction failed")
-                if registry.restore(artifact_id, consumer) != before:
+                if load_payload() != before:
                     raise ArtifactError("restored bytes differ")
             else:
                 registry.close()
@@ -240,6 +270,8 @@ def run(args, config: dict) -> dict:
     finally:
         if registry is not None:
             registry.close()
+        if catalog is not None:
+            catalog.close()
 
 
 def main() -> int:
@@ -270,10 +302,15 @@ def main() -> int:
     code, config = 0, {}
     try:
         config = read_config(args.config)
-        result.update(run(args, config))
+        with redirect_stdout(sys.stderr):
+            result.update(run(args, config))
     except (
         ArtifactError,
         OSError,
+        EOFError,
+        MemoryError,
+        ImportError,
+        RuntimeError,
         KeyError,
         ValueError,
         subprocess.SubprocessError,

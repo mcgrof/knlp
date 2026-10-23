@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""CPU readout parity for a released Memorilla reader and cached PubMedQA vectors.
+"""Readout parity for a released Memorilla reader and cached PubMedQA vectors.
 
 The author source stays unchanged. This probe checks the reader stage and exact
 file bytes. It does not execute a decoder or qualify inference cache identity.
@@ -8,6 +8,7 @@ file bytes. It does not execute a decoder or qualify inference cache identity.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib
 import json
@@ -30,14 +31,26 @@ from .run import persistent
 
 def tensor_digest(tensor):
     return hashlib.sha256(
-        tensor.contiguous().view(__import__("torch").uint8).numpy().tobytes()
+        tensor.cpu().contiguous().view(__import__("torch").uint8).numpy().tobytes()
     ).hexdigest()
+
+
+@contextmanager
+def artifact_tensors(store, artifact_id, consumer):
+    """Hold storage ownership until the reader finishes using its views."""
+    if hasattr(store, "lease"):
+        with store.lease(artifact_id, consumer) as tensors:
+            yield tensors
+    else:
+        from safetensors.torch import load
+
+        yield load(store.load(artifact_id, consumer))
 
 
 def worker(args):
     import pyarrow.parquet as pq
     import torch
-    from safetensors.torch import load, save_file
+    from safetensors.torch import save_file
 
     torch.set_num_threads(2)
     torch.use_deterministic_algorithms(True)
@@ -53,10 +66,21 @@ def worker(args):
     memory_token_id = prepare_tokenizer(tokenizer)
     protocol = BENCHMARKS["pubmedqa"]
 
-    reader = MemoryModule.from_pretrained(args.checkpoint).eval()
+    reader = MemoryModule.from_pretrained(args.checkpoint).eval().to(args.device)
     checkpoint_digest = digest_file(args.checkpoint / "memory.pt")
     consumer = ConsumerIdentity("memorilla/Memorilla-Qwen3-8B", args.reader_revision)
-    store = ContextArtifactRegistry(args.output / "store")
+    catalog = None
+    if args.storage_backend == "lmcache":
+        from vllm.cartridge_registry import CartridgeRegistry
+        from lmcache.v1.memory_allocators.host_memory_allocator import (
+            HostMemoryAllocator,
+        )
+        from .lmcache_adapter import LMCacheArtifactRegistry
+
+        catalog = CartridgeRegistry(args.output / "cartridges.sqlite3")
+        store = LMCacheArtifactRegistry(catalog, HostMemoryAllocator(args.pool_bytes))
+    else:
+        store = ContextArtifactRegistry(args.output / "store")
     bank = EmbeddingStore("pubmedqa", "test", root=args.data)
     table = pq.read_table(args.data / "data/pubmedqa/test-00000-of-00001.parquet")
     artifacts = []
@@ -96,9 +120,9 @@ def worker(args):
                 canonical(token_ids[: positions[0]])
             ).hexdigest()
             baseline = reader(
-                original_docs.unsqueeze(0).to(torch.bfloat16),
+                original_docs.unsqueeze(0).to(device=args.device, dtype=torch.bfloat16),
                 None,
-                question.unsqueeze(0).to(torch.bfloat16),
+                question.unsqueeze(0).to(device=args.device, dtype=torch.bfloat16),
             ).squeeze(0)
             if args.phase == "import":
                 path = args.output / f"documents-{row}.safetensors"
@@ -135,7 +159,7 @@ def worker(args):
                 )
                 bank_id = store.register(manifest, path)
                 soft_path = args.output / f"soft-tokens-{row}.safetensors"
-                save_file({"embeddings": baseline.contiguous()}, str(soft_path))
+                save_file({"embeddings": baseline.cpu().contiguous()}, str(soft_path))
                 soft = ContextArtifactManifest(
                     1,
                     "memorilla-reader-probe",
@@ -170,24 +194,25 @@ def worker(args):
             else:
                 bank_id = artifacts[row]["bank_id"]
                 soft_id = artifacts[row]["soft_id"]
-            restored_docs = load(store.load(bank_id, consumer))["embeddings"]
-            assert torch.equal(original_docs, restored_docs)
-            restored_output = reader(
-                restored_docs.unsqueeze(0).to(torch.bfloat16),
-                None,
-                question.unsqueeze(0).to(torch.bfloat16),
-            ).squeeze(0)
-            assert torch.equal(baseline, restored_output)
-            assert torch.isfinite(restored_output).all()
+            with artifact_tensors(store, bank_id, consumer) as tensors:
+                restored_docs = tensors["embeddings"]
+                assert torch.equal(original_docs, restored_docs)
+                restored_output = reader(
+                    restored_docs.unsqueeze(0).to(
+                        device=args.device, dtype=torch.bfloat16
+                    ),
+                    None,
+                    question.unsqueeze(0).to(device=args.device, dtype=torch.bfloat16),
+                ).squeeze(0)
+                assert torch.equal(baseline, restored_output)
+                assert torch.isfinite(restored_output).all()
             decoder = ConsumerIdentity("Qwen/Qwen3-8B", args.decoder_revision)
-            persisted_soft = load(store.load(soft_id, decoder))["embeddings"]
-            assert torch.equal(baseline, persisted_soft)
+            with artifact_tensors(store, soft_id, decoder) as tensors:
+                assert torch.equal(baseline.cpu(), tensors["embeddings"])
             assert tensor_digest(baseline) == artifacts[row]["output_digest"]
-            store.evict(bank_id)
-            assert bank_id not in store.resident
-            assert torch.equal(
-                load(store.restore(bank_id, consumer))["embeddings"], original_docs
-            )
+            assert store.evict(bank_id)
+            with artifact_tensors(store, bank_id, consumer) as tensors:
+                assert torch.equal(tensors["embeddings"], original_docs)
             cases.append(
                 {
                     "row": row,
@@ -202,17 +227,64 @@ def worker(args):
                     "output_digest": tensor_digest(baseline),
                 }
             )
+    shared_bank_checks = []
+    if args.storage_backend == "lmcache" and args.rows > 1:
+        bank_id = artifacts[0]["bank_id"]
+        original_docs = bank.documents(artifacts[0]["collection"])
+        with torch.inference_mode():
+            for query_row in (0, 1):
+                question = bank.question(query_row)
+                native = reader(
+                    original_docs.unsqueeze(0).to(
+                        device=args.device, dtype=torch.bfloat16
+                    ),
+                    None,
+                    question.unsqueeze(0).to(device=args.device, dtype=torch.bfloat16),
+                ).squeeze(0)
+                with artifact_tensors(store, bank_id, consumer) as tensors:
+                    restored = reader(
+                        tensors["embeddings"]
+                        .unsqueeze(0)
+                        .to(device=args.device, dtype=torch.bfloat16),
+                        None,
+                        question.unsqueeze(0).to(
+                            device=args.device, dtype=torch.bfloat16
+                        ),
+                    ).squeeze(0)
+                    assert torch.equal(native, restored)
+                shared_bank_checks.append(
+                    {
+                        "query_row": query_row,
+                        "bank_id": bank_id,
+                        "query_digest": tensor_digest(question),
+                        "output_digest": tensor_digest(restored),
+                        "exact_reader": True,
+                    }
+                )
+    storage_counts = None
+    if args.storage_backend == "lmcache":
+        storage_counts = {
+            name: getattr(store.storage, name)
+            for name in ("read_count", "read_bytes", "cache_hits")
+        }
     store.close()
+    if catalog is not None:
+        catalog.close()
     (args.output / "artifacts.json").write_bytes(canonical(artifacts))
     report = {
-        "status": "CPU_READER_STAGE_PASS",
+        "status": (
+            "CPU_READER_STAGE_PASS" if args.device == "cpu" else "GPU_READER_STAGE_PASS"
+        ),
+        "storage_backend": args.storage_backend,
+        "storage_counts": storage_counts,
+        "shared_bank_checks": shared_bank_checks,
         "phase": args.phase,
         "cases": cases,
         "decoder_executed": False,
-        "gpu_executed": False,
+        "gpu_executed": args.device != "cpu",
         "interface_pass": False,
         "reader_checkpoint_digest": checkpoint_digest,
-        "device": "cpu",
+        "device": args.device,
         "reader_dtype": "bfloat16",
         "stored_document_dtype": "float16",
         "torch": torch.__version__,
@@ -237,6 +309,11 @@ def main():
         "data-revision",
     ):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument(
+        "--storage-backend", choices=("files", "lmcache"), default="files"
+    )
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--pool-bytes", type=int, default=4 << 20)
     parser.add_argument("--rows", type=int, default=8)
     parser.add_argument("--phase", choices=("import", "restore"))
     args = parser.parse_args()

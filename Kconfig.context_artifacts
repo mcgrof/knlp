@@ -100,4 +100,13 @@ config KNLP_CA_CONSUMER_REVISION
 	string "Exact consumer revision"
 	default ""
 
+config KNLP_CA_POOL_BYTES
+	int "LMCache host artifact arena bytes"
+	default 67108864
+	depends on KNLP_CA_BACKEND_LMCACHE
+	help
+	  Bounded host arena for loaded external artifacts. Configure enough
+	  space for active leases; idle entries may be evicted on allocation.
+	  This limit does not include the Linux page cache or model memory.
+
 endif
