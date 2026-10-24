@@ -55,7 +55,8 @@ def settings(path):
     result.setdefault("MODE", "cpu")
     result.setdefault("OUTPUT", "results/tokendance")
     result.setdefault("DOCKER", "docker")
-    result.setdefault("SOURCE_PAIR", "current" if result["MODE"] == "cuda" else "dated")
+    if not result.get("SOURCE_PAIR"):
+        result["SOURCE_PAIR"] = "current" if result["MODE"] == "cuda" else "dated"
     if result["MODE"] not in ("cpu", "gpu", "cuda"):
         raise ValueError("TOKENDANCE_MODE must be cpu or gpu or cuda")
     return result
@@ -125,7 +126,9 @@ def plan(cfg):
     return {
         "schema_version": 1,
         "mode": cfg["MODE"],
-        "source_pins": profile()["source_pairs"]["current" if cuda else "dated"],
+        "source_pins": profile()["source_pairs"][
+            cfg.get("SOURCE_PAIR", "current" if cuda else "dated")
+        ],
         "arms": profile()["arms"],
         "trace_sha256": profile()["trace_sha256"],
         "gpu_execution": cfg["MODE"] in ("gpu", "cuda"),
@@ -339,7 +342,9 @@ def main():
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--bundle", type=Path)
-    parser.add_argument("--source-pair", choices=["dated", "reference", "current"])
+    parser.add_argument(
+        "--source-pair", choices=["dated", "reference", "current", "rtx4090"]
+    )
     args = parser.parse_args()
     cfg = settings(args.config)
     if args.output:
@@ -348,7 +353,13 @@ def main():
         cfg["BUNDLE"] = str(args.bundle)
     if args.source_pair:
         cfg["SOURCE_PAIR"] = args.source_pair
-    if cfg["MODE"] == "cuda" and args.action in ("run", "gpu", "contracts", "codec"):
+    if cfg["MODE"] == "cuda" and args.action in (
+        "run",
+        "gpu",
+        "contracts",
+        "codec",
+        "verify",
+    ):
         action = "run" if args.action in ("run", "gpu") else args.action
         env = os.environ.copy()
         env.update({"TOKENDANCE_" + key: value for key, value in cfg.items()})

@@ -31,6 +31,16 @@
         "commit": "643f8ca3962e0d02687ed9d0194e0915679b3c0b",
         "tree": "6712036a58a4597bd0c1ad0d16bf3291b429d702"
       }
+    },
+    "rtx4090": {
+      "lmcache": {
+        "commit": "daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a",
+        "tree": "0b86139f7df065e2f80b5c48adcf3d24060ded19"
+      },
+      "vllm": {
+        "commit": "9df1493cae0b98380a3c3ecb9b2d41776a6d8735",
+        "tree": "26f684eb66e4adc76fbb37f8cd43557c614232c7"
+      }
     }
   },
   "image": "rocm/vllm-dev@sha256:9e531214b46ebabcfc0ee0888324533de0d90c28a828d5803f7b381179d8457c",
@@ -75,6 +85,31 @@
       "accelerator_count": 1,
       "device_arch": "sm_90",
       "device_total_memory": 85017493504
+    },
+    "extension_hashes": {
+      "_C_stable_libtorch": "f08910ebc61ec7d37d1ab5feec66cf9602a3d5160c1cd28c4e0ba8e8cab66aa0",
+      "_moe_C_stable_libtorch": "65be3121d8ae4008b52e958622dff7f9fdf2747652d4eb9527b08faefb825015"
+    }
+  },
+  "rtx4090_cuda": {
+    "image": null,
+    "target_volume": null,
+    "runtime": {
+      "python": "3.13.15",
+      "torch": "2.13.0+cu130",
+      "hip": null,
+      "cuda": "13.0",
+      "transformers": "5.17.0",
+      "tokenizers": "0.23.3",
+      "sortedcontainers": "2.4.0",
+      "aiofile": "3.12.3",
+      "caio": "0.12.9",
+      "target_volume": null,
+      "wheel_vllm_distribution": "0.30.1rc1.dev624+g84bcbc626",
+      "overlay_vllm_version": "0.30.1rc1.dev624+g84bcbc626",
+      "accelerator_count": 1,
+      "device_arch": "sm_89",
+      "device_total_memory": 25336807424
     },
     "extension_hashes": {
       "_C_stable_libtorch": "f08910ebc61ec7d37d1ab5feec66cf9602a3d5160c1cd28c4e0ba8e8cab66aa0",

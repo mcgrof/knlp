@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "tools/reproduce/tokendance"
 sys.path.insert(0, str(PACKAGE))
 sys.path.insert(0, str(PACKAGE / "harness"))
-from contract import (
+from contract import (  # noqa: E402
     digest,
     profile,
     source_identity,
@@ -33,7 +33,7 @@ spec.loader.exec_module(runner)
 
 class ReproductionTest(unittest.TestCase):
     def test_both_explicit_source_pairs_and_wrong_commit_rejection(self):
-        for pair in ("dated", "reference", "current"):
+        for pair in ("dated", "reference", "current", "rtx4090"):
             source = copy.deepcopy(profile()["source_pairs"][pair])
             validate_sources(source, pair)
             source["vllm"]["commit"] = "0" * 40
@@ -66,6 +66,40 @@ class ReproductionTest(unittest.TestCase):
         value = runner.plan(cfg)
         self.assertEqual(value["source_pins"], profile()["source_pairs"]["current"])
         self.assertTrue(value["gpu_execution"])
+
+    def test_rtx_runtime_and_source_cannot_relabel_the_h100_capture(self):
+        pins = profile()["rtx4090_cuda"]
+        runtime = copy.deepcopy(pins["runtime"])
+        runtime["image"] = pins["image"]
+        runtime["compiled_extensions"] = {
+            name: {"sha256": digest}
+            for name, digest in pins["extension_hashes"].items()
+        }
+        validate_current_runtime(runtime, "rtx4090")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            validate_current_runtime(runtime, "current")
+        with self.assertRaisesRegex(ValueError, "source pins"):
+            validate_sources(profile()["source_pairs"]["current"], "rtx4090")
+        changed = copy.deepcopy(runtime)
+        changed["compiled_extensions"]["_C_stable_libtorch"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "extensions differ"):
+            validate_current_runtime(changed, "rtx4090")
+
+    def test_rtx_plan_uses_its_explicit_pins_without_changing_default(self):
+        with patch.dict(
+            os.environ, {"TOKENDANCE_MODE": "cuda", "TOKENDANCE_SOURCE_PAIR": "rtx4090"}
+        ):
+            cfg = runner.settings(Path("/absent/config"))
+        self.assertEqual(
+            runner.plan(cfg)["source_pins"], profile()["source_pairs"]["rtx4090"]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "config"
+            config.write_text(
+                'CONFIG_KNLP_TOKENDANCE_MODE="cuda"\nCONFIG_KNLP_TOKENDANCE_SOURCE_PAIR=""\n'
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(runner.settings(config)["SOURCE_PAIR"], "current")
 
     def test_dirty_source_is_rejected(self):
         source = copy.deepcopy(profile()["source_pairs"]["dated"])

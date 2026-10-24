@@ -113,6 +113,39 @@ For a captured current run, select `TOKENDANCE_SOURCE_PAIR=current` when
 using `make tokendance-verify`. Historical captures keep their original
 source and runtime checks below.
 
+## RTX 4090 reference on the span-storage source branches
+
+Use `make defconfig-tokendance-rtx4090` to run the existing eight model
+recovery/control cases on the separately pinned RTX 4090 runtime. It selects
+LMCache `daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a` and vLLM
+`9df1493cae0b98380a3c3ecb9b2d41776a6d8735`. The model, trace, repair ratio,
+numerical controls and independent verifier remain the existing baseline.
+This is the in-process LocalCPU reference; it does not exercise the new
+multiprocess span service or enable DMA-BUF model recovery.
+
+The RTX profile pins Python 3.13.15, PyTorch 2.13.0+cu130, the matching vLLM
+wheel/extensions and one `sm_89` device with 25,336,807,424 bytes reported by
+PyTorch. It describes a prepared native environment, with no container image
+or Docker volume claim. Leave `KMESH_IMAGE_DIGEST` unset for this profile.
+The H100 profile retains its original image, source and accelerator pins;
+its captures cannot qualify as RTX runs.
+
+```sh
+make defconfig-tokendance-rtx4090
+make tokendance-plan
+TOKENDANCE_VLLM_SOURCE=/path/to/pinned/vllm \
+  TOKENDANCE_LMCACHE_SOURCE=/path/to/pinned/LMCache \
+  TOKENDANCE_WHEEL_PACKAGE=/path/to/installed/vllm \
+  TOKENDANCE_MODEL_DIR=/path/to/pinned/model/snapshot \
+  TOKENDANCE_OUTPUT=/path/outside/checkouts/rtx-reference \
+  TOKENDANCE_PY=/path/to/prepared/python make tokendance-gpu
+```
+
+Native launchers put the selected source and harness ahead of any caller-supplied
+Python dependency directories. They do not install packages or download models.
+Verify RTX captures with `TOKENDANCE_SOURCE_PAIR=rtx4090` and the helper revision
+that produced them. Raw model tensors and timing captures stay outside Git.
+
 ## Pin the component checkouts and native environment
 
 These pins describe the historical ROCm profile. Use the current CUDA

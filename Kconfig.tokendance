@@ -17,6 +17,13 @@ config KNLP_TOKENDANCE_MODE
 	  cuda runs the pinned current source/runtime on an available GPU,
 	  using the selected Python interpreter.
 
+config KNLP_TOKENDANCE_SOURCE_PAIR
+	string "Source/runtime profile (empty selects the mode default)"
+	default ""
+	help
+	  Select rtx4090 for the separately pinned native RTX reference.
+	  Empty keeps the historical ROCm or current H100 profile.
+
 config KNLP_TOKENDANCE_OUTPUT
 	string "Fresh output directory"
 	default "results/tokendance"

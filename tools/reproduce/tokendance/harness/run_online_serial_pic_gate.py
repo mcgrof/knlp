@@ -96,22 +96,26 @@ TRACE_CONFIG = {
 
 # Runtime selection changes source and accelerator pins, never the workload
 # or the numerical acceptance policy.
-CURRENT_CUDA = os.environ.get("TOKENDANCE_PROFILE") == "current-cuda"
+CURRENT_CUDA = os.environ.get("TOKENDANCE_PROFILE") in ("current-cuda", "rtx4090-cuda")
 if os.environ.get("TOKENDANCE_PROFILE", "historical") not in (
     "historical",
     "current-cuda",
+    "rtx4090-cuda",
 ):
     raise RuntimeError("unknown TokenDance runtime profile")
 if CURRENT_CUDA:
     _profile = json.loads(
         Path(__file__).resolve().parents[1].joinpath("profile.json").read_text()
     )
-    _current = _profile["current_cuda"]
+    _source_pair = (
+        "rtx4090" if os.environ["TOKENDANCE_PROFILE"] == "rtx4090-cuda" else "current"
+    )
+    _current = _profile["rtx4090_cuda" if _source_pair == "rtx4090" else "current_cuda"]
     EXPECTED_IMAGE = _current["image"]
     EXPECTED_TARGET_VOLUME = _current["target_volume"]
     EXPECTED_RUNTIME = _current["runtime"]
     EXPECTED_EXTENSION_HASHES = _current["extension_hashes"]
-    _pins = _profile["source_pairs"]["current"]
+    _pins = _profile["source_pairs"][_source_pair]
     EXPECTED_VLLM_COMMIT = _pins["vllm"]["commit"]
     EXPECTED_VLLM_TREE = _pins["vllm"]["tree"]
     EXPECTED_LMCACHE_COMMIT = _pins["lmcache"]["commit"]

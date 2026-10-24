@@ -31,9 +31,17 @@ def validate_sources(source, pair="dated"):
             raise ValueError(f"{project} source is dirty")
 
 
-def validate_current_runtime(runtime):
-    """Bind a CUDA capture to the committed runtime and wheel identities."""
-    current = profile()["current_cuda"]
+def cuda_profile(pair="current"):
+    """Select explicit hardware/runtime pins without changing old captures."""
+    keys = {"current": "current_cuda", "rtx4090": "rtx4090_cuda"}
+    if pair not in keys:
+        raise ValueError("source pair has no native CUDA runtime profile")
+    return profile()[keys[pair]]
+
+
+def validate_current_runtime(runtime, pair="current"):
+    """Bind a CUDA capture to its selected runtime and wheel identities."""
+    current = cuda_profile(pair)
     for key, value in current["runtime"].items():
         if runtime.get(key) != value:
             raise ValueError(f"current CUDA runtime differs at {key}")

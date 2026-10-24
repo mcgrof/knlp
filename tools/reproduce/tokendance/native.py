@@ -2,7 +2,6 @@
 """Run the pinned CUDA baseline in an existing, reserved environment."""
 
 import argparse
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +9,7 @@ import sys
 
 from contract import (
     ROOT,
+    cuda_profile,
     profile,
     source_identity,
     validate_assets,
@@ -28,15 +28,17 @@ def main():
     args = parser.parse_args()
     cfg = settings(args.config)
     validate_assets()
-    if os.environ.get("KMESH_IMAGE_DIGEST") != profile()["current_cuda"]["image"]:
+    pair = cfg["SOURCE_PAIR"]
+    selected = cuda_profile(pair)
+    if os.environ.get("KMESH_IMAGE_DIGEST") != selected["image"]:
         raise ValueError(
-            "declare the pinned image actually used via KMESH_IMAGE_DIGEST"
+            "declared container image differs from the selected runtime profile"
         )
     identity = {
         name: source_identity(cfg[name.upper() + "_SOURCE"])
         for name in ("vllm", "lmcache")
     }
-    validate_sources(identity, "current")
+    validate_sources(identity, pair)
     model = Path(cfg["MODEL_DIR"]).absolute()
     validate_model(model)
     if not cfg.get("WHEEL_PACKAGE"):
@@ -49,16 +51,17 @@ def main():
     env = os.environ.copy()
     env.update(
         {
-            "TOKENDANCE_PROFILE": "current-cuda",
+            "TOKENDANCE_PROFILE": (
+                "current-cuda" if pair == "current" else "rtx4090-cuda"
+            ),
             "TOKENDANCE_MODEL_DIR": str(model),
             "TOKENDANCE_VLLM_SOURCE": identity["vllm"]["path"],
             "TOKENDANCE_WHEEL_PACKAGE": cfg["WHEEL_PACKAGE"],
-            "KMESH_IMAGE_DIGEST": profile()["current_cuda"]["image"],
-            "KMESH_TARGET_VOLUME": profile()["current_cuda"]["target_volume"],
             "LMCACHE_CONFIG_FILE": str(ROOT / "lmcache-current.yaml"),
             "PYTHONPATH": identity["lmcache"]["path"]
             + os.pathsep
-            + str(ROOT / "harness"),
+            + str(ROOT / "harness")
+            + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""),
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -71,6 +74,15 @@ def main():
             "OMP_NUM_THREADS": "2",
         }
     )
+
+    for name, key in (
+        ("KMESH_IMAGE_DIGEST", "image"),
+        ("KMESH_TARGET_VOLUME", "target_volume"),
+    ):
+        if selected[key] is None:
+            env.pop(name, None)
+        else:
+            env[name] = selected[key]
 
     def step(script, argv, label, gpu=False):
         step_env = env.copy()
@@ -142,7 +154,7 @@ def main():
             bundle = output if args.action == "run" else Path(cfg["BUNDLE"]).resolve()
             argv = [
                 "--source-pair",
-                "current",
+                pair,
                 "--output",
                 output / "verified.json",
                 "--checksums",

@@ -1,0 +1,10 @@
+# Run the existing eight model recovery/control cases on the pinned RTX stack.
+# Supply the clean source checkouts, installed wheel and pinned model.
+CONFIG_KNLP_REPRODUCE_TOKENDANCE=y
+CONFIG_KNLP_TOKENDANCE_MODE="cuda"
+CONFIG_KNLP_TOKENDANCE_SOURCE_PAIR="rtx4090"
+CONFIG_KNLP_TOKENDANCE_OUTPUT="results/tokendance-rtx4090"
+CONFIG_KNLP_TOKENDANCE_VLLM_SOURCE=""
+CONFIG_KNLP_TOKENDANCE_LMCACHE_SOURCE=""
+CONFIG_KNLP_TOKENDANCE_WHEEL_PACKAGE=""
+CONFIG_KNLP_TOKENDANCE_MODEL_DIR=""

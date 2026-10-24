@@ -3366,7 +3366,9 @@ def _parse_args() -> argparse.Namespace:
             type=Path,
         )
     parser.add_argument(
-        "--source-pair", choices=["dated", "reference", "current"], default="dated"
+        "--source-pair",
+        choices=["dated", "reference", "current", "rtx4090"],
+        default="dated",
     )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--checksums", required=True, type=Path)
@@ -3382,10 +3384,10 @@ def main() -> None:
 
     for result in results.values():
         validate_sources(result["source"], args.source_pair)
-        if args.source_pair == "current":
-            validate_current_runtime(result["runtime"])
+        if args.source_pair in ("current", "rtx4090"):
+            validate_current_runtime(result["runtime"], args.source_pair)
     baseline_identity = _identity(results["ordinary"])
-    if args.source_pair == "current":
+    if args.source_pair in ("current", "rtx4090"):
         compiled = results["ordinary"]["runtime"]["lmcache_compiled_extensions"]
         if set(compiled) != {"lmcache_native", "cuda_ops"} or any(
             item["runtime"].get("lmcache_compiled_extensions") != compiled
