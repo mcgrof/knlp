@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "registered-native-serial-model",
+  "lmcache": {
+    "commit": "fe15939ed14f680fdbbf6ebc0df2a3d97fd18266",
+    "tree": "f488fa33b47c5b241567591e8058aabe6d6ceb90"
+  },
+  "vllm": {
+    "commit": "9df1493cae0b98380a3c3ecb9b2d41776a6d8735",
+    "tree": "26f684eb66e4adc76fbb37f8cd43557c614232c7"
+  },
+  "lmcache_native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b",
+    "_vulkan_rm": "a8f0db4eabece84af6b0f769f8dbf2cdb03b18c37f2933eded89ddd7335515fe"
+  },
+  "storage": {
+    "kind": "raw_block_comparison",
+    "arena_bytes": 67108864,
+    "chunk_tokens": 256,
+    "model_layers": 24,
+    "logical_kv_planes": 2,
+    "kv_heads": 2,
+    "head_size": 64,
+    "dtype_bytes": 2,
+    "chunk_payload_bytes": 3145728,
+    "source_objects": 4,
+    "children": 4,
+    "metadata_bytes": 1048576,
+    "queue_depth": 32,
+    "max_transfer_bytes": 131072,
+    "prefetch_policy": "retain"
+  },
+  "workload": "tokendance-five-agents-512-tokens-shifted-shared-416",
+  "reference_storage_duplicated": true,
+  "auxiliary_native_sha256": {
+    "lmcache_rust_raw_block_io": "3aa34dacf7577a4a426a012ee19f184b2d7c40383662260b7b54eacb64e2275b"
+  }
+}

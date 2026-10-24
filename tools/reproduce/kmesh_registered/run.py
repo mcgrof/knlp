@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib
 import json
 import multiprocessing as mp
@@ -21,7 +22,15 @@ sys.path[:0] = [str(ROOT), str(BASELINE), str(BASELINE / "harness")]
 
 
 def service(
-    channel, vllm_source: Path, wheel: Path, lmcache_source: Path, control="none"
+    channel,
+    vllm_source: Path,
+    wheel: Path,
+    lmcache_source: Path,
+    control="none",
+    storage_route="cpu-l1",
+    storage_file=None,
+    storage_settings=None,
+    poison_arena=False,
 ):
     """Own the importing process; its actual exit is the final release proof."""
     import collective_gate_common as common
@@ -35,13 +44,27 @@ def service(
     import zmq
 
     import faults
+    import storage
 
     fault = faults.install_service(control)
-    server = engine = None
+    server = engine = observer = None
     try:
-        server, engine = create_managed_raw_server(
+        storage_config = (
+            None
+            if storage_route == "cpu-l1"
+            else storage.create_config(storage_route, storage_file, storage_settings)
+        )
+        service_args = dict(
             port=0, chunk_tokens=256, dram_bytes=64 << 20, enable_span_execution=True
         )
+        if storage_config is not None:
+            service_args["storage_config"] = storage_config
+        server, engine = create_managed_raw_server(**service_args)
+        if storage_config is not None:
+            observer = storage.StorageObserver(
+                engine.storage_manager, storage_settings, poison_arena=poison_arena
+            )
+            observer.install()
         server.start()
         address = (
             f"grpc://127.0.0.1:{server.bound_port}"
@@ -59,13 +82,37 @@ def service(
             elif command == "clean":
                 fault.armed = False
                 channel.send(("cleaned", dict(fault.observed)))
+            elif (
+                observer is not None
+                and isinstance(command, tuple)
+                and len(command) == 2
+            ):
+                kind, request_id = command
+                if type(request_id) is not str or not request_id:
+                    raise ValueError(
+                        "storage observation requires the actual request ID"
+                    )
+                if kind == "cold":
+                    channel.send(("cold", observer.cold(request_id)))
+                elif kind == "measure":
+                    channel.send(("measured", observer.measure(request_id)))
+                else:
+                    raise RuntimeError("unexpected storage observation")
             else:
                 raise RuntimeError("unexpected service control message")
         server.close()
         server = None
+        storage_evidence = None if observer is None else observer.snapshot()
         engine.close()
         engine = None
-        channel.send(("closed", None))
+        if observer is not None:
+            outcome = observer.adapter.close_with_outcome()
+            storage_evidence["close_buffers_reusable"] = outcome.buffers_reusable
+            if not outcome.buffers_reusable:
+                raise RuntimeError(
+                    "raw-block arena shutdown remains physically unresolved"
+                )
+        channel.send(("closed", storage_evidence))
     except BaseException:
         channel.send(("error", traceback.format_exc()))
         raise
@@ -74,6 +121,8 @@ def service(
             server.close()
         if engine is not None:
             engine.close()
+        if observer is not None:
+            observer.close()
         channel.close()
 
 
@@ -133,6 +182,11 @@ def parse_args():
     )
     parser.add_argument("--ordinary-result", type=Path)
     parser.add_argument("--ordinary-verification", type=Path)
+    parser.add_argument(
+        "--storage-route", choices=("cpu-l1", "staged", "dma-buf"), default="cpu-l1"
+    )
+    parser.add_argument("--storage-file", type=Path)
+    parser.add_argument("--poison-arena", action="store_true")
     return parser.parse_args()
 
 
@@ -152,9 +206,25 @@ def main():
             "model controls require registered route and a verified ordinary result"
         )
     pins = json.loads(args.profile.read_text())
+    profile_hash = hashlib.sha256(args.profile.read_bytes()).hexdigest()
+    helper_hashes = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ROOT.glob("*.py")
+    }
     if args.plan:
         print(json.dumps(pins, indent=2))
         return
+    if args.storage_route != "cpu-l1" and (
+        args.route != "registered"
+        or args.control != "none"
+        or pins["storage"]["kind"] != "raw_block_comparison"
+    ):
+        raise ValueError(
+            "storage comparison requires its pinned registered model profile"
+        )
+    if args.storage_route == "cpu-l1" and args.storage_file is not None:
+        raise ValueError("a backing file requires an explicit storage route")
+    if args.storage_route == "cpu-l1" and args.poison_arena:
+        raise ValueError("arena conditioning requires an explicit storage route")
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError("output directory must be empty")
     for source_path in (args.lmcache_source, args.vllm_source, ROOT.parents[2]):
@@ -164,6 +234,18 @@ def main():
         ):
             raise ValueError("capture output must be outside source checkouts")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.storage_route != "cpu-l1":
+        selected = (
+            args.output_dir / "canonical-kv.raw"
+            if args.storage_file is None
+            else args.storage_file
+        )
+        if selected.exists() or selected.is_symlink():
+            raise ValueError("storage comparison requires a fresh caller-selected file")
+        args.storage_file = selected.resolve()
+        for source_path in (args.lmcache_source, args.vllm_source, ROOT.parents[2]):
+            if args.storage_file.is_relative_to(source_path.resolve()):
+                raise ValueError("storage files must remain outside source checkouts")
     os.environ["TOKENDANCE_PROFILE"] = "rtx4090-cuda"
     os.environ["TOKENDANCE_MODEL_DIR"] = str(args.model_dir)
     unexpected = [
@@ -224,17 +306,24 @@ def main():
         for name in base.EXPECTED_EXTENSION_HASHES
     }
     hashes = {name: base._sha256(path) for name, path in extensions.items()}
+    native_files = {"vllm." + name: path for name, path in extensions.items()}
+    native_hashes = {"vllm." + name: digest for name, digest in hashes.items()}
     if hashes != base.EXPECTED_EXTENSION_HASHES:
         raise ValueError("compiled vLLM extensions differ")
     runtime = base._runtime_identity(
         vllm, lmcache, torch, transformers, extensions, hashes
     )
     for name, digest in pins["lmcache_native_sha256"].items():
-        if (
-            base._sha256(Path(importlib.import_module("lmcache." + name).__file__))
-            != digest
-        ):
+        native_path = Path(importlib.import_module("lmcache." + name).__file__)
+        native_files["lmcache." + name] = native_path
+        native_hashes["lmcache." + name] = digest
+        if base._sha256(native_path) != digest:
             raise ValueError(f"compiled LMCache extension differs: {name}")
+    for name, expected in pins.get("auxiliary_native_sha256", {}).items():
+        native_path = Path(importlib.import_module(name).__file__)
+        native_files[name], native_hashes[name] = native_path, expected
+        if base._sha256(native_path) != expected:
+            raise ValueError(f"compiled storage extension differs: {name}")
 
     # Extend only source admission for this separately pinned descendant. Keep
     # the frozen capture geometry, raw tensor policy and warmup checks intact.
@@ -249,6 +338,8 @@ def main():
     base._atomic_json(args.output_dir / "status.json", {"status": "running"})
     llm = bridge = client = process = None
     parent = None
+    storage_evidence = None
+    storage_verification = None
     try:
         baseline._install_instrumentation(ledger, inject_sibling_failure=False)
         capture = (
@@ -274,6 +365,10 @@ def main():
                     args.wheel_vllm_package,
                     args.lmcache_source,
                     args.control,
+                    args.storage_route,
+                    args.storage_file,
+                    pins["storage"],
+                    args.poison_arena,
                 ),
             )
             process.start()
@@ -283,6 +378,25 @@ def main():
                 raise RuntimeError("cache process did not initialize")
             client = RequestClientFactory.create(address)
             model_files = contract.profile()["model_files"]
+
+            def before_consume(request_id):
+                parent.send(("cold", request_id))
+                kind, value = receive(parent)
+                if kind != "cold":
+                    raise RuntimeError("owned service did not confirm cold sources")
+                ledger.emit("registered.storage.before", **value)
+
+            def after_consume(request_id):
+                parent.send(("measure", request_id))
+                kind, value = receive(parent)
+                if kind != "measured":
+                    raise RuntimeError(
+                        "owned service did not report actual storage work"
+                    )
+                ledger.emit(
+                    "registered.storage.after", request_id=request_id, evidence=value
+                )
+
             bridge = RegisteredReplay(
                 client,
                 {
@@ -305,6 +419,10 @@ def main():
                 },
                 ledger,
                 lambda: stop_importer(process),
+                before_consume=(
+                    None if args.storage_route == "cpu-l1" else before_consume
+                ),
+                after_consume=None if args.storage_route == "cpu-l1" else after_consume,
             )
             bridge.install()
         ledger.set_phase("construction")
@@ -367,11 +485,21 @@ def main():
         if args.route == "registered":
             bridge.close()
             parent.send("stop")
-            if receive(parent)[0] != "closed":
+            kind, storage_evidence = receive(parent)
+            if kind != "closed":
                 raise RuntimeError("cache process did not close")
             process.join(30)
             if process.exitcode != 0:
                 raise RuntimeError("cache process did not exit successfully")
+            if args.storage_route != "cpu-l1":
+                import storage_verify
+
+                storage_verification = storage_verify.verify(
+                    args.storage_route,
+                    storage_evidence,
+                    pins["storage"],
+                    require_poison=args.poison_arena,
+                )
             client.close()
             client = None
         base._cleanup_llm(llm, ledger)
@@ -386,6 +514,15 @@ def main():
             ):
                 raise ValueError("source identity changed during model execution")
         contract.validate_assets()
+        if (
+            profile_hash != base._sha256(args.profile)
+            or helper_hashes != {p.name: base._sha256(p) for p in ROOT.glob("*.py")}
+            or native_hashes
+            != {name: base._sha256(p) for name, p in native_files.items()}
+        ):
+            raise ValueError(
+                "profile, helper or native inputs changed during model execution"
+            )
         base._atomic_json(
             args.output_dir / "result.json",
             {
@@ -400,6 +537,10 @@ def main():
                     )
                 ),
                 "route": args.route,
+                "storage_route": args.storage_route,
+                "poison_arena": args.poison_arena,
+                "storage_evidence": storage_evidence,
+                "storage_verification": storage_verification,
                 "control_evidence": control_evidence,
                 "ordinary_result_sha256": (
                     None
@@ -410,7 +551,8 @@ def main():
                 "runtime": runtime,
                 "profile": pins,
                 "lmcache_config_sha256": base._sha256(LMCACHE_CONFIG),
-                "profile_sha256": base._sha256(args.profile),
+                "profile_sha256": profile_hash,
+                "native_sha256": native_hashes,
                 "runner_sha256": base._sha256(Path(__file__)),
                 "bridge_sha256": base._sha256(ROOT / "bridge.py"),
                 "observations": observations,
@@ -420,8 +562,12 @@ def main():
                     e for e in events if e["action"] == "registered.model.selection"
                 ],
                 "event_ledger_sha256": base._sha256(ledger.path),
-                "helper_sha256": {p.name: base._sha256(p) for p in ROOT.glob("*.py")},
-                "claim_boundary": "CPU-L1 serial model correctness; duplicated reference storage; no serving latency or DMA-BUF claim.",
+                "helper_sha256": helper_hashes,
+                "claim_boundary": (
+                    "CPU-L1 serial model correctness; duplicated reference storage; no serving latency or DMA-BUF claim."
+                    if args.storage_route == "cpu-l1"
+                    else "Controlled cold registered restore and serial repair; duplicated reference storage and capture overhead; no natural eviction-policy, total-memory or production serving-speed claim."
+                ),
             },
         )
         base._atomic_json(args.output_dir / "status.json", {"status": "complete"})

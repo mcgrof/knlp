@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import time
 from typing import Any
 
 
@@ -24,12 +25,20 @@ class RegisteredReplay:
     """Own one worker and the first canonical source in each logical domain."""
 
     def __init__(
-        self, client: Any, artifacts: dict[str, str], ledger: Any, abort_importer: Any
+        self,
+        client: Any,
+        artifacts: dict[str, str],
+        ledger: Any,
+        abort_importer: Any,
+        *,
+        before_consume: Any = None,
+        after_consume: Any = None,
     ):
         self.client = client
         self.artifacts = artifacts
         self.ledger = ledger
         self.abort_importer = abort_importer
+        self.before_consume, self.after_consume = before_consume, after_consume
         self.worker = None
         self.handles: dict[tuple[Any, ...], Any] = {}
         self.sources = []
@@ -157,6 +166,10 @@ class RegisteredReplay:
         spans = kwargs["explicit_spans"]
         if self.worker is None:
             raise RuntimeError("scheduler hit has no registered worker/source")
+        start = time.perf_counter_ns()
+        if self.before_consume is not None:
+            self.before_consume(kwargs.get("request_id"))
+        ready = time.perf_counter_ns()
         blocks = self.worker.block_table(tuple(kwargs["slot_mapping"].cpu().tolist()))
         placements = []
         for span in spans.spans:
@@ -189,6 +202,10 @@ class RegisteredReplay:
             # This refuses a still-live generator and preserves pending physical
             # debt through the typed cleanup gate. It never releases by fiat.
             source.close()
+        finished = time.perf_counter_ns()
+        elapsed, processing = finished - start, finished - ready
+        if self.after_consume is not None:
+            self.after_consume(kwargs.get("request_id"))
         self.ledger.emit(
             "registered.model.consumed",
             request_id=kwargs.get("request_id"),
@@ -197,6 +214,8 @@ class RegisteredReplay:
             returned_mask=[bool(x) for x in result.cpu().tolist()],
             source_closed=source.is_closed,
             pending=source.pending,
+            elapsed_ns=elapsed,
+            processing_ns=processing,
         )
         return result
 
