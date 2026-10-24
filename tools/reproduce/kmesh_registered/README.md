@@ -84,3 +84,79 @@ A revoked lease disables this bounded replay backend; later drained requests
 recompute. This is an explicit availability limit. Controls compare completed
 generated tokens with the ordinary baseline. They do not replace the successful
 pair's raw K/V, logit and selection comparison.
+
+## Matched storage routes
+
+The storage comparison asks whether direct reads into a GPU arena improve this
+same serial repair workload compared with reads into pinned host memory. Select
+`defconfig-kmesh-registered-storage-cuda` and inspect `make kmesh-registered-plan`.
+This is a separate experimental profile, `storage-profile.json`; it requires the
+eager source-arena component commits and native extensions named there. First
+qualify those inputs with `defconfig-kmesh-registered-arenas-cpu` and
+`defconfig-kmesh-registered-arenas-cuda`. The ordinary multiprocess serving guard
+remains closed. The comparison is implemented but has no accepted GPU result in
+this document.
+
+Use the source, model, trace, historical reference and independent verification
+paths described above. Choose a fresh external `KMESH_REGISTERED_OUTPUT`, then
+run `make kmesh-registered-storage-pair` with the matching interpreter. The
+default runs seven pairs, alternating which storage route runs first. Set
+`KMESH_REGISTERED_TRIALS` to choose another number of pairs. Each replay owns a
+fresh regular backing file in its capture directory. It uses the existing raw
+block adapter over that file; it does not initialize a raw device. The filesystem
+must be XFS or ext4 on an NVMe namespace and support the selected registered
+`io_uring` path. Both routes use the same filesystem and storage geometry.
+Both fully initialize and sync the fresh backing file before native open.
+Preallocation alone leaves unwritten extents, which the strict GPU route refuses.
+
+The pinned model has 24 layers, two logical K/V planes, two KV heads, 64 elements
+per head and two bytes per BF16 element. A padded 256-token object is therefore
+`256 × 24 × 2 × 2 × 64 × 2 = 3 MiB`. Four such objects supply the four partial
+spans. Both routes reserve a 64 MiB canonical arena and a 1 MiB metadata area.
+The file has eight slots of 3 MiB plus a 4 KiB header each, providing one source
+set and an equally sized reserve without overwrite. Both use one worker for
+each store, lookup and load queue, an I/O queue depth of 32, and a 128 KiB maximum
+transfer. These are fixed experiment settings, not tuned production defaults.
+
+The staged arm needs a locked-memory allowance larger than its 64 MiB host
+arena. Native I/O workers can register the same arena again, and metadata also
+uses registered memory. Configure the process's soft and hard
+`RLIMIT_MEMLOCK` before running; for example, `ulimit -l 1048576` permits 1 GiB
+when the hard limit allows it. Use the same allowance for both arms. The pair
+refuses a limit smaller than one arena before starting the model and records
+the actual limits. Passing this minimum check does not reserve memory or prove
+that every native worker registration will succeed.
+
+External retention is explicitly enabled in both arms. Before each child, the
+runner confirms that the exact four immutable source keys are visible in the
+NVMe tier, releases its lookup locks, waits for outstanding L1 leases, and evicts
+those keys from external L1. This deliberate cold-read control measures the
+transfer path. It does not repeat the retention ablation: retention is the
+mechanism that avoids these repeated reads during normal reuse, whereas
+singleflight coalesces overlapping loads. SSD caches can remain warm.
+
+Before collecting timing samples, each route must pass a separate real model
+replay that fills its entire freed canonical arena with a BF16 NaN pattern and
+drains that fill before loading from NVMe. Freed allocations can retain old KV
+bytes; this control prevents a numerically correct stale buffer from passing as
+new data arrival. It poisons only an exclusively reserved, otherwise free arena,
+never a live immutable source. An unresolved device operation retains its
+reservation and physical leases until the owned process exits. Timing runs omit
+this conditioning and are admitted only after both qualified routes pass.
+
+Every measured child must show native registered-read submission and completion
+for its exact source keys and byte counts, followed by bitwise K/V, matching
+repair selections and retrieval masks, the existing logit tolerance, and exact
+generated tokens against the same-source serial reference. The staged route
+uses classic registered host buffers; the direct route uses a Vulkan/RM-exported
+GPU DMA-BUF arena. Checked physical drain and arena shutdown are mandatory.
+
+`paired.json` binds both data-arrival qualifications and every numerical
+comparison. It reports per-pair differences between child medians for restore,
+actual storage calls, full integrity hashing and consuming-model work. Restore
+contains nested storage and hash costs; these columns must not be added. GPU
+source integrity checking still copies the complete object to the host for
+SHA-256, and the direct route copies canonical bytes into private engine slots
+before repair. Reference storage, model instrumentation and raw tensor capture
+also remain active. The comparison does not establish production serving speed,
+total memory savings or elimination of all host transfers.

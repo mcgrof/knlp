@@ -10,6 +10,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 FIELDS = (
+    "PROFILE",
+    "STORAGE_ROUTE",
+    "STORAGE_FILE",
+    "TRIALS",
     "ROUTE",
     "VLLM_SOURCE",
     "LMCACHE_SOURCE",
@@ -27,11 +31,16 @@ FIELDS = (
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "run", "verify", "controls"))
+    parser.add_argument(
+        "action", choices=("plan", "run", "verify", "controls", "storage-pair")
+    )
     parser.add_argument("--config", type=Path, default=Path(".config"))
     args = parser.parse_args()
     settings = dict.fromkeys(FIELDS, "")
     settings["ROUTE"] = "registered"
+    settings["PROFILE"] = str(ROOT / "profile.json")
+    settings["STORAGE_ROUTE"] = "cpu-l1"
+    settings["TRIALS"] = 7
     prefix = "CONFIG_KNLP_KMESH_REGISTERED_"
     if args.config.is_file():
         for line in args.config.read_text().splitlines():
@@ -42,7 +51,7 @@ def main():
     settings = {
         k: os.environ.get("KMESH_REGISTERED_" + k, v) for k, v in settings.items()
     }
-    profile = json.loads((ROOT / "profile.json").read_text())
+    profile = json.loads(Path(settings["PROFILE"]).read_text())
     if args.action == "plan":
         print(json.dumps({"profile": profile, "settings": settings}, indent=2))
         return
@@ -83,13 +92,48 @@ def main():
     ):
         if output == source.resolve() or source.resolve() in output.parents:
             parser.error("capture output must remain outside source checkouts")
-    argv = [sys.executable, str(ROOT / "run.py"), "--route", settings["ROUTE"]]
+    if args.action == "storage-pair":
+        if any(not settings[k] for k in ("REFERENCE", "VERIFICATION")):
+            parser.error(
+                "storage pair requires independently verified historical reference paths"
+            )
+        argv = [
+            sys.executable,
+            str(ROOT / "storage_pair.py"),
+            "--profile",
+            settings["PROFILE"],
+            "--trials",
+            str(settings["TRIALS"]),
+            "--historical-reference",
+            settings["REFERENCE"],
+            "--historical-verification",
+            settings["VERIFICATION"],
+            "--output-dir",
+            str(output),
+        ]
+    else:
+        argv = [
+            sys.executable,
+            str(ROOT / "run.py"),
+            "--route",
+            settings["ROUTE"],
+            "--profile",
+            settings["PROFILE"],
+            "--storage-route",
+            settings["STORAGE_ROUTE"],
+        ]
+        if settings["STORAGE_FILE"]:
+            argv += ["--storage-file", settings["STORAGE_FILE"]]
     for key, option in names.items():
         if key != "OUTPUT":
             argv.extend(("--" + option, settings[key]))
     if args.action == "controls":
-        if settings["ROUTE"] != "registered" or any(
-            not settings[k] for k in ("ORDINARY_RESULT", "ORDINARY_VERIFICATION")
+        if (
+            settings["ROUTE"] != "registered"
+            or settings["STORAGE_ROUTE"] != "cpu-l1"
+            or any(
+                not settings[k] for k in ("ORDINARY_RESULT", "ORDINARY_VERIFICATION")
+            )
         ):
             parser.error(
                 "controls require registered route and verified ordinary result paths"
@@ -121,6 +165,8 @@ def main():
                     stderr=subprocess.STDOUT,
                     check=True,
                 )
+    elif args.action == "storage-pair":
+        subprocess.run(argv, check=True)
     else:
         subprocess.run(argv + ["--output-dir", str(output)], check=True)
 

@@ -101,13 +101,17 @@ ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_CASCADE),y)
 endif
 
 KMESH_REGISTERED_PY ?= $(PYTHON)
-.PHONY: kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls
-.NOTPARALLEL: kmesh-registered
-kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls:
+.PHONY: kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls kmesh-registered-storage-pair
+.NOTPARALLEL: kmesh-registered kmesh-registered-storage-pair
+kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls kmesh-registered-storage-pair:
 	@"$(KMESH_REGISTERED_PY)" -m tools.reproduce.kmesh_registered.launch --config "$(CONFIG_FILE)" $(if $(filter kmesh-registered,$@),run,$(patsubst kmesh-registered-%,%,$@))
 
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_REGISTERED),y)
+ifeq ($(CONFIG_KNLP_KMESH_REGISTERED_STORAGE_PAIR),y)
+.DEFAULT_GOAL := kmesh-registered-storage-pair
+else
 .DEFAULT_GOAL := kmesh-registered
+endif
 endif
 
 KMESH_NATIVE_PY ?= $(PYTHON)

@@ -5,12 +5,34 @@ config KNLP_REPRODUCE_KMESH_REGISTERED
 	bool "Replay serial model repair from registered native spans"
 	default n
 	help
-	  Use the pinned Qwen workload and separate-process CPU-L1 span service.
+	  Use the pinned Qwen workload and separate-process span service.
 	  Keep reference lookup/storage as scheduling controls and feed real
 	  model repair from registered restores. This duplicates storage and
-	  does not measure serving latency or DMA-BUF performance.
+	  does not establish production serving speed. Select an explicit
+	  storage profile for matched cold staged and DMA-BUF restores.
 
 if KNLP_REPRODUCE_KMESH_REGISTERED
+
+config KNLP_KMESH_REGISTERED_PROFILE
+	string "Pinned registered model source/runtime profile"
+	default "tools/reproduce/kmesh_registered/profile.json"
+
+config KNLP_KMESH_REGISTERED_STORAGE_ROUTE
+	string "Canonical source route: cpu-l1, staged or dma-buf"
+	default "cpu-l1"
+
+config KNLP_KMESH_REGISTERED_STORAGE_FILE
+	string "Fresh storage file outside source trees; empty uses capture directory"
+	default ""
+
+config KNLP_KMESH_REGISTERED_STORAGE_PAIR
+	bool "Run a verified reference and alternating matched storage pairs"
+	default n
+
+config KNLP_KMESH_REGISTERED_TRIALS
+	int "Number of matched storage pairs"
+	default 7
+	range 1 50
 
 config KNLP_KMESH_REGISTERED_ROUTE
 	string "Model input route: reference or registered"
