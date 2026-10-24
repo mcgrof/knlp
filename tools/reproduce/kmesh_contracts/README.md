@@ -166,3 +166,12 @@ source objects and unsupported managed-service storage configurations.
 Supply the exact LMCache and vLLM trees shown by its plan. These CPU checks
 allocate no GPU arena; use the paired CUDA profile to qualify actual pinned
 and Vulkan/RM transfers, repacking, canonical preservation and physical drain.
+
+Select `make defconfig-kmesh-registered-groups-cpu` for complete-group admission.
+Its 694 required cases retain the eager-arena contracts and cover shared
+immutable sources with pairwise private mutable destination tables. Reject
+duplicate request identities, reused restore receipts, foreign worker contexts
+and changed model membership before any source can be consumed. Synthetic
+session checks require complete binding before session creation and preserve
+the aggregate cleanup error before fallback. They do not qualify native group
+inputs or real model outputs; use the paired CUDA profile for device work.

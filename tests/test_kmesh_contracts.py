@@ -225,5 +225,9 @@ class RegisteredArenasReceiptTests(RegisteredInputsReceiptTests):
     profile_name = "registered-arenas"
 
 
+class RegisteredGroupsReceiptTests(RegisteredArenasReceiptTests):
+    profile_name = "registered-groups"
+
+
 if __name__ == "__main__":
     unittest.main()

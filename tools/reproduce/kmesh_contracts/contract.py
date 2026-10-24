@@ -30,6 +30,7 @@ PROFILES = {
     "interior-spans": HERE / "profiles" / "interior-spans.json",
     "registered-inputs": HERE / "profiles" / "registered-inputs.json",
     "registered-arenas": HERE / "profiles" / "registered-arenas.json",
+    "registered-groups": HERE / "profiles" / "registered-groups.json",
 }
 
 

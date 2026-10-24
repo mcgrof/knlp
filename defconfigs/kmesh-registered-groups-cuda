@@ -1,0 +1,5 @@
+# Simultaneous private GPU layer inputs and all-member physical cleanup.
+CONFIG_KNLP_REPRODUCE_KMESH_NATIVE=y
+CONFIG_KNLP_KMESH_NATIVE_PROFILE="registered-groups"
+CONFIG_KNLP_KMESH_NATIVE_SOURCE=""
+CONFIG_KNLP_KMESH_NATIVE_OUTPUT=""

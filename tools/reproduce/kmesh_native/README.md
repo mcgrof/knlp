@@ -304,3 +304,28 @@ These are synthetic memory-transfer controls awaiting GPU execution. They do
 not perform NVMe I/O or run a model. GPU canonical hashing still copies the
 full payload to the CPU. A configured DMA-BUF export and a passing arena test
 do not establish the storage route, model correctness or lower serving latency.
+
+Select `make defconfig-kmesh-registered-groups-cuda` for simultaneous private
+layer inputs. Its 208 required cases include the arena controls and four-member
+registered groups over both transports, separate/fused K/V, and NHD/HND. Each
+synthetic group uses the same nine-token canonical source across 24 layers,
+with destination starts one through four. Each member has a private four-block
+fixture region; its actual block table covers only its 12–15 input tokens.
+The windows include declared misses and private tail tokens. This complete
+profile has a 20-minute execution budget to cover the additional separate-process
+cases and checked shutdown. Earlier profiles retain their 15-minute default.
+Budgets must be positive integers of at most one hour; invalid budgets refuse
+before capture creation or worker launch.
+
+The group must reject a changed member before binding, and the worker must
+refuse other restores while group inputs are live. All four layer buffers stay
+independent as a synthetic additive transform writes them back to their private
+engine slots. Early close must preserve the engine bytes. Refusing device drain
+after actual gathers must attempt all member cleanups, retain all buffers, and
+require a later actual drain before checked retirement. The paired prerequisite
+is `make defconfig-kmesh-registered-groups-cpu`.
+
+These native group controls await GPU execution and do not run a model or NVMe
+I/O. The implemented CacheBlend group consumer keeps model tensor operations
+request-local and advances them layer by layer. Actual serial-versus-group
+model equivalence and storage performance remain separate experiments.

@@ -151,6 +151,57 @@ class NativeReceiptTests(unittest.TestCase):
                 cell.main()
 
 
+class NativeRunBudgetTests(unittest.TestCase):
+    def test_selected_budget_reaches_the_worker_without_running_a_gpu(self):
+        class StopWorker(Exception):
+            pass
+
+        for name, seconds in (("paged-cache", 900), ("registered-groups", 1200)):
+            with self.subTest(profile=name), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "KMESH_NATIVE_PROFILE": name,
+                        "KMESH_NATIVE_SOURCE": str(root / "source"),
+                        "KMESH_NATIVE_OUTPUT": str(root / "capture"),
+                    },
+                ), patch(
+                    "sys.argv", ["native", "run", "--config", "/dev/null"]
+                ), patch.object(
+                    run.subprocess, "run", side_effect=StopWorker
+                ) as execute:
+                    with self.assertRaises(StopWorker):
+                        run.main()
+                    self.assertEqual(execute.call_args.kwargs["timeout"], seconds)
+
+    def test_invalid_or_unbounded_budget_refuses_before_capture_creation(self):
+        for value in (None, True, 0, -1, 3601, 1.5, "1200"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                output = root / "capture"
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "KMESH_NATIVE_PROFILE": "registered-groups",
+                        "KMESH_NATIVE_SOURCE": str(root / "source"),
+                        "KMESH_NATIVE_OUTPUT": str(output),
+                    },
+                ), patch(
+                    "sys.argv", ["native", "run", "--config", "/dev/null"]
+                ), patch.object(
+                    run,
+                    "profile",
+                    return_value={"execution_timeout_seconds": value},
+                ), patch.object(
+                    run.subprocess, "run"
+                ) as execute:
+                    with self.assertRaisesRegex(ValueError, "execution timeout"):
+                        run.main()
+                    execute.assert_not_called()
+                    self.assertFalse(output.exists())
+
+
 class RegisteredCopyReceiptTests(NativeReceiptTests):
     profile_name = "registered-copy"
 
@@ -221,6 +272,10 @@ class RegisteredInputsReceiptTests(InteriorSpansReceiptTests):
 
 class RegisteredArenasReceiptTests(RegisteredInputsReceiptTests):
     profile_name = "registered-arenas"
+
+
+class RegisteredGroupsReceiptTests(RegisteredArenasReceiptTests):
+    profile_name = "registered-groups"
 
 
 if __name__ == "__main__":

@@ -11,6 +11,14 @@ from pathlib import Path
 from tools.reproduce.kmesh_native.contract import digest, profile, selectors, verify
 
 
+def execution_timeout(name: str = "paged-cache") -> int:
+    """Require a bounded runtime for the selected native qualification."""
+    seconds = profile(name).get("execution_timeout_seconds", 900)
+    if type(seconds) is not int or not 0 < seconds <= 3600:
+        raise ValueError("native execution timeout must be 1 through 3600 seconds")
+    return seconds
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("plan", "run", "verify"))
@@ -27,6 +35,7 @@ def main() -> None:
     settings = {
         key: os.environ.get("KMESH_NATIVE_" + key, val) for key, val in settings.items()
     }
+    timeout_seconds = execution_timeout(settings["PROFILE"])
     if args.action == "plan":
         print(
             json.dumps(
@@ -79,7 +88,7 @@ def main() -> None:
             stdout=log,
             stderr=subprocess.STDOUT,
             check=True,
-            timeout=900,
+            timeout=timeout_seconds,
         )
     if profile(settings["PROFILE"]).get("forbidden_log_patterns"):
         # The child can report outstanding exporter references during exit,
