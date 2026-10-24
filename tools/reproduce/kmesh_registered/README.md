@@ -13,6 +13,13 @@ elapsed time cannot establish serving latency, capacity savings or a DMA-BUF
 benefit. The ordinary multiprocess serving profile remains disabled. This replay
 qualifies CPU-L1 model consumption before changing the storage route.
 
+The bounded RTX 4090 replay passed on October 24, 2026. All four registered
+children match the same-source serial reference bit for bit in K/V and logits,
+with identical masks, generated tokens and all 96 observed layer selections.
+Seven actual failure controls pass, including refusing fallback while physical
+completion remains unresolved. This matches the existing approximate repair
+baseline; it does not establish equivalence to full recomputation.
+
 Use the exact source commits in `profile.json` with the existing
 [RTX runtime and model pins](../tokendance/profile.json). Install the matching
 native extensions and generated protobuf modules as described by the component
@@ -94,8 +101,14 @@ This is a separate experimental profile, `storage-profile.json`; it requires the
 eager source-arena component commits and native extensions named there. First
 qualify those inputs with `defconfig-kmesh-registered-arenas-cpu` and
 `defconfig-kmesh-registered-arenas-cuda`. The ordinary multiprocess serving guard
-remains closed. The comparison is implemented but has no accepted GPU result in
-this document.
+remains closed. On October 24, 2026, both poisoned-arena qualifications and all
+seven alternating pairs passed on the RTX 4090 with XFS files on a Samsung
+990 PRO 4 TB. Each child restored 12 MiB of padded payload in 96 native reads.
+The median paired read-call difference favored DMA-BUF by 0.152 ms (3.7%) in
+all seven pairs. Full restoration remained mixed: four of seven pairs favored
+DMA-BUF, with differences from -0.890 to +1.139 ms. The
+[measured table](https://knlp.io/kmesh-recovery.html#registered-storage) explains
+the paired aggregation and retained host integrity copy.
 
 Use the source, model, trace, historical reference and independent verification
 paths described above. Choose a fresh external `KMESH_REGISTERED_OUTPUT`, then
@@ -153,8 +166,11 @@ GPU DMA-BUF arena. Checked physical drain and arena shutdown are mandatory.
 
 `paired.json` binds both data-arrival qualifications and every numerical
 comparison. It reports per-pair differences between child medians for restore,
-actual storage calls, full integrity hashing and consuming-model work. Restore
-contains nested storage and hash costs; these columns must not be added. GPU
+actual storage calls, full integrity hashing and the outer restore-and-repair
+interval. The saved `model_consume_ns` metric uses the bridge's `processing_ns`
+interval: it begins before registered restores and ends after model repair and
+checked source close. Restore contains storage and hash costs and is itself
+inside that outer interval; these columns must not be added. GPU
 source integrity checking still copies the complete object to the host for
 SHA-256, and the direct route copies canonical bytes into private engine slots
 before repair. Reference storage, model instrumentation and raw tensor capture
