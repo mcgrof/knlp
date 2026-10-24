@@ -39,8 +39,11 @@ available.</p>
 <h2>The idea: coordinate reuse around existing engine sharing</h2>
 <p>Imagine an agent reads a document and then launches four follow-up
 requests. Their common context is the <strong>ancestor</strong>; each
-follow-up adds private input and output. vLLM's existing prefix cache can
-share compatible ancestor blocks. <strong>Singleflight</strong> makes one
+follow-up adds private input and output. The model saves attention state for
+text it has processed; this is its <strong>key/value (KV) cache</strong>.
+vLLM runs the model, and its existing prefix cache can share that saved state
+when requests begin with the same tokens. LMCache stores state outside the
+engine, in host RAM or on storage. <strong>Singleflight</strong> makes one
 request restore a cold ancestor while matching followers wait and then
 adopt that copy.</p>
 <p>Sharing inside the engine leaves another question: can the external
@@ -95,7 +98,8 @@ sequence and full timing results</a>.</p>
 <div class="stat"><div class="val amber">9–13%</div><div class="label">Earlier group eight-token completion with 100 ms notice</div></div>
 </div>
 <p>The percentages measure waiting after the fixed scheduled arrival, comparing
-early preparation with retained demand loading. Singleflight and read-once
+early preparation with loading that starts when the requests arrive, with
+the external copy retained in both cases. Singleflight and read-once
 storage are enabled in both controls. The test covers one small model, four
 or eight requests and eight output tokens per child. Late submission stays
 in the waiting time; the advance preparation and its one warm-up token
@@ -108,17 +112,30 @@ pressure and assumes useful advance notice. A separate
 holding an ancestor can displace more useful cache hits than it saves.
 The measured early-loading gains apply to both transfer paths; the
 comparison does not establish DMA-BUF superiority or a production policy.</div>
-<h3>Registered restoration and model repair</h3>
-<p>A separate shifted-segment test now restores 416 shared tokens from a cache
-process and matches the existing serial repair baseline bit for bit in K/V and
-logits, both one child at a time and in a layer-major group. Failure controls
-require actual cleanup before recomputation. The group uses CPU-L1 sources;
-a separate serial NVMe comparison finds DMA-BUF read-call medians improve by
-3.7% in seven pairs, while
-complete restoration remains mixed. GPU integrity checking still copies the
-payload to the host. The <a href="kmesh-recovery.html#serial">registered recovery
-page</a> explains this different workload, its numerical checks and the remaining
-costs. These results compare against approximate repair, not full recomputation.</p>
+<h3>Beyond a shared beginning: what if the same text moves?</h3>
+<p>The retention results above share an identical beginning of a prompt. A
+separate experiment asks whether four follow-ups can reuse saved state for
+the same text when each puts different instructions before it. Moving the
+text changes its position and preceding context, so copying the saved bytes
+alone is insufficient. The existing TokenDance-style baseline uses
+<strong>approximate repair</strong>: it recalculates selected model work before
+reusing the rest.</p>
+<p>We test loading 416 shared tokens through a separate cache process and
+running that same repair algorithm. It preserves the reference's saved
+attention state and next-token scores bit for bit, both when finishing one
+follow-up at a time and when running one model layer, or computation stage,
+for all four follow-ups before advancing to the next layer. The group uses
+LMCache's cache in host RAM. Its failure test lets three follow-ups finish
+while the failed one cleans up and retries by recalculating its whole prompt.</p>
+<p>A separate SSD comparison runs follow-ups one at a time. DMA-BUF, Linux's
+buffer-sharing interface, lets the SSD read directly into GPU memory instead
+of staging the read in host RAM. Read-call time falls by 3.7% across seven
+matched pairs, but complete restoration is faster in only four pairs. Checking
+the loaded data still copies it back to the CPU. Combining this storage path
+with the group remains untested. The
+<a href="kmesh-recovery.html">recovery page explains the setup and results
+from the beginning</a>. Matching the approximate repair reference does not
+mean matching full prompt recalculation or establishing a serving-speed gain.</p>
 </section>
 
 <section id="questions">
@@ -174,13 +191,13 @@ conclusions; the pages below retain the full measurements.</p>
 <article class="question-group">
 <span class="range">Questions 21–25</span>
 <h3><a href="kmesh-recovery.html">Recovery across processes</a></h3>
-<p>Qualified process ownership, real serial and grouped model repair, and a separate matched NVMe restoration comparison.</p>
+<p>Reusing text at new positions: safe copies, real-model comparisons, SSD loading and processing four requests one model layer at a time.</p>
 <ol start="21">
-<li><a href="kmesh-recovery.html#native">Do the native layouts and rotations preserve the data?</a></li>
-<li><a href="kmesh-recovery.html#ownership">Who owns a registration and its unfinished work?</a></li>
-<li><a href="kmesh-recovery.html#copies">Do CUDA copies retain memory until they finish?</a></li>
-<li><a href="kmesh-recovery.html#serial">Can a registered shifted restore feed the real model?</a></li>
-<li><a href="kmesh-recovery.html#collective">Can registered children share a layer-major repair group?</a></li>
+<li><a href="kmesh-recovery.html#native">Can we move saved state into the right GPU locations?</a></li>
+<li><a href="kmesh-recovery.html#ownership">How does a separate cache process use memory safely?</a></li>
+<li><a href="kmesh-recovery.html#copies">What happens if a copy fails while the GPU is still working?</a></li>
+<li><a href="kmesh-recovery.html#serial">Does the real model produce the same repair result, and does DMA-BUF help?</a></li>
+<li><a href="kmesh-recovery.html#collective">Can all four requests advance through the model one layer at a time?</a></li>
 </ol></article>
 </div>
 </section>

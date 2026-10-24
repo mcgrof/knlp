@@ -47,6 +47,8 @@ pre { padding: 20px; margin: 24px 0; overflow-x: auto; border: 1px solid var(--l
 pre code { overflow-wrap: normal; color: var(--text); }
 .table-wrap { overflow-x: auto; border-radius: 9px; margin: 24px 0; }
 table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
+.storage-timings { min-width: 760px; }
+.table-scroll-hint { display: none; }
 th, td { padding: 15px 17px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { color: var(--muted); font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
 td { color: var(--muted); font-size: 14px; }
@@ -66,7 +68,7 @@ details[open] summary { margin-bottom: 22px; }
 .timeline-scroll svg { display: block; width: 100%; min-width: 900px; height: auto; }
 .prefetch-timeline figcaption { max-width: 1030px; margin-top: 16px; color: var(--muted); font-size: 15px; }
 .timeline-scroll-hint { display: none; font-size: 13px; margin-top: 10px; }
-@media (max-width: 940px) { .timeline-scroll-hint { display: block; } }
+@media (max-width: 940px) { .timeline-scroll-hint, .table-scroll-hint { display: block; } }
 .papers { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 28px 0 0; }
 .papers li { min-width: 0; padding: 24px; background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 14px; }
 .papers .t { color: var(--text); font-weight: 600; }
