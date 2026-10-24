@@ -197,5 +197,9 @@ class OrderedRegistrationReceiptTests(RegisteredStateReceiptTests):
     profile_name = "ordered-registration"
 
 
+class OwnedRawCopyReceiptTests(OrderedRegistrationReceiptTests):
+    profile_name = "owned-raw-copy"
+
+
 if __name__ == "__main__":
     unittest.main()

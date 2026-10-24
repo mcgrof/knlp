@@ -17,6 +17,7 @@ Each pins an independent LMCache source and case set:
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 | `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
+| `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | 4 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
 prepared CUDA environment; this runner does not install or rebuild packages.
@@ -140,6 +141,26 @@ does not prove import never occurred. The six cases also verify that serialized
 wrappers reset receiver-local counts while the sender keeps its own references.
 Controlled native errors occur before driver effects; no actual device-fault
 recovery or positive service teardown receipt is qualified.
+
+The `owned-raw-copy` profile connects raw import ownership to actual downloads.
+Select `make defconfig-kmesh-owned-raw-copy-cuda`, its pinned source and a fresh
+capture with the same native commands. The manager owns every incoming wrapper
+before importing the first table. It validates metadata, waits for a pending
+producer, copies the table and closes owned raw references only after physical
+stream completion. A dedicated 64 MiB rotary allocation contains a `[64, 8]`
+FP32 view, so the payload is 2,048 bytes and its final close is independent of
+the paged BF16 allocation. Default same-host CUDA event IPC supplies ordering;
+the isolated timeline backend is a separate qualification.
+
+Four cases check exact bytes, cleanup refusal before checked close, a submitted
+copy with failed drain, and partial second import combined with cleanup refusal.
+Refusals retain both borrows, every mapping owner and all buffers until later
+physical drain and checked reference release. Ambiguous native outcomes remain
+quarantined for importer teardown; the stream drain cannot make them retryable.
+The tests supply receiving identity explicitly and do not expose a raw control
+RPC or service retirement receipt. Run its separate 323-case
+[CPU controls](../kmesh_contracts/README.md) with
+`defconfig-kmesh-owned-raw-copy-cpu`. No model or storage performance is measured.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

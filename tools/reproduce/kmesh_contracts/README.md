@@ -28,6 +28,7 @@ and use clean checkouts at its exact commits:
 | `registered-state` | `a301244af6d202f041fe321c6497963b16f626e9` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 268 |
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 292 |
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 316 |
+| `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 323 |
 
 The registered-state profile requires the paired vLLM source and a prepared
 environment containing its dependencies. It runs real server processes on both
@@ -53,6 +54,14 @@ shared-memory inputs and shutdown during preparation. Use
 exact source pair. It does not provide positive exporter teardown or enable
 engine recovery. Its six-case CUDA counterpart runs separately through
 `defconfig-kmesh-ordered-registration-cuda`.
+
+Use `make defconfig-kmesh-owned-raw-copy-cpu` for the later 323-case profile.
+Controlled raw mapping owners model partial import, refused cleanup, interrupted
+close, failed copy drain, metadata refusal and shutdown with retained debt.
+Real CPU registration checks also reject this CUDA-only operation and preserve
+its registered state. The controlled device part allocates no GPU memory; the
+separate four-case CUDA profile checks actual imports and transfers. Typed raw
+registration, exporter release and engine admission remain subsequent gates.
 
 Generate the gRPC bindings from the selected LMCache checkout using its pinned
 build dependency. From that checkout:

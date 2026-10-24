@@ -23,6 +23,7 @@ PROFILES = {
     "registered-state": HERE / "profiles" / "registered-state.json",
     "rotary-transfers": HERE / "profiles" / "rotary-transfers.json",
     "ordered-registration": HERE / "profiles" / "ordered-registration.json",
+    "owned-raw-copy": HERE / "profiles" / "owned-raw-copy.json",
 }
 
 

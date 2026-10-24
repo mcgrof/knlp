@@ -195,5 +195,9 @@ class RawIPCOutcomesReceiptTests(RawIPCLifetimeReceiptTests):
     profile_name = "raw-ipc-outcomes"
 
 
+class OwnedRawCopyReceiptTests(RawIPCOutcomesReceiptTests):
+    profile_name = "owned-raw-copy"
+
+
 if __name__ == "__main__":
     unittest.main()

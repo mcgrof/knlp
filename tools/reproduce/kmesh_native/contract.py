@@ -23,6 +23,7 @@ PROFILES = {
     "ordered-registration": HERE / "profiles" / "ordered-registration.json",
     "raw-ipc-lifetime": HERE / "profiles" / "raw-ipc-lifetime.json",
     "raw-ipc-outcomes": HERE / "profiles" / "raw-ipc-outcomes.json",
+    "owned-raw-copy": HERE / "profiles" / "owned-raw-copy.json",
 }
 
 
