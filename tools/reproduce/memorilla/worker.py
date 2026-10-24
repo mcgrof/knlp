@@ -14,7 +14,17 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .replay import BatchAdmission, configure_scheduling, runtime_settings
-from .run import BENCHMARKS, DATA, ENCODER, LMCACHE, READER, VLLM, digest, write
+from .run import (
+    BENCHMARKS,
+    CHECKPOINT_RELEASE_LABELS,
+    DATA,
+    ENCODER,
+    LMCACHE,
+    READER,
+    VLLM,
+    digest,
+    write,
+)
 from .workloads import fingerprint, percentile, request_record, schedule
 
 
@@ -272,6 +282,14 @@ def main():
         raise ValueError("imported author package differs from pinned source")
     name = opts.benchmark
     folder = name if name in {"pmv2", "pv4"} else "stage3"
+    checkpoint_release = {
+        "published_label": CHECKPOINT_RELEASE_LABELS[folder],
+        "model_card": (
+            "https://huggingface.co/memorilla/Memorilla-Qwen3-8B/"
+            f"blob/{READER}/README.md"
+        ),
+        "paper_lineage_verified": False,
+    }
     checkpoint = Path(inputs["assets"]["reader"]["path"]) / folder
     decoder = inputs["assets"]["decoder"]["path"]
     engine_root = Path(vllm.__file__).resolve().parent
@@ -307,6 +325,7 @@ def main():
         "runner_sha256": digest(Path(__file__)),
         "workloads_sha256": digest(Path(__file__).with_name("workloads.py")),
         "checkpoint_folder": folder,
+        "checkpoint_release": checkpoint_release,
         "checkpoint_sha256": digest(checkpoint / "memory.pt"),
         "data_revision": DATA,
         "decoder_revision": inputs["assets"]["decoder"]["revision"],
@@ -383,6 +402,7 @@ def main():
                 "observed_percent": metrics[key],
                 "delta_percentage_points": metrics[key] - target,
                 "checkpoint_lineage_verified_against_paper": False,
+                "checkpoint_release": checkpoint_release,
                 "claim": "released-checkpoint evaluation; scores are observations, not an exact-reproduction gate",
             },
         )

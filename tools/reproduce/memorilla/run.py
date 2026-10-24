@@ -15,6 +15,11 @@ from .workloads import compare
 
 AUTHOR = "005854d13ced2dfe56588fb721eb78db5ec13f6a"
 READER = "f6b15af56aa687861c8d2d03b1cd8f7979881361"
+CHECKPOINT_RELEASE_LABELS = {
+    "stage3": "Stage 3 (epoch-00), continued from Stage 2",
+    "pmv2": "PersonaMem-v2, fine-tuned from Stage 1",
+    "pv4": "PersonalizationV4, fine-tuned from Stage 1",
+}
 DATA = "c6b0d7eea65659254115ed31dd26869eb6dc0586"
 DECODER = "b968826d9c46dd6066d109eabc6255188de91218"
 ENCODER = "5cf2132abc99cad020ac570b19d031efec650f2b"

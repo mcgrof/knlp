@@ -211,6 +211,11 @@ from Stage 1 and labels stage3 as epoch-00. Therefore these commands reproduce
 row remains unverified. Deltas are reported honestly; passing execution is not
 proof of matching the table. Preserve checkpoint bytes and investigate a gap
 before changing prompts, scoring, generation budgets or checkpoints.
+Provenance and paper-comparison receipts include the published release label
+and a link to the [pinned model card](https://huggingface.co/memorilla/Memorilla-Qwen3-8B/blob/f6b15af56aa687861c8d2d03b1cd8f7979881361/README.md).
+Exact paper-checkpoint verification needs the corresponding authors' run
+manifest; the release label alone does not establish which weights produced
+the paper's scores.
 
 The author's evaluation guide reports about 15 minutes on one H100 after
 inputs are cached. Our per-benchmark process isolation adds startup overhead;
