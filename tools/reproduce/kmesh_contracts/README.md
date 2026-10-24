@@ -28,6 +28,7 @@ and use clean checkouts at its exact commits:
 | `registered-state` | `a301244af6d202f041fe321c6497963b16f626e9` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 268 |
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 292 |
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 316 |
+| `managed-raw-service` | `d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 331 |
 | `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 327 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 323 |
 
@@ -69,6 +70,13 @@ admission checks to the owned-copy profile. Missing or mixed raw owners and an
 active GDS singleton refuse before import. Its nine-case CUDA counterpart tests
 actual construction and checked context retirement; service release receipts and
 model execution remain unqualified.
+
+Use `make defconfig-kmesh-managed-raw-service-cpu` for the 331-case service
+profile. Its four additional controls check CPU refusal, the bounded handler
+inventory, supplied context ownership and an actual CPU registration held through
+retirement. The wire-annotation coverage includes the dedicated managed module.
+Regenerate the selected source's schemas before running. Real raw imports and
+release receipts require the separate ten-case CUDA profile.
 
 Generate the gRPC bindings from the selected LMCache checkout using its pinned
 build dependency. From that checkout:

@@ -17,6 +17,7 @@ Each pins an independent LMCache source and case set:
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 | `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
+| `managed-raw-service` | `d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e` | 10 |
 | `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | 9 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | 4 |
 
@@ -181,6 +182,34 @@ bounded resource primitive requires inactive GDS and does not provide a typed
 managed RPC, service receipt, storage or model result. Ten separate ordinary
 registration/raw-copy regression cases also pass against this source, but are
 outside this nine-case profile. Its paired CPU profile requires 327 cases.
+
+Select `make defconfig-kmesh-managed-raw-service-cuda` for the later ten-case
+profile. A real exporter and importing raw-only service use both public request
+transports. The server records boot, receiving client, nonce, exact views and
+context ownership before import. Repeated registration/rotary preparation/status
+lookup preserve saved state without another import. Changed views, foreign
+sessions and stale generations refuse.
+
+The producer must still be pending when ordered rotary preparation begins.
+Host snapshots and private uploaded bytes compare exactly; later exporter writes
+do not change private state. Retained copy debt and a known pre-native close
+refusal prevent release until actual cleanup. Partial construction and an
+ambiguous native close require importer exit without another native pointer call.
+Native errors are controlled before driver effects, not actual device faults.
+
+Successful clients validate the complete release receipt, drop exported tensors,
+empty the allocator cache and allocate replacements while the service remains
+alive. Private readback and repeated retirement still pass; native close counts
+do not grow. Two requested 64 MiB exporter allocations contain a BF16
+`[2, 16, 4, 2, 8]` paged view and a 2,048-byte FP32 `[64, 8]` rotary view.
+Repeated calls test lost-reply recovery semantics without dropping network packets.
+
+This bounded service admits one context and rotary preparation per lifetime,
+world size one, CPU DRAM L1 and same-host CUDA event IPC. It exposes no legacy
+transfer, lookup, peer, HTTP or automatic reaper interface. Active GDS remains
+refused; storage namespace execution, a model consumer and DMA-BUF comparison
+remain separate gates. Use the paired 331-case CPU profile for ownership and
+schema controls. Counts across prerequisite profiles overlap and are not additive.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

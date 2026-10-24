@@ -203,5 +203,9 @@ class ManagedRawContextReceiptTests(OwnedRawCopyReceiptTests):
     profile_name = "managed-raw-context"
 
 
+class ManagedRawServiceReceiptTests(ManagedRawContextReceiptTests):
+    profile_name = "managed-raw-service"
+
+
 if __name__ == "__main__":
     unittest.main()

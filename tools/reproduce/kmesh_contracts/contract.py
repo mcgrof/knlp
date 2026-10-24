@@ -25,6 +25,7 @@ PROFILES = {
     "ordered-registration": HERE / "profiles" / "ordered-registration.json",
     "owned-raw-copy": HERE / "profiles" / "owned-raw-copy.json",
     "managed-raw-context": HERE / "profiles" / "managed-raw-context.json",
+    "managed-raw-service": HERE / "profiles" / "managed-raw-service.json",
 }
 
 
