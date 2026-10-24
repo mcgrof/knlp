@@ -81,6 +81,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Ordered CUDA registration</td><td>6</td><td>Both public server transports, first-read producer ordering, private normalized GPU bytes and retained failure debt.</td></tr>
 <tr><td>Checked raw-import lifetime</td><td>3</td><td>Real separate-process raw CUDA imports, alias release and injected pre-driver refusal followed by successful retry.</td></tr>
 <tr><td>Raw native-outcome fencing</td><td>6</td><td>Safe preflight retry, conservative import/close quarantine, forwarded local references and alias controls.</td></tr>
+<tr><td>Owned raw rotary input copies</td><td>323 CPU + 4 CUDA</td><td>Ownership before partial import, actual producer-ordered downloads, checked reference release and retained failure debt.</td></tr>
 </table></div>
 <p>The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
@@ -167,6 +168,16 @@ are controlled injections before driver effects; these results qualify the
 conservative refusal policy, rather than actual device-fault recovery. The
 broader IPC regression suite separately passes seventeen cases. Service-level
 release receipts and the model/storage comparison remain subsequent gates.</p>
+<p><strong>Raw imports are now owned before their first mapping attempt.</strong>
+The later four-case CUDA gate passes exact downloaded bytes after a pending
+producer, refusal before checked cleanup, a submitted copy whose stream drain
+fails, and a partial second import combined with refused cleanup. Every incoming
+wrapper, buffer and both registration holds remain retained until actual drain
+and checked reference release succeed. The paired CPU profile passes 323 cases.
+A dedicated 64 MiB allocation holds the 2,048-byte rotary view, making its final
+mapping close independent of the paged allocation. These tests supply receiving
+identity explicitly; they do not qualify a raw control RPC or service retirement
+receipt. No model or DMA-BUF storage performance is measured.</p>
 <p>A real shifted restore must then compare model outputs and repair the state
 whose deeper-layer contents depend on its original preceding context. Rotating
 key positions alone does not make that contextual dependence disappear.
@@ -226,6 +237,13 @@ faults, exporter death or a complete service teardown protocol.</p>
 <code>b08f4c339c73c23d2ba46b7e2c17e880c34a7b19</code>. Run the same native
 commands into a fresh capture directory. This separate six-case profile preserves
 the earlier three-case checkpoint without relabeling its source or evidence.</p>
+<p>For owned raw input copies, use LMCache
+<code>ca65f2820a218a84ecba4d452c47da2c1ac1c4f5</code> with
+<code>make defconfig-kmesh-owned-raw-copy-cpu</code> or
+<code>make defconfig-kmesh-owned-raw-copy-cuda</code>. Run the corresponding
+commands above into fresh external capture directories. The CPU profile requires
+323 cases and the CUDA profile requires four, with the same complete-exit-log
+and source verification rules.</p>
 </details>
 </section>
 <section id="collective">
