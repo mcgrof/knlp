@@ -342,7 +342,10 @@ def main():
         if args.command == "compare":
 
             def records(path):
-                return [json.loads(line) for line in path.read_text().splitlines()]
+                # JSON strings can contain literal Unicode line separators.
+                # JSON Lines uses physical newlines between records.
+                with path.open() as stream:
+                    return [json.loads(line) for line in stream]
 
             result = compare(records(args.reference), records(args.observed))
             print(json.dumps(result, indent=2))

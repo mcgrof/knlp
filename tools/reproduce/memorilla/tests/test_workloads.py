@@ -44,6 +44,38 @@ def test_comparison_detects_corruption_missing_and_duplicate():
         compare(reference, reference * 2)
 
 
+def test_compare_cli_preserves_unicode_separators_inside_json_strings(
+    tmp_path, monkeypatch, capsys
+):
+    import json
+    import sys
+
+    from tools.reproduce.memorilla.run import main
+
+    row = {
+        "request_id": "q:0",
+        "input_digest": "same-input",
+        "prediction": "first\u2028second\u2029third",
+    }
+    reference, observed = tmp_path / "reference.jsonl", tmp_path / "observed.jsonl"
+    reference.write_text(json.dumps(row, ensure_ascii=False) + "\n")
+    observed.write_text(json.dumps(row, ensure_ascii=True) + "\n")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "memorilla",
+            "compare",
+            "--reference",
+            str(reference),
+            "--observed",
+            str(observed),
+        ],
+    )
+    assert main() == 0
+    assert json.loads(capsys.readouterr().out)["exact"]
+
+
 def test_all_paper_rows_and_configuration(tmp_path):
     assert sum(v[0] for v in BENCHMARKS.values()) == 32860
     config = tmp_path / "config"
