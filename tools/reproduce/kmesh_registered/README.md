@@ -6,7 +6,16 @@ in-process retrieval to completed native span restores in a separate cache
 process. It uses the actual Qwen model, rotary table, engine cache allocations
 and live request slots. The leader publishes four partial spans containing 416
 tokens. Four siblings restore them at shifted positions and consume them through
-the existing serial CacheBlend repair.
+our TokenDance-style serial recovery built on LMCache's CacheBlend code.
+
+LMCache calls the feature [CacheBlend, or cache blending](https://docs.lmcache.ai/legacy/kv_cache_optimizations/blending.html).
+The serial entry point in our fork is `LMCBlender.blend()`. Our extensions
+supply explicit shared segments and positions, request-owned sessions and
+mandatory recomputation wherever saved state is missing. CacheBlend's selective
+recomputation handles reused state with changed preceding context. The serial
+reference already includes these extensions. It is our TokenDance-style
+reproduction, rather than the TokenDance authors' implementation or an
+unmodified upstream CacheBlend run. The group uses `LMCBlender.blend_group()`.
 
 LocalCPU lookup and storage remain scheduling controls. This duplicates storage;
 elapsed time cannot establish serving latency, capacity savings or a DMA-BUF
@@ -140,13 +149,23 @@ refuses a limit smaller than one arena before starting the model and records
 the actual limits. Passing this minimum check does not reserve memory or prove
 that every native worker registration will succeed.
 
-External retention is explicitly enabled in both arms. Before each child, the
-runner confirms that the exact four immutable source keys are visible in the
+**Singleflight is off in this storage comparison. The retention fix is present
+and enabled in both arms, and the runner forces a fresh SSD read per child.**
+The model uses `LMCacheConnectorV1` with the KMesh extension and
+`enable_prefix_caching=false`; the earlier `LMCacheMPConnector` exact-prefix
+singleflight gate is inactive. The storage configuration selects
+`prefetch_policy=retain` and leaves `prefetch_join_overlaps=false`, so the
+storage manager's optional joining of simultaneous fills is also off.
+
+Before each child, the runner confirms that the exact four immutable source keys are visible in the
 NVMe tier, releases its lookup locks, waits for outstanding L1 leases, and evicts
-those keys from external L1. This deliberate cold-read control measures the
-transfer path. It does not repeat the retention ablation: retention is the
-mechanism that avoids these repeated reads during normal reuse, whereas
-singleflight coalesces overlapping loads. SSD caches can remain warm.
+those keys from external L1. Every child reads the same 12 MiB source set again,
+totalling 48 MiB across four children. Forced eviction ensures each sample
+exercises the SSD route. These repeated reads are requested by the benchmark;
+they are not evidence that fixed retention lost the data unexpectedly.
+The earlier exact-prefix read-once experiment kept singleflight and retention
+on across the children and read its different 48 MiB ancestor only once.
+SSD caches can remain warm in this storage-route comparison.
 
 Before collecting timing samples, each route must pass a separate real model
 replay that fills its entire freed canonical arena with a BF16 NaN pattern and

@@ -48,9 +48,12 @@ puts new instructions before that report:</p>
 context have changed. Simply copying their saved state is insufficient.
 <strong>Restoration</strong> means loading that state into the follow-up's GPU
 memory. <strong>Repair</strong> means recalculating selected model work so the
-moved state can be used. This experiment uses the existing approximate
-CacheBlend repair algorithm from our
-<a href="kmesh-baselines.html#baseline">TokenDance-style reproduction</a>.</p>
+moved state can be used. Our
+<a href="kmesh-baselines.html#baseline">TokenDance-style reproduction</a>
+uses LMCache's <strong>CacheBlend</strong> implementation for that selective
+recalculation. Our extensions identify the shared text segments, adjust their
+saved positions and require recalculation wherever saved state is missing.
+The comparisons below all include these extensions.</p>
 <h3>Which sections test the implementation, and which run the model?</h3>
 <p><strong>Questions 21–23 are implementation checks.</strong> vLLM already
 organizes its saved attention state into memory blocks, and LMCache already
@@ -75,8 +78,9 @@ outputs or prevents safe recovery when one fails.</p>
 <p><strong>For each of the four requests, its generated tokens were identical
 across these three runs:</strong></p>
 <ol class="experiment-steps">
-<li><strong>Existing method:</strong> Run CacheBlend inside the model process,
-finishing one request before starting the next.</li>
+<li><strong>Existing TokenDance-style method:</strong> Run our extended LMCache
+CacheBlend code inside the model process, finishing one request before
+starting the next.</li>
 <li><strong>Move loading to another process:</strong> Obtain saved state from
 the separate cache process, then run the same CacheBlend method, still finishing
 one request at a time.</li>
@@ -88,16 +92,17 @@ and continue through the model.</li>
 used to choose the next token. They matched bit for bit across all three runs.
 In this test,
 moving the data through another process and changing the execution order did
-not change what the existing CacheBlend method computed.</p>
+not change what our TokenDance-style serial implementation computed.</p>
 <p>CacheBlend itself reuses some saved work and recalculates selected parts.
 We have not shown here that this approximate method gives the same result as
 recalculating the entire prompt. The comparison above checks whether our
 engineering changes alter the existing method's output.</p>
 <p>A separate SSD test finds that reading directly into GPU memory reduces
 storage-read time by 3.7%, but the complete loading process is sometimes faster
-and sometimes slower. That test runs one request at a time. The four-request
-group uses saved state in host RAM; combining it with SSD loading remains
-untested.</p>
+and sometimes slower. That test runs one request at a time with singleflight
+off. It uses the fixed retention code, then deliberately evicts retained data
+before every child to force fresh SSD reads. The four-request group uses saved
+state in host RAM; combining it with SSD loading remains untested.</p>
 <p>These tests ran on one RTX 4090 on October 23–24, 2026. For the model and
 SSD comparisons, <a href="#serial">jump to question 24</a>; for the four-request
 execution order and failure test, <a href="#collective">jump to question 25</a>.</p>
@@ -257,16 +262,34 @@ One leader request supplies saved attention state for four shared text segments,
 totalling 416 tokens. Four follow-up requests, called <strong>children</strong>,
 each have a 512-token prompt and place those segments at different positions.
 This is the measured workload behind the report illustration above.</p>
-<p>First we run the existing repair algorithm within the model process as the
-reference. Then we load the same saved segments through the separate cache
-process, place them in each child's private GPU memory, and run the same repair
-algorithm. Here <strong>serial</strong> means finishing one child before moving
+<h3 id="repair-implementation">Which repair implementation does this use?</h3>
+<p><strong>It uses our TokenDance-style recovery code built on LMCache's
+CacheBlend implementation.</strong> LMCache calls the feature
+<a href="https://docs.lmcache.ai/legacy/kv_cache_optimizations/blending.html">CacheBlend,
+or cache blending</a>. It implements the selective recalculation approach
+from the <a href="https://arxiv.org/abs/2405.16444">CacheBlend paper</a>:
+reuse saved attention state and recalculate selected tokens to account for
+their changed preceding context.</p>
+<p>In our fork, the one-request entry point is
+<code>LMCBlender.blend()</code>. Our TokenDance-style additions supply explicit
+shared text segments and their positions, give each request its own execution
+state, and force recalculation of every position without restored data.
+The four-request version uses our <code>LMCBlender.blend_group()</code>
+extension. This is our reproduction built with LMCache, rather than the
+TokenDance authors' implementation. The first comparison already includes
+our additions; it is not an unmodified upstream CacheBlend run.</p>
+<p>First we run <strong>that extended serial implementation</strong> with
+loading inside the model process. Then we load the same saved segments through
+the separate cache process, place them in each child's private GPU memory, and
+run the same repair algorithm. Here <strong>serial</strong> means finishing one child before moving
 to the next. The shared source data stays unchanged; each child has its own
 working copy because repair changes model state.</p>
 <p>Repair is needed because a token's saved state depends on the text before it,
 as well as its position. Adjusting key rotation fixes the position component.
-CacheBlend selectively recalculates model work to handle the changed context.
-It is an approximation; the reference is not a full recalculation of the prompt.</p>
+CacheBlend's selection determines which restored positions receive additional
+work, and our extension adds every position missing restored state. This is
+approximate reuse of earlier computation; the comparison is against the same
+method running serially, rather than recalculating the entire prompt.</p>
 <h3>Did moving the data through another process change the result?</h3>
 <p><strong>No differences were observed against that reference in this test.</strong>
 All four children have bit-for-bit identical saved keys and values and
@@ -296,12 +319,28 @@ buffer is pinned so the device can access it throughout the transfer.</li>
 shared with the kernel. DMA-BUF is Linux's buffer-sharing interface; this route
 avoids the host staging step for the storage read.</li>
 </ol>
-<p>We run seven matched pairs, alternating which route goes first. Each pair
-runs all four children through each route. Before each child, we deliberately
-remove the four saved objects from LMCache's memory tier so both routes must
-read the SSD. <strong>Retention is enabled in both routes.</strong> This measures
-how the bytes move. It does not vary retention or singleflight, the rule that
-lets one request load while matching requests wait.</p>
+<p><strong>This is a forced-read storage comparison. Singleflight is off;
+the retention fix is present and enabled in both routes.</strong> We run seven
+matched pairs, alternating which route goes first. Each pair runs all four
+children through each route, one child at a time.</p>
+<p>The test explicitly removes the four retained objects from LMCache's memory
+tier before <strong>every child</strong>. Each child therefore reads the same
+saved objects from SSD again: <strong>12 MiB per child, 48 MiB across four
+children</strong>. This eviction makes every child exercise the selected SSD
+route instead of timing a hit in the memory cache. The repeated reads are
+deliberately requested by the benchmark, rather than caused by losing the
+retained copy unexpectedly.</p>
+<p>The earlier read-once experiment had a different setup: singleflight was
+on, and the fixed retention kept one 48 MiB ancestor available across the
+children. It read that ancestor from SSD once. Here, forced eviction takes
+away that cross-child reuse to compare the two storage routes.</p>
+<div class="table-wrap"><table>
+<caption>Which sharing mechanisms were used?</caption>
+<tr><th scope="col">Setting</th><th scope="col">Earlier exact-prefix read-once experiment</th><th scope="col">This shifted-segment SSD comparison</th></tr>
+<tr><td>Engine singleflight: one request loads while matching followers wait</td><td>On.</td><td>Off. Children run one at a time.</td></tr>
+<tr><td>Fixed external retention</td><td>On. Keep the loaded ancestor for subsequent children.</td><td>On. The benchmark explicitly evicts the four objects before every child.</td></tr>
+<tr><td>Resulting SSD payload reads</td><td>One 48 MiB ancestor read across the group.</td><td>12 MiB per child; four reads of the source set, totalling 48 MiB.</td></tr>
+</table></div>
 <p class="table-scroll-hint">On a small screen, scroll the timing table
 sideways to see every column.</p>
 <div class="table-wrap" role="region" aria-label="DMA-BUF timing comparison" tabindex="0"><table class="storage-timings">
@@ -357,6 +396,14 @@ Maximum absolute key/value and score differences are 0.0.</p>
 <p>The reproducer retains duplicate reference storage and numerical
 instrumentation. These checks make this a controlled transfer-path comparison,
 rather than a production memory-footprint or serving-performance result.</p>
+<p>The frozen model configuration uses <code>LMCacheConnectorV1</code> with our
+KMesh extension and <code>enable_prefix_caching=false</code>. It does not
+activate the earlier <code>LMCacheMPConnector</code> exact-prefix singleflight
+gate. The storage manager uses <code>prefetch_policy=retain</code> and
+<code>prefetch_join_overlaps=false</code>, so its optional joining of simultaneous
+loads is also off. The measured LMCache source includes the earlier retention
+fix. The runner's <code>StorageObserver.cold()</code> explicitly evicts the
+source set before each child.</p>
 </details>
 <details><summary>Model and implementation qualification details</summary>
 <p>Serial input tests pass 649 CPU and 112 CUDA cases; the host/GPU source-pool

@@ -44,6 +44,13 @@ four siblings then recover 416 tokens each. That is <strong>81.25% realized
 sharing</strong> after segment rounding from the nominal 80% generator setting.
 There are no matching prompt-aligned full blocks, so ordinary prefix reuse
 cannot explain the recovery.</p>
+<p>This is our TokenDance-style implementation built on LMCache's
+<a href="https://docs.lmcache.ai/legacy/kv_cache_optimizations/blending.html">CacheBlend</a>
+feature. Our fork extends <code>LMCBlender.blend()</code> with explicit shared
+segments, position adjustment, request-owned execution state and required
+recalculation of missing positions. CacheBlend supplies selective recalculation
+of reused state. The serial comparison already includes our extensions;
+it uses our reproduction rather than the TokenDance authors' code.</p>
 <p>The vLLM and LMCache branches execute collective position-independent
 recovery: they adjust retrieved keys for each sibling's positions and batch
 rotary-position and difference-analysis calls across compatible requests.
