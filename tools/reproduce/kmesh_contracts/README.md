@@ -29,6 +29,7 @@ and use clean checkouts at its exact commits:
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 292 |
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 316 |
 | `native-spans` | `daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 341 |
+| `interior-spans` | `e23d4acd29420a0258a9666b98d9a10fdec12b53` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 341 |
 | `managed-raw-service` | `d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 331 |
 | `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 327 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 323 |
@@ -151,3 +152,9 @@ with that revision.
 
 Run the standard-library verifier controls with `make kmesh-contracts-test`.
 Planning and verification do not import Torch or allocate device resources.
+
+Use `make defconfig-kmesh-interior-spans-cpu` for the matching interior-source
+revision. It requires the same 341 CPU controls and exact vLLM source, while
+pinning the native source-gather implementation and its GPU test program.
+Actual interior NHD/HND gathering is qualified by the separate CUDA profile;
+CPU execution alone cannot establish native transfer correctness.

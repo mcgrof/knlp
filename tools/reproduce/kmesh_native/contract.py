@@ -27,6 +27,7 @@ PROFILES = {
     "managed-raw-context": HERE / "profiles" / "managed-raw-context.json",
     "managed-raw-service": HERE / "profiles" / "managed-raw-service.json",
     "native-spans": HERE / "profiles" / "native-spans.json",
+    "interior-spans": HERE / "profiles" / "interior-spans.json",
 }
 
 

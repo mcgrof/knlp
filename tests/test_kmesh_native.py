@@ -211,5 +211,9 @@ class NativeSpansReceiptTests(ManagedRawServiceReceiptTests):
     profile_name = "native-spans"
 
 
+class InteriorSpansReceiptTests(NativeSpansReceiptTests):
+    profile_name = "interior-spans"
+
+
 if __name__ == "__main__":
     unittest.main()

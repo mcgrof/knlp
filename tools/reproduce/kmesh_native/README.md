@@ -18,6 +18,7 @@ Each pins an independent LMCache source and case set:
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 | `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
 | `native-spans` | `daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a` | 24 |
+| `interior-spans` | `e23d4acd29420a0258a9666b98d9a10fdec12b53` | 36 |
 | `managed-raw-service` | `d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e` | 10 |
 | `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | 9 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | 4 |
@@ -267,3 +268,19 @@ Request-local deeper-layer repair, model output checks, NVMe-backed cold reads,
 GPU-L1/GDS, the staged/DMA-BUF comparison and collective consumers remain separate
 qualification gates. Timings from these correctness controls are not a serving
 latency result.
+
+Select `make defconfig-kmesh-interior-spans-cuda` to qualify source positions
+inside a block. Its paired CPU profile is `defconfig-kmesh-interior-spans-cpu`.
+The new source pin preserves the earlier `native-spans` profile and captures.
+This profile requires 36 GPU cases: ten service lifetime controls and twenty-six
+span cases. Interior-source cases use 24 synthetic layers in both NHD and HND,
+source position five, and destination positions three and nine. Each layer view
+shares the same retained exporter allocation. Source writes remain genuinely
+pending when submitted to the cache service.
+
+The service gathers exact source slots into complete pinned CPU chunks. The
+fixture checks independent key rotation, bitwise values, untouched destinations
+and canonical source reuse after the original slots are poisoned. An injected
+failure after actual source gathering must keep admission and retirement blocked
+until physical drain; cleanup must not gather again. This extends storage
+correctness coverage, without enabling model repair or measuring DMA-BUF.

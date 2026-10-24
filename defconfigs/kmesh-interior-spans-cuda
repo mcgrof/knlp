@@ -1,0 +1,5 @@
+# Exact source gathering, positional restore and checked physical drain.
+CONFIG_KNLP_REPRODUCE_KMESH_NATIVE=y
+CONFIG_KNLP_KMESH_NATIVE_PROFILE="interior-spans"
+CONFIG_KNLP_KMESH_NATIVE_SOURCE=""
+CONFIG_KNLP_KMESH_NATIVE_OUTPUT=""
