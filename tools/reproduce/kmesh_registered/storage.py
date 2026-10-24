@@ -4,15 +4,19 @@
 The experiment uses a fresh regular file and the existing raw-block adapter.
 L2 lookup proves current visibility, not power-loss durability. Evicting every
 source before a child is a controlled cold read, not a cache-policy result.
+Qualification additionally poisons the freed L1 arena before loading it again;
+timing runs omit this conditioning after both real model controls pass.
 """
 
 from __future__ import annotations
 
+from functools import wraps
 import os
 from pathlib import Path
 import platform
 import resource
 import subprocess
+import threading
 import time
 
 
@@ -229,3 +233,257 @@ def evict_settled_l1_keys(manager, keys, deadline: float) -> int:
     if pending:
         raise RuntimeError("source L1 copies still have outstanding physical leases")
     return deleted_count
+
+
+class StorageObserver:
+    """Own bounded observation hooks in the importing experiment process."""
+
+    def __init__(self, manager, settings: dict, *, poison_arena: bool = False):
+        adapters = manager.l2_adapters()
+        if len(adapters) != 1:
+            raise ValueError("cold comparison requires one actual L2 adapter")
+        self.manager, self.adapter = manager, adapters[0][1]
+        self.settings = settings
+        self.location = describe_location(
+            Path(self.adapter.report_status()["core"]["device_path"])
+        )
+        self.lock = threading.Lock()
+        self.reserved = {}
+        self.admitted = {}
+        self.phase = "source"
+        self.rows = []
+        self.originals = []
+        self.poison_arena = poison_arena
+        self.conditioning = False
+        self.conditioning_work = None
+
+    def install(self) -> None:
+        """Install process-local admission, I/O and timing observations."""
+        from lmcache.v1.distributed.error import L1Error
+        from lmcache.v1.distributed.storage_manager import StorageManager
+        from lmcache.v1.multiprocess import kmesh_span_store as spans
+        from lmcache.v1.storage_backend.raw_block import RawBlockCore, decode_object_key
+
+        reserve = StorageManager.reserve_write
+        admit = StorageManager.finish_write_with_status
+        checksum = spans.checksum_span_object
+        restore = spans.KMeshSpanStore.restore
+        load = RawBlockCore.load_many_into
+
+        @wraps(reserve)
+        def reserve_source(manager, keys, layout_desc):
+            if manager is self.manager and not self.conditioning:
+                size = sum(
+                    shape.numel() * dtype.itemsize
+                    for shape, dtype in zip(
+                        layout_desc.shapes, layout_desc.dtypes, strict=True
+                    )
+                )
+                if size != self.settings["chunk_payload_bytes"]:
+                    raise RuntimeError(
+                        "actual source layout differs from the storage profile"
+                    )
+            result = reserve(manager, keys, layout_desc)
+            if manager is self.manager and not self.conditioning:
+                with self.lock:
+                    for key in result:
+                        self.reserved[key] = layout_desc
+            return result
+
+        @wraps(load)
+        def load_source(core, encoded_keys, objs, *, io_context=None):
+            if io_context is None:
+                raise RuntimeError(
+                    "storage timing requires actual native I/O attribution"
+                )
+            start = time.perf_counter_ns()
+            result = load(core, encoded_keys, objs, io_context=io_context)
+            elapsed = time.perf_counter_ns() - start
+            self.rows.append(
+                {
+                    "kind": "storage_read",
+                    "phase": self.phase,
+                    "elapsed_ns": elapsed,
+                    "io_request_id": io_context.request_id,
+                    "source_key_hashes": [
+                        decode_object_key(key).chunk_hash.hex() for key in encoded_keys
+                    ],
+                    "payload_bytes": sum(obj.get_size() for obj in objs),
+                    "success": len(result) == len(encoded_keys) and all(result),
+                }
+            )
+            return result
+
+        @wraps(admit)
+        def admit_source(manager, completion):
+            result = admit(manager, completion)
+            if manager is self.manager:
+                with self.lock:
+                    for key, outcome in result.items():
+                        if outcome == L1Error.SUCCESS:
+                            self.admitted[key] = self.reserved[key]
+            return result
+
+        @wraps(checksum)
+        def hash_source(obj):
+            start = time.perf_counter_ns()
+            result = checksum(obj)
+            tensor = obj.get_tensor(0)
+            self.rows.append(
+                {
+                    "kind": "checksum",
+                    "phase": self.phase,
+                    "elapsed_ns": time.perf_counter_ns() - start,
+                    "payload_bytes": obj.get_size(),
+                    "host_payload_copy_bytes": obj.get_size() if tensor.is_cuda else 0,
+                }
+            )
+            return result
+
+        @wraps(restore)
+        def restore_source(
+            executor, fence, request_id, generation, span, *args, **kwargs
+        ):
+            start = time.perf_counter_ns()
+            result = restore(
+                executor, fence, request_id, generation, span, *args, **kwargs
+            )
+            self.rows.append(
+                {
+                    "kind": "restore",
+                    "phase": self.phase,
+                    "elapsed_ns": time.perf_counter_ns() - start,
+                    "request_id": request_id,
+                    "span_id": span.span_id,
+                    "state": result.state,
+                }
+            )
+            return result
+
+        self.originals = [
+            (StorageManager, "reserve_write", reserve),
+            (StorageManager, "finish_write_with_status", admit),
+            (spans, "checksum_span_object", checksum),
+            (spans.KMeshSpanStore, "restore", restore),
+            (RawBlockCore, "load_many_into", load),
+        ]
+        StorageManager.reserve_write = reserve_source
+        StorageManager.finish_write_with_status = admit_source
+        spans.checksum_span_object = hash_source
+        spans.KMeshSpanStore.restore = restore_source
+        RawBlockCore.load_many_into = load_source
+
+    def cold(self, request_id: str) -> dict:
+        """Verify actual L2 admission, release lookup locks, then evict L1."""
+        with self.lock:
+            keys = list(self.admitted)
+            layouts = {key.object_group_id: self.admitted[key] for key in keys}
+        if len(keys) != self.settings["source_objects"] or set(layouts) != {0}:
+            raise RuntimeError("cold comparison lacks its exact canonical source set")
+        start = time.perf_counter_ns()
+        deadline = time.monotonic() + 60
+        await_exact_l2_keys(self.adapter, keys, layouts, deadline)
+        deleted = evict_settled_l1_keys(self.manager, keys, deadline)
+        poison = self._poison_free_arena() if self.poison_arena else None
+        self.phase = request_id
+        result = {
+            "request_id": request_id,
+            "source_key_hashes": [key.chunk_hash.hex() for key in keys],
+            "confirmed_l2_keys": len(keys),
+            "deleted_l1_keys": deleted,
+            "poison": poison,
+            "elapsed_ns": time.perf_counter_ns() - start,
+            "before": self.adapter.report_status(),
+        }
+        self.rows.append({"kind": "cold", **result})
+        return result
+
+    def measure(self, request_id: str) -> dict:
+        """Record post-model storage completion for the actual request."""
+        row = {
+            "kind": "after",
+            "request_id": request_id,
+            "adapter": self.adapter.report_status(),
+        }
+        self.rows.append(row)
+        return row
+
+    def snapshot(self) -> dict:
+        """Capture observed operations and actual storage ownership."""
+        return {
+            "rows": list(self.rows),
+            "adapter": self.adapter.report_status(),
+            "storage_manager": self.manager.report_status(),
+            "location": self.location,
+            "poisoned_l1_arena": self.poison_arena,
+        }
+
+    def close(self) -> None:
+        """Restore the hooks saved by this process-local observer."""
+        for owner, name, original in reversed(self.originals):
+            setattr(owner, name, original)
+        self.originals.clear()
+
+    def _poison_free_arena(self) -> dict:
+        """Condition an exclusive free arena, retaining any failed GPU work."""
+        import hashlib
+        import uuid
+
+        import torch
+        from lmcache import torch_dev
+        from lmcache.v1.distributed.api import MemoryLayoutDesc, ObjectKey
+        from lmcache.v1.platform.stream import synchronize_device
+
+        if self.conditioning_work is not None:
+            raise RuntimeError("earlier arena conditioning still owns physical work")
+        key = ObjectKey(
+            hashlib.sha256(uuid.uuid4().bytes).digest(), "arena-conditioning", 0
+        )
+        size = self.settings["arena_bytes"]
+        layout = MemoryLayoutDesc([torch.Size((size // 2,))], [torch.bfloat16])
+        work = {}
+        self.conditioning_work = work
+        self.conditioning = True
+        try:
+            work["objects"] = self.manager.reserve_write([key], layout)
+            if set(work["objects"]) != {key}:
+                raise RuntimeError(
+                    "canonical arena is not entirely free for qualification"
+                )
+            work["completion"] = self.manager.prepare_write_completion(work["objects"])
+            work["leases"] = self.manager.acquire_write_transfer_leases(
+                work["objects"], all_buffers=True
+            )
+            buffer = work["objects"][key].get_tensor(0)
+            if (
+                buffer is None
+                or buffer.nbytes != size
+                or not buffer.is_contiguous()
+                or buffer.device.type not in ("cpu", "cuda")
+            ):
+                raise RuntimeError(
+                    "arena qualification requires one complete contiguous arena"
+                )
+            work["buffers"] = (buffer, buffer.view(torch.uint8))
+            if buffer.device.type == "cuda":
+                with torch_dev.device(buffer.device):
+                    work["buffers"][1].fill_(255)
+                    synchronize_device(buffer.device)
+            else:
+                work["buffers"][1].fill_(255)
+            receipt = {
+                "bytes": buffer.nbytes,
+                "device": str(buffer.device),
+                "drained": True,
+            }
+            self.manager.discard_write_by_owner(work["completion"])
+            self.manager.release_transfer_leases(work["leases"])
+            _, skipped = self.manager.delete_l1_keys([key])
+            if skipped:
+                raise RuntimeError(
+                    "arena qualification reservation remains physically leased"
+                )
+            self.conditioning_work = None
+            return receipt
+        finally:
+            self.conditioning = False
