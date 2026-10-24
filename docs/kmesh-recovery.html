@@ -83,8 +83,10 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Raw native-outcome fencing</td><td>6</td><td>Safe preflight retry, conservative import/close quarantine, forwarded local references and alias controls.</td></tr>
 <tr><td>Owned raw rotary input copies</td><td>323 CPU + 4 CUDA</td><td>Ownership before partial import, actual producer-ordered downloads, checked reference release and retained failure debt.</td></tr>
 <tr><td>Checked managed raw contexts</td><td>327 CPU + 9 CUDA</td><td>Retained construction, initialization/transfer stream drains, alias retirement and idempotent checked close; active GDS refused.</td></tr>
+<tr><td>Managed raw control service</td><td>331 CPU + 10 CUDA</td><td>Actual receiving ownership on both transports; checked release followed by exporter free/reallocation while the importer stays alive.</td></tr>
 </table></div>
-<p>The CPU controls run with GPU visibility disabled. Every selected setup, body
+<p>Counts across these prerequisite profiles overlap and are not additive.
+The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
 CPU and CUDA profiles are distinct captures, with their exact source, helper and
 runtime identities recorded. The 414 vLLM controls use CUDA configuration but
@@ -106,8 +108,8 @@ targets and compare their bytes after the actual copy stream drains.</p>
 <p>Each direction has success, drained-error and undrained-error cases. Error
 injection occurs after a real copy submission. A failed drain must preserve both
 registration holds and all source/destination memory until a later physical
-drain succeeds. The tests supply the logical receiving identity explicitly;
-they do not yet exercise an ordered registration RPC through the public server.</p>
+drain succeeds. The six-case transfer profile supplies the logical receiving identity explicitly.
+The later registration and service gates below exercise actual public RPCs.</p>
 <p>The BF16 paged allocation has shape <code>[2, 16, 4, 2, 8]</code>; the FP32
 rotary table is <code>[64, 8]</code>, or 2,048 bytes. A synthetic sequence of
 512 matrix multiplications on FP32 <code>[2048, 2048]</code> inputs keeps the
@@ -121,152 +123,86 @@ server-owned acknowledgement.</p>
 </section>
 <section id="serial">
 <h2>24. What remains before one real shifted restore?</h2>
-<p><strong>Multiprocess KMesh engine admission remains closed.</strong>
-An explicitly requested KMesh recovery profile must refuse an unsupported
-multiprocess connector before creating the engine. Ordinary multiprocess use
-without that profile is a separate path.</p>
-<p><strong>Ordered registration now passes its separate prerequisite gate:</strong>
-316 CPU cases and six public-server CUDA cases on the same RTX 4090 runtime.
-The rotary table starts with invalid values. Its producer writes a scaled valid
-table on a non-default stream; the server receives the event while production
-is still pending, snapshots before normalization, uploads private normalized
-tables and publishes their completed generation. Independent byte readback
-passes, and later exporter writes do not change the private state. Both ZeroMQ
-and gRPC also pass disabled-admission and failed-copy/drain/retry controls.</p>
-<p>The tests must create a fresh PyTorch export for each attempted import. Initial
-refusal/retry fixtures left outstanding IPC reference warnings despite passing
-test bodies; isolated controls identified unused and reused exports. The corrected
-six-case rerun passes, and the strict reproducer rejects that warning in the
-complete process-exit log. This fixes those fixtures; a general worker-side
-export cancellation or release acknowledgement is still unimplemented.</p>
-<p>The server still needs truthful imported-mapping teardown,
-fenced storage publication and retrieval, and a worker consumer that preserves
-destination block ownership through completion.</p>
-<p><strong>The lower-level raw mapping primitive now passes three scoped CUDA
-cases.</strong> A failed native close preserves its mapping record and final
-reference, and new raw imports stay blocked while cleanup is uncertain. After
-an injected refusal before the driver call, later actual checked close succeeds.
-Retirement blocks new raw aliases while an existing alias remains readable until
-its own release. Each test uses a 64 MiB FP32 allocation with two interior views;
-exporters remain alive until their importing processes exit.</p>
-<p>This inspection counts raw-wrapper imports. PyTorch storage, virtual-memory
-and external driver imports require their own lifetime guarantees. The checked
-primitive still needs integration with raw snapshot preparation and an exact
-server-generation release receipt. Retired handles remain recorded for the
-process lifetime. The three-case runner checks its full exit log and records
-CUDA Python bindings 13.4.4 and CuPy 14.2.0 in the measured environment.</p>
-<p><strong>The subsequent six-case native-outcome gate makes retry precise.</strong>
-A failure known to precede native close can be retried. If the driver call may
-have taken effect, its old pointer must not be submitted again: the address
-could have been reused. Unknown import, close or interrupted bookkeeping therefore
-stays quarantined until the importing process ends. Even an absent completed
-mapping record cannot establish that import never occurred. The tests verify
-that an ambiguous outcome causes no second native call.</p>
-<p>Forwarded wrapper metadata also resets the receiving copy's local reference
-count. Closing that copy must preserve the sender's still-active alias. All six
-scoped cases pass with complete source and exit-log verification. Native errors
-are controlled injections before driver effects; these results qualify the
-conservative refusal policy, rather than actual device-fault recovery. The
-broader IPC regression suite separately passes seventeen cases. Service-level
-release receipts and the model/storage comparison remain subsequent gates.</p>
-<p><strong>Raw imports are now owned before their first mapping attempt.</strong>
-The later four-case CUDA gate passes exact downloaded bytes after a pending
-producer, refusal before checked cleanup, a submitted copy whose stream drain
-fails, and a partial second import combined with refused cleanup. Every incoming
-wrapper, buffer and both registration holds remain retained until actual drain
-and checked reference release succeed. The paired CPU profile passes 323 cases.
-A dedicated 64 MiB allocation holds the 2,048-byte rotary view, making its final
-mapping close independent of the paged allocation. These tests supply receiving
-identity explicitly; they do not qualify a raw control RPC or service retirement
-receipt. No model or DMA-BUF storage performance is measured.</p>
-<p><strong>The managed raw context now passes checked physical retirement.</strong>
-Nine separate-process CUDA cases cover successful repeated close, an outstanding
-alias, initialization and transfer drain refusal, refusal before checked close,
-ambiguous native close and partial construction. The parent retains a 64 MiB
-BF16 allocation with two nonoverlapping paged views filled with distinct values.
-Context-stream work must still be pending when close starts. Initialization
-uploads are drained on their original stream before publication; the transfer
-stream is drained separately before retiring and closing raw mappings.</p>
-<p>All nine scoped cases and the paired 327-case CPU profile pass complete source
-and exit-log verification. Ten existing copy/ordered-registration CUDA cases also
-pass against this source. The primitive keeps failed construction alive until
-importer exit, rejects new aliases after retirement and returns the same released
-allocation identities on repeated success. It remains a resource primitive:
-typed managed registration, a service release receipt and model recovery are
-subsequent gates. Active GDS is refused because its current staging deregistration
-logs backend errors and cannot prove checked release. This result therefore
-qualifies no GPU-L1 or DMA-BUF storage shutdown.</p>
-<p>A real shifted restore must then compare model outputs and repair the state
-whose deeper-layer contents depend on its original preceding context. Rotating
-key positions alone does not make that contextual dependence disappear.
-Numerical checks, deliberate-corruption rejection, fallback and physical drain
-must pass before a staged versus DMA-BUF serving comparison can qualify. The
-earlier <a href="kmesh-retention.html#prefetch-demand">exact-prefix retention
-result</a> answers a different, already measured question.</p>
-<details class="reproduce"><summary>Reproduce the completed prerequisite gates</summary>
-<p>Use the prepared environments and exact source pins described in the
+<p><strong>The managed raw control service now proves release; multiprocess
+model recovery remains disabled.</strong> Its pinned qualification passes 331
+CPU cases and ten separate-process CUDA cases on the RTX 4090 runtime above.
+Both ZeroMQ and gRPC exercise actual receiving-client ownership, registration,
+ordered rotary preparation and checked retirement. Twenty-five existing CUDA
+controls also pass against the implementation before the stronger release run.</p>
+<p>The server records its boot identity, the receiving client, a registration
+nonce, exact tensor views and a context generation before import. Retrying
+identical registration returns saved facts without opening another mapping;
+changed views, foreign clients and stale generations refuse. Ordered rotary
+preparation waits for a genuinely pending producer, copies completed host
+snapshots and publishes private uploaded tables. Exact byte checks pass, and
+later worker writes leave the private tables unchanged.</p>
+<p><strong>A release receipt follows physical completion and checked mapping
+retirement.</strong> Retirement closes admission, revokes holds and refuses
+unfinished copy debt. It removes the exact rotary generation, closes imported
+raw references, retires temporary inputs against new imports and detaches the
+exact context entry before caching its receipt. Successful workers then drop
+the exported tensors, empty the allocator cache and allocate replacements while
+the importing service remains alive. Independent private-table readback and
+repeated retirement still pass, with no additional native close call.</p>
+<p>A refusal known to precede native effects can be retried after cleanup.
+An ambiguous native import or close remains quarantined until the importing
+process ends; its old pointer must not be submitted again because the address
+could have been reused. Partial construction also requires importer exit.
+The tests inject native errors before driver effects and exercise repeated
+requests/status lookup without dropping network packets. Actual device-fault
+recovery and network-loss timing remain unqualified.</p>
+<p>The service admits one context and one rotary preparation per process,
+world size one, contiguous BF16 full attention, CPU DRAM L1 and same-host CUDA
+events. Its assembled interface exposes KMesh controls without generic transfer,
+lookup, peer, HTTP or automatic reaping handlers. Active GDS is refused because
+its staging deregistration currently logs backend errors and cannot prove checked
+release. These are registration and lifetime results; they measure no storage
+I/O, model throughput or DMA-BUF latency.</p>
+<p><strong>Next comes fenced storage execution and the actual model consumer.</strong>
+Publication and retrieval must use the accepted namespace and exact borrowed
+resources through physical completion. The worker must preserve destination
+block ownership until restoration finishes. A real shifted restore must then
+compare model outputs and repair deeper-layer state that depends on its original
+preceding context. Rotating key positions alone does not remove that dependence.
+Numerical checks, corruption rejection, fallback and physical drain precede the
+staged versus DMA-BUF serving comparison. The earlier
+<a href="kmesh-retention.html#prefetch-demand">exact-prefix retention result</a>
+answers a separate, already measured question.</p>
+<details class="reproduce"><summary>Reproduce the completed control-service gate</summary>
+<p>Use the prepared environment described in the
 <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership instructions</a>
 and <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">CUDA instructions</a>.
-The public component branches are
+Pin LMCache <code>d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e</code> and the paired
+vLLM source <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>, then regenerate
+the selected LMCache source's gRPC bindings as documented. Both public component
+branches are named <code>2026-10-23-feature-kmesh-mp-recovery</code>:
 <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-kmesh-mp-recovery">LMCache</a>
 and <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-kmesh-mp-recovery">vLLM</a>.
-Select the profile's exact commit rather than a moving branch tip.</p>
-<pre><code># CPU ownership and transfer controls: 292 required cases
-make defconfig-kmesh-rotary-transfers-cpu
+Select each exact source pin rather than the moving branch tip.</p>
+<pre><code># CPU admission, ownership and wire contracts: 331 required cases
+make defconfig-kmesh-managed-raw-service-cpu
 make kmesh-contracts-plan
 KMESH_CONTRACTS_SOURCE=/path/to/pinned/LMCache \
   KMESH_CONTRACTS_VLLM_SOURCE=/path/to/pinned/vllm \
   KMESH_CONTRACTS_OUTPUT=/path/outside/checkouts/cpu-capture \
   KMESH_CONTRACTS_PY=/path/to/prepared/python make kmesh-contracts
 
-# Native layouts: 32 required CUDA cases
-make defconfig-kmesh-native-cuda
-KMESH_NATIVE_SOURCE=/path/to/native-profile/LMCache \
-  KMESH_NATIVE_OUTPUT=/path/outside/checkouts/native-capture \
-  KMESH_NATIVE_PY=/path/to/prepared/python make kmesh-native
-
-# Retained downloads and uploads: six required CUDA cases
-make defconfig-kmesh-rotary-transfers-cuda
-KMESH_NATIVE_SOURCE=/path/to/transfer-profile/LMCache \
-  KMESH_NATIVE_OUTPUT=/path/outside/checkouts/transfer-capture \
+# Real raw service registration and release: ten required CUDA cases
+make defconfig-kmesh-managed-raw-service-cuda
+make kmesh-native-plan
+KMESH_NATIVE_SOURCE=/path/to/pinned/LMCache \
+  KMESH_NATIVE_OUTPUT=/path/outside/checkouts/cuda-capture \
   KMESH_NATIVE_PY=/path/to/prepared/python make kmesh-native</code></pre>
-<p>Every execution uses a fresh capture directory outside the checkouts.
-Saved-capture verification runs on CPU with the producing helper revision.
-Captured logs, raw receipts and tensors remain outside the public source tree.
-Receipt consistency does not independently authenticate hardware execution.</p>
-<p>For the later ordered-registration gate, use LMCache
-<code>27e256e1aae7090c4ccfc5eea587a7fbf93fddae</code> with the same pinned
-vLLM source. Regenerate its gRPC bindings as documented, then select
-<code>make defconfig-kmesh-ordered-registration-cpu</code> for 316 required CPU
-cases, or <code>make defconfig-kmesh-ordered-registration-cuda</code> for six
-required CUDA cases. Use the same corresponding make commands above and fresh
-external capture directories. These profiles also freeze the actual loaded
-wire schemas; the CUDA receipt hashes its complete exit log.</p>
-<p>The checked raw-import gate uses LMCache
-<code>cb31561f6877f16d50e74891d3dc9bf00f888532</code> and
-<code>make defconfig-kmesh-raw-ipc-lifetime-cuda</code>, followed by the same
-native runner commands with a fresh output directory. Its three required cases
-are distinct from the broader fourteen-case IPC regression suite, whose mixed
-PyTorch metadata fixtures still create an unused export. The scoped gate rejects
-outstanding exporter-reference warnings. It does not qualify actual driver
-faults, exporter death or a complete service teardown protocol.</p>
-<p>For the later native-outcome rules, select
-<code>make defconfig-kmesh-raw-ipc-outcomes-cuda</code> and LMCache
-<code>b08f4c339c73c23d2ba46b7e2c17e880c34a7b19</code>. Run the same native
-commands into a fresh capture directory. This separate six-case profile preserves
-the earlier three-case checkpoint without relabeling its source or evidence.</p>
-<p>For owned raw input copies, use LMCache
-<code>ca65f2820a218a84ecba4d452c47da2c1ac1c4f5</code> with
-<code>make defconfig-kmesh-owned-raw-copy-cpu</code> or
-<code>make defconfig-kmesh-owned-raw-copy-cuda</code>. Run the corresponding
-commands above into fresh external capture directories. The CPU profile requires
-323 cases and the CUDA profile requires four, with the same complete-exit-log
-and source verification rules.</p>
-<p>The checked managed-context resource gate pins LMCache
-<code>304df82413dbb9d9d12de145963b5451d1e9eeae</code>. Select
-<code>make defconfig-kmesh-managed-raw-context-cpu</code> for 327 required cases
-or <code>make defconfig-kmesh-managed-raw-context-cuda</code> for nine. Use the
-corresponding runner above with a fresh external output directory.</p>
+<p>Every execution uses a fresh capture directory outside the checkouts and
+requires every selected setup, body and teardown to pass. The helpers verify
+source, loaded wire schemas, runtime and native identities; the CUDA gate also
+checks the complete process-exit log for outstanding exporter-reference warnings.
+Saved-capture verification needs the producing helper revision. Captured receipts,
+logs and tensors stay outside public Git. Receipt consistency does not independently
+authenticate hardware execution.</p>
+<p>The linked instructions preserve the exact source pins and defconfigs for
+the earlier native-layout, context ownership, ordered-registration, raw-copy and
+checked-context gates. They remain separate captures with their original scope.</p>
 </details>
 </section>
 <section id="collective">
