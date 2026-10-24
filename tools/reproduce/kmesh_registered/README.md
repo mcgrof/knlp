@@ -192,7 +192,14 @@ execution with the same model, trace and runtime envelope. First pass
 `defconfig-kmesh-registered-groups-cpu` and
 `defconfig-kmesh-registered-groups-cuda`. The latter checks simultaneous native
 inputs and synthetic private writeback, which do not replace this real model
-comparison. The model group is implemented but awaits GPU qualification here.
+comparison. On October 24, 2026, the complete native profile and actual model
+group passed on the RTX 4090. Registered serial and layer-major execution both
+match the same-source serial reference bit for bit in K/V and logits, with
+identical masks, tokens and all 96 actual layer selections. The member-failure
+control also passes: three children preserve the serial result, and the failed
+child drains and recomputes through an empty retry plan with ordinary tokens.
+This group qualification uses CPU-L1 sources; the NVMe comparison above remains
+a separate serial experiment.
 
 Set the input paths described above, using the source commits in the group
 profile. Set `KMESH_REGISTERED_MODEL_EXECUTION=serial` and

@@ -300,8 +300,8 @@ five-chunk source also checks refusal when its plan would reuse one of the
 context's four working slots. The paired CPU prerequisite is
 `make defconfig-kmesh-registered-arenas-cpu`.
 
-These are synthetic memory-transfer controls awaiting GPU execution. They do
-not perform NVMe I/O or run a model. GPU canonical hashing still copies the
+These synthetic memory-transfer controls pass on the RTX 4090. They do not
+perform NVMe I/O or run a model. GPU canonical hashing still copies the
 full payload to the CPU. A configured DMA-BUF export and a passing arena test
 do not establish the storage route, model correctness or lower serving latency.
 
@@ -325,7 +325,8 @@ after actual gathers must attempt all member cleanups, retain all buffers, and
 require a later actual drain before checked retirement. The paired prerequisite
 is `make defconfig-kmesh-registered-groups-cpu`.
 
-These native group controls await GPU execution and do not run a model or NVMe
-I/O. The implemented CacheBlend group consumer keeps model tensor operations
-request-local and advances them layer by layer. Actual serial-versus-group
-model equivalence and storage performance remain separate experiments.
+These native group controls pass on the RTX 4090. They do not run a model or
+NVMe I/O. The separate [registered model qualification](../kmesh_registered/README.md#registered-layer-major-model-group)
+also passes against the same-source serial reference. It keeps model tensor
+operations request-local and advances them layer by layer. Combined group/NVMe
+execution and storage performance remain separate experiments.

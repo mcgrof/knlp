@@ -108,6 +108,17 @@ pressure and assumes useful advance notice. A separate
 holding an ancestor can displace more useful cache hits than it saves.
 The measured early-loading gains apply to both transfer paths; the
 comparison does not establish DMA-BUF superiority or a production policy.</div>
+<h3>Registered restoration and model repair</h3>
+<p>A separate shifted-segment test now restores 416 shared tokens from a cache
+process and matches the existing serial repair baseline bit for bit in K/V and
+logits, both one child at a time and in a layer-major group. Failure controls
+require actual cleanup before recomputation. The group uses CPU-L1 sources;
+a separate serial NVMe comparison finds DMA-BUF read-call medians improve by
+3.7% in seven pairs, while
+complete restoration remains mixed. GPU integrity checking still copies the
+payload to the host. The <a href="kmesh-recovery.html#serial">registered recovery
+page</a> explains this different workload, its numerical checks and the remaining
+costs. These results compare against approximate repair, not full recomputation.</p>
 </section>
 
 <section id="questions">
@@ -163,13 +174,13 @@ conclusions; the pages below retain the full measurements.</p>
 <article class="question-group">
 <span class="range">Questions 21–25</span>
 <h3><a href="kmesh-recovery.html">Recovery across processes</a></h3>
-<p>Qualified native layouts, process ownership and immutable span restoration. Model repair and collective serving remain the next gates.</p>
+<p>Qualified process ownership, real serial and grouped model repair, and a separate matched NVMe restoration comparison.</p>
 <ol start="21">
 <li><a href="kmesh-recovery.html#native">Do the native layouts and rotations preserve the data?</a></li>
 <li><a href="kmesh-recovery.html#ownership">Who owns a registration and its unfinished work?</a></li>
 <li><a href="kmesh-recovery.html#copies">Do CUDA copies retain memory until they finish?</a></li>
-<li><a href="kmesh-recovery.html#serial">What does one native shifted restore prove?</a></li>
-<li><a href="kmesh-recovery.html#collective">When can collective recovery be evaluated?</a></li>
+<li><a href="kmesh-recovery.html#serial">Can a registered shifted restore feed the real model?</a></li>
+<li><a href="kmesh-recovery.html#collective">Can registered children share a layer-major repair group?</a></li>
 </ol></article>
 </div>
 </section>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh recovery qualification: native cache geometry, process ownership, retained CUDA transfers, and the remaining serial and collective serving gates.">
+<meta name="description" content="KMesh registered recovery: process ownership, native span restoration, real model repair, NVMe data arrival and grouped cleanup.">
 <title>KMesh: Recovery across processes</title>
 <link rel="canonical" href="https://knlp.io/kmesh-recovery.html">
 <link rel="stylesheet" href="kmesh.css">
@@ -26,16 +26,17 @@
 <span class="eyebrow">Questions 21–25</span>
 <h1>Can shared state survive a separate cache process?</h1>
 <p class="lead">The retention experiments restore an exact prefix through the
-existing serving path. The next historical phase moves beyond that baseline:
-recover state at different positions through a separate cache server, then
-coordinate recovery across consumers. The controls below qualify its foundations.</p>
+existing serving path. Registered recovery moves beyond that exact-prefix case:
+save immutable interior segments in a separate cache process, restore them at
+new positions and repair the model state in private engine blocks. Storage
+completion and model readiness have separate qualification gates.</p>
 </div>
 <div class="page-toc"><strong>On this page</strong><ol start="21">
 <li><a href="#native">Do the native layouts and rotations preserve the data?</a></li>
 <li><a href="#ownership">Who owns a registration and its unfinished work?</a></li>
 <li><a href="#copies">Do CUDA copies retain memory until they finish?</a></li>
-<li><a href="#serial">What remains before one real shifted restore?</a></li>
-<li><a href="#collective">When can collective recovery be evaluated?</a></li>
+<li><a href="#serial">Can a registered shifted restore feed the real model?</a></li>
+<li><a href="#collective">Can registered children share a layer-major repair group?</a></li>
 </ol></div>
 <section id="native">
 <h2>21. Do the native layouts and rotations preserve the data?</h2>
@@ -124,9 +125,41 @@ mapping has closed: exporter teardown needs a separate exact-generation,
 server-owned acknowledgement.</p>
 </section>
 <section id="serial">
-<h2>24. What does one native shifted restore prove?</h2>
-<p><strong>Immutable span storage and native shifted restoration now pass across
-processes; model repair remains the next gate.</strong> The pinned profile passes
+<h2>24. Can a registered shifted restore feed the real model?</h2>
+<p><strong>Yes, for the bounded Qwen2.5-0.5B-Instruct serial repair profile
+tested on the RTX 4090 on October 24, 2026.</strong> One leader publishes four
+interior segments containing 416 shared tokens. Four children restore those
+segments at different positions within their 512-token prompts and consume
+them through the existing CacheBlend repair. The cache service is a separate
+process; each child keeps its mutable engine blocks and layer buffers private.</p>
+<div class="table-wrap"><table>
+<caption>Overlapping qualification profiles</caption>
+<tr><th scope="col">Check</th><th scope="col">Observed result</th><th scope="col">What it establishes</th></tr>
+<tr><td>Partial spans and fused K/V views</td><td>649 CPU and 112 CUDA cases pass.</td><td>Exact partial tails, actual layer input and writeback, physical drain and checked exporter retirement. The layer transform is synthetic.</td></tr>
+<tr><td>Eager pinned-host and GPU arenas</td><td>661 CPU and 184 CUDA cases pass.</td><td>Canonical source ownership, private working slots and cleanup for both arena types. This native gate performs no NVMe comparison.</td></tr>
+<tr><td>Same-source reference versus the accepted serial baseline</td><td>All four children's raw K/V and logits are bitwise identical; maximum absolute difference 0.0.</td><td>The updated source preserves the existing approximate repair baseline in this workload.</td></tr>
+<tr><td>Registered restoration versus that same-source reference</td><td>K/V and logits remain bitwise identical. Tokens, retrieval masks and all 96 observed layer selections match exactly.</td><td>Completed native placements feed the real model correctly across the cache-process boundary.</td></tr>
+<tr><td>Seven real model failure controls</td><td>All pass, including partial miss, corruption, eviction, failure after enqueue and refused service or worker drain.</td><td>Recomputation waits for actual physical cleanup. An unresolved drain prevents fallback and destination reuse.</td></tr>
+</table></div>
+<p>The model's per-layer cache has shape
+<code>[blocks, 2 KV heads, 32 slots, 128 content]</code>. Each head's content
+contains K64 followed by V64. The registered view retains that engine storage;
+the two-head axis must not be mistaken for two K/V planes. Restored keys already
+have their destination rotation, so model consumption must not rotate them again.</p>
+<p>The serial and native input pins are LMCache
+<a href="https://github.com/mcgrof/LMCache/commit/3f2078a89abadcc59424e1b6588493d0564729ca"><code>3f2078a8</code></a>
+and vLLM <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>.
+The eager-arena profile pins LMCache
+<code>fe15939ed14f680fdbbf6ebc0df2a3d97fd18266</code>. Use the exact component
+and runtime pins in each reproducer profile.</p>
+<div class="note"><strong>This matches approximate serial repair.</strong>
+The accepted repair baseline is not numerically equivalent to full
+recomputation. The raw-state equality above compares registered restoration
+with that baseline. LocalCPU lookup and storage also remain duplicated
+scheduling controls, so this replay does not establish serving speed or
+total memory savings. The ordinary multiprocess serving guard remains closed.</div>
+<details class="reproduce"><summary>Earlier storage-only qualifications</summary>
+<p>The initial immutable span storage profile passes
 341 CPU cases and 24 CUDA cases on the RTX 4090 runtime above. The CUDA set
 contains ten raw service lifetime controls and fourteen native span cases,
 covering both ZeroMQ and gRPC. These counts overlap the earlier profiles.</p>
@@ -170,6 +203,7 @@ actual device-context drain settles the work; cleanup does not enqueue it again.
 The earlier release controls also check exporter free and reallocation while
 the importing service remains alive. Device faults and packet loss are not
 injected by this profile.</p>
+</details>
 <div class="table-wrap"><table>
 <caption>Storage completion and model readiness are separate</caption>
 <tr><th scope="col">Observed state</th><th scope="col">Meaning</th><th scope="col">Worker action</th></tr>
@@ -179,14 +213,88 @@ injected by this profile.</p>
 <tr><td><code>failed-undrained</code></td><td>Physical completion remains unresolved.</td><td>Keep blocks and allocations reserved; do not recompute into them.</td></tr>
 <tr><td><code>failed-drained</code></td><td>Failed work physically drained and released its holds.</td><td>Request-local recomputation is permitted.</td></tr>
 </table></div>
-<p><strong>Next connect these receipts to the real serving and repair consumer.</strong>
-A key's new rotation alone cannot repair deeper-layer dependence on its original
-preceding context. Model outputs, selection masks, fallback and worker block
-lifetime need validation before multiprocess engine admission. The staged versus
-DMA-BUF serving comparison follows that gate. This profile uses CPU L1 and
-performs no NVMe or DMA-BUF I/O; active GDS remains refused. The earlier
+<p>A key's new rotation alone cannot repair deeper-layer dependence on its original
+preceding context. The registered serial model test closes that additional gate
+for this profile. It does not admit the ordinary multiprocess connector or
+qualify arbitrary models. The earlier
 <a href="kmesh-retention.html#prefetch-demand">exact-prefix retention result</a>
 answers its separate, already measured question.</p>
+<h3 id="registered-storage">Does DMA-BUF help this shifted model restore?</h3>
+<p><strong>It lowers the read-call time, but this sample does not show a
+consistent complete-restore advantage.</strong> Seven alternating pairs compare
+registered pinned-host staging with reads into a GPU DMA-BUF canonical arena.
+Both paths pass a separate qualification that poisons the entire freed 64 MiB
+arena before each child loads from NVMe. All 16 registered model runs, including
+those two qualifications, match the reference's raw K/V, logits, masks,
+selections and generated tokens; maximum K/V and logit difference is 0.0.</p>
+<p>Each of seven paired trials first takes the median of its four children for
+each route. The table reports medians of paired time differences and percentage
+changes. Negative time favors DMA-BUF.</p>
+<div class="table-wrap"><table>
+<caption>Paired registered storage timings</caption>
+<tr><th scope="col">Measured work</th><th scope="col">Paired change</th><th scope="col">Paired percentage</th><th scope="col">Pairs favoring DMA-BUF</th><th scope="col">Range of time changes</th></tr>
+<tr><td>Native backend read calls</td><td>−0.152 ms</td><td>−3.7%</td><td>7/7</td><td>−0.273 to −0.012 ms</td></tr>
+<tr><td>Integrity checking</td><td>+0.722 ms</td><td>+10.5%</td><td>0/7</td><td>+0.556 to +1.288 ms</td></tr>
+<tr><td>Complete registered restore</td><td>−0.114 ms</td><td>−0.7%</td><td>4/7</td><td>−0.890 to +1.139 ms</td></tr>
+<tr><td>Restore plus instrumented model repair</td><td>−1.613 ms</td><td>−0.8%</td><td>5/7</td><td>−5.009 to +4.070 ms</td></tr>
+</table></div>
+<p>Read and integrity timings are inside the complete restore, which is itself
+inside the outer restore-and-repair interval. Do not add these nested rows.
+Typical per-child complete restores are about 17 ms; the outer instrumented
+interval, including restoration and model repair, is about 189 ms. These are not serving
+time-to-first-token measurements. The GPU integrity implementation still copies
+the full <strong>12 MiB to the host per child</strong> for SHA-256, and canonical
+GPU data still copies into private working slots. The read-call improvement
+therefore does not establish elimination of host copies or a serving-speed gain.</p>
+<p>This is a different fixture from the earlier exact-prefix retention test.
+The 416 valid tokens occupy 4.875 MiB, but four padded 256-token objects occupy
+12 MiB. Both arms enable external retention, then deliberately evict those four
+keys before each child. Each replay consequently reads 48 MiB of payload across four
+children, using 384 native payload-read operations. This controlled cold-read
+comparison measures the transfer path; it does not repeat the earlier retention
+ablation or compare singleflight off versus on. Hardware caches may remain warm.</p>
+<p>The measured setup uses an RTX 4090, Ryzen 9 9950X3D, Samsung 990 PRO 4 TB
+NVMe drive and XFS regular files on the patched DMA-BUF-capable Linux 7.3-rc3 kernel.
+Both arms use a 64 MiB canonical arena, 1 MiB metadata area, queue depth 32 and
+128 KiB maximum transfers. Fresh backing files are fully initialized and synced;
+both runs have the same 1 GiB locked-memory allowance. The profile derives a 3 MiB
+object from <code>256 × 24 layers × 2 K/V planes × 2 heads × 64 × 2 BF16 bytes</code>.</p>
+<details class="reproduce"><summary>Reproduce the paired registered storage comparison</summary>
+<p>Select <code>defconfig-kmesh-registered-storage-cuda</code>, inspect
+<code>make kmesh-registered-plan</code> and set the paths described in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_registered/README.md#matched-storage-routes">matched storage guide</a>.
+Use its pinned LMCache <code>fe15939e</code> and vLLM <code>9df1493c</code>
+sources, runtime and generated reference. Configure enough locked memory for
+the host registrations, then run <code>make kmesh-registered-storage-pair</code>.
+The default seven pairs alternate route order. The runner requires both
+poisoned-arena model qualifications before admitting timing samples.</p>
+<p>The reproducer creates fresh regular files in the selected external capture
+directory. It does not format a device. Keep raw logs, tensors, journals and
+backing files outside public Git. Duplicate reference storage and numerical
+instrumentation remain active; this is a bounded path comparison.</p>
+</details>
+<details class="reproduce"><summary>Reproduce registered model repair and its failure controls</summary>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_registered/README.md">registered replay guide</a>
+lists source, runtime, model, trace and external capture paths. Generate the
+independent TokenDance reference using its own source pins, then keep a clean
+checkout of each registered profile's source. Both the new reference and its
+registered counterpart use the same checkout and checked current configuration.</p>
+<pre><code>make defconfig-kmesh-registered-inputs-cpu
+make kmesh-contracts-plan
+# Set the pinned source, matching Python and external output paths, then run.
+make kmesh-contracts
+make defconfig-kmesh-registered-inputs-cuda
+make kmesh-native-plan
+make kmesh-native
+make defconfig-kmesh-registered-model-cuda
+make kmesh-registered-plan</code></pre>
+<p>Follow the guide's reference-first workflow with
+<code>make kmesh-registered</code> and
+<code>make kmesh-registered-verify</code>, then run
+<code>make kmesh-registered-controls</code> against the independently verified
+ordinary baseline. Use fresh capture directories outside all source checkouts.
+These commands qualify one separate cache process and one GPU worker.</p>
+</details>
 <details class="reproduce"><summary>Reproduce native span storage and physical cleanup</summary>
 <p>Use the prepared environment and binding-generation instructions in the
 <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership guide</a>
@@ -223,16 +331,71 @@ profiles retain their original pins, defconfigs and narrower scopes.</p>
 </details>
 </section>
 <section id="collective">
-<h2>25. When can collective recovery be evaluated?</h2>
-<p><strong>After one serial restore has passed the ownership and model gates.</strong>
-Collective recovery means several consumers coordinate reuse of compatible
-state, potentially across worker instances. It must retain each consumer's
-generation, destination and unfinished work, rather than treating a shared
-logical request as one physical completion.</p>
-<p>First qualify the bounded single-worker path. Then extend its real storage,
-rotation and model-repair consumer to multiple instances and compare against
-independent serial restores. Rank barriers in the CPU registry do not establish
-GPU shard compatibility, collective execution or a throughput gain.</p>
+<h2>25. Can registered children share a layer-major repair group?</h2>
+<p><strong>Yes, for four children on one RTX 4090 worker with a separate cache
+process, tested on October 24, 2026.</strong> Registered serial and layer-major
+execution both match the same-source serial reference bit for bit in K/V and
+logits, with maximum absolute difference 0.0. Tokens, masks and all 96 actual
+layer selections match. This extends the earlier one-child-at-a-time test.
+A group must validate
+all members before exposing any model input, retain each child's private engine
+slots and finish cleanup for every member, even when one member fails.</p>
+<p>The implementation first completes all sixteen span placements for four
+children, then binds their exact ordered request identities, generations,
+tokens and declared spans. All children advance through one model layer before
+moving to the next. They share immutable canonical sources while keeping mutable
+repair buffers and destination block tables separate. Cached keys have already
+been rotated during native restoration and must not be rotated a second time.</p>
+<p>This is one GPU worker and one separate cache process. Model tensor operations
+remain request-local: the group coordinates their order and ownership. It does
+not batch query/key rotation, selection differences or matrix multiplication,
+and it does not implement cross-worker collective transport.</p>
+<div class="table-wrap"><table>
+<caption>Registered group qualification</caption>
+<tr><th scope="col">Gate</th><th scope="col">Observed result</th><th scope="col">Scope</th></tr>
+<tr><td>Native ownership</td><td>694 CPU and 208 CUDA cases pass; these profiles overlap the earlier gates.</td><td>Simultaneous inputs, private writeback, early close and refused drain; separate and fused NHD/HND views over ZeroMQ and gRPC.</td></tr>
+<tr><td>Successful model group</td><td>Same-source reference, registered serial and registered group comparisons pass; raw K/V and logits are bitwise identical.</td><td>Four 512-token children, each restoring 416 shared tokens; exact masks, tokens and all 96 layer selections.</td></tr>
+<tr><td>One member fails</td><td>Three children match the serial reference; the failed child completes through ordinary recomputation.</td><td>Full-prompt invalidation, an empty retry plan and actual completion; all registered sources close with no pending work.</td></tr>
+</table></div>
+<p>The failure control interrupts the second child after its first repaired
+layer. The other three preserve the serial reference's generated tokens,
+retrieval masks and actual selections. After checked drain, the failed child's
+full prompt is invalidated and its empty retry plan leads to ordinary
+recomputation with matching generated tokens. This mixed repaired/recomputed
+control checks fallback and ownership; it is separate from the successful
+group's complete raw K/V and logit comparison.</p>
+<p>The exact group source is LMCache
+<a href="https://github.com/mcgrof/LMCache/commit/b9b5687baf79cabaeca2807eedb04dd13bbb87ed"><code>b9b5687b</code></a>,
+with vLLM <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code> and the runtime
+listed above. The ordinary multiprocess serving guard remains closed.</p>
+<details class="reproduce"><summary>Reproduce the registered group and member-failure control</summary>
+<p>Use the source pins in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_registered/group-profile.json">group profile</a>
+and follow the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_registered/README.md#registered-layer-major-model-group">registered group guide</a>.
+Run the CPU and native prerequisites before the model comparison:</p>
+<pre><code>make defconfig-kmesh-registered-groups-cpu
+make kmesh-contracts-plan
+# Set the pinned source, interpreter and external capture paths.
+make kmesh-contracts
+make defconfig-kmesh-registered-groups-cuda
+make kmesh-native-plan
+make kmesh-native
+make defconfig-kmesh-registered-group-model-cuda
+make kmesh-registered-plan</code></pre>
+<p>Capture and independently verify the same-source serial reference first.
+Then run <code>make kmesh-registered</code> with registered serial execution and
+with <code>KMESH_REGISTERED_MODEL_EXECUTION=collective-lockstep</code>, using
+fresh external directories and <code>make kmesh-registered-verify</code> for each.
+Finally run <code>make kmesh-registered-group-failure</code> against the verified
+serial and ordinary references. Unknown physical completion must keep blocks
+reserved; it cannot authorize fallback or destination reuse.</p>
+</details>
+<p>The first group uses CPU-L1 sources. Combining group execution with the new
+NVMe routes needs separate integration and qualification. Matching this bounded
+approximate repair baseline does not prove equivalence to full recomputation,
+production serving speed or total memory savings. Rank barriers in a CPU
+registry alone do not establish GPU shard compatibility or multiworker reuse.</p>
 </section>
 <nav class="page-nav" aria-label="Research pages"><a href="kmesh-retention.html">&larr; Retention and early loading</a><a href="kmesh.html">Overview &rarr;</a></nav>
 <footer><a href="kmesh.html">KMesh overview</a>
