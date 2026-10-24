@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "lmcache_commit": "e5dded61d56e220bcd98c95e6a8bb13148a989cf",
+  "source_files_sha256": {
+    "tests/v1/multiprocess/test_cb_plan_executor_gpu.py": "c9005ed991252522364d7de7f03af8f7e7bd8042ba661b6ce72a0d0fbb057b6f",
+    "tests/v1/test_fused_rerope.py": "bdf7aa52af99dac9d54cea1c3c864c5ea3a878b5cd6ce6a33dbe86a45bdf642c",
+    "lmcache/v1/multiprocess/modules/blend/retrieve.py": "846750b118ea330215d026949fbba0f0fc61da72381967436c0fe1e1f09fb9f8",
+    "lmcache/v1/multiprocess/modules/blend/registration.py": "9294a39913ce714a1413c8a9c46567a2d86e8fa6284c715bdf0edc79d0a518b2",
+    "lmcache/v1/multiprocess/modules/blend/rope.py": "30057a51e620a596f5956befdd80202523902568d6f07030e9fcefff4c937a5c",
+    "lmcache/v1/gpu_connector/kv_format/__init__.py": "fda8c8b23f147ca35055958780e89631b398d094d94dbfa864a62cc18ce0d4fe",
+    "csrc/engine_kv_format.h": "5aff0fad9ff11c6daf03b9cb4da8d530bc4ab02ee6bcf7e061599e1f8abcb096",
+    "csrc/cuda/blend_kernels.cu": "e779457cca2de4e9d2f255ee70d286d05d9d56a69147c27f817b8bcf688c634d",
+    "csrc/cuda/pos_kernels.cu": "d9aba684db30c9c99aa10d45b7f08e93ddc93fc72983d2ab554f05cc6d2963c4",
+    "csrc/cuda/pybind.cpp": "462473868d6dd378f794055ea4a28e75b1a7b16cdfffdf9bbe057719122ca81e"
+  },
+  "native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b"
+  },
+  "required_symbols": [
+    "CBGroupSpec",
+    "execute_cb_retrieve_plan_flat",
+    "rotary_embedding_k_fused",
+    "rotary_embedding_k_fused_strided"
+  ],
+  "geometry": {
+    "payload_dtype": "bfloat16",
+    "grouped_rotation_cache_dtype": "float32",
+    "layers_per_group": 4,
+    "heads": 2,
+    "head_width": 16,
+    "chunk_tokens": 8,
+    "block_tokens": 4,
+    "blocks": 512,
+    "object_groups": 2,
+    "group_kinds": [
+      "attention",
+      "aux"
+    ],
+    "formats": [
+      "split HND",
+      "split NHD",
+      "fused CS HND",
+      "fused CS NHD"
+    ],
+    "waves": [
+      [
+        11,
+        4
+      ],
+      [
+        69,
+        64
+      ]
+    ],
+    "last_chunk_valid_tokens": 5,
+    "unshifted_chunk_period": 3,
+    "destination_poison": -17,
+    "rotation_absolute_tolerance": 0.03125,
+    "rotation_relative_tolerance": 0
+  },
+  "limits": [
+    "Synthetic unpadded BF16 geometry, not a full-model serving result.",
+    "Registered handlers use local storage and event-handle transport stand-ins.",
+    "No DMA-BUF I/O, cross-process ownership or performance claim."
+  ]
+}

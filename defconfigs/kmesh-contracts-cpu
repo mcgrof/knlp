@@ -1,0 +1,4 @@
+# CPU domain, request-session and registered-context ownership controls.
+CONFIG_KNLP_REPRODUCE_KMESH_CONTRACTS=y
+CONFIG_KNLP_KMESH_CONTRACTS_SOURCE=""
+CONFIG_KNLP_KMESH_CONTRACTS_OUTPUT=""

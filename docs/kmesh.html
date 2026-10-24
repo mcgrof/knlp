@@ -32,7 +32,7 @@ KMesh explores how an application can tell vLLM and LMCache which requests
 will reuse that state, when they will arrive and how long it should remain
 available.</p>
 <p><a href="#conclusions">Read the conclusions</a> &nbsp;&middot;&nbsp;
-<a href="#questions">Explore the twenty questions</a></p>
+<a href="#questions">Explore the twenty-five questions</a></p>
 </div>
 
 <section id="grounding">
@@ -159,6 +159,17 @@ conclusions; the pages below retain the full measurements.</p>
 <li><a id="family-residency" href="kmesh-retention.html#family-residency">Does holding the ancestor pay under pressure?</a></li>
 <li><a id="reasoning-demand" href="kmesh-retention.html#reasoning-demand">Does model-driven branching leave room for better retention?</a></li>
 <li><a id="prefetch-demand" href="kmesh-retention.html#prefetch-demand">Does loading shared context early actually help?</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Questions 21–25</span>
+<h3><a href="kmesh-recovery.html">Recovery across processes</a></h3>
+<p>Qualified native layouts, process ownership and retained CUDA copies, followed by the remaining serial and collective serving gates.</p>
+<ol start="21">
+<li><a href="kmesh-recovery.html#native">Do the native layouts and rotations preserve the data?</a></li>
+<li><a href="kmesh-recovery.html#ownership">Who owns a registration and its unfinished work?</a></li>
+<li><a href="kmesh-recovery.html#copies">Do CUDA copies retain memory until they finish?</a></li>
+<li><a href="kmesh-recovery.html#serial">What remains before one real shifted restore?</a></li>
+<li><a href="kmesh-recovery.html#collective">When can collective recovery be evaluated?</a></li>
 </ol></article>
 </div>
 </section>

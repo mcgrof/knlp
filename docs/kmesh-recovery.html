@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="KMesh recovery qualification: native cache geometry, process ownership, retained CUDA transfers, and the remaining serial and collective serving gates.">
+<title>KMesh: Recovery across processes</title>
+<link rel="canonical" href="https://knlp.io/kmesh-recovery.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="KMesh navigation">
+<a class="logo" href="https://knlp.io/">knlp</a>
+<span class="spacer"></span>
+<a href="kmesh.html">overview</a>
+<a href="kmesh-design.html">design</a>
+<a href="kmesh-baselines.html">baselines</a>
+<a href="kmesh-storage.html">storage</a>
+<a href="kmesh-retention.html">retention</a>
+<a href="kmesh-recovery.html" aria-current="page">recovery</a>
+</nav></header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Recovery across processes</p>
+<span class="eyebrow">Questions 21–25</span>
+<h1>Can shared state survive a separate cache process?</h1>
+<p class="lead">The retention experiments restore an exact prefix through the
+existing serving path. The next historical phase moves beyond that baseline:
+recover state at different positions through a separate cache server, then
+coordinate recovery across consumers. The controls below qualify its foundations.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong><ol start="21">
+<li><a href="#native">Do the native layouts and rotations preserve the data?</a></li>
+<li><a href="#ownership">Who owns a registration and its unfinished work?</a></li>
+<li><a href="#copies">Do CUDA copies retain memory until they finish?</a></li>
+<li><a href="#serial">What remains before one real shifted restore?</a></li>
+<li><a href="#collective">When can collective recovery be evaluated?</a></li>
+</ol></div>
+<section id="native">
+<h2>21. Do the native layouts and rotations preserve the data?</h2>
+<p><strong>All 32 required synthetic CUDA cases passed on October 23, 2026.</strong>
+The executor accepts several paged key/value layouts, so a positional recovery
+test must check each layout's addressing as well as its mathematics. The controls
+cover head-major and token-major storage, separate key/value planes and fused
+content-width formats, multiple object groups, partial tails and repeated reuse
+of destination slots.</p>
+<p>Values and unchanged-position keys preserve their raw BF16 words, including
+negative zero. Shifted keys match an independent CPU rotation with absolute
+tolerance 0.03125 and zero relative tolerance. Poisoned destinations expose
+unintended writes. These are small synthetic tensors: four layers per group,
+two heads, head width 16, eight-token chunks and four-token blocks. They do not
+establish model-output quality or serving latency.</p>
+<p>The test host has an RTX 4090. The prepared runtime uses Python 3.13.15,
+PyTorch 2.13.0+cu130, CUDA runtime 13.0 and pytest 9.1.1, with two OpenMP/MKL
+threads. The source and reference native binaries are pinned in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">native qualification instructions</a>.
+Some handler tests use storage and event-transport stand-ins; their planner,
+tensor geometry and CUDA kernels are real.</p>
+</section>
+<section id="ownership">
+<h2>22. Who owns a registration and its unfinished work?</h2>
+<p><strong>The receiving client's actual transport identity owns the registered
+state.</strong> An instance number alone cannot authorize its replacement client
+to use an old registration. A server boot, storage generation, semantic domain,
+worker registration and accepted operation each have an explicit identity.
+Retiring a registration first closes admission and revokes its users; its tensors
+remain held until accepted work physically finishes.</p>
+<p>Ending a request, losing a heartbeat or cancelling a client does not prove that
+GPU work stopped. Uncertain completion therefore retains the exact paged and
+rotary generations. Store clearing and shutdown refuse outstanding physical debt.
+These controls are separate from the normal request heartbeat.</p>
+<div class="table-wrap"><table>
+<caption>Qualified prerequisites, October 23, 2026</caption>
+<tr><th scope="col">Control</th><th scope="col">Passed cases</th><th scope="col">Scope</th></tr>
+<tr><td>Native layouts and rotation</td><td>32</td><td>Synthetic CUDA numerical and addressing checks.</td></tr>
+<tr><td>CPU registration and transfer ownership</td><td>292</td><td>Real CPU registrations and ZeroMQ/gRPC servers; device failures are simulated.</td></tr>
+<tr><td>Separate-process CUDA downloads and uploads</td><td>6</td><td>Actual tensor copies and stream drains; injected failure controls.</td></tr>
+<tr><td>vLLM connector and configuration controls</td><td>414</td><td>Configuration and connector behavior, including refusal of unsupported multiprocess recovery.</td></tr>
+</table></div>
+<p>The CPU controls run with GPU visibility disabled. Every selected setup, body
+and teardown passes; skipped and expected-failure cases cannot qualify. The
+CPU and CUDA profiles are distinct captures, with their exact source, helper and
+runtime identities recorded. The 414 vLLM controls use CUDA configuration but
+are configuration and connector unit tests, not a model-serving experiment.</p>
+<p>The cache server derives registered layout and rotary facts. Model weights,
+tokenizer and model-configuration digests remain independent worker declarations;
+the storage server does not load or attest those artifacts. Transport identities
+prevent accidental cross-client reuse; they are not an authentication boundary
+against a hostile client.</p>
+</section>
+<section id="copies">
+<h2>23. Do CUDA copies retain memory until they finish?</h2>
+<p><strong>Yes, in the six tested download/upload cases.</strong> A separate
+exporter and test-server process exchange real CUDA interprocess communication
+handles. Downloads must encounter a producer still pending on a non-default
+stream, wait for its event, copy the rotary tables and compare exact host bytes.
+Uploads begin from completed private host snapshots, allocate private device
+targets and compare their bytes after the actual copy stream drains.</p>
+<p>Each direction has success, drained-error and undrained-error cases. Error
+injection occurs after a real copy submission. A failed drain must preserve both
+registration holds and all source/destination memory until a later physical
+drain succeeds. The tests supply the logical receiving identity explicitly;
+they do not yet exercise an ordered registration RPC through the public server.</p>
+<p>The BF16 paged allocation has shape <code>[2, 16, 4, 2, 8]</code>; the FP32
+rotary table is <code>[64, 8]</code>, or 2,048 bytes. A synthetic sequence of
+512 matrix multiplications on FP32 <code>[2048, 2048]</code> inputs keeps the
+download producer pending. This challenges event ordering; it is not a model
+or latency workload. The exporter remains alive through child cleanup.
+Actual device faults and exporter death are unqualified.</p>
+<p>These copies use ordinary CUDA IPC and host/device transfers. They perform
+no DMA-BUF storage I/O. The successful copy gate does not imply that an imported
+mapping has closed: exporter teardown needs a separate exact-generation,
+server-owned acknowledgement.</p>
+</section>
+<section id="serial">
+<h2>24. What remains before one real shifted restore?</h2>
+<p><strong>Multiprocess KMesh engine admission remains closed.</strong>
+An explicitly requested KMesh recovery profile must refuse an unsupported
+multiprocess connector before creating the engine. Ordinary multiprocess use
+without that profile is a separate path.</p>
+<p>The next gate orders the very first rotary-table read against its producer,
+normalizes a completed private snapshot, uploads it, and publishes only the
+completed generation. Legacy registration with already-drained inputs does not
+prove this sequence. The server also needs truthful imported-mapping teardown,
+fenced storage publication and retrieval, and a worker consumer that preserves
+destination block ownership through completion.</p>
+<p>A real shifted restore must then compare model outputs and repair the state
+whose deeper-layer contents depend on its original preceding context. Rotating
+key positions alone does not make that contextual dependence disappear.
+Numerical checks, deliberate-corruption rejection, fallback and physical drain
+must pass before a staged versus DMA-BUF serving comparison can qualify. The
+earlier <a href="kmesh-retention.html#prefetch-demand">exact-prefix retention
+result</a> answers a different, already measured question.</p>
+<details class="reproduce"><summary>Reproduce the completed prerequisite gates</summary>
+<p>Use the prepared environments and exact source pins described in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership instructions</a>
+and <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">CUDA instructions</a>.
+The public component branches are
+<a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-kmesh-mp-recovery">LMCache</a>
+and <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-kmesh-mp-recovery">vLLM</a>.
+Select the profile's exact commit rather than a moving branch tip.</p>
+<pre><code># CPU ownership and transfer controls: 292 required cases
+make defconfig-kmesh-rotary-transfers-cpu
+make kmesh-contracts-plan
+KMESH_CONTRACTS_SOURCE=/path/to/pinned/LMCache \
+  KMESH_CONTRACTS_VLLM_SOURCE=/path/to/pinned/vllm \
+  KMESH_CONTRACTS_OUTPUT=/path/outside/checkouts/cpu-capture \
+  KMESH_CONTRACTS_PY=/path/to/prepared/python make kmesh-contracts
+
+# Native layouts: 32 required CUDA cases
+make defconfig-kmesh-native-cuda
+KMESH_NATIVE_SOURCE=/path/to/native-profile/LMCache \
+  KMESH_NATIVE_OUTPUT=/path/outside/checkouts/native-capture \
+  KMESH_NATIVE_PY=/path/to/prepared/python make kmesh-native
+
+# Retained downloads and uploads: six required CUDA cases
+make defconfig-kmesh-rotary-transfers-cuda
+KMESH_NATIVE_SOURCE=/path/to/transfer-profile/LMCache \
+  KMESH_NATIVE_OUTPUT=/path/outside/checkouts/transfer-capture \
+  KMESH_NATIVE_PY=/path/to/prepared/python make kmesh-native</code></pre>
+<p>Every execution uses a fresh capture directory outside the checkouts.
+Saved-capture verification runs on CPU with the producing helper revision.
+Captured logs, raw receipts and tensors remain outside the public source tree.
+Receipt consistency does not independently authenticate hardware execution.</p>
+</details>
+</section>
+<section id="collective">
+<h2>25. When can collective recovery be evaluated?</h2>
+<p><strong>After one serial restore has passed the ownership and model gates.</strong>
+Collective recovery means several consumers coordinate reuse of compatible
+state, potentially across worker instances. It must retain each consumer's
+generation, destination and unfinished work, rather than treating a shared
+logical request as one physical completion.</p>
+<p>First qualify the bounded single-worker path. Then extend its real storage,
+rotation and model-repair consumer to multiple instances and compare against
+independent serial restores. Rank barriers in the CPU registry do not establish
+GPU shard compatibility, collective execution or a throughput gain.</p>
+</section>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh-retention.html">&larr; Retention and early loading</a><a href="kmesh.html">Overview &rarr;</a></nav>
+<footer><a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a></footer>
+</main></body></html>
