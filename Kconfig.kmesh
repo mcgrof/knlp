@@ -12,18 +12,18 @@ config KNLP_REPRODUCE_KMESH_CONTRACTS
 if KNLP_REPRODUCE_KMESH_CONTRACTS
 
 config KNLP_KMESH_CONTRACTS_PROFILE
-	string "CPU source profile (contexts or registered-state)"
+	string "CPU source profile (contexts, registered-state or rotary-transfers)"
 	default "contexts"
 	help
-	  Keep the original context-ownership gate or select the later typed
-	  registered-state controls. Each profile pins its own source and cases.
+	  Keep the context/registered-state gates or select retained rotary
+	  transfers. Each profile pins its own source and required cases.
 
 config KNLP_KMESH_CONTRACTS_SOURCE
 	string "Clean pinned LMCache source with its shared native extension"
 	default ""
 
 config KNLP_KMESH_CONTRACTS_VLLM_SOURCE
-	string "Clean pinned vLLM checkout for the registered-state profile"
+	string "Clean pinned vLLM checkout when the CPU profile requires it"
 	default ""
 
 config KNLP_KMESH_CONTRACTS_OUTPUT
@@ -43,7 +43,7 @@ config KNLP_REPRODUCE_KMESH_NATIVE
 if KNLP_REPRODUCE_KMESH_NATIVE
 
 config KNLP_KMESH_NATIVE_PROFILE
-	string "Native source profile (paged-cache or registered-copy)"
+	string "Native profile (paged-cache, registered-copy or rotary-transfers)"
 	default "paged-cache"
 	help
 	  Select native paged-cache rotation or separate-process registered

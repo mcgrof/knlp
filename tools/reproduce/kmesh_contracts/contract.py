@@ -21,6 +21,7 @@ HELPERS = (
 PROFILES = {
     "contexts": HERE / "profile.json",
     "registered-state": HERE / "profiles" / "registered-state.json",
+    "rotary-transfers": HERE / "profiles" / "rotary-transfers.json",
 }
 
 

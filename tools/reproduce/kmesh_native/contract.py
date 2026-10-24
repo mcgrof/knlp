@@ -19,6 +19,7 @@ SELECTORS = (
 PROFILES = {
     "paged-cache": HERE / "profile.json",
     "registered-copy": HERE / "profiles" / "registered-copy.json",
+    "rotary-transfers": HERE / "profiles" / "rotary-transfers.json",
 }
 
 

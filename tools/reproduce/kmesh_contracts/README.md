@@ -26,6 +26,7 @@ and use clean checkouts at its exact commits:
 | --- | --- | --- | ---: |
 | `contexts` | `93926179d1f6e431093bd504624d3ea68f25d2c9` | No additional source pin | 91 |
 | `registered-state` | `a301244af6d202f041fe321c6497963b16f626e9` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 268 |
+| `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 292 |
 
 The registered-state profile requires the paired vLLM source and a prepared
 environment containing its dependencies. It runs real server processes on both
@@ -34,6 +35,14 @@ The model, tokenizer and weight digests are worker declarations: the cache
 server verifies registered layout and rotary contents but does not load or
 attest the model weights. This profile does not enable multiprocess KMesh
 inference.
+
+The rotary-transfers profile retains those controls and adds independent host
+snapshots, provisional rotary ownership and both transfer directions. It uses
+controlled device metadata and weak references to pending reads for error,
+interruption, collection and shutdown tests. That part models lifetime debt
+without allocating GPU memory. Provisional state must not replace a live blend
+registration. Ordered registration and canonical publication remain separate
+work; this CPU profile does not qualify device transfers.
 
 Generate the gRPC bindings from the selected LMCache checkout using its pinned
 build dependency. From that checkout:
@@ -72,6 +81,12 @@ make kmesh-contracts-verify \
   KMESH_CONTRACTS_OUTPUT=/absolute/path/to/new-capture
 ```
 
+Use `make defconfig-kmesh-rotary-transfers-cpu` for the later transfer controls,
+then the same plan/run/verify commands with that profile's exact source commits
+and a fresh output directory. The corresponding real-device prerequisite uses
+`defconfig-kmesh-rotary-transfers-cuda` and the
+[native runner](../kmesh_native/README.md).
+
 The launcher hides GPU devices, removes the explicit LMCache backend override
 and requires the pinned CPU fallback. It uses two OpenMP/MKL threads and disables
 optional pytest plugin loading and usage tracking. Tests allocate small synthetic
@@ -81,8 +96,8 @@ paired vLLM package must also resolve from its pinned checkout. Its target is
 explicitly CPU for these controls.
 
 The capture contains JUnit XML, all collected cases and setup/call/teardown
-reports, source/helper/build hashes and runtime versions. The registered-state
-profile also checks the loaded protobuf descriptor hashes, so stale generated
+reports, source/helper/build hashes and runtime versions. The paired source
+profiles also check loaded protobuf descriptor hashes, so stale generated
 bindings cannot qualify against a newer schema. `verified.json` is
 written only after all checks pass. Keep captures outside the source repository;
 they are not source files. Saved-file verification establishes consistency,

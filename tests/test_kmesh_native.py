@@ -145,5 +145,9 @@ class RegisteredCopyReceiptTests(NativeReceiptTests):
     profile_name = "registered-copy"
 
 
+class RotaryTransfersReceiptTests(NativeReceiptTests):
+    profile_name = "rotary-transfers"
+
+
 if __name__ == "__main__":
     unittest.main()

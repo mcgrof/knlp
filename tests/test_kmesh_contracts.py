@@ -189,5 +189,9 @@ class RegisteredStateReceiptTests(ContractReceiptTests):
             cell.main()
 
 
+class RotaryTransfersReceiptTests(RegisteredStateReceiptTests):
+    profile_name = "rotary-transfers"
+
+
 if __name__ == "__main__":
     unittest.main()

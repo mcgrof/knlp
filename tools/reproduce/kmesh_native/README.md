@@ -5,13 +5,15 @@ executor's memory layout and positional transformations. These controls use
 synthetic BF16 payloads with head-major and token-major paged storage,
 separate K/V planes and current fused content-width formats.
 
-Select `paged-cache` for that original gate or `registered-copy` for the later
-copy-lifetime prerequisite. Each pins an independent LMCache source and case set:
+Select `paged-cache` for that original gate. The `registered-copy` and
+`rotary-transfers` profiles supply the later copy-lifetime prerequisites.
+Each pins an independent LMCache source and case set:
 
 | Profile | LMCache commit | Required cases |
 | --- | --- | ---: |
 | `paged-cache` | `e5dded61d56e220bcd98c95e6a8bb13148a989cf` | 32 |
 | `registered-copy` | `6776516b3efd156df1fa014bc6f346adce374379` | 3 |
+| `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | 6 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
 prepared CUDA environment; this runner does not install or rebuild packages.
@@ -45,7 +47,8 @@ KMESH_NATIVE_OUTPUT=/path/outside/checkouts/native-capture \
 ```
 
 The registered-copy profile uses an exporter and a separate test server with
-actual CUDA IPC tensors, streams and events. The key/value cache is a single
+actual CUDA interprocess communication (IPC) tensors, streams and events.
+The key/value cache is a single
 BF16 layer with shape `[2, 16, 4, 2, 8]`; the rotary cache is `[64, 8]` FP32,
 so each host snapshot contains `64 * 8 * 4 = 2048` bytes. Registration starts
 from drained inputs. A later write runs on a non-default producer stream, and
@@ -62,6 +65,13 @@ and checks that both registration holds remain pending until a later real drain.
 The exporter keeps its allocations until the child has completed cleanup.
 These controls do not qualify actual device faults or exporter death.
 
+The rotary-transfers profile preserves that download challenge and adds
+independent upload cases. The server prepares completed host inputs in a new,
+unpublished rotary generation, uploads them into new device tensors and checks
+their raw bytes after physical completion. Successful, drained-error and
+undrained-error cases run in each direction. These are separate transfer cases;
+they do not implement the complete ordered registration and publication path.
+
 Use the same commands with the separate defconfig and a fresh capture:
 
 ```sh
@@ -75,6 +85,11 @@ CUDA_VISIBLE_DEVICES=0 \
 KMESH_NATIVE_OUTPUT=/path/outside/checkouts/copy-capture \
   make kmesh-native-verify
 ```
+
+Use `make defconfig-kmesh-rotary-transfers-cuda` with the same commands for the
+six-case profile, selecting its exact source commit and a fresh output path.
+Its [CPU controls](../kmesh_contracts/README.md) run separately through
+`defconfig-kmesh-rotary-transfers-cpu`.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external
