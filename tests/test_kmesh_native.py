@@ -41,6 +41,7 @@ class NativeReceiptTests(unittest.TestCase):
             },
             "source": {"commit": cfg["lmcache_commit"], "clean": True},
             "source_files_sha256": cfg["source_files_sha256"],
+            "protobuf_descriptors_sha256": cfg.get("protobuf_descriptors_sha256", {}),
             "native_sha256": cfg["native_sha256"],
             "exit_code": 0,
             "device": {"backend": "cuda", "count": 1},
@@ -53,6 +54,10 @@ class NativeReceiptTests(unittest.TestCase):
             ],
             "junit_sha256": contract.digest(self.root / "junit.xml"),
         }
+        (self.root / "execution.log").write_text("synthetic complete execution\n")
+        self.receipt["execution_log_sha256"] = contract.digest(
+            self.root / "execution.log"
+        )
 
     def check_receipt(self, receipt):
         (self.root / "receipt.json").write_text(json.dumps(receipt))
@@ -147,6 +152,29 @@ class RegisteredCopyReceiptTests(NativeReceiptTests):
 
 class RotaryTransfersReceiptTests(NativeReceiptTests):
     profile_name = "rotary-transfers"
+
+
+class OrderedRegistrationReceiptTests(NativeReceiptTests):
+    profile_name = "ordered-registration"
+
+    def test_wrong_loaded_descriptors(self):
+        self.receipt["protobuf_descriptors_sha256"] = {}
+        with self.assertRaisesRegex(ValueError, "protobuf"):
+            self.check_receipt(self.receipt)
+
+    def test_exporter_warning_after_green_test_exit_cannot_qualify(self):
+        cfg = contract.profile(self.profile_name)
+        (self.root / "execution.log").write_text(cfg["forbidden_log_patterns"][0])
+        self.receipt["execution_log_sha256"] = contract.digest(
+            self.root / "execution.log"
+        )
+        with self.assertRaisesRegex(ValueError, "lifecycle warning"):
+            self.check_receipt(self.receipt)
+
+    def test_modified_execution_log_cannot_qualify(self):
+        (self.root / "execution.log").write_text("edited")
+        with self.assertRaisesRegex(ValueError, "log digest"):
+            self.check_receipt(self.receipt)
 
 
 if __name__ == "__main__":

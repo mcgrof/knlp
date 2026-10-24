@@ -2,7 +2,6 @@
 """Run CPU ownership controls with GPUs hidden in a prepared environment."""
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -17,7 +16,7 @@ from tools.reproduce.kmesh_contracts.contract import (
     profile,
     profile_path,
 )
-from tools.reproduce.kmesh_native.cell import Capture
+from tools.reproduce.kmesh_native.cell import Capture, protobuf_hashes
 
 
 def source_snapshot(root: Path, commit: str, files: dict) -> dict:
@@ -33,16 +32,6 @@ def source_snapshot(root: Path, commit: str, files: dict) -> dict:
     if actual != commit or dirty or hashes != files:
         raise RuntimeError("CPU qualification requires the pinned clean source")
     return {"commit": actual, "clean": True, "source_files_sha256": hashes}
-
-
-def protobuf_hashes(cfg: dict) -> dict:
-    """Hash the loaded wire schemas, including generated optional-field presence."""
-    return {
-        name: hashlib.sha256(
-            importlib.import_module(name).DESCRIPTOR.serialized_pb
-        ).hexdigest()
-        for name in cfg.get("protobuf_descriptors_sha256", {})
-    }
 
 
 def main() -> None:

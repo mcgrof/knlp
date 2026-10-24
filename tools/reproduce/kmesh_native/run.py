@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.reproduce.kmesh_native.contract import profile, selectors, verify
+from tools.reproduce.kmesh_native.contract import digest, profile, selectors, verify
 
 
 def main() -> None:
@@ -81,6 +81,13 @@ def main() -> None:
             check=True,
             timeout=900,
         )
+    if profile(settings["PROFILE"]).get("forbidden_log_patterns"):
+        # The child can report outstanding exporter references during exit,
+        # after it has written its receipt. Hash only after the process exits.
+        receipt_path = output / "receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt["execution_log_sha256"] = digest(output / "execution.log")
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
     result = verify(output, settings["PROFILE"])
     (output / "verified.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

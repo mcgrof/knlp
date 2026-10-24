@@ -77,6 +77,8 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>CPU registration and transfer ownership</td><td>292</td><td>Real CPU registrations and ZeroMQ/gRPC servers; device failures are simulated.</td></tr>
 <tr><td>Separate-process CUDA downloads and uploads</td><td>6</td><td>Actual tensor copies and stream drains; injected failure controls.</td></tr>
 <tr><td>vLLM connector and configuration controls</td><td>414</td><td>Configuration and connector behavior, including refusal of unsupported multiprocess recovery.</td></tr>
+<tr><td>Ordered CPU registration</td><td>316</td><td>Completed private snapshots, canonical publication, ownership and both public request transports.</td></tr>
+<tr><td>Ordered CUDA registration</td><td>6</td><td>Both public server transports, first-read producer ordering, private normalized GPU bytes and retained failure debt.</td></tr>
 </table></div>
 <p>The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
@@ -119,10 +121,21 @@ server-owned acknowledgement.</p>
 An explicitly requested KMesh recovery profile must refuse an unsupported
 multiprocess connector before creating the engine. Ordinary multiprocess use
 without that profile is a separate path.</p>
-<p>The next gate orders the very first rotary-table read against its producer,
-normalizes a completed private snapshot, uploads it, and publishes only the
-completed generation. Legacy registration with already-drained inputs does not
-prove this sequence. The server also needs truthful imported-mapping teardown,
+<p><strong>Ordered registration now passes its separate prerequisite gate:</strong>
+316 CPU cases and six public-server CUDA cases on the same RTX 4090 runtime.
+The rotary table starts with invalid values. Its producer writes a scaled valid
+table on a non-default stream; the server receives the event while production
+is still pending, snapshots before normalization, uploads private normalized
+tables and publishes their completed generation. Independent byte readback
+passes, and later exporter writes do not change the private state. Both ZeroMQ
+and gRPC also pass disabled-admission and failed-copy/drain/retry controls.</p>
+<p>The tests must create a fresh PyTorch export for each attempted import. Initial
+refusal/retry fixtures left outstanding IPC reference warnings despite passing
+test bodies; isolated controls identified unused and reused exports. The corrected
+six-case rerun passes, and the strict reproducer rejects that warning in the
+complete process-exit log. This fixes those fixtures; a general worker-side
+export cancellation or release acknowledgement is still unimplemented.</p>
+<p>The server still needs truthful imported-mapping teardown,
 fenced storage publication and retrieval, and a worker consumer that preserves
 destination block ownership through completion.</p>
 <p>A real shifted restore must then compare model outputs and repair the state
@@ -163,6 +176,14 @@ KMESH_NATIVE_SOURCE=/path/to/transfer-profile/LMCache \
 Saved-capture verification runs on CPU with the producing helper revision.
 Captured logs, raw receipts and tensors remain outside the public source tree.
 Receipt consistency does not independently authenticate hardware execution.</p>
+<p>For the later ordered-registration gate, use LMCache
+<code>27e256e1aae7090c4ccfc5eea587a7fbf93fddae</code> with the same pinned
+vLLM source. Regenerate its gRPC bindings as documented, then select
+<code>make defconfig-kmesh-ordered-registration-cpu</code> for 316 required CPU
+cases, or <code>make defconfig-kmesh-ordered-registration-cuda</code> for six
+required CUDA cases. Use the same corresponding make commands above and fresh
+external capture directories. These profiles also freeze the actual loaded
+wire schemas; the CUDA receipt hashes its complete exit log.</p>
 </details>
 </section>
 <section id="collective">

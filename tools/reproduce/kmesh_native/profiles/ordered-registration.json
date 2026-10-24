@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "lmcache_commit": "27e256e1aae7090c4ccfc5eea587a7fbf93fddae",
+  "source_files_sha256": {
+    "csrc/cuda/blend_kernels.cu": "e779457cca2de4e9d2f255ee70d286d05d9d56a69147c27f817b8bcf688c634d",
+    "csrc/cuda/pos_kernels.cu": "d9aba684db30c9c99aa10d45b7f08e93ddc93fc72983d2ab554f05cc6d2963c4",
+    "csrc/cuda/pybind.cpp": "462473868d6dd378f794055ea4a28e75b1a7b16cdfffdf9bbe057719122ca81e",
+    "csrc/engine_kv_format.h": "5aff0fad9ff11c6daf03b9cb4da8d530bc4ab02ee6bcf7e061599e1f8abcb096",
+    "lmcache/integration/vllm/kmesh_mp_handoff.py": "b0a5025be148f54a2aae85fadee3cb48d2f4086e7de7d6c0ad5deb35f015d054",
+    "lmcache/integration/vllm/lmcache_mp_connector.py": "69f38948c747927c67d520995f13bb30643171e9aa0b74f4192c0ef3f05d4c33",
+    "lmcache/v1/gpu_connector/kv_format/__init__.py": "fda8c8b23f147ca35055958780e89631b398d094d94dbfa864a62cc18ce0d4fe",
+    "lmcache/v1/multiprocess/config.py": "57dd84353250f838d7aec2b7731cbd74a8654a2b00856c3217b63fd3d84748d8",
+    "lmcache/v1/multiprocess/context_ownership.py": "ff936e0bd27ffe33646d2e1b586996413f1f16429505cd7aada5654bcebc1bf9",
+    "lmcache/v1/multiprocess/engine_context.py": "44d3bdfcee30489b8590c5c69ccd585378a7e173f22c75ee265a151733816145",
+    "lmcache/v1/multiprocess/engine_module.py": "c11804085c0d2e8c1e2b4cae50d0ce687482ad89750e5ea7634e91358afadf98",
+    "lmcache/v1/multiprocess/kmesh_bindings.py": "23c69e6a82a96ad3051fec7aa624e99e29ad8082e720e8cb824fc25111550223",
+    "lmcache/v1/multiprocess/kmesh_device_copy.py": "a80141fee2dc094608b1c133448101c3610ad71e41d990cc7a4a35e886ccce7f",
+    "lmcache/v1/multiprocess/kmesh_domains.py": "55f7ba63556a26fd649945f3548d115e80899dd33059ab05add51679770531b7",
+    "lmcache/v1/multiprocess/kmesh_rotary_snapshot.py": "49c9a3b2830b18393b9db20dd81643bcad392df04c05a35dc352ca899e9faf2d",
+    "lmcache/v1/multiprocess/kmesh_types.py": "7941f6b8aa9ab9671681cdc1f803414652088552dd8f3282d2db2f68480ebcf5",
+    "lmcache/v1/multiprocess/modules/blend/module.py": "2c9fe87a92af69b281450af591dfe28dc8be71f754f6b5c77371bc477f37c4f2",
+    "lmcache/v1/multiprocess/modules/blend/registration.py": "9f7dc4a7227f175a720053d8dea10044c561e5e2271270290b8fde867841f9c5",
+    "lmcache/v1/multiprocess/modules/blend/retrieve.py": "846750b118ea330215d026949fbba0f0fc61da72381967436c0fe1e1f09fb9f8",
+    "lmcache/v1/multiprocess/modules/blend/rope.py": "12d845624fb55c01bd4132787c6515c480eaf671907515af2400e2a3d8ddc8d1",
+    "lmcache/v1/multiprocess/modules/kmesh_control.py": "185245aac30388d4f968391b3d06ba097ded96c5185b52ee466d7a576779917e",
+    "lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py": "2f93a86482f944724c67160c16887fb2071f9b66091ed73cdbed1900ecb8a0ad",
+    "lmcache/v1/multiprocess/modules/management.py": "e2e726a3814f6213f3217a9ebbc7bb944fcf04a563a43fea1c3487417e6887f4",
+    "lmcache/v1/multiprocess/request_handler.py": "5a7a897b97e8a7d64c1d4bcffa98356e689e73cbcb34d163877bf557a81b6724",
+    "lmcache/v1/multiprocess/rpc.py": "9d7c8ec6968789eb9d2bc28643a24040488cb7f3d05af5fd8c661e3a11b204ba",
+    "lmcache/v1/multiprocess/server.py": "72df9ecbafd8874647a4acf4a507d4905ec02c240ce0f9e16cd21b1af84fe03b",
+    "lmcache/v1/multiprocess/transport/base.py": "60f31c1e6f43944435ef7802d174c929841a2b9cfbbf0db12f3d49cfa75043de",
+    "lmcache/v1/multiprocess/transport/grpc_impl/_proto_gen/_generate.py": "cca3938fd66064f1ed6342aac6ebaf619a131f99fa08014f63f037f53a91f1ab",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/blend_service.proto": "7692f9a4787f2ec76c7d5db1d03d175a9ab37424323c12bbb44f77f4eb0a3efd",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/common.proto": "a9987c7fbf947d65e96074bd677778b909af013b71f371d484d5bf9f6d3d3e03",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/controller_service.proto": "22f0ba64fea3d71209b63c98284733f3b935db954a3daae3ddbed47d4c391c74",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/debug_service.proto": "ff0fa03b5412ac76ebd0a1d368611263bed53a79e4833fbb39f1abbf9f812196",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/engine_driven_service.proto": "8d25846f2e27b4e4c8bc961470cc270fd4fa21a54d9939e1d5af33495621fa3a",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/kmesh_service.proto": "b0d7abca80de02e06cfce479eab6fc51e2a6b3ff313fa862c0a634982e1a64b9",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/lmcache_driven_service.proto": "94b7f610ab31540dc4596858cb559763647e2a1363a7304cf09398afad58c026",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/lookup_service.proto": "2a215472808c7e29e8b794a1a400fb5c755c0274d7e35e0cdc95fd30b7c019b0",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/observability_service.proto": "a826510101e35e40f3f9eae7edd49903cdab89e76184f5c0d2399cc29d503ab7",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/p2p_service.proto": "a84d47b9ea235842ef5505b1f92943ed81a1e1a37acf1290eb8cd6c080f24e91",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/qstore_service.proto": "41240629a9a374eabe26f9b4d10716898d8f7b5a94bd86bb39bb0671377bd831",
+    "lmcache/v1/multiprocess/transport/grpc_impl/server.py": "8b32c88f36967337c505730ae02e7c8c555b59ad31661c4d1438babcbdba99c2",
+    "lmcache/v1/multiprocess/transport/request_context.py": "37518364c62c6b14b010405e7a074bd6cc821b3ae5d02faf13dc297004f8741e",
+    "lmcache/v1/multiprocess/transport/zmq_impl/mq.py": "73b4213cbb72a60fa35f9e5b133ae58f23558eef47a0c238a7ac55193e8fd5c3",
+    "lmcache/v1/platform/base/device_spec.py": "14b38a3b493fbc15499bba79be85c468430e84ea78da2cf0a57d3a3c9920ee10",
+    "lmcache/v1/platform/base/event_ipc.py": "2bdebfb2d62dec1fe4c631dd5654abdf338b2e4e47a6ae1f725d1c0828663164",
+    "lmcache/v1/platform/devices/cpu/cache_context.py": "15669ab6247642b5b573525d07c9b5fa87636ff5966c9aa2264d6fecefc6d27c",
+    "lmcache/v1/platform/devices/cuda/cache_context.py": "25326e4393f1717b071efe3dacb5463a31eceeca76b1ef4171edc366566b530c",
+    "lmcache/v1/platform/devices/cuda/ipc_wrapper.py": "7e41baa2a317899bd6ae33d58a2783a71888cdcffd6f64d25aa451fed887f978",
+    "lmcache/v1/platform/stream.py": "75d88267a4261c2b7935ab9f7c57c6e83d6dbd901c118815f854920007b97687",
+    "tests/v1/multiprocess/test_blend_store.py": "c6f2f9955bec1a45ce29cb232daf8d566b71b22861e7d17574407899ac71b56f",
+    "tests/v1/multiprocess/test_cb_plan_executor_gpu.py": "c9005ed991252522364d7de7f03af8f7e7bd8042ba661b6ce72a0d0fbb057b6f",
+    "tests/v1/multiprocess/test_config.py": "d2b80f7b136e393dd39f5e388da30e12c868108efaccdb94bd359cde3b8f6a32",
+    "tests/v1/multiprocess/test_grpc_transport.py": "44bfdae2bfda61db29d1d4b1d7145a8d9cdeb3080e5adab546a76145c4269f4f",
+    "tests/v1/multiprocess/test_lmcache_driven_layout_registry.py": "d9cf6728b5d775cd0f7872f2d1a6f791abc5a46f1ec4d896960052a30e261e55",
+    "tests/v1/multiprocess/test_lmcache_driven_missing_registration.py": "c7b485e5305866b1f974d2a3f99e5c9dbde2361f4d7882d3d9e8de15307acffa",
+    "tests/v1/multiprocess/test_protocols.py": "8cb2280856d4afa024b9145ec76916f95f7a52d59c794262141907f6671bbcce",
+    "tests/v1/multiprocess/test_transport_factory.py": "ce24e7b1e2b4d82ef3f3b74894e94ab29edb8963894e1433fb974c349ef7e4fb",
+    "tests/v1/multiprocess/test_worker_liveness.py": "68ff6b7d9c7f2a340adc4c2d2d514938351b3888cf4d7ba08069b63cb6d8436a",
+    "tests/v1/test_context_ownership.py": "c742af284303ee00d817c82e3f8a69d6c017267d9464648c9995bfce5ce6e9f4",
+    "tests/v1/test_fused_rerope.py": "bdf7aa52af99dac9d54cea1c3c864c5ea3a878b5cd6ce6a33dbe86a45bdf642c",
+    "tests/v1/test_kmesh_bindings.py": "9823f5f0ea675de4108e62ea901fd0ad83ba6d1b8b8c40e6ea7c0dd2ed1bf967",
+    "tests/v1/test_kmesh_control.py": "fb03c2de8655dad1dce9bf2a81a68c030a2359e0feddbed863e2028b45408030",
+    "tests/v1/test_kmesh_device_copy.py": "213366be715dba5193d35861a4bd6f2e349cb26d34d84cee37f6280fe5894d2a",
+    "tests/v1/test_kmesh_device_copy_gpu.py": "a0219f1d91d1b17034c2857b7cad776d2e2655cbaafc26bba99fda9db53bbf7b",
+    "tests/v1/test_kmesh_domains.py": "1e68a473a1297f26cf20d8426d435e6e516c410cbe20f740d16f9c4fef5ddcd5",
+    "tests/v1/test_kmesh_mp_handoff.py": "8b3ff3fb1576b549c95ef021efb3ed6d0bf85e1bcd3719ee7e6d24dd1b9988fc",
+    "tests/v1/test_kmesh_rotary_snapshot.py": "6192bfb922b06ea65498772c928166a3e1812cf71a60748a4ca9ff66d3556d0f",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py": "60e2c67956e45a4f5631231a048a376d49796fcd5568d2d6b10c68e5a98b8ca1",
+    "tests/v1/test_mp_connector_autostart.py": "a506ee7bb20a35e51947faa8088afdb2034c66c9e1423312b43623210042cf22",
+    "tests/v1/test_registered_context_ownership.py": "790011519f210a10f72d67fcabb1d5736329ab9df1f19d17626f6275b5b866f2",
+    "tests/v1/test_registered_rope_ownership.py": "3aa0cc110a3bee79c40699b6870d80f6b2a322818c21107d2188f233d7d6e6d0",
+    "tests/v1/test_request_context.py": "b44ff1bfb1e0ac525d374855b9ede0abcc73617eb603fa40a98d7ef56f6773c8",
+    "tests/v1/test_request_session_transport.py": "227236e7de102d001352b0aca02cbeda73a5b54289f8b10ba6cdde852c0c5a9e"
+  },
+  "native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b"
+  },
+  "required_symbols": [
+    "CBGroupSpec",
+    "execute_cb_retrieve_plan_flat",
+    "rotary_embedding_k_fused",
+    "rotary_embedding_k_fused_strided"
+  ],
+  "selectors": [
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py"
+  ],
+  "cases": [
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[copy-undrained-grpc]",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[copy-undrained-zmq]",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[disabled-grpc]",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[disabled-zmq]",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[success-grpc]",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py::test_ordered_device_snapshot_uses_real_public_server[success-zmq]"
+  ],
+  "geometry": {
+    "paged_dtype": "bfloat16",
+    "paged_shape": [
+      2,
+      16,
+      4,
+      2,
+      8
+    ],
+    "rotary_dtype": "float32",
+    "rotary_shape": [
+      64,
+      8
+    ],
+    "rotary_copy_bytes": 2048,
+    "dram_store_bytes": 8388608,
+    "producer_stream": "non-default",
+    "producer_delay_fixture": {
+      "operation": "FP32 matrix multiply",
+      "matrix_shape": [
+        2048,
+        2048
+      ],
+      "repetitions": 512,
+      "purpose": "Challenge an actually pending producer event, not simulate model serving.",
+      "applies_to": "device_to_host only"
+    },
+    "directions": [
+      "ordered_device_to_host_then_host_to_device"
+    ],
+    "upload_source": "Completed independent pinned host snapshot in an unpublished owned generation.",
+    "registration_input": "Initial NaN rotary values; pending non-default producer writes a scale-two cosine/sine cache before the server snapshots it.",
+    "server_transports": [
+      "zmq",
+      "grpc"
+    ]
+  },
+  "limits": [
+    "Actual public server entry point and typed ZeroMQ/gRPC controls in separate CUDA processes; test hooks observe pending producer state and completed private GPU bytes.",
+    "Only the PyTorch CUDA IPC rotary-input profile is qualified. Each attempted import needs a fresh export wrapper. Disabled admission is tested with already-consumed KV metadata rather than an unused outgoing export.",
+    "Cases cover success, disabled admission and an injected post-copy failure plus failed drain followed by later actual server drain and a fresh-export retry.",
+    "Raw private normalized GPU bytes and runtime facts survive later exporter writes. Producer input must remain unchanged during the snapshot; events do not enforce atomic snapshots.",
+    "Pytest success with an outstanding-exporter-reference warning cannot qualify; the complete process-exit log is hashed and checked.",
+    "No positive exporter teardown receipt, raw/VMM lifecycle, actual device/exporter fault, shifted model recovery, DMA-BUF storage I/O or performance claim."
+  ],
+  "protobuf_descriptors_sha256": {
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.blend_service_pb2": "6cb987626b325a8b6df59164af965a597cf32f7342a87a1bbd565f414b2ca154",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.common_pb2": "6abf1b693ce1eca4fc619547d3cbdf6798187deb0971f31f293c7a398656f3b0",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.controller_service_pb2": "bd7e290d83b58c3deb8695cefcc836c4fbae52c3f178fde90216444889901d22",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.debug_service_pb2": "c2fc700dd7f42c589a38a1666d397a93ebb300ac7736a7793e57cb7ed16458f1",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.engine_driven_service_pb2": "dfe30287a3eba181458738026563fdbb4eaa07e863cc9da26ffe56d8b09427f2",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.kmesh_service_pb2": "c517c2805820de18d71304628d730f15f4cf8b44ecc58c4a191f0972f79f13c8",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.lmcache_driven_service_pb2": "98b45550782cdcbeab0652c0a396c90cb284abcacdfcc62054c5f776f20055ab",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.lookup_service_pb2": "9b8e400d065064de25b084cc9717aa2e5f9d302dd64b2273ed694371caf469ed",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.observability_service_pb2": "3cc85b6de2cea88143da254fd291a6d30f2256fe84c7049dfece0dfe1353519f",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.p2p_service_pb2": "baad574dc814a6c0a8289e215e784badea20b23dfd9d7d0972974c02e6db2ee7",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.qstore_service_pb2": "0c11f258559cd64321913f63b4c41c95b63e5074e49ce555b27c57f5ddb1db25"
+  },
+  "forbidden_log_patterns": [
+    "Producer process has been terminated before all shared CUDA tensors released"
+  ]
+}

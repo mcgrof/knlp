@@ -14,6 +14,7 @@ Each pins an independent LMCache source and case set:
 | `paged-cache` | `e5dded61d56e220bcd98c95e6a8bb13148a989cf` | 32 |
 | `registered-copy` | `6776516b3efd156df1fa014bc6f346adce374379` | 3 |
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | 6 |
+| `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
 prepared CUDA environment; this runner does not install or rebuild packages.
@@ -90,6 +91,25 @@ Use `make defconfig-kmesh-rotary-transfers-cuda` with the same commands for the
 six-case profile, selecting its exact source commit and a fresh output path.
 Its [CPU controls](../kmesh_contracts/README.md) run separately through
 `defconfig-kmesh-rotary-transfers-cpu`.
+
+Use `make defconfig-kmesh-ordered-registration-cuda` for the later public-server
+gate. It starts from invalid rotary values, challenges an actually pending
+non-default producer before the first value read, normalizes the completed host
+snapshot and checks the private GPU bytes after upload. Both ZeroMQ and gRPC
+exercise success, disabled admission and an injected undrained copy followed by
+actual server drain and retry. Fresh PyTorch export wrappers supply each attempted
+import; the disabled case reuses already-consumed KV metadata and must refuse
+before importing it. An unused export cannot establish a receiver close.
+
+This profile pins all loaded generated wire descriptors as well as source and
+native binaries. Regenerate the LMCache gRPC bindings using its pinned generator
+before execution. Its complete process-exit log is hashed and an outstanding
+exporter-reference warning rejects qualification even after green pytest results.
+Inspecting normalized private GPU bytes is a test hook; readiness and publication
+still pass through the real public server entry point and typed controls.
+No positive exporter teardown, raw/VMM import lifecycle, actual device fault,
+model-serving, DMA-BUF I/O or speed qualification follows. Engine admission stays
+closed. Use its [316-case CPU profile](../kmesh_contracts/README.md) separately.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

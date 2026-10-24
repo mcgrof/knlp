@@ -27,6 +27,7 @@ and use clean checkouts at its exact commits:
 | `contexts` | `93926179d1f6e431093bd504624d3ea68f25d2c9` | No additional source pin | 91 |
 | `registered-state` | `a301244af6d202f041fe321c6497963b16f626e9` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 268 |
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 292 |
+| `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | `9df1493cae0b98380a3c3ecb9b2d41776a6d8735` | 316 |
 
 The registered-state profile requires the paired vLLM source and a prepared
 environment containing its dependencies. It runs real server processes on both
@@ -43,6 +44,15 @@ interruption, collection and shutdown tests. That part models lifetime debt
 without allocating GPU memory. Provisional state must not replace a live blend
 registration. Ordered registration and canonical publication remain separate
 work; this CPU profile does not qualify device transfers.
+
+The ordered-registration profile adds first-read snapshot preparation and
+private canonical publication through both real request transports. It checks
+normalization, independent ownership, stale and foreign clients, disappeared
+shared-memory inputs and shutdown during preparation. Use
+`make defconfig-kmesh-ordered-registration-cpu` with the same commands and its
+exact source pair. It does not provide positive exporter teardown or enable
+engine recovery. Its six-case CUDA counterpart runs separately through
+`defconfig-kmesh-ordered-registration-cuda`.
 
 Generate the gRPC bindings from the selected LMCache checkout using its pinned
 build dependency. From that checkout:
