@@ -284,3 +284,23 @@ and canonical source reuse after the original slots are poisoned. An injected
 failure after actual source gathering must keep admission and retirement blocked
 until physical drain; cleanup must not gather again. This extends storage
 correctness coverage, without enabling model repair or measuring DMA-BUF.
+
+Select `make defconfig-kmesh-registered-arenas-cuda` for eager canonical sources.
+Its 184 required cases retain the registered-input controls and add matched
+eager pinned-host and explicit Vulkan/RM GPU arenas. They cover separate and
+per-head fused K/V, NHD/HND, aligned chunks, interior starts and partial tails.
+The optional `_vulkan_rm` extension is pinned and checked alongside the native
+transfer bindings. Provider failure is a failed test, never a host fallback.
+Use the ordinary plan/run/verify commands with this profile and a fresh capture.
+
+Every arena control uses a 64 MiB canonical pool. Working copies must preserve
+canonical bytes across shifted and same-position restores. Corrupt or evicted
+sources refuse before scatter; failed physical drain retains ownership. A
+five-chunk source also checks refusal when its plan would reuse one of the
+context's four working slots. The paired CPU prerequisite is
+`make defconfig-kmesh-registered-arenas-cpu`.
+
+These are synthetic memory-transfer controls awaiting GPU execution. They do
+not perform NVMe I/O or run a model. GPU canonical hashing still copies the
+full payload to the CPU. A configured DMA-BUF export and a passing arena test
+do not establish the storage route, model correctness or lower serving latency.

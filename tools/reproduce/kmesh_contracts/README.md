@@ -158,3 +158,11 @@ revision. It requires the same 341 CPU controls and exact vLLM source, while
 pinning the native source-gather implementation and its GPU test program.
 Actual interior NHD/HND gathering is qualified by the separate CUDA profile;
 CPU execution alone cannot establish native transfer correctness.
+
+Select `make defconfig-kmesh-registered-arenas-cpu` for the eager-arena source
+prerequisite. It pins the partial/fused span implementation and requires 661
+CPU contract cases, including refusal of pageable, foreign or incomplete
+source objects and unsupported managed-service storage configurations.
+Supply the exact LMCache and vLLM trees shown by its plan. These CPU checks
+allocate no GPU arena; use the paired CUDA profile to qualify actual pinned
+and Vulkan/RM transfers, repacking, canonical preservation and physical drain.

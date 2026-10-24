@@ -29,6 +29,7 @@ PROFILES = {
     "native-spans": HERE / "profiles" / "native-spans.json",
     "interior-spans": HERE / "profiles" / "interior-spans.json",
     "registered-inputs": HERE / "profiles" / "registered-inputs.json",
+    "registered-arenas": HERE / "profiles" / "registered-arenas.json",
 }
 
 

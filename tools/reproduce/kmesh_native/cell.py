@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib
 import importlib.metadata
 import json
 import os
@@ -87,7 +88,6 @@ def main() -> None:
         raise RuntimeError("pinned source file hashes differ")
 
     import lmcache
-    import lmcache.lmcache_native as native
     import pytest
     import torch
     from lmcache import cuda_ops
@@ -97,9 +97,12 @@ def main() -> None:
     descriptors = protobuf_hashes(cfg)
     if descriptors != cfg.get("protobuf_descriptors_sha256", {}):
         raise RuntimeError("generated protobuf descriptors differ from the profile")
+    native_modules = {
+        name: importlib.import_module("lmcache." + name)
+        for name in cfg["native_sha256"]
+    }
     native_hashes = {
-        "cuda_ops": digest(Path(cuda_ops.__file__)),
-        "lmcache_native": digest(Path(native.__file__)),
+        name: digest(Path(module.__file__)) for name, module in native_modules.items()
     }
     if native_hashes != cfg["native_sha256"]:
         raise RuntimeError("another native build was loaded")
@@ -137,8 +140,7 @@ def main() -> None:
     }:
         raise RuntimeError("source files changed during execution")
     if native_hashes != {
-        "cuda_ops": digest(Path(cuda_ops.__file__)),
-        "lmcache_native": digest(Path(native.__file__)),
+        name: digest(Path(module.__file__)) for name, module in native_modules.items()
     }:
         raise RuntimeError("native extensions changed during execution")
     if (
@@ -165,8 +167,7 @@ def main() -> None:
         "native_sha256": native_hashes,
         "loaded_modules": {
             "lmcache": lmcache.__file__,
-            "cuda_ops": cuda_ops.__file__,
-            "lmcache_native": native.__file__,
+            **{name: module.__file__ for name, module in native_modules.items()},
         },
         "runtime": {
             "python": sys.version,

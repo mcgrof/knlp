@@ -219,5 +219,9 @@ class RegisteredInputsReceiptTests(InteriorSpansReceiptTests):
     profile_name = "registered-inputs"
 
 
+class RegisteredArenasReceiptTests(RegisteredInputsReceiptTests):
+    profile_name = "registered-arenas"
+
+
 if __name__ == "__main__":
     unittest.main()
