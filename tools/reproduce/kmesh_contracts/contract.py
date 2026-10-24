@@ -26,6 +26,7 @@ PROFILES = {
     "owned-raw-copy": HERE / "profiles" / "owned-raw-copy.json",
     "managed-raw-context": HERE / "profiles" / "managed-raw-context.json",
     "managed-raw-service": HERE / "profiles" / "managed-raw-service.json",
+    "native-spans": HERE / "profiles" / "native-spans.json",
 }
 
 

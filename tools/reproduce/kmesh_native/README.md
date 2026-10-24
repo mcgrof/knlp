@@ -17,6 +17,7 @@ Each pins an independent LMCache source and case set:
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 | `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
+| `native-spans` | `daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a` | 24 |
 | `managed-raw-service` | `d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e` | 10 |
 | `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | 9 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | 4 |
@@ -233,3 +234,36 @@ admission can open. No DMA-BUF storage path or speed comparison is exercised.
 Offline receipt verification establishes file consistency, not independent
 authentication of hardware execution. Keep each capture tied to its helper
 revision, and verify earlier captures with the revision that produced them.
+
+Select `make defconfig-kmesh-native-spans-cuda` for the native storage profile,
+then use the same plan/run/verify commands with its exact source pin. It retains
+ten raw service lifetime cases and adds fourteen span cases across ZeroMQ and
+gRPC. Regenerate bindings from that source before execution. The paired CPU
+profile is `defconfig-kmesh-native-spans-cpu`, requiring 341 cases and the vLLM
+source pinned in the [CPU instructions](../kmesh_contracts/README.md).
+
+The span fixture registers synthetic BF16 `[2, 16, 4, 2, 16]` paged storage and
+FP32 `[64, 16]` rotary state, in distinct 64 MiB exporter allocations. Its lazy
+pinned CPU L1 is 64 MiB, the allocator's registration granule. Two eight-token
+chunks hold a sixteen-token source. Real native gather saves that source after
+a producer submitted behind 512 FP32 matrix multiplications on `[2048, 2048]`
+inputs. The worker poisons its original GPU slots after the stored receipt.
+Native restore then scatters at token position three through a reversed,
+noncontiguous destination block table. Untouched prefix and tail slots remain
+poisoned. Values must match raw BF16 bits; keys use an independent CPU rotation
+with `rtol=0.012` and `atol=0.025`. A second same-position restore verifies that
+shared canonical source bytes were never rotated in place.
+
+The remaining controls cover repeated-generation idempotency, foreign clients,
+altered handles, eviction, corruption before scatter, failed admission and
+stale publication. An exception after real native enqueue plus an injected
+drain refusal must retain physical ownership. Retirement refuses; later actual
+device-context drain releases the debt without another enqueue. These injected
+refusals do not establish recovery from a real device fault.
+
+This profile qualifies native CPU-L1 storage transactions, not model recovery.
+The `loaded-needs-repair` receipt does not authorize computed vLLM tokens.
+Request-local deeper-layer repair, model output checks, NVMe-backed cold reads,
+GPU-L1/GDS, the staged/DMA-BUF comparison and collective consumers remain separate
+qualification gates. Timings from these correctness controls are not a serving
+latency result.

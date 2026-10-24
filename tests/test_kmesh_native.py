@@ -207,5 +207,9 @@ class ManagedRawServiceReceiptTests(ManagedRawContextReceiptTests):
     profile_name = "managed-raw-service"
 
 
+class NativeSpansReceiptTests(ManagedRawServiceReceiptTests):
+    profile_name = "native-spans"
+
+
 if __name__ == "__main__":
     unittest.main()

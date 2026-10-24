@@ -21,6 +21,7 @@ config KNLP_KMESH_CONTRACTS_PROFILE
 	  Select owned-raw-copy for partial raw import and cleanup lifetime.
 	  Select managed-raw-context for checked context admission controls.
 	  Select managed-raw-service for bounded service ownership controls.
+	  Select native-spans for checked admission and host-buffer lifetimes.
 
 config KNLP_KMESH_CONTRACTS_SOURCE
 	string "Clean pinned LMCache source with its shared native extension"
@@ -57,6 +58,7 @@ config KNLP_KMESH_NATIVE_PROFILE
 	  Select owned-raw-copy for retained raw rotary import and cleanup.
 	  Select managed-raw-context for checked CUDA context retirement.
 	  Select managed-raw-service for public raw control and release RPCs.
+	  Select native-spans for native store, shifted restore and physical drain.
 	  Each profile pins its source, binaries and cases.
 
 config KNLP_KMESH_NATIVE_SOURCE

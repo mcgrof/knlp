@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "lmcache_commit": "daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a",
+  "source_files_sha256": {
+    "csrc/cuda/blend_kernels.cu": "e779457cca2de4e9d2f255ee70d286d05d9d56a69147c27f817b8bcf688c634d",
+    "csrc/cuda/pos_kernels.cu": "d9aba684db30c9c99aa10d45b7f08e93ddc93fc72983d2ab554f05cc6d2963c4",
+    "csrc/cuda/pybind.cpp": "462473868d6dd378f794055ea4a28e75b1a7b16cdfffdf9bbe057719122ca81e",
+    "csrc/engine_kv_format.h": "5aff0fad9ff11c6daf03b9cb4da8d530bc4ab02ee6bcf7e061599e1f8abcb096",
+    "lmcache/integration/vllm/kmesh_mp_handoff.py": "b0a5025be148f54a2aae85fadee3cb48d2f4086e7de7d6c0ad5deb35f015d054",
+    "lmcache/integration/vllm/lmcache_mp_connector.py": "69f38948c747927c67d520995f13bb30643171e9aa0b74f4192c0ef3f05d4c33",
+    "lmcache/v1/distributed/api.py": "0d907be6cad69ff535d61578c5734ca241810b47b802980e74be995ee2948a09",
+    "lmcache/v1/distributed/l1_manager.py": "91d405c9adf7bbe45cbd60a738781945bf3dc6a213188634c14d56fdcfb0f54e",
+    "lmcache/v1/distributed/storage_manager.py": "9370ec678cac913115adba0840a5983f2f9ca6a4ebe44f9472eb096bae020ee8",
+    "lmcache/v1/gpu_connector/gds_context.py": "487e80436d037050f48724ee2b2d41dbb9d176593c2c54d6fd0c0e1e63adef48",
+    "lmcache/v1/gpu_connector/kv_format/__init__.py": "fda8c8b23f147ca35055958780e89631b398d094d94dbfa864a62cc18ce0d4fe",
+    "lmcache/v1/memory_allocators/lazy_memory_allocator.py": "319a4d26ccf4cb57d613db92ab624cd5e4b9facc15ae30aaf94c0849b3f07206",
+    "lmcache/v1/multiprocess/config.py": "57dd84353250f838d7aec2b7731cbd74a8654a2b00856c3217b63fd3d84748d8",
+    "lmcache/v1/multiprocess/context_ownership.py": "ff936e0bd27ffe33646d2e1b586996413f1f16429505cd7aada5654bcebc1bf9",
+    "lmcache/v1/multiprocess/engine_context.py": "44d3bdfcee30489b8590c5c69ccd585378a7e173f22c75ee265a151733816145",
+    "lmcache/v1/multiprocess/engine_module.py": "c11804085c0d2e8c1e2b4cae50d0ce687482ad89750e5ea7634e91358afadf98",
+    "lmcache/v1/multiprocess/kmesh_bindings.py": "bfa6403d3d70328807d23e4e2adfc36459a952861c0b6872054cad4cec5b0aef",
+    "lmcache/v1/multiprocess/kmesh_device_copy.py": "14595979283c47357c3c4b9ea11878537fa1e377b05f1e6630aba4fc226b5bdf",
+    "lmcache/v1/multiprocess/kmesh_domains.py": "58c32f921211194d4fee8caca5730082e6cfa6c7cecb560656762b9c936cc0fe",
+    "lmcache/v1/multiprocess/kmesh_raw_server.py": "340aeb749063ab75d5aae70e57eac97099143244d209044bf0bf9b733b0c9ad4",
+    "lmcache/v1/multiprocess/kmesh_rotary_snapshot.py": "49c9a3b2830b18393b9db20dd81643bcad392df04c05a35dc352ca899e9faf2d",
+    "lmcache/v1/multiprocess/kmesh_span_store.py": "91a64c7369934eb8318412761bd6e43a9e41cf8da155cb7b06fab1492d261b8a",
+    "lmcache/v1/multiprocess/kmesh_types.py": "5af4e42d28cfcf2bd0c5294666ff32f71aad7a48e520cd593f0468419af863ea",
+    "lmcache/v1/multiprocess/modules/blend/module.py": "2c9fe87a92af69b281450af591dfe28dc8be71f754f6b5c77371bc477f37c4f2",
+    "lmcache/v1/multiprocess/modules/blend/registration.py": "9f7dc4a7227f175a720053d8dea10044c561e5e2271270290b8fde867841f9c5",
+    "lmcache/v1/multiprocess/modules/blend/retrieve.py": "940ee1efc830be017f08f28e8d29c37545f708f00b7e0a4cfceb63499b76a501",
+    "lmcache/v1/multiprocess/modules/blend/rope.py": "12d845624fb55c01bd4132787c6515c480eaf671907515af2400e2a3d8ddc8d1",
+    "lmcache/v1/multiprocess/modules/kmesh_control.py": "db86828ef904d30c0136102f697dfab21045cd8c1a40144a0c0d637eb6f59a22",
+    "lmcache/v1/multiprocess/modules/kmesh_managed_raw.py": "4a7ca24f275c94acc3ba066b0ee232675c4e2cd4259089085f3d151654c64eb2",
+    "lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py": "6c3f5c0b762046c65b082b8a81e208239a1cfdaf8b5667126e4d6ac8d10c8029",
+    "lmcache/v1/multiprocess/modules/management.py": "e2e726a3814f6213f3217a9ebbc7bb944fcf04a563a43fea1c3487417e6887f4",
+    "lmcache/v1/multiprocess/object_group_transfer.py": "5961ac45df0d5e59191c9d804b02a2d26845dfa2beb2137702da3746741d1f8e",
+    "lmcache/v1/multiprocess/request_handler.py": "5a7a897b97e8a7d64c1d4bcffa98356e689e73cbcb34d163877bf557a81b6724",
+    "lmcache/v1/multiprocess/rpc.py": "9d7c8ec6968789eb9d2bc28643a24040488cb7f3d05af5fd8c661e3a11b204ba",
+    "lmcache/v1/multiprocess/server.py": "72df9ecbafd8874647a4acf4a507d4905ec02c240ce0f9e16cd21b1af84fe03b",
+    "lmcache/v1/multiprocess/transport/base.py": "292828e799906267d08da18de91de47bb2616314af70baf52fe96a6fde5b3f8c",
+    "lmcache/v1/multiprocess/transport/grpc_impl/_proto_gen/_generate.py": "cca3938fd66064f1ed6342aac6ebaf619a131f99fa08014f63f037f53a91f1ab",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/blend_service.proto": "7692f9a4787f2ec76c7d5db1d03d175a9ab37424323c12bbb44f77f4eb0a3efd",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/common.proto": "a9987c7fbf947d65e96074bd677778b909af013b71f371d484d5bf9f6d3d3e03",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/controller_service.proto": "22f0ba64fea3d71209b63c98284733f3b935db954a3daae3ddbed47d4c391c74",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/debug_service.proto": "ff0fa03b5412ac76ebd0a1d368611263bed53a79e4833fbb39f1abbf9f812196",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/engine_driven_service.proto": "8d25846f2e27b4e4c8bc961470cc270fd4fa21a54d9939e1d5af33495621fa3a",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/kmesh_service.proto": "6085f376e4cd19c65e56b396c996d145bb21f87f4fd2d44bbed5abbc7c172fa8",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/lmcache_driven_service.proto": "94b7f610ab31540dc4596858cb559763647e2a1363a7304cf09398afad58c026",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/lookup_service.proto": "2a215472808c7e29e8b794a1a400fb5c755c0274d7e35e0cdc95fd30b7c019b0",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/observability_service.proto": "a826510101e35e40f3f9eae7edd49903cdab89e76184f5c0d2399cc29d503ab7",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/p2p_service.proto": "a84d47b9ea235842ef5505b1f92943ed81a1e1a37acf1290eb8cd6c080f24e91",
+    "lmcache/v1/multiprocess/transport/grpc_impl/protos/qstore_service.proto": "41240629a9a374eabe26f9b4d10716898d8f7b5a94bd86bb39bb0671377bd831",
+    "lmcache/v1/multiprocess/transport/grpc_impl/server.py": "8b32c88f36967337c505730ae02e7c8c555b59ad31661c4d1438babcbdba99c2",
+    "lmcache/v1/multiprocess/transport/request_context.py": "37518364c62c6b14b010405e7a074bd6cc821b3ae5d02faf13dc297004f8741e",
+    "lmcache/v1/multiprocess/transport/zmq_impl/mq.py": "73b4213cbb72a60fa35f9e5b133ae58f23558eef47a0c238a7ac55193e8fd5c3",
+    "lmcache/v1/platform/base/device_spec.py": "14b38a3b493fbc15499bba79be85c468430e84ea78da2cf0a57d3a3c9920ee10",
+    "lmcache/v1/platform/base/event_ipc.py": "2bdebfb2d62dec1fe4c631dd5654abdf338b2e4e47a6ae1f725d1c0828663164",
+    "lmcache/v1/platform/base/ipc_wrapper.py": "407f43cb8d225271f65750cd2ff175b717f4e59a720791c5360d2c9f19c3525a",
+    "lmcache/v1/platform/devices/cpu/cache_context.py": "15669ab6247642b5b573525d07c9b5fa87636ff5966c9aa2264d6fecefc6d27c",
+    "lmcache/v1/platform/devices/cuda/cache_context.py": "c1084f3255beb2c8b06162c83cb1fd9cca2c8b1df1872fb918248658fd079304",
+    "lmcache/v1/platform/devices/cuda/ipc_wrapper.py": "ea4e3275aa2dfaf5add5db51852985a9460043a6109d1317ddad44d9917b2732",
+    "lmcache/v1/platform/devices/cuda/utils.py": "11d28849db2962aa3540e96269a9b5bad75bbe0479d86d935d3c78f84f0296ca",
+    "lmcache/v1/platform/ipc_policy.py": "87a250cf488460bd3b3fc249fd8a201d5fc8fd2dc6c4a73504ee66d3b755e0cc",
+    "lmcache/v1/platform/stream.py": "75d88267a4261c2b7935ab9f7c57c6e83d6dbd901c118815f854920007b97687",
+    "tests/v1/multiprocess/test_blend_store.py": "c6f2f9955bec1a45ce29cb232daf8d566b71b22861e7d17574407899ac71b56f",
+    "tests/v1/multiprocess/test_cb_plan_executor_gpu.py": "c9005ed991252522364d7de7f03af8f7e7bd8042ba661b6ce72a0d0fbb057b6f",
+    "tests/v1/multiprocess/test_config.py": "d2b80f7b136e393dd39f5e388da30e12c868108efaccdb94bd359cde3b8f6a32",
+    "tests/v1/multiprocess/test_grpc_transport.py": "d2b4c99c89626629462a14db5ad27c4edc67ec77d9e0ee960871b0e0ac962e89",
+    "tests/v1/multiprocess/test_lmcache_driven_layout_registry.py": "d9cf6728b5d775cd0f7872f2d1a6f791abc5a46f1ec4d896960052a30e261e55",
+    "tests/v1/multiprocess/test_lmcache_driven_missing_registration.py": "c7b485e5305866b1f974d2a3f99e5c9dbde2361f4d7882d3d9e8de15307acffa",
+    "tests/v1/multiprocess/test_protocols.py": "8cb2280856d4afa024b9145ec76916f95f7a52d59c794262141907f6671bbcce",
+    "tests/v1/multiprocess/test_transport_factory.py": "ce24e7b1e2b4d82ef3f3b74894e94ab29edb8963894e1433fb974c349ef7e4fb",
+    "tests/v1/multiprocess/test_worker_liveness.py": "68ff6b7d9c7f2a340adc4c2d2d514938351b3888cf4d7ba08069b63cb6d8436a",
+    "tests/v1/platform/devices/cuda/test_cuda_ipc_wrapper.py": "615ac3ef5eacaaf356a2e71ece767733b1fb0fd0b0d630e78f8c3e0c9c3441cb",
+    "tests/v1/test_context_ownership.py": "c742af284303ee00d817c82e3f8a69d6c017267d9464648c9995bfce5ce6e9f4",
+    "tests/v1/test_fused_rerope.py": "bdf7aa52af99dac9d54cea1c3c864c5ea3a878b5cd6ce6a33dbe86a45bdf642c",
+    "tests/v1/test_kmesh_bindings.py": "9823f5f0ea675de4108e62ea901fd0ad83ba6d1b8b8c40e6ea7c0dd2ed1bf967",
+    "tests/v1/test_kmesh_control.py": "fb03c2de8655dad1dce9bf2a81a68c030a2359e0feddbed863e2028b45408030",
+    "tests/v1/test_kmesh_device_copy.py": "e3a85b2927029650189dbcba0324be7b9de60aa37d12e0c38ad9551abca6065e",
+    "tests/v1/test_kmesh_device_copy_gpu.py": "a0219f1d91d1b17034c2857b7cad776d2e2655cbaafc26bba99fda9db53bbf7b",
+    "tests/v1/test_kmesh_domains.py": "1e68a473a1297f26cf20d8426d435e6e516c410cbe20f740d16f9c4fef5ddcd5",
+    "tests/v1/test_kmesh_managed_context.py": "80ed5710453bdecbd12c00c777816328fc0643ae92a04d3f33ccddd8927eb531",
+    "tests/v1/test_kmesh_managed_context_gpu.py": "950ddf006a928274354af0ff22f977cc1834fcf160dadca96a39595e55346a9a",
+    "tests/v1/test_kmesh_managed_service.py": "daa03b229d2cc5e32845d6d3d153ba42ce5bb189964c9bf05ae25fc3fb145eae",
+    "tests/v1/test_kmesh_managed_service_gpu.py": "fb95b11d61fa5d0b39cfc382c210647c5309077f8d4ae0f8dcad16bb0ad32ecd",
+    "tests/v1/test_kmesh_mp_handoff.py": "8b3ff3fb1576b549c95ef021efb3ed6d0bf85e1bcd3719ee7e6d24dd1b9988fc",
+    "tests/v1/test_kmesh_raw_copy_gpu.py": "0aa07efeff0b11d375a3e2ff6788925665581c18055a8843e8fd2bef9a4710df",
+    "tests/v1/test_kmesh_rotary_snapshot.py": "6192bfb922b06ea65498772c928166a3e1812cf71a60748a4ca9ff66d3556d0f",
+    "tests/v1/test_kmesh_rotary_snapshot_gpu.py": "60e2c67956e45a4f5631231a048a376d49796fcd5568d2d6b10c68e5a98b8ca1",
+    "tests/v1/test_kmesh_span_store.py": "163dc51ea2a944ae82d3d154d86607ee936f321b7f6d657c1e9e386c5b9bb623",
+    "tests/v1/test_kmesh_span_store_gpu.py": "c7611b420801dc0da81220aa36f3d4bd5b21c9a7bda7e8b22e06673846ba7c01",
+    "tests/v1/test_kmesh_write_admission.py": "9b6d429f589574669028779eb893b9d86a5abd3ab94db4a57b930bb8221b2e17",
+    "tests/v1/test_mp_connector_autostart.py": "a506ee7bb20a35e51947faa8088afdb2034c66c9e1423312b43623210042cf22",
+    "tests/v1/test_registered_context_ownership.py": "790011519f210a10f72d67fcabb1d5736329ab9df1f19d17626f6275b5b866f2",
+    "tests/v1/test_registered_rope_ownership.py": "3aa0cc110a3bee79c40699b6870d80f6b2a322818c21107d2188f233d7d6e6d0",
+    "tests/v1/test_request_context.py": "b44ff1bfb1e0ac525d374855b9ede0abcc73617eb603fa40a98d7ef56f6773c8",
+    "tests/v1/test_request_session_transport.py": "227236e7de102d001352b0aca02cbeda73a5b54289f8b10ba6cdde852c0c5a9e"
+  },
+  "native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b"
+  },
+  "required_symbols": [
+    "execute_cb_retrieve_plan_flat",
+    "execute_object_group_transfer"
+  ],
+  "selectors": [
+    "tests/v1/test_kmesh_managed_service_gpu.py",
+    "tests/v1/test_kmesh_span_store_gpu.py"
+  ],
+  "cases": [
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[close-refusal-grpc]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[close-refusal-zmq]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[copy-undrained-grpc]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[copy-undrained-zmq]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[partial-construction-grpc]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[partial-construction-zmq]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[success-grpc]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[success-zmq]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[unknown-close-grpc]",
+    "tests/v1/test_kmesh_managed_service_gpu.py::test_managed_raw_service_owns_registration_and_release[unknown-close-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[admission-refusal-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[admission-refusal-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[corrupt-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[corrupt-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[drain-refusal-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[drain-refusal-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[enqueue-failure-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[enqueue-failure-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[evict-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[evict-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[stale-publication-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[stale-publication-zmq]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[success-grpc]",
+    "tests/v1/test_kmesh_span_store_gpu.py::test_managed_span_native_store_and_restore[success-zmq]"
+  ],
+  "geometry": {
+    "managed_raw_control": {
+      "exporter_allocations": {
+        "paged_bfloat16_bytes": 67108864,
+        "rotary_float32_bytes": 67108864
+      },
+      "paged_view_shape": [
+        2,
+        16,
+        4,
+        2,
+        8
+      ],
+      "rotary_view_shape": [
+        64,
+        8
+      ],
+      "rotary_payload_bytes": 2048,
+      "producer_work": {
+        "matrix_shape": [
+          2048,
+          2048
+        ],
+        "dtype": "float32",
+        "iterations": 512
+      },
+      "transports": [
+        "zmq",
+        "grpc"
+      ],
+      "world_size": 1,
+      "l1": "CPU DRAM",
+      "events": "same-host CUDA IPC"
+    },
+    "native_spans": {
+      "paged_view_shape": [
+        2,
+        16,
+        4,
+        2,
+        16
+      ],
+      "rotary_view_shape": [
+        64,
+        16
+      ],
+      "exporter_allocations_bytes": [
+        67108864,
+        67108864
+      ],
+      "cpu_l1_bytes": 67108864,
+      "allocator": "lazy pinned CPU",
+      "chunk_tokens": 8,
+      "source_tokens": 16,
+      "source_start": 0,
+      "destination_start": 3,
+      "source_block_table": [
+        2,
+        4,
+        6,
+        8
+      ],
+      "destination_block_table": [
+        13,
+        11,
+        9,
+        7,
+        5
+      ],
+      "key_tolerance": {
+        "rtol": 0.012,
+        "atol": 0.025
+      },
+      "values": "bitwise equal",
+      "producer_work": {
+        "matrix_shape": [
+          2048,
+          2048
+        ],
+        "dtype": "float32",
+        "iterations": 512
+      },
+      "transports": [
+        "zmq",
+        "grpc"
+      ],
+      "world_size": 1,
+      "layout": "NHD"
+    }
+  },
+  "limits": [
+    "Ten managed raw control/release cases and fourteen native-span cases, each through an independent importing process on ZeroMQ or gRPC.",
+    "Actual native CPU-L1 gather, per-key admission, host checksums, unaligned positional restore and a second same-position restore from unchanged canonical bytes. Source writes are submitted behind outstanding device work.",
+    "Same request-generation retries do not resubmit native work. Foreign clients and altered handles refuse before transfer; corruption and eviction refuse before scatter.",
+    "Failed admission and stale publication return no reusable span. A failure after real native enqueue retains physical debt when drain is refused; later server-device drain permits cleanup without re-enqueueing.",
+    "Device errors and drain refusals are controlled injections, not recovery from a real device fault. Client-declared artifact identities are not model attestation.",
+    "One worker, full BF16 attention and CPU L1 only. Loaded-needs-repair does not authorize computed model tokens. No model outputs, NVMe I/O, GDS, DMA-BUF comparison or performance claim."
+  ],
+  "protobuf_descriptors_sha256": {
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.blend_service_pb2": "6cb987626b325a8b6df59164af965a597cf32f7342a87a1bbd565f414b2ca154",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.common_pb2": "6abf1b693ce1eca4fc619547d3cbdf6798187deb0971f31f293c7a398656f3b0",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.controller_service_pb2": "bd7e290d83b58c3deb8695cefcc836c4fbae52c3f178fde90216444889901d22",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.debug_service_pb2": "c2fc700dd7f42c589a38a1666d397a93ebb300ac7736a7793e57cb7ed16458f1",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.engine_driven_service_pb2": "dfe30287a3eba181458738026563fdbb4eaa07e863cc9da26ffe56d8b09427f2",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.kmesh_service_pb2": "8341a3933483bf7bd9f431b3609a405d9b2d462d46415054257162c00a515ed1",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.lmcache_driven_service_pb2": "98b45550782cdcbeab0652c0a396c90cb284abcacdfcc62054c5f776f20055ab",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.lookup_service_pb2": "9b8e400d065064de25b084cc9717aa2e5f9d302dd64b2273ed694371caf469ed",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.observability_service_pb2": "3cc85b6de2cea88143da254fd291a6d30f2256fe84c7049dfece0dfe1353519f",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.p2p_service_pb2": "baad574dc814a6c0a8289e215e784badea20b23dfd9d7d0972974c02e6db2ee7",
+    "lmcache.v1.multiprocess.transport.grpc_impl._proto_gen.qstore_service_pb2": "0c11f258559cd64321913f63b4c41c95b63e5074e49ce555b27c57f5ddb1db25"
+  },
+  "forbidden_log_patterns": [
+    "Producer process has been terminated before all shared CUDA tensors released"
+  ],
+  "runtime_packages": [
+    "cuda-bindings",
+    "cupy-cuda13x"
+  ]
+}

@@ -1,0 +1,5 @@
+# Native immutable-span store, unaligned restore and checked physical drain.
+CONFIG_KNLP_REPRODUCE_KMESH_NATIVE=y
+CONFIG_KNLP_KMESH_NATIVE_PROFILE="native-spans"
+CONFIG_KNLP_KMESH_NATIVE_SOURCE=""
+CONFIG_KNLP_KMESH_NATIVE_OUTPUT=""
