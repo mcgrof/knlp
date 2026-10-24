@@ -82,6 +82,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Checked raw-import lifetime</td><td>3</td><td>Real separate-process raw CUDA imports, alias release and injected pre-driver refusal followed by successful retry.</td></tr>
 <tr><td>Raw native-outcome fencing</td><td>6</td><td>Safe preflight retry, conservative import/close quarantine, forwarded local references and alias controls.</td></tr>
 <tr><td>Owned raw rotary input copies</td><td>323 CPU + 4 CUDA</td><td>Ownership before partial import, actual producer-ordered downloads, checked reference release and retained failure debt.</td></tr>
+<tr><td>Checked managed raw contexts</td><td>327 CPU + 9 CUDA</td><td>Retained construction, initialization/transfer stream drains, alias retirement and idempotent checked close; active GDS refused.</td></tr>
 </table></div>
 <p>The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
@@ -178,6 +179,23 @@ A dedicated 64 MiB allocation holds the 2,048-byte rotary view, making its final
 mapping close independent of the paged allocation. These tests supply receiving
 identity explicitly; they do not qualify a raw control RPC or service retirement
 receipt. No model or DMA-BUF storage performance is measured.</p>
+<p><strong>The managed raw context now passes checked physical retirement.</strong>
+Nine separate-process CUDA cases cover successful repeated close, an outstanding
+alias, initialization and transfer drain refusal, refusal before checked close,
+ambiguous native close and partial construction. The parent retains a 64 MiB
+BF16 allocation with two nonoverlapping paged views filled with distinct values.
+Context-stream work must still be pending when close starts. Initialization
+uploads are drained on their original stream before publication; the transfer
+stream is drained separately before retiring and closing raw mappings.</p>
+<p>All nine scoped cases and the paired 327-case CPU profile pass complete source
+and exit-log verification. Ten existing copy/ordered-registration CUDA cases also
+pass against this source. The primitive keeps failed construction alive until
+importer exit, rejects new aliases after retirement and returns the same released
+allocation identities on repeated success. It remains a resource primitive:
+typed managed registration, a service release receipt and model recovery are
+subsequent gates. Active GDS is refused because its current staging deregistration
+logs backend errors and cannot prove checked release. This result therefore
+qualifies no GPU-L1 or DMA-BUF storage shutdown.</p>
 <p>A real shifted restore must then compare model outputs and repair the state
 whose deeper-layer contents depend on its original preceding context. Rotating
 key positions alone does not make that contextual dependence disappear.
@@ -244,6 +262,11 @@ the earlier three-case checkpoint without relabeling its source or evidence.</p>
 commands above into fresh external capture directories. The CPU profile requires
 323 cases and the CUDA profile requires four, with the same complete-exit-log
 and source verification rules.</p>
+<p>The checked managed-context resource gate pins LMCache
+<code>304df82413dbb9d9d12de145963b5451d1e9eeae</code>. Select
+<code>make defconfig-kmesh-managed-raw-context-cpu</code> for 327 required cases
+or <code>make defconfig-kmesh-managed-raw-context-cuda</code> for nine. Use the
+corresponding runner above with a fresh external output directory.</p>
 </details>
 </section>
 <section id="collective">
