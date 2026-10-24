@@ -84,6 +84,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Owned raw rotary input copies</td><td>323 CPU + 4 CUDA</td><td>Ownership before partial import, actual producer-ordered downloads, checked reference release and retained failure debt.</td></tr>
 <tr><td>Checked managed raw contexts</td><td>327 CPU + 9 CUDA</td><td>Retained construction, initialization/transfer stream drains, alias retirement and idempotent checked close; active GDS refused.</td></tr>
 <tr><td>Native span transactions</td><td>341 CPU + 24 CUDA</td><td>Checked immutable-source admission, unaligned native restore, corruption/eviction refusal and retained physical drain; includes ten raw service lifetime cases.</td></tr>
+<tr><td>Interior-source spans</td><td>341 CPU + 36 CUDA</td><td>Exact source position five, 24-layer NHD/HND storage, shifts in both directions and retained physical debt after source gathering; overlaps the earlier cases.</td></tr>
 <tr><td>Managed raw control service</td><td>331 CPU + 10 CUDA</td><td>Actual receiving ownership on both transports; checked release followed by exporter free/reallocation while the importer stays alive.</td></tr>
 </table></div>
 <p>Counts across these prerequisite profiles overlap and are not additive.
@@ -129,6 +130,15 @@ processes; model repair remains the next gate.</strong> The pinned profile passe
 341 CPU cases and 24 CUDA cases on the RTX 4090 runtime above. The CUDA set
 contains ten raw service lifetime controls and fourteen native span cases,
 covering both ZeroMQ and gRPC. These counts overlap the earlier profiles.</p>
+<p><strong>The interior-source extension also passes:</strong> 341 CPU cases and
+36 CUDA cases at LMCache <code>e23d4acd29420a0258a9666b98d9a10fdec12b53</code>.
+It saves a segment beginning at source token five in 24 synthetic layers, using
+both NHD and HND layouts, and restores it at positions three and nine. Values
+remain bitwise exact; independent key rotation and untouched destination slots
+pass. A failure after actual source gathering retains ownership until physical
+drain and never publishes an incomplete source. Each layer view shares its
+retained exporter allocation. This extends the same storage contract; it still
+uses complete chunks and does not run model repair.</p>
 <p>The worker registers one contiguous BF16 full-attention context and private
 canonical rotary state. A store operation retains the exact accepted resources,
 waits for source writes, gathers real key/value bytes into pinned CPU L1 and
@@ -181,7 +191,8 @@ answers its separate, already measured question.</p>
 <p>Use the prepared environment and binding-generation instructions in the
 <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership guide</a>
 and <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">CUDA guide</a>.
-Pin LMCache <code>daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a</code> and paired
+For the interior-source profile, pin LMCache
+<code>e23d4acd29420a0258a9666b98d9a10fdec12b53</code> and paired
 vLLM source <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>.
 The public component branches remain
 <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-kmesh-mp-recovery">LMCache</a>
@@ -189,7 +200,7 @@ and <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-kmesh-mp-rec
 <code>2026-10-23-feature-kmesh-mp-recovery</code>. Select exact pins rather than
 moving branch tips; regenerate that LMCache source's gRPC bindings.</p>
 <pre><code># CPU ownership, actual L1 admission and host-buffer leases
-make defconfig-kmesh-native-spans-cpu
+make defconfig-kmesh-interior-spans-cpu
 make kmesh-contracts-plan
 KMESH_CONTRACTS_SOURCE=/path/to/pinned/LMCache \
   KMESH_CONTRACTS_VLLM_SOURCE=/path/to/pinned/vllm \
@@ -197,7 +208,7 @@ KMESH_CONTRACTS_SOURCE=/path/to/pinned/LMCache \
   KMESH_CONTRACTS_PY=/path/to/prepared/python make kmesh-contracts
 
 # Separate-process native store/restore and raw release controls
-make defconfig-kmesh-native-spans-cuda
+make defconfig-kmesh-interior-spans-cuda
 make kmesh-native-plan
 KMESH_NATIVE_SOURCE=/path/to/pinned/LMCache \
   KMESH_NATIVE_OUTPUT=/path/outside/checkouts/cuda-capture \
