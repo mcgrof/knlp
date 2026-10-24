@@ -10,6 +10,7 @@ from tools.reproduce.kmesh_registered.group_capture import (
     MODEL_COUNTS,
     recovery_contract,
 )
+from tools.reproduce.kmesh_registered.verify import recovery_members
 
 
 def requests():
@@ -123,6 +124,35 @@ def group_capture():
 
 
 class GroupCapture(unittest.TestCase):
+    def test_saved_group_masks_keep_their_actual_execution_identity(self):
+        captured, recovery = group_capture()
+        manifest = {
+            "collective": {"profile": "collective_lockstep_v1"},
+            "members": [
+                {
+                    "sequence_index": i,
+                    "engine_request_id": c.engine_request_id,
+                    "trace_request_id": c.binding.trace_request_id,
+                }
+                for i, c in captured.items()
+            ],
+        }
+        value = {
+            "kind": "registered_native_group_model",
+            "model_execution": "collective-lockstep",
+            "recovery_evidence": recovery,
+        }
+        self.assertEqual(
+            recovery_members(value, manifest), recovery["groups"][0]["members"]
+        )
+        with self.assertRaises(ValueError):
+            recovery_members(
+                value | {"kind": "registered_native_serial_model"}, manifest
+            )
+        manifest["collective"]["profile"] = "collective_batched_qkv_v1"
+        with self.assertRaises(ValueError):
+            recovery_members(value, manifest)
+
     def test_lockstep_receipt_keeps_model_operations_request_local(self):
         captured, recovery = group_capture()
         family, members = recovery_contract(recovery, captured)

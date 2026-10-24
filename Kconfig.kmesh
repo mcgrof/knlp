@@ -21,6 +21,10 @@ config KNLP_KMESH_REGISTERED_STORAGE_ROUTE
 	string "Canonical source route: cpu-l1, staged or dma-buf"
 	default "cpu-l1"
 
+config KNLP_KMESH_REGISTERED_MODEL_EXECUTION
+	string "Model execution: serial or collective-lockstep"
+	default "serial"
+
 config KNLP_KMESH_REGISTERED_STORAGE_FILE
 	string "Fresh storage file outside source trees; empty uses capture directory"
 	default ""

@@ -187,7 +187,26 @@ def parse_args():
     )
     parser.add_argument("--storage-file", type=Path)
     parser.add_argument("--poison-arena", action="store_true")
+    parser.add_argument(
+        "--model-execution", choices=("serial", "collective-lockstep"), default="serial"
+    )
     return parser.parse_args()
+
+
+def engine_options(common, execution):
+    """Change only the admitted scheduler mode for layer-major model repair."""
+    options = common.engine_kwargs(connectors=True, profile=common.SERIAL_PROFILE)
+    profile = common.SERIAL_PROFILE
+    if execution == "collective-lockstep":
+        profile = "collective_lockstep_v1"
+        extra = options["kv_transfer_config"]["kv_connector_extra_config"]
+        extra["kmesh_target_profile"] = profile
+        extra["connectors"][0]["kv_connector_extra_config"]["kmesh"][
+            "mode"
+        ] = "collective_lockstep"
+    elif execution != "serial":
+        raise ValueError("unsupported registered model execution")
+    return profile, options
 
 
 def main():
@@ -206,6 +225,16 @@ def main():
             "model controls require registered route and a verified ordinary result"
         )
     pins = json.loads(args.profile.read_text())
+    if args.model_execution not in pins.get("model_executions", ["serial"]):
+        raise ValueError("model execution differs from its pinned input profile")
+    if args.model_execution != "serial" and (
+        args.route != "registered"
+        or args.storage_route != "cpu-l1"
+        or args.control != "none"
+    ):
+        raise ValueError(
+            "the first registered model group requires CPU-L1 and no source fault"
+        )
     profile_hash = hashlib.sha256(args.profile.read_bytes()).hexdigest()
     helper_hashes = {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ROOT.glob("*.py")
@@ -334,12 +363,22 @@ def main():
                 raise ValueError("capture source differs from qualified descendant")
             return copy.deepcopy(value)
 
+        def _recovery_contract(self, recovery):
+            if args.model_execution == "collective-lockstep":
+                from group_capture import recovery_contract
+
+                return recovery_contract(recovery, self._captured)
+            return super()._recovery_contract(recovery)
+
     ledger = base.EventLedger(args.output_dir / "events.jsonl")
     base._atomic_json(args.output_dir / "status.json", {"status": "running"})
     llm = bridge = client = process = None
     parent = None
     storage_evidence = None
     storage_verification = None
+    capture_arm = (
+        "serial_oracle" if args.model_execution == "serial" else "collective_forward"
+    )
     try:
         baseline._install_instrumentation(ledger, inject_sibling_failure=False)
         capture = (
@@ -347,7 +386,7 @@ def main():
             if args.control != "none"
             else QualifiedCapture(
                 ledger=ledger,
-                arm="serial_oracle",
+                arm=capture_arm,
                 output_dir=args.output_dir,
                 records=tuple(copy.deepcopy(records)),
                 source=source,
@@ -397,7 +436,12 @@ def main():
                     "registered.storage.after", request_id=request_id, evidence=value
                 )
 
-            bridge = RegisteredReplay(
+            replay_type = RegisteredReplay
+            if args.model_execution == "collective-lockstep":
+                from group_bridge import RegisteredGroupReplay
+
+                replay_type = RegisteredGroupReplay
+            bridge = replay_type(
                 client,
                 {
                     "weights": identity(
@@ -415,7 +459,9 @@ def main():
                             and not k.endswith(".safetensors")
                         }
                     ),
-                    "execution": identity(pins),
+                    "execution": identity(
+                        {"profile": pins, "model_execution": args.model_execution}
+                    ),
                 },
                 ledger,
                 lambda: stop_importer(process),
@@ -426,21 +472,21 @@ def main():
             )
             bridge.install()
         ledger.set_phase("construction")
-        kwargs = common.engine_kwargs(connectors=True, profile=common.SERIAL_PROFILE)
+        target_profile, kwargs = engine_options(common, args.model_execution)
         llm = LLM(**kwargs)
         from vllm.v1.kmesh.config import validate_kmesh_target_profile
 
-        if validate_kmesh_target_profile(llm.llm_engine.vllm_config) != "serial_pic_v1":
-            raise ValueError("runtime is not the bounded serial profile")
+        if validate_kmesh_target_profile(llm.llm_engine.vllm_config) != target_profile:
+            raise ValueError("runtime is not the bounded selected model profile")
         if llm.llm_engine.vllm_config.attention_config.backend.name != "TRITON_ATTN":
             raise ValueError("runtime attention backend changed")
         control_evidence = None
         if args.control == "none":
-            observations = baseline._execute_arm("serial_oracle", llm, records, ledger)
+            observations = baseline._execute_arm(capture_arm, llm, records, ledger)
             events = ledger.snapshot()
             recovery = baseline._recovery_evidence(observations, events)
             numeric_result = capture.finish(
-                arm="serial_oracle",
+                arm=capture_arm,
                 observations=observations,
                 recovery_evidence=recovery,
                 source=source,
@@ -468,18 +514,39 @@ def main():
             stored = [e for e in events if e["action"] == "registered.span.stored"]
             restored = [e for e in events if e["action"] == "registered.span.restored"]
             consumed = [e for e in events if e["action"] == "registered.model.consumed"]
-            if len(stored) != 4 or len(restored) != 16 or len(consumed) != 4:
+            if len(stored) != 4 or len(restored) != 16:
                 raise ValueError("registered operation/model coverage is incomplete")
-            if any(
-                e["span_count"] != 4
-                or e["restored_tokens"] != 416
-                or not e["source_closed"]
-                or e["pending"]
-                for e in consumed
+            if args.model_execution == "serial" and (
+                len(consumed) != 4
+                or any(
+                    e["span_count"] != 4
+                    or e["restored_tokens"] != 416
+                    or not e["source_closed"]
+                    or e["pending"]
+                    for e in consumed
+                )
             ):
                 raise ValueError(
                     "model did not consume and settle all registered inputs"
                 )
+            if args.model_execution == "collective-lockstep":
+                groups = [
+                    e
+                    for e in events
+                    if e["action"] == "registered.model.group.consumed"
+                ]
+                if (
+                    consumed
+                    or len(groups) != 1
+                    or groups[0]["span_counts"] != [4] * 4
+                    or groups[0]["restored_tokens"] != [416] * 4
+                    or groups[0]["outcomes"] != ["recovered"] * 4
+                    or not groups[0]["source_closed"]
+                    or groups[0]["pending"]
+                ):
+                    raise ValueError(
+                        "model group did not consume and settle every registered input"
+                    )
             if any(e["source_start"] == e["destination_start"] for e in restored):
                 raise ValueError("model replay did not exercise shifted positions")
         if args.route == "registered":
@@ -531,12 +598,17 @@ def main():
                     "registered_model_control"
                     if args.control != "none"
                     else (
-                        "registered_native_serial_model"
+                        (
+                            "registered_native_serial_model"
+                            if args.model_execution == "serial"
+                            else "registered_native_group_model"
+                        )
                         if args.route == "registered"
                         else "serial_model_reference"
                     )
                 ),
                 "route": args.route,
+                "model_execution": args.model_execution,
                 "storage_route": args.storage_route,
                 "poison_arena": args.poison_arena,
                 "storage_evidence": storage_evidence,
@@ -564,7 +636,11 @@ def main():
                 "event_ledger_sha256": base._sha256(ledger.path),
                 "helper_sha256": helper_hashes,
                 "claim_boundary": (
-                    "CPU-L1 serial model correctness; duplicated reference storage; no serving latency or DMA-BUF claim."
+                    (
+                        "CPU-L1 model repair with request-local operations in layer-major order; duplicated reference storage; no batched tensor work, serving speed or DMA-BUF claim."
+                        if args.model_execution == "collective-lockstep"
+                        else "CPU-L1 serial model correctness; duplicated reference storage; no serving latency or DMA-BUF claim."
+                    )
                     if args.storage_route == "cpu-l1"
                     else "Controlled cold registered restore and serial repair; duplicated reference storage and capture overhead; no natural eviction-policy, total-memory or production serving-speed claim."
                 ),

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "kind": "registered-native-layer-major-model",
+  "lmcache": {
+    "commit": "b9b5687baf79cabaeca2807eedb04dd13bbb87ed",
+    "tree": "a66167e0f726ba4097e43a88522dfd5c76fc5ade"
+  },
+  "vllm": {
+    "commit": "9df1493cae0b98380a3c3ecb9b2d41776a6d8735",
+    "tree": "26f684eb66e4adc76fbb37f8cd43557c614232c7"
+  },
+  "lmcache_native_sha256": {
+    "cuda_ops": "d18fc3d74fc49292d25dced1d017dc5f6998d673f30dc9d826284f7b65bf5e64",
+    "lmcache_native": "0b5c53076e1ce7ca950c4e64e481d8090a754321239bac8ad1cbf50d439de77b"
+  },
+  "storage": {
+    "kind": "managed_cpu_l1",
+    "bytes": 67108864,
+    "chunk_tokens": 256
+  },
+  "workload": "tokendance-five-agents-512-tokens-shifted-shared-416",
+  "reference_storage_duplicated": true,
+  "model_executions": [
+    "serial",
+    "collective-lockstep"
+  ],
+  "model_group": {
+    "members": 4,
+    "tensor_operations": "request-local",
+    "cached_key_rotation": "already completed by native restoration"
+  }
+}

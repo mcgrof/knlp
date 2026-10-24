@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def digest(path):
@@ -18,6 +19,32 @@ def bound_file(root, binding):
     if path.stat().st_size != binding["nbytes"] or digest(path) != binding["sha256"]:
         raise ValueError("saved tensor bytes differ from the capture manifest")
     return path
+
+
+def recovery_members(value, manifest):
+    """Compare serial and group masks without changing their execution labels."""
+    recovery = value["recovery_evidence"]
+    if value.get("model_execution", "serial") == "collective-lockstep":
+        if value.get("kind") != "registered_native_group_model":
+            raise ValueError("registered group result has another execution kind")
+        if manifest["collective"]["profile"] != "collective_lockstep_v1":
+            raise ValueError("registered group capture reports another model profile")
+        if __package__:
+            from .group_capture import recovery_contract
+        else:
+            from group_capture import recovery_contract
+        captured = {
+            m["sequence_index"]: SimpleNamespace(
+                engine_request_id=m["engine_request_id"],
+                binding=SimpleNamespace(trace_request_id=m["trace_request_id"]),
+            )
+            for m in manifest["members"]
+        }
+        recovery_contract(recovery, captured)
+        return recovery["groups"][0]["members"]
+    if recovery["groups"] or len(recovery["serial_members"]) != 4:
+        raise ValueError("serial model result has different recovery membership")
+    return recovery["serial_members"]
 
 
 def compare(candidate, reference, verification):
@@ -49,7 +76,11 @@ def compare(candidate, reference, verification):
         raise ValueError("reference differs from independent verification")
     if (
         result.get("kind")
-        not in ("registered_native_serial_model", "serial_model_reference")
+        not in (
+            "registered_native_serial_model",
+            "registered_native_group_model",
+            "serial_model_reference",
+        )
         or result.get("status") != "complete"
     ):
         raise ValueError("candidate is not a completed registered model replay")
@@ -79,11 +110,11 @@ def compare(candidate, reference, verification):
     ):
         raise ValueError("model family coverage is incomplete")
     masks = []
-    for value in (result, old_result):
+    for value, manifest in zip((result, old_result), manifests, strict=True):
         masks.append(
             {
                 m["trace_request_id"]: (m["selected_spans"], m["retrieval_mask"])
-                for m in value["recovery_evidence"]["serial_members"]
+                for m in recovery_members(value, manifest)
             }
         )
     masks_equal = masks[0] == masks[1] and len(masks[0]) == 4

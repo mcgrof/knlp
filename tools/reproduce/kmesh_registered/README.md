@@ -160,3 +160,45 @@ SHA-256, and the direct route copies canonical bytes into private engine slots
 before repair. Reference storage, model instrumentation and raw tensor capture
 also remain active. The comparison does not establish production serving speed,
 total memory savings or elimination of all host transfers.
+
+## Registered layer-major model group
+
+The group consumer asks whether several children can safely consume the same
+immutable registered sources while keeping their repair buffers and engine
+destinations private. It advances all children through one layer before moving
+to the next layer. Model tensor operations stay request-local; this first group
+comparison does not batch query/key rotation or selection differences. Cached
+keys were already rotated during native restore and must not be rotated again.
+
+Select `defconfig-kmesh-registered-group-model-cuda`. Its `group-profile.json`
+pins the complete-group owner implementation and accepts serial and layer-major
+execution with the same model, trace and runtime envelope. First pass
+`defconfig-kmesh-registered-groups-cpu` and
+`defconfig-kmesh-registered-groups-cuda`. The latter checks simultaneous native
+inputs and synthetic private writeback, which do not replace this real model
+comparison. The model group is implemented but awaits GPU qualification here.
+
+Set the input paths described above, using the source commits in the group
+profile. Set `KMESH_REGISTERED_MODEL_EXECUTION=serial` and
+`KMESH_REGISTERED_ROUTE=reference` to capture the same-source serial reference.
+Compare it with the independently verified historical serial result using
+`make kmesh-registered-verify`. Then use fresh external captures for
+`ROUTE=registered`, first with `MODEL_EXECUTION=serial`, then with
+`MODEL_EXECUTION=collective-lockstep`. Compare both with that new reference and
+its passing `comparison.json`, retaining bitwise K/V, identical spans, masks and
+actual layer selections, the original logit tolerance and exact tokens.
+
+The group validates every child's full block table before any native restore.
+All placements complete before the group opens any model input. Exact request,
+generation, tokens and spans bind before the first CacheBlend session starts.
+Cleanup attempts every member and requires actual physical drain before the
+adapter can publish fallback or destination reuse. A callback failure must
+escape request-local error containment.
+
+The first model group uses CPU-L1 canonical storage and the existing
+`collective_lockstep_v1` engine profile. Combined group/storage timing and source
+fault injection are refused by this entry point until separately integrated.
+The ordinary multiprocess serving guard stays closed. Duplicated reference
+storage and model capture remain; matching this bounded approximate-repair
+baseline does not establish equivalence to full recomputation, production
+serving speed or total memory savings.

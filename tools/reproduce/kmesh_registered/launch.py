@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parent
 FIELDS = (
     "PROFILE",
+    "MODEL_EXECUTION",
     "STORAGE_ROUTE",
     "STORAGE_FILE",
     "TRIALS",
@@ -40,6 +41,7 @@ def main():
     settings["ROUTE"] = "registered"
     settings["PROFILE"] = str(ROOT / "profile.json")
     settings["STORAGE_ROUTE"] = "cpu-l1"
+    settings["MODEL_EXECUTION"] = "serial"
     settings["TRIALS"] = 7
     prefix = "CONFIG_KNLP_KMESH_REGISTERED_"
     if args.config.is_file():
@@ -121,6 +123,8 @@ def main():
             settings["PROFILE"],
             "--storage-route",
             settings["STORAGE_ROUTE"],
+            "--model-execution",
+            settings["MODEL_EXECUTION"],
         ]
         if settings["STORAGE_FILE"]:
             argv += ["--storage-file", settings["STORAGE_FILE"]]
@@ -131,6 +135,7 @@ def main():
         if (
             settings["ROUTE"] != "registered"
             or settings["STORAGE_ROUTE"] != "cpu-l1"
+            or settings["MODEL_EXECUTION"] != "serial"
             or any(
                 not settings[k] for k in ("ORDINARY_RESULT", "ORDINARY_VERIFICATION")
             )
