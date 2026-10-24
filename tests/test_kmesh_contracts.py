@@ -217,5 +217,9 @@ class InteriorSpansReceiptTests(NativeSpansReceiptTests):
     profile_name = "interior-spans"
 
 
+class RegisteredInputsReceiptTests(InteriorSpansReceiptTests):
+    profile_name = "registered-inputs"
+
+
 if __name__ == "__main__":
     unittest.main()

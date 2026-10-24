@@ -20,6 +20,14 @@ projects. Keep source checkouts clean. Generate the frozen trace using the
 [TokenDance reproducer](../tokendance/README.md), which also produces the
 independently verified serial reference used by the comparison.
 
+Run the lower-level gates first with `defconfig-kmesh-registered-inputs-cpu`
+and `defconfig-kmesh-registered-inputs-cuda`. These use the existing
+`kmesh-contracts` and `kmesh-native` entry points and their caller-selected source
+and external output paths. Both pin the model replay's LMCache source. The
+CUDA gate covers separate and fused NHD/HND views, exact partial spans,
+synthetic layer input/writeback, physical drain and exporter retirement. Its
+synthetic transform does not replace the real model replay below.
+
 ```sh
 make defconfig-kmesh-registered-model-cuda
 make kmesh-registered-plan
