@@ -83,6 +83,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Raw native-outcome fencing</td><td>6</td><td>Safe preflight retry, conservative import/close quarantine, forwarded local references and alias controls.</td></tr>
 <tr><td>Owned raw rotary input copies</td><td>323 CPU + 4 CUDA</td><td>Ownership before partial import, actual producer-ordered downloads, checked reference release and retained failure debt.</td></tr>
 <tr><td>Checked managed raw contexts</td><td>327 CPU + 9 CUDA</td><td>Retained construction, initialization/transfer stream drains, alias retirement and idempotent checked close; active GDS refused.</td></tr>
+<tr><td>Native span transactions</td><td>341 CPU + 24 CUDA</td><td>Checked immutable-source admission, unaligned native restore, corruption/eviction refusal and retained physical drain; includes ten raw service lifetime cases.</td></tr>
 <tr><td>Managed raw control service</td><td>331 CPU + 10 CUDA</td><td>Actual receiving ownership on both transports; checked release followed by exporter free/reallocation while the importer stays alive.</td></tr>
 </table></div>
 <p>Counts across these prerequisite profiles overlap and are not additive.
@@ -122,87 +123,92 @@ mapping has closed: exporter teardown needs a separate exact-generation,
 server-owned acknowledgement.</p>
 </section>
 <section id="serial">
-<h2>24. What remains before one real shifted restore?</h2>
-<p><strong>The managed raw control service now proves release; multiprocess
-model recovery remains disabled.</strong> Its pinned qualification passes 331
-CPU cases and ten separate-process CUDA cases on the RTX 4090 runtime above.
-Both ZeroMQ and gRPC exercise actual receiving-client ownership, registration,
-ordered rotary preparation and checked retirement. Twenty-five existing CUDA
-controls also pass against the implementation before the stronger release run.</p>
-<p>The server records its boot identity, the receiving client, a registration
-nonce, exact tensor views and a context generation before import. Retrying
-identical registration returns saved facts without opening another mapping;
-changed views, foreign clients and stale generations refuse. Ordered rotary
-preparation waits for a genuinely pending producer, copies completed host
-snapshots and publishes private uploaded tables. Exact byte checks pass, and
-later worker writes leave the private tables unchanged.</p>
-<p><strong>A release receipt follows physical completion and checked mapping
-retirement.</strong> Retirement closes admission, revokes holds and refuses
-unfinished copy debt. It removes the exact rotary generation, closes imported
-raw references, retires temporary inputs against new imports and detaches the
-exact context entry before caching its receipt. Successful workers then drop
-the exported tensors, empty the allocator cache and allocate replacements while
-the importing service remains alive. Independent private-table readback and
-repeated retirement still pass, with no additional native close call.</p>
-<p>A refusal known to precede native effects can be retried after cleanup.
-An ambiguous native import or close remains quarantined until the importing
-process ends; its old pointer must not be submitted again because the address
-could have been reused. Partial construction also requires importer exit.
-The tests inject native errors before driver effects and exercise repeated
-requests/status lookup without dropping network packets. Actual device-fault
-recovery and network-loss timing remain unqualified.</p>
-<p>The service admits one context and one rotary preparation per process,
-world size one, contiguous BF16 full attention, CPU DRAM L1 and same-host CUDA
-events. Its assembled interface exposes KMesh controls without generic transfer,
-lookup, peer, HTTP or automatic reaping handlers. Active GDS is refused because
-its staging deregistration currently logs backend errors and cannot prove checked
-release. These are registration and lifetime results; they measure no storage
-I/O, model throughput or DMA-BUF latency.</p>
-<p><strong>Next comes fenced storage execution and the actual model consumer.</strong>
-Publication and retrieval must use the accepted namespace and exact borrowed
-resources through physical completion. The worker must preserve destination
-block ownership until restoration finishes. A real shifted restore must then
-compare model outputs and repair deeper-layer state that depends on its original
-preceding context. Rotating key positions alone does not remove that dependence.
-Numerical checks, corruption rejection, fallback and physical drain precede the
-staged versus DMA-BUF serving comparison. The earlier
+<h2>24. What does one native shifted restore prove?</h2>
+<p><strong>Immutable span storage and native shifted restoration now pass across
+processes; model repair remains the next gate.</strong> The pinned profile passes
+341 CPU cases and 24 CUDA cases on the RTX 4090 runtime above. The CUDA set
+contains ten raw service lifetime controls and fourteen native span cases,
+covering both ZeroMQ and gRPC. These counts overlap the earlier profiles.</p>
+<p>The worker registers one contiguous BF16 full-attention context and private
+canonical rotary state. A store operation retains the exact accepted resources,
+waits for source writes, gathers real key/value bytes into pinned CPU L1 and
+checks every chunk's admission before publishing an immutable source handle.
+Unique physical keys prevent a delayed completion from naming a replacement
+allocation. Host I/O leases prevent buffer reuse when logical locks expire.</p>
+<p><strong>The test recycles the original GPU slots before restoration.</strong>
+It stores sixteen synthetic tokens as two eight-token chunks, then poisons the
+source GPU cache. Native restore places them at token position three through a
+reversed, noncontiguous block table. Values match raw BF16 bits; keys match an
+independent CPU RoPE calculation with <code>rtol=0.012</code> and
+<code>atol=0.025</code>. Untouched prefix and tail slots remain poisoned.
+A second same-position restore passes from the same canonical source, whose
+checksums still match. Rotation uses private GPU staging, preserving shared
+stored bytes.</p>
+<p>The paged view is <code>[2, 16, 4, 2, 16]</code>; the FP32 rotary table is
+<code>[64, 16]</code>. Each raw exporter allocation and the lazy pinned CPU L1
+are 64 MiB. The latter matches its allocator's registration granule. Source
+writes are submitted behind 512 FP32 matrix multiplications on
+<code>[2048, 2048]</code> inputs to challenge producer ordering. This synthetic
+fixture measures correctness, not serving latency.</p>
+<p>Identical request-generation retries return saved status without another
+native launch. Foreign clients and changed handles refuse before transfer.
+Evicted or corrupt source bytes fail before GPU scatter. Failed admission and
+stale publication produce no reusable result. An injected exception after real
+native enqueue, combined with a refused drain, retains the accepted context,
+source buffers and destination ownership. Retirement refuses until a later
+actual device-context drain settles the work; cleanup does not enqueue it again.
+The earlier release controls also check exporter free and reallocation while
+the importing service remains alive. Device faults and packet loss are not
+injected by this profile.</p>
+<div class="table-wrap"><table>
+<caption>Storage completion and model readiness are separate</caption>
+<tr><th scope="col">Observed state</th><th scope="col">Meaning</th><th scope="col">Worker action</th></tr>
+<tr><td><code>stored</code></td><td>Source bytes drained and every chunk admitted.</td><td>The immutable handle can name this source.</td></tr>
+<tr><td><code>loaded</code></td><td>I/O completed at the same position and preceding context.</td><td>Validate the exact request, generation, context and blocks before consumption.</td></tr>
+<tr><td><code>loaded-needs-repair</code></td><td>I/O completed after a position or context change.</td><td>Repair deeper-layer model state before marking tokens computed.</td></tr>
+<tr><td><code>failed-undrained</code></td><td>Physical completion remains unresolved.</td><td>Keep blocks and allocations reserved; do not recompute into them.</td></tr>
+<tr><td><code>failed-drained</code></td><td>Failed work physically drained and released its holds.</td><td>Request-local recomputation is permitted.</td></tr>
+</table></div>
+<p><strong>Next connect these receipts to the real serving and repair consumer.</strong>
+A key's new rotation alone cannot repair deeper-layer dependence on its original
+preceding context. Model outputs, selection masks, fallback and worker block
+lifetime need validation before multiprocess engine admission. The staged versus
+DMA-BUF serving comparison follows that gate. This profile uses CPU L1 and
+performs no NVMe or DMA-BUF I/O; active GDS remains refused. The earlier
 <a href="kmesh-retention.html#prefetch-demand">exact-prefix retention result</a>
-answers a separate, already measured question.</p>
-<details class="reproduce"><summary>Reproduce the completed control-service gate</summary>
-<p>Use the prepared environment described in the
-<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership instructions</a>
-and <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">CUDA instructions</a>.
-Pin LMCache <code>d3a4b9a6dd2a8edb649d24d48cb6e6b46b10bd9e</code> and the paired
-vLLM source <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>, then regenerate
-the selected LMCache source's gRPC bindings as documented. Both public component
-branches are named <code>2026-10-23-feature-kmesh-mp-recovery</code>:
+answers its separate, already measured question.</p>
+<details class="reproduce"><summary>Reproduce native span storage and physical cleanup</summary>
+<p>Use the prepared environment and binding-generation instructions in the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_contracts/README.md">CPU ownership guide</a>
+and <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_native/README.md">CUDA guide</a>.
+Pin LMCache <code>daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a</code> and paired
+vLLM source <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>.
+The public component branches remain
 <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-kmesh-mp-recovery">LMCache</a>
-and <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-kmesh-mp-recovery">vLLM</a>.
-Select each exact source pin rather than the moving branch tip.</p>
-<pre><code># CPU admission, ownership and wire contracts: 331 required cases
-make defconfig-kmesh-managed-raw-service-cpu
+and <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-kmesh-mp-recovery">vLLM</a>
+<code>2026-10-23-feature-kmesh-mp-recovery</code>. Select exact pins rather than
+moving branch tips; regenerate that LMCache source's gRPC bindings.</p>
+<pre><code># CPU ownership, actual L1 admission and host-buffer leases
+make defconfig-kmesh-native-spans-cpu
 make kmesh-contracts-plan
 KMESH_CONTRACTS_SOURCE=/path/to/pinned/LMCache \
   KMESH_CONTRACTS_VLLM_SOURCE=/path/to/pinned/vllm \
   KMESH_CONTRACTS_OUTPUT=/path/outside/checkouts/cpu-capture \
   KMESH_CONTRACTS_PY=/path/to/prepared/python make kmesh-contracts
 
-# Real raw service registration and release: ten required CUDA cases
-make defconfig-kmesh-managed-raw-service-cuda
+# Separate-process native store/restore and raw release controls
+make defconfig-kmesh-native-spans-cuda
 make kmesh-native-plan
 KMESH_NATIVE_SOURCE=/path/to/pinned/LMCache \
   KMESH_NATIVE_OUTPUT=/path/outside/checkouts/cuda-capture \
   KMESH_NATIVE_PY=/path/to/prepared/python make kmesh-native</code></pre>
-<p>Every execution uses a fresh capture directory outside the checkouts and
-requires every selected setup, body and teardown to pass. The helpers verify
-source, loaded wire schemas, runtime and native identities; the CUDA gate also
-checks the complete process-exit log for outstanding exporter-reference warnings.
-Saved-capture verification needs the producing helper revision. Captured receipts,
-logs and tensors stay outside public Git. Receipt consistency does not independently
-authenticate hardware execution.</p>
-<p>The linked instructions preserve the exact source pins and defconfigs for
-the earlier native-layout, context ownership, ordered-registration, raw-copy and
-checked-context gates. They remain separate captures with their original scope.</p>
+<p>Use fresh capture directories outside source checkouts. Every selected setup,
+body and teardown must pass. The helpers verify source and loaded schema hashes;
+the CUDA profile also pins native binaries and checks the complete exit log for
+unreleased exporter warnings. Saved-capture verification needs its producing
+helper revision. Raw receipts, logs and tensors remain outside public Git.
+Receipt consistency does not independently attest hardware execution. Earlier
+profiles retain their original pins, defconfigs and narrower scopes.</p>
 </details>
 </section>
 <section id="collective">
