@@ -74,6 +74,17 @@ vLLM pin replace that explicitly selected runtime.
 The worker checks catalog and LMCache source revisions and tracked changes,
 and records the separately imported engine path/version. Full fork-engine
 qualification is distinct from testing these catalog modules.
+The recorded port uses Torch 2.9.1 with ROCm 6.4, Transformers 4.57.6
+and a locally patched V1 engine derived from vLLM 0.18.1rc1. This is a
+qualification of that recorded runtime; the pause/enqueue wrapper uses
+public APIs, but other engine builds still need matched control runs.
+
+The storage measurements qualify LMCache's real host allocator and
+external-artifact component. They do not qualify its complete package graph
+against the older author dependencies. Keep the original native control
+in its separate pinned environment. A component import or an installation
+that omits dependency resolution does not establish full SDK compatibility.
+Full StorageManager and token-KV connector integration remain separate gates.
 The recorded port qualification exercises PubMedQA's polarity scorer.
 Choice-scored tasks additionally require the author encoder API
 (`LLM(task="embed")`), which newer engines may remove. The original runtime
@@ -217,8 +228,8 @@ Exact paper-checkpoint verification needs the corresponding authors' run
 manifest; the release label alone does not establish which weights produced
 the paper's scores.
 
-The author's evaluation guide reports about 15 minutes on one H100 after
+The author's evaluation guide reports about 15 minutes on one 80 GiB GPU after
 inputs are cached. Our per-benchmark process isolation adds startup overhead;
 that figure is not a prediction for another GPU. The eight-benchmark suite
 excludes retraining, ablations that require new weights, other methods' full
-baseline sweeps, TextWorld RL evaluation, and the separate H100 latency curve.
+baseline sweeps, TextWorld RL evaluation, and the separate accelerator latency curve.

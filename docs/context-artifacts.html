@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Typed, reusable context artifacts for learned KV prefixes and Memorilla memory. CPU restore evidence, sharing boundaries, and a comparison with REFRAG.">
+<meta name="description" content="Typed, reusable context artifacts for learned KV prefixes and Memorilla memory. Checkpoint inference, exact replay controls, sharing boundaries, and a comparison with REFRAG.">
 <title>Context Artifacts: Learned Prefixes and Latent Memory | knlp</title>
 <style>
 :root{color-scheme:dark;--bg:#080d16;--panel:#111b2a;--line:#2b3c51;--text:#eaf1fa;--muted:#a8b7ca;--cyan:#5ce1cf;--amber:#f5c46a;--blue:#82b8ff}
@@ -12,14 +12,14 @@
 </style>
 </head>
 <body>
-<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#evidence">What ran</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#checkpoint-results">What ran</a><a href="#replay-scheduling">Replay controls</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
 <header class="wrap">
-<div class="eyebrow">Context reuse · CPU proof of concept · October 2026</div>
+<div class="eyebrow">Context reuse · checkpoint inference · October 2026</div>
 <h1>Reusable context,<br>typed by its consumer.</h1>
 <p class="lede">A learned key/value prefix, a document-vector bank, and a query’s soft memory tokens can share a storage contract. Each still needs its own model interface and cache identity.</p>
-<p class="muted">This work extends the <a href="learned_prefix_caches.html">Learned Prefix Cache (LPC) architecture</a> toward Memorilla’s latent memory. The implementation verifies durable file transport and a released reader on CPU. Serving through a common engine and LMCache remains a target.</p>
-<div class="tags"><span class="tag ok">43 CPU/configuration checks</span><span class="tag ok">8 released-reader examples</span><span class="tag pending">Decoder integration pending</span></div>
-<div class="notice"><p><strong>Current result:</strong> restored tensors and reader outputs match exactly in the tested cases. No generation-quality, shared GPU allocation, LMCache restore, or storage-speed result follows from those checks.</p></div>
+<p class="muted">This work extends the <a href="learned_prefix_caches.html">Learned Prefix Cache (LPC) architecture</a> toward Memorilla’s latent memory. The shared catalog and LMCache host-artifact adapter now restore document banks for released Memorilla inference. Controlled replay separates storage correctness from numerical batch sensitivity. LPC keeps its own model attachment path.</p>
+<div class="tags"><span class="tag ok">8 released benchmarks</span><span class="tag ok">Exact storage replay controls</span><span class="tag ok">No training required</span></div>
+<div class="notice"><p><strong>Current result:</strong> the document-bank adapter matches original checkpoint predictions in the tested controls. Explicit scheduling makes the ported offline comparison repeatable. Paper scores and batch-independent generation are separate checks; read the <a href="#checkpoint-results">checkpoint results</a> and <a href="#replay-scheduling">replay controls</a>.</p></div>
 </header>
 <main class="wrap">
 <section id="architecture">
@@ -46,18 +46,18 @@
 <section id="paths">
 <div class="eyebrow">03 / Where the bytes go</div><h2>One lifecycle, different attachment paths.</h2>
 <div class="lane"><div class="lane-label">Learned prefix</div><div class="node"><b>Stored layer KV</b>Verified CPU import / restore</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Compatible KV attachment</b>Engine integration pending</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Decoder execution</b>Not exercised by this PoC</div></div>
-<div class="lane"><div class="lane-label">Memorilla</div><div class="node"><b>Document bank + question</b>Released cached vectors</div><div class="arrow" aria-hidden="true">→</div><div class="node"><b>Released memory reader</b>16 soft tokens; CPU parity</div><div class="arrow" aria-hidden="true">→</div><div class="node future"><b>Exact prompt-embedding prefill</b>Decoder integration pending</div></div>
-<p class="caption">Solid boxes are the CPU stages exercised here. Dashed boxes describe intended integration. Soft-token serialization was also checked separately; newly computed readouts do not need a mandatory storage round trip.</p>
+<div class="lane"><div class="lane-label">Memorilla</div><div class="node"><b>Document bank + question</b>Released cached vectors</div><div class="arrow" aria-hidden="true">→</div><div class="node"><b>Released memory reader</b>16 soft tokens; validated readout</div><div class="arrow" aria-hidden="true">→</div><div class="node"><b>Prompt-embedding prefill</b>Original decoder path evaluated</div></div>
+<p class="caption">Solid boxes show stages exercised by the transport and Memorilla inference checks. Dashed boxes describe intended integration. Soft-token serialization was also checked separately; newly computed readouts do not need a mandatory storage round trip.</p>
 </section>
 <section id="evidence">
-<div class="eyebrow">04 / Evidence</div><h2>What was tested.</h2>
-<p>The comparison asks whether storage preserves an artifact and its reader behavior. It does not compare LPC quality with Memorilla quality: their checkpoints and model paths differ.</p>
+<div class="eyebrow">04 / CPU foundation</div><h2>The initial transport checks.</h2>
+<p>The initial comparison asked whether storage preserves an artifact and its reader behavior. It does not compare LPC quality with Memorilla quality: their checkpoints and model paths differ.</p>
 <div class="table-wrap"><table><thead><tr><th>Check</th><th>Observed result</th><th>Scope</th></tr></thead><tbody>
 <tr><td>Contract and configuration</td><td class="status">43 checks passed</td><td>Format validation, identity separation, corruption rejection, interrupted/concurrent publication, tail lengths, fresh-process bytes, and all seven preset round trips.</td></tr>
 <tr><td>Real LPC checkpoint</td><td class="status">All layer tensors exact</td><td>BF16 Llama-3.2-3B-Instruct artifact: 28 layers, 4,096 positions, eight KV heads of width 128. One frozen leading position plus 4,095 trained positions. Fresh-process payload digest matched.</td></tr>
 <tr><td>Released Memorilla reader</td><td class="status">8 of 8 examples exact</td><td>First eight PubMedQA test rows, complete selected collections, FP16 stored vectors, BF16 reader. Document tensors, reader outputs, and 16 × 4,096 soft-token tensors matched after restore.</td></tr>
 <tr><td>File command lifecycle</td><td class="status">Passed</td><td>Import, load, registry working-copy eviction, and restart. Reader writer process exited before a new process restored and recomputed its outputs.</td></tr>
-<tr><td>Engine / LMCache acceptance</td><td class="pending-text">Incomplete</td><td>Control, LMCache, and default inference-acceptance paths fail explicitly until implemented. No silent skip becomes a pass.</td></tr>
+<tr><td>Original CPU harness inference gates</td><td class="pending-text">Not exercised by that pass</td><td>The later checkpoint runner below tests the Memorilla adapter. Complete LPC engine attachment and all-backend LMCache acceptance remain separate gates.</td></tr>
 </tbody></table></div>
 <p>The LPC byte check ran an unchanged loader function extracted from pinned source; it did not import a built vLLM engine. Its training-time model revision remains unverified. The reader used <a href="https://github.com/snap-stanford/memorilla/tree/005854d13ced2dfe56588fb721eb78db5ec13f6a">unchanged Memorilla source</a>, the <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/tree/f6b15af56aa687861c8d2d03b1cd8f7979881361/stage3">released stage3 checkpoint</a>, PyTorch 2.7.0+cpu, and Transformers 4.53.3. This is a reader-stage check, not the complete author serving environment.</p>
 <p>Numerical acceptance was exact tensor equality, with no tolerance widened after the result. The sanitized result summary records the tested geometry, versions, and acceptance flags. Page-cache state was unknown. No physical NVMe traffic, device transfer, latency improvement, power-loss guarantee, or generation score was measured.</p>
@@ -86,8 +86,8 @@
 <p>A possible REFRAG adapter belongs at the chunk-bank and mixed-input boundaries, with its own typed metadata. Whether that adapter is worthwhile needs a separate compatibility and quality evaluation. It is not part of the CPU pass reported here.</p>
 </section>
 <section id="reproduce">
-<div class="eyebrow">07 / Code</div><h2>Inspect and reproduce the CPU contract.</h2>
-<p><a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">Source and instructions</a> explain environment setup, manifests, source locks, and the import/load/restore commands. Presets distinguish original controls, generalized file storage, and future LMCache paths.</p>
+<div class="eyebrow">07 / Code</div><h2>Run the contract or checkpoint controls.</h2>
+<p><a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/context_artifacts">Source and instructions</a> explain environment setup, manifests, source locks, and the import/load/restore commands. Those presets test artifact import and restore. The separate Memorilla runner below uses released checkpoints for generation and storage comparisons.</p>
 <pre><code>python -m pytest tools/reproduce/context_artifacts/tests -q
 make defconfig DEFCONFIG=context-artifacts-memorilla-files
 make olddefconfig
@@ -103,8 +103,44 @@ make memorilla-benchmark MEMORILLA_PYTHON=/path/to/python
 make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
 <p>The same stress command works with the adapter preset and can replay a saved request trace. Public dated branches of <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-context-artifacts">vLLM</a> and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-context-artifacts">LMCache</a> supply the catalog and storage dependencies. Read the runner instructions for exact commits, environments, saved-trace comparison, and the distinction between the original CUDA runtime and a separately qualified runtime. Released checkpoint lineage does not establish an exact reproduction of every paper score. These commands are separate from the CPU transport results above.</p>
 </section>
+<section id="checkpoint-results">
+<div class="eyebrow">08 / Checkpoint evaluation</div><h2>Use the release, report the measured scores.</h2>
+<p>The original pinned CUDA environment uses Torch 2.7.0, vLLM 0.9.1, Transformers 4.53.3 and datasets 4.1.1, with batch size 32 and an 80 GiB GPU. Prompt embeddings select the V0 engine in this version. All eight registered benchmarks completed with released checkpoints, original prompts and original scorers, without training.</p>
+<div class="table-wrap"><table><thead><tr><th>Benchmark</th><th>Metric</th><th>Paper</th><th>Observed</th></tr></thead><tbody>
+<tr><td>PubMedQA</td><td>Accuracy</td><td>59.00</td><td>59.00</td></tr>
+<tr><td>FactKG</td><td>Accuracy</td><td>84.33</td><td>83.51</td></tr>
+<tr><td>TriviaQA</td><td>Exact match</td><td>57.00</td><td>54.00</td></tr>
+<tr><td>NarrativeQA</td><td>ROUGE-L</td><td>19.31</td><td>19.24</td></tr>
+<tr><td>LaMP-4</td><td>ROUGE-L</td><td>18.15</td><td>16.59</td></tr>
+<tr><td>LaMP-7</td><td>ROUGE-L</td><td>48.37</td><td>46.70</td></tr>
+<tr><td>PersonaMem-v2</td><td>Short-answer accuracy</td><td>44.60</td><td>44.48</td></tr>
+<tr><td>PersonalizationV4</td><td>Short-answer accuracy</td><td>66.65</td><td>66.65</td></tr>
+</tbody></table></div>
+<p class="caption">Scores are percentages; ROUGE-L uses the code’s 0–100 scale. There are 32,860 questions. Reader release <code>f6b15af5</code>, data <code>c6b0d7ee</code> and author source <code>005854d1</code> stay pinned. The inference and storage modules in clean source <a href="https://github.com/mcgrof/knlp/tree/8ecc3952a873de1d1e1c02632089aaba1fd05478/tools/reproduce/memorilla"><code>8ecc3952</code></a> match the measured snapshot byte for byte.</p>
+<p>The adapter matches every original prediction on the 100-question PubMedQA benchmark and the 10,557-question NarrativeQA benchmark. The latter uses a 64 MiB host arena, 355 bank loads and 10,202 resident hits. Another 73,856 stress requests pass all 37 same-trace comparisons. These qualify the host-artifact component and selected inference paths. Complete LMCache package compatibility and other storage backends have separate qualification gates.</p>
+<p>Independent CPU rescoring reproduces the inspected generation metrics. Exact paper-checkpoint lineage remains unverified: the <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/blob/f6b15af56aa687861c8d2d03b1cd8f7979881361/README.md">release card</a> labels Stage 3 as <code>epoch-00</code>, while the recipe runs five epochs and the source evaluation example names <code>epoch-04</code>. Those labels alone do not establish which weights produced the paper table. The runner records the discrepancy and preserves the observed scores.</p>
+<p>Read size depends on the selected collection. PubMedQA has a 20 KiB median bank and a 40 KiB maximum; NarrativeQA has a 6,975 KiB median and a 34,800 KiB maximum. These are question-weighted tensor payload sizes. The unchanged reader consumes every row of its selected bank. The author’s indexed mmap already skips other collections in a shard; our current adapter materializes one artifact per bank. Both file paths use the Linux page cache. Logical bytes do not establish device-command sizes or a kernel-patch speedup.</p>
+</section>
+<section id="replay-scheduling">
+<div class="eyebrow">09 / Reproducible comparisons</div><h2>Control when requests enter the engine.</h2>
+<p>A V1 engine process can execute a request while its caller is still submitting the rest of the batch. That timing can change numerical execution batches and native prefix reuse, even when every prompt embedding is identical. Diagnosis verified 4,096 unchanged prompt deliveries. Complete-batch admission restored parity while retaining multiprocessing, weights and cache residency.</p>
+<p>Port and LMCache controls now default to <code>KNLP_MEM_SCHEDULING="inprocess"</code>, following <a href="https://docs.vllm.ai/en/v0.18.1/usage/reproducibility/">vLLM’s offline guidance</a>. The original-author profile preserves upstream runtime behavior. The <code>memorilla-port-batch-replay</code> and <code>memorilla-lmcache-batch-replay</code> presets instead retain multiprocessing: pause scheduling at level zero, enqueue the complete call, resume scheduling, then wait for completion. They require the corresponding public APIs and an idle, exclusive offline engine.</p>
+<p>The recorded port uses Torch 2.9.1 with ROCm 6.4, Transformers 4.57.6 and a locally patched V1 engine derived from vLLM 0.18.1rc1. Catalog modules have their own source pin; their tests do not certify a complete fork-engine build.</p>
+<p>Eight fresh 1,024-request runs qualify the repaired source without diagnostic admission hooks. The default-runtime native/adapter control has 51 string differences. All six repaired runs agree exactly in all 15 pairwise comparisons, including native versus adapter, repeat runs and in-process versus multiprocessing admission. Decoder prefix caching, asynchronous scheduling and chunked prefill remain enabled. This qualifies the recorded port runtime; it does not certify a stock engine build or every hardware/backend combination.</p>
+<p>Different neighboring questions and document-bank padding can still change the reader or decoder’s floating-point results. The <code>memorilla-port-reference</code> and <code>memorilla-lmcache-reference</code> presets isolate one request at a time and disable decoder prefix caching. Document-bank residency and the real restore path remain active. These are numerical reference controls; their scores need not equal a batch-32 run.</p>
+<p>Both single-request runs complete the same 384-request trace. Native and adapter predictions and all collated-input, reader-output and decoder-prompt tensor hashes match at every position. Repeated inputs have no tensor or string variants in either run. The adapter performs 384 bank loads with eviction after every request and no resident hits. These results qualify the reference on the recorded port runtime; they do not make batch-32 or cross-backend outputs equivalent.</p>
+<pre>make defconfig DEFCONFIG=memorilla-port-batch-replay
+make menuconfig
+make memorilla-stress MEMORILLA_PYTHON=/path/to/python
+# Select the same work root and runtime in the adapter configuration.
+make defconfig DEFCONFIG=memorilla-lmcache-batch-replay
+make menuconfig
+make memorilla-stress TRACE=/path/to/control/trace.json \
+  MEMORILLA_PYTHON=/path/to/python</pre>
+<p>Keep the trace, batch size, scheduling mode, engine options and model/data pins fixed when comparing storage paths. The <a href="https://github.com/mcgrof/knlp/tree/2026-10-23-feature-context-artifacts/tools/reproduce/memorilla">runner documentation</a> explains exact-string comparison, tensor diagnostics, effective-runtime receipts and the reference presets. No kernel installation or kernel A/B test is part of this qualification.</p>
+</section>
 <section id="sources">
-<div class="eyebrow">08 / Primary sources</div><h2>Read the methods and the implementation.</h2>
+<div class="eyebrow">10 / Primary sources</div><h2>Read the methods and the implementation.</h2>
 <ol class="refs">
 <li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
 <li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
@@ -113,6 +149,6 @@ make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
 </ol>
 </section>
 </main>
-<footer class="wrap">knlp · CPU file-artifact exploration · October 22, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
+<footer class="wrap">knlp · Context artifact and checkpoint evaluation · October 23, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
 </body>
 </html>
