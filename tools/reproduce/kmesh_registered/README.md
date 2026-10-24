@@ -202,3 +202,16 @@ The ordinary multiprocess serving guard stays closed. Duplicated reference
 storage and model capture remain; matching this bounded approximate-repair
 baseline does not establish equivalence to full recomputation, production
 serving speed or total memory savings.
+
+For a member-failure control, retain the group model configuration and choose
+another fresh `KMESH_REGISTERED_OUTPUT`. Point `REFERENCE` and `VERIFICATION`
+to the same-source serial reference and its passing `comparison.json`, and set
+the verified ordinary result paths described under model failure controls.
+Run `make kmesh-registered-group-failure`. The inherited model instrumentation
+fails the second child after its first repaired layer. The other three must
+finish with serial-reference tokens; the failed child must drain, invalidate
+its full prompt and complete through ordinary recomputation. The original
+request/plan evidence enforces the causal chain through the empty retry plan
+and actual request completion. All four native group sources must close with
+no physical work pending. This token/cleanup control has mixed repaired and
+recomputed K/V and is separate from the complete raw-tensor success comparison.

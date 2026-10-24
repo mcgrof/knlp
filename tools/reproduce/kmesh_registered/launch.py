@@ -33,7 +33,8 @@ FIELDS = (
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", choices=("plan", "run", "verify", "controls", "storage-pair")
+        "action",
+        choices=("plan", "run", "verify", "controls", "storage-pair", "group-failure"),
     )
     parser.add_argument("--config", type=Path, default=Path(".config"))
     args = parser.parse_args()
@@ -170,6 +171,41 @@ def main():
                     stderr=subprocess.STDOUT,
                     check=True,
                 )
+    elif args.action == "group-failure":
+        if (
+            settings["MODEL_EXECUTION"] != "collective-lockstep"
+            or settings["ROUTE"] != "registered"
+            or settings["STORAGE_ROUTE"] != "cpu-l1"
+            or any(
+                not settings[k]
+                for k in (
+                    "REFERENCE",
+                    "VERIFICATION",
+                    "ORDINARY_RESULT",
+                    "ORDINARY_VERIFICATION",
+                )
+            )
+        ):
+            parser.error(
+                "group member control requires registered CPU-L1 and verified ordinary/serial references"
+            )
+        subprocess.run(
+            argv
+            + [
+                "--group-failure",
+                "--output-dir",
+                str(output),
+                "--ordinary-result",
+                settings["ORDINARY_RESULT"],
+                "--ordinary-verification",
+                settings["ORDINARY_VERIFICATION"],
+                "--serial-result",
+                str(Path(settings["REFERENCE"]) / "result.json"),
+                "--serial-comparison",
+                settings["VERIFICATION"],
+            ],
+            check=True,
+        )
     elif args.action == "storage-pair":
         subprocess.run(argv, check=True)
     else:

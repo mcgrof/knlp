@@ -182,6 +182,9 @@ def parse_args():
     )
     parser.add_argument("--ordinary-result", type=Path)
     parser.add_argument("--ordinary-verification", type=Path)
+    parser.add_argument("--serial-result", type=Path)
+    parser.add_argument("--serial-comparison", type=Path)
+    parser.add_argument("--group-failure", action="store_true")
     parser.add_argument(
         "--storage-route", choices=("cpu-l1", "staged", "dma-buf"), default="cpu-l1"
     )
@@ -216,7 +219,8 @@ def main():
     import controls
 
     args = parse_args()
-    if args.control != "none" and (
+    is_control = args.control != "none" or args.group_failure
+    if is_control and (
         args.route != "registered"
         or args.ordinary_result is None
         or args.ordinary_verification is None
@@ -224,6 +228,13 @@ def main():
         raise ValueError(
             "model controls require registered route and a verified ordinary result"
         )
+    if args.group_failure and (
+        args.model_execution != "collective-lockstep"
+        or args.control != "none"
+        or args.serial_result is None
+        or args.serial_comparison is None
+    ):
+        raise ValueError("group member control requires its verified serial reference")
     pins = json.loads(args.profile.read_text())
     if args.model_execution not in pins.get("model_executions", ["serial"]):
         raise ValueError("model execution differs from its pinned input profile")
@@ -311,7 +322,7 @@ def main():
     }
     _, records = base._load_trace(args.trace, args.manifest)
     ordinary_outputs = {}
-    if args.control != "none":
+    if is_control:
         verification = json.loads(args.ordinary_verification.read_text())
         if verification.get("claims", {}).get(
             "full_collective_lockstep_gate_pass"
@@ -322,6 +333,24 @@ def main():
         ):
             raise ValueError("ordinary result differs from independent verification")
         ordinary_outputs = base._baseline_outputs(args.ordinary_result)
+    if args.group_failure:
+        checked = json.loads(args.serial_comparison.read_text())
+        serial_reference = json.loads(args.serial_result.read_text())
+        if (
+            checked.get("passed") is not True
+            or checked.get("candidate_result_sha256")
+            != base._sha256(args.serial_result)
+            or serial_reference["source"] != source
+            or serial_reference["kind"] != "serial_model_reference"
+            or serial_reference.get("model_execution", "serial") != "serial"
+        ):
+            raise ValueError(
+                "group control serial reference is not independently bound"
+            )
+        from group_controls import serial_reference_outputs
+
+        if set(serial_reference_outputs(serial_reference)) != set(ordinary_outputs):
+            raise ValueError("serial and ordinary references cover different requests")
     sys.path.insert(0, str(args.lmcache_source))
     vllm = base._load_vllm_overlay(args.vllm_source, args.wheel_vllm_package)
     import lmcache
@@ -380,10 +409,17 @@ def main():
         "serial_oracle" if args.model_execution == "serial" else "collective_forward"
     )
     try:
-        baseline._install_instrumentation(ledger, inject_sibling_failure=False)
+        injection = baseline._install_instrumentation(
+            ledger, inject_sibling_failure=False
+        )
+        if args.group_failure:
+            from group_controls import install_member_failure
+            from lmcache.v1.compute.blend.blender import LMCBlender, LMCBlendSession
+
+            injection = install_member_failure(ledger, LMCBlendSession, LMCBlender)
         capture = (
             None
-            if args.control != "none"
+            if is_control
             else QualifiedCapture(
                 ledger=ledger,
                 arm=capture_arm,
@@ -481,7 +517,30 @@ def main():
         if llm.llm_engine.vllm_config.attention_config.backend.name != "TRITON_ATTN":
             raise ValueError("runtime attention backend changed")
         control_evidence = None
-        if args.control == "none":
+        if args.group_failure:
+            from group_controls import verify_member_failure
+
+            observations = baseline._execute_arm(
+                "sibling_failure", llm, records, ledger
+            )
+            events = ledger.snapshot()
+            # The original evidence builder also enforces the full failed-member
+            # invalidation -> empty retry plan -> completed request causal chain.
+            recovery = baseline._recovery_evidence(observations, events)
+            control_evidence = verify_member_failure(
+                events,
+                recovery,
+                observations,
+                ordinary_outputs,
+                serial_reference,
+                injection,
+            )
+            numeric_result = {
+                "enabled": False,
+                "status": "disabled",
+                "reason": "mixed group repair and member recomputation control",
+            }
+        elif args.control == "none":
             observations = baseline._execute_arm(capture_arm, llm, records, ledger)
             events = ledger.snapshot()
             recovery = baseline._recovery_evidence(observations, events)
@@ -510,7 +569,7 @@ def main():
                 "status": "disabled",
                 "reason": "model failure control",
             }
-        if args.route == "registered" and args.control == "none":
+        if args.route == "registered" and not is_control:
             stored = [e for e in events if e["action"] == "registered.span.stored"]
             restored = [e for e in events if e["action"] == "registered.span.restored"]
             consumed = [e for e in events if e["action"] == "registered.model.consumed"]
@@ -595,8 +654,12 @@ def main():
             {
                 "status": "complete",
                 "kind": (
-                    "registered_model_control"
-                    if args.control != "none"
+                    (
+                        "registered_group_member_control"
+                        if args.group_failure
+                        else "registered_model_control"
+                    )
+                    if is_control
                     else (
                         (
                             "registered_native_serial_model"
@@ -609,6 +672,7 @@ def main():
                 ),
                 "route": args.route,
                 "model_execution": args.model_execution,
+                "group_failure": args.group_failure,
                 "storage_route": args.storage_route,
                 "poison_arena": args.poison_arena,
                 "storage_evidence": storage_evidence,
@@ -618,6 +682,11 @@ def main():
                     None
                     if args.ordinary_result is None
                     else base._sha256(args.ordinary_result)
+                ),
+                "serial_result_sha256": (
+                    None
+                    if args.serial_result is None
+                    else base._sha256(args.serial_result)
                 ),
                 "source": source,
                 "runtime": runtime,
