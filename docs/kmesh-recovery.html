@@ -79,6 +79,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>vLLM connector and configuration controls</td><td>414</td><td>Configuration and connector behavior, including refusal of unsupported multiprocess recovery.</td></tr>
 <tr><td>Ordered CPU registration</td><td>316</td><td>Completed private snapshots, canonical publication, ownership and both public request transports.</td></tr>
 <tr><td>Ordered CUDA registration</td><td>6</td><td>Both public server transports, first-read producer ordering, private normalized GPU bytes and retained failure debt.</td></tr>
+<tr><td>Checked raw-import lifetime</td><td>3</td><td>Real separate-process raw CUDA imports, alias release and injected pre-driver refusal followed by successful retry.</td></tr>
 </table></div>
 <p>The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
@@ -138,6 +139,20 @@ export cancellation or release acknowledgement is still unimplemented.</p>
 <p>The server still needs truthful imported-mapping teardown,
 fenced storage publication and retrieval, and a worker consumer that preserves
 destination block ownership through completion.</p>
+<p><strong>The lower-level raw mapping primitive now passes three scoped CUDA
+cases.</strong> A failed native close preserves its mapping record and final
+reference, and new raw imports stay blocked while cleanup is uncertain. After
+an injected refusal before the driver call, later actual checked close succeeds.
+Retirement blocks new raw aliases while an existing alias remains readable until
+its own release. Each test uses a 64 MiB FP32 allocation with two interior views;
+exporters remain alive until their importing processes exit.</p>
+<p>This inspection counts raw-wrapper imports. PyTorch storage, virtual-memory
+and external driver imports require their own lifetime guarantees. The checked
+primitive still needs integration with raw snapshot preparation and an exact
+server-generation release receipt. Retired handles remain recorded for the
+process lifetime. The three-case runner checks its full exit log and records
+CUDA Python bindings 13.4.4 and CuPy 14.2.0 in the measured environment. This
+qualifies memory lifetime controls before the model and storage comparison.</p>
 <p>A real shifted restore must then compare model outputs and repair the state
 whose deeper-layer contents depend on its original preceding context. Rotating
 key positions alone does not make that contextual dependence disappear.
@@ -184,6 +199,14 @@ cases, or <code>make defconfig-kmesh-ordered-registration-cuda</code> for six
 required CUDA cases. Use the same corresponding make commands above and fresh
 external capture directories. These profiles also freeze the actual loaded
 wire schemas; the CUDA receipt hashes its complete exit log.</p>
+<p>The checked raw-import gate uses LMCache
+<code>cb31561f6877f16d50e74891d3dc9bf00f888532</code> and
+<code>make defconfig-kmesh-raw-ipc-lifetime-cuda</code>, followed by the same
+native runner commands with a fresh output directory. Its three required cases
+are distinct from the broader fourteen-case IPC regression suite, whose mixed
+PyTorch metadata fixtures still create an unused export. The scoped gate rejects
+outstanding exporter-reference warnings. It does not qualify actual driver
+faults, exporter death or a complete service teardown protocol.</p>
 </details>
 </section>
 <section id="collective">
