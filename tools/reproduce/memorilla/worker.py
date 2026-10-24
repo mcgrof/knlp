@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from .replay import BatchAdmission, configure_scheduling, runtime_settings
 from .run import BENCHMARKS, DATA, ENCODER, LMCACHE, READER, VLLM, digest, write
 from .workloads import fingerprint, percentile, request_record, schedule
 
@@ -216,6 +217,10 @@ def main():
     cfg, inputs = json.loads(opts.config.read_text()), json.loads(
         opts.inputs.read_text()
     )
+    # Historical resolved captures did not have this key. Preserve their
+    # runtime mode; new configurations always record an explicit selection.
+    scheduling = cfg.get("scheduling", "runtime")
+    configure_scheduling(scheduling)
     cfg["source_revision"] = inputs["source_revision"]
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HOME"] = str(Path(cfg["root"]) / "hf")
@@ -307,6 +312,8 @@ def main():
         "decoder_revision": inputs["assets"]["decoder"]["revision"],
         "encoder_revision": ENCODER,
         "runtime_profile": cfg["profile"],
+        "offline_scheduling": scheduling,
+        "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
         "hip": torch.version.hip,
         "author_module": memorilla.__file__,
@@ -326,6 +333,24 @@ def main():
         "training": False,
     }
     write(opts.output / "provenance.json", provenance)
+    original_model = MemoryVLLM
+
+    class ReplayMemoryVLLM(original_model):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            effective = runtime_settings(self.engine)
+            provenance["effective_runtime"] = effective
+            write(opts.output / "provenance.json", provenance)
+            if cfg.get("singleton_reference") == "y" and (
+                effective["enable_prefix_caching"] is not False
+                or effective["max_num_seqs"] != 1
+            ):
+                raise ValueError("runtime did not apply singleton reference options")
+            if scheduling == "batch":
+                self.engine.generate = BatchAdmission(self.engine).generate
+
+    MemoryVLLM = ReplayMemoryVLLM
+    author.MemoryVLLM = ReplayMemoryVLLM
     original_load = author.load_target
     stores = []
 

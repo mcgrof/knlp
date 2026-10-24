@@ -14,6 +14,8 @@ Select one preset:
 | `memorilla-author` | Original source and pinned author CUDA dependencies. |
 | `memorilla-port-control` | Original mmap collections on a separately qualified engine. Record runtime differences separately. |
 | `memorilla-lmcache` | Same engine with the common cartridge catalog and leased LMCache host storage. |
+| `memorilla-port-batch-replay`, `memorilla-lmcache-batch-replay` | Complete-batch admission with V1 multiprocessing retained. Requires level-0 scheduling pause and enqueue APIs. |
+| `memorilla-port-reference`, `memorilla-lmcache-reference` | Single-request reference with no prefix reuse. A numerical control rather than a throughput preset. |
 
 ```sh
 make defconfig DEFCONFIG=memorilla-author
@@ -115,11 +117,49 @@ reject duplicate IDs, missing requests, changed inputs and changed predictions.
 Keep seed, pattern, request count and working set fixed when changing storage
 or batching. Repeated-question output changes are reported.
 `KNLP_MEM_ENGINE_JSON` accepts only explicit port-runtime options
-(`enforce_eager`, `attention_config`, `max_num_seqs`). They are recorded in
+(`enforce_eager`, `attention_config`, `max_num_seqs`, `enable_prefix_caching`). They are recorded in
 provenance; original author mode rejects them. Model, prompts and sampling
 cannot be overridden through this setting. Greedy generation
 can differ numerically across batch shapes and devices; investigate changes
 before treating an exact mismatch as evidence of wrong-bank reuse.
+
+### Reproducible offline scheduling
+
+The port and LMCache presets now default to
+`KNLP_MEM_SCHEDULING="inprocess"`. The worker sets
+`VLLM_ENABLE_V1_MULTIPROCESSING=0` before importing vLLM. This follows the
+[versioned vLLM offline reproducibility guidance](https://docs.vllm.ai/en/v0.18.1/usage/reproducibility/).
+The original-author preset keeps `runtime` scheduling and rejects overrides.
+Historical resolved captures without a scheduling key also keep runtime
+behavior. Use `runtime` explicitly to reproduce the asynchronous admission
+control on a ported engine; an exact mismatch remains a failing comparison.
+
+In V1 multiprocessing mode, the engine can execute a request while the caller
+is still submitting its neighbors. Those timing-dependent execution batches
+can change floating-point results even with identical prompt embeddings and
+greedy sampling. The `batch` mode keeps multiprocessing enabled. It pauses
+scheduling at level zero, enqueues the complete call, resumes scheduling and
+waits for completion. It neither offloads weights nor clears the prefix cache.
+It requires an idle engine owned exclusively by this offline caller. An API
+failure invalidates the wrapper; discard that engine rather than execute a
+partially submitted batch. Older runtimes without these APIs fail explicitly.
+
+Repeatable scheduling does not imply batch-independent model arithmetic.
+Changing neighboring questions or document-bank padding can change reader
+and decoder numerics. The reference presets require batch size one,
+in-process scheduling, one engine sequence and disabled prefix caching.
+They remove neighbors and cached prefixes from this correctness control.
+LMCache document-bank residency remains enabled; only decoder prefix reuse
+is disabled.
+Configuration and effective runtime checks reject a relabeled reference
+that does not apply those settings. They preserve the model, prompt,
+generation budget and scorer; their scores need not equal a batch-32 run.
+
+Each run records the scheduling selection, effective process model,
+prefix-cache setting and engine limits. Compare storage paths with the same
+scheduling, batch size and engine settings. No mode promises equal results
+across hardware, engine versions or arbitrary batch shapes. vLLM's separate
+batch-invariance feature requires its own backend qualification.
 
 Reports include synchronous batch p50/p95/p99, completed requests per second,
 whole-worker time, driver RSS/page faults and process I/O observations, plus

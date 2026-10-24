@@ -26,6 +26,26 @@ config KNLP_MEM_BATCH
 	int "Generation batch size"
 	range 1 256
 	default 32
+config KNLP_MEM_SCHEDULING
+	string "Offline scheduling: runtime, inprocess, batch"
+	default "runtime" if KNLP_MEM_AUTHOR
+	default "inprocess"
+	help
+	  Runtime preserves upstream defaults. Inprocess disables V1 engine
+	  multiprocessing for repeatable offline scheduling. Batch keeps V1
+	  multiprocessing and pauses scheduling while a complete batch is
+	  enqueued; it requires the level-0 pause/enqueue APIs. Original author
+	  mode accepts runtime only. Neither mode promises equality between
+	  different batch shapes or engine/hardware versions.
+config KNLP_MEM_SINGLETON_REFERENCE
+	bool "Isolated single-request numerical reference"
+	depends on !KNLP_MEM_AUTHOR
+	default n
+	help
+	  Require batch size one, inprocess scheduling, one engine sequence
+	  and disabled prefix caching. This removes neighboring requests and
+	  prefix reuse from the numerical reference. It is a correctness
+	  control, not a throughput configuration or a paper-score target.
 config KNLP_MEM_GPU_FRACTION
 	string "Decoder GPU memory fraction"
 	default "0.6"

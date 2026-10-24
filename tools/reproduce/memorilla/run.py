@@ -83,7 +83,12 @@ def configuration(path):
             raise ValueError(f"invalid {key}")
     cfg.setdefault("pattern", "shuffle")
     cfg["engine_options"] = json.loads(cfg.get("engine_json", "{}"))
-    allowed = {"enforce_eager", "attention_config", "max_num_seqs"}
+    allowed = {
+        "enforce_eager",
+        "attention_config",
+        "max_num_seqs",
+        "enable_prefix_caching",
+    }
     if (
         not isinstance(cfg["engine_options"], dict)
         or set(cfg["engine_options"]) - allowed
@@ -93,6 +98,23 @@ def configuration(path):
         )
     if cfg["profile"] == "author" and cfg["engine_options"]:
         raise ValueError("original author mode rejects engine overrides")
+    cfg.setdefault(
+        "scheduling", "runtime" if cfg["profile"] == "author" else "inprocess"
+    )
+    if cfg["scheduling"] not in {"runtime", "inprocess", "batch"}:
+        raise ValueError("scheduling must be runtime, inprocess or batch")
+    if cfg["profile"] == "author" and cfg["scheduling"] != "runtime":
+        raise ValueError("original author mode rejects scheduling overrides")
+    if cfg.get("singleton_reference") == "y" and (
+        cfg["batch"] != 1
+        or cfg["scheduling"] != "inprocess"
+        or cfg["engine_options"].get("enable_prefix_caching") is not False
+        or cfg["engine_options"].get("max_num_seqs") != 1
+    ):
+        raise ValueError(
+            "singleton reference requires batch=1, inprocess scheduling, "
+            "max_num_seqs=1 and enable_prefix_caching=false"
+        )
     if (
         min(cfg["batch"], cfg["pool_bytes"], cfg["requests"]) < 1
         or min(cfg["rows"], cfg["evict_every"]) < 0
