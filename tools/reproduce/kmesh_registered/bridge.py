@@ -33,6 +33,8 @@ class RegisteredReplay:
         self.worker = None
         self.handles: dict[tuple[Any, ...], Any] = {}
         self.sources = []
+        self.disabled = False
+        self.omitted_sources = set()
         self.originals = []
 
     def _worker(self, engine: Any) -> Any:
@@ -99,6 +101,10 @@ class RegisteredReplay:
         return domain, runtime, identity(tokens), len(tokens)
 
     def publish(self, engine: Any, tokens: Any, spans: Any, kwargs: dict) -> None:
+        if self.disabled:
+            if self.worker is not None and self.worker.pending:
+                self.worker.drain_pending()
+            return
         worker = self._worker(engine)
         token_ids = tuple(int(t) for t in tokens)
         blocks = worker.block_table(tuple(kwargs["slot_mapping"].cpu().tolist()))
@@ -133,6 +139,20 @@ class RegisteredReplay:
     ):
         import torch
 
+        if self.disabled:
+            if self.worker is not None and self.worker.pending:
+                from lmcache.v1.compute.blend.layer_source import (
+                    UnsettledLayerSourceError,
+                )
+
+                raise UnsettledLayerSourceError(
+                    "disabled replay still owns physical work",
+                    self.worker.drain_pending,
+                )
+            self.ledger.emit(
+                "registered.model.disabled", request_id=kwargs.get("request_id")
+            )
+            return torch.zeros(len(tokens), dtype=torch.bool)
         token_ids = tuple(int(t) for t in tokens)
         spans = kwargs["explicit_spans"]
         if self.worker is None:
@@ -142,7 +162,7 @@ class RegisteredReplay:
         for span in spans.spans:
             key = self._key(token_ids[span.start : span.end], kwargs["request_configs"])
             handle = self.handles.get(key)
-            if handle is None:
+            if handle is None or key in self.omitted_sources:
                 continue
             placed = self.worker.restore(
                 handle, span.start, identity(token_ids[: span.start]), blocks
@@ -203,7 +223,14 @@ class RegisteredReplay:
 
         @functools.wraps(original_blend)
         def blend(blender, tokens, mask=None, **kwargs):
-            return self.consume(blender, tokens, mask, kwargs, original_blend)
+            try:
+                return self.consume(blender, tokens, mask, kwargs, original_blend)
+            except Exception:
+                self.disabled = True
+                self.ledger.emit(
+                    "registered.backend.disabled", request_id=kwargs.get("request_id")
+                )
+                raise
 
         self.originals = [
             (LMCacheEngine, "store_layer", original_store),

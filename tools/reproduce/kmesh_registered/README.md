@@ -51,3 +51,28 @@ All captures remain outside the source trees. The service process is owned by
 the replay and exits before engine allocations can be freed. Checked retirement
 must cover all imported allocations; an uncertain reply requires actual importer
 exit. This runner does not change kernels, drivers or storage media.
+
+## Model failure controls
+
+Select a new `KMESH_REGISTERED_OUTPUT` directory and set
+`KMESH_REGISTERED_ORDINARY_RESULT` to the independently verified historical
+bundle's `arms/00-ordinary/artifacts/result.json`. Set
+`KMESH_REGISTERED_ORDINARY_VERIFICATION` to that bundle's `verified.json`, then
+run `make kmesh-registered-controls` with the same pinned source and runtime.
+Each control runs in a fresh process and records its actual operations:
+
+- Omit one registered handle while the source remains intact. The model must
+  consume the other three spans and recompute all missing and private positions.
+- Corrupt an actual CPU-L1 tensor, or delete its actual L1 key before lookup.
+  Both must refuse before native scatter and complete through fallback.
+- Raise after a genuine native restore enqueue. Successful physical drain must
+  permit full-prompt invalidation and recomputation.
+- Refuse one service drain, then require an actual later drain before fallback.
+- Keep refusing service drain, or refuse worker drain after a real layer gather.
+  Neither may mark blocks reusable for fallback or return a completed request.
+  Disarming the control must allow real cleanup and checked retirement.
+
+A revoked lease disables this bounded replay backend; later drained requests
+recompute. This is an explicit availability limit. Controls compare completed
+generated tokens with the ordinary baseline. They do not replace the successful
+pair's raw K/V, logit and selection comparison.

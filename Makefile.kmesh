@@ -101,9 +101,9 @@ ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_CASCADE),y)
 endif
 
 KMESH_REGISTERED_PY ?= $(PYTHON)
-.PHONY: kmesh-registered kmesh-registered-plan kmesh-registered-verify
+.PHONY: kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls
 .NOTPARALLEL: kmesh-registered
-kmesh-registered kmesh-registered-plan kmesh-registered-verify:
+kmesh-registered kmesh-registered-plan kmesh-registered-verify kmesh-registered-controls:
 	@"$(KMESH_REGISTERED_PY)" -m tools.reproduce.kmesh_registered.launch --config "$(CONFIG_FILE)" $(if $(filter kmesh-registered,$@),run,$(patsubst kmesh-registered-%,%,$@))
 
 ifeq ($(CONFIG_KNLP_REPRODUCE_KMESH_REGISTERED),y)

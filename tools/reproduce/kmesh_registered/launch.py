@@ -20,12 +20,14 @@ FIELDS = (
     "OUTPUT",
     "REFERENCE",
     "VERIFICATION",
+    "ORDINARY_RESULT",
+    "ORDINARY_VERIFICATION",
 )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "run", "verify"))
+    parser.add_argument("action", choices=("plan", "run", "verify", "controls"))
     parser.add_argument("--config", type=Path, default=Path(".config"))
     args = parser.parse_args()
     settings = dict.fromkeys(FIELDS, "")
@@ -73,10 +75,54 @@ def main():
         parser.error(
             "set all source, runtime, model, trace and output paths shown by plan"
         )
+    output = Path(settings["OUTPUT"]).resolve()
+    for source in (
+        ROOT.parents[2],
+        Path(settings["LMCACHE_SOURCE"]),
+        Path(settings["VLLM_SOURCE"]),
+    ):
+        if output == source.resolve() or source.resolve() in output.parents:
+            parser.error("capture output must remain outside source checkouts")
     argv = [sys.executable, str(ROOT / "run.py"), "--route", settings["ROUTE"]]
     for key, option in names.items():
-        argv.extend(("--" + option, settings[key]))
-    subprocess.run(argv, check=True)
+        if key != "OUTPUT":
+            argv.extend(("--" + option, settings[key]))
+    if args.action == "controls":
+        if settings["ROUTE"] != "registered" or any(
+            not settings[k] for k in ("ORDINARY_RESULT", "ORDINARY_VERIFICATION")
+        ):
+            parser.error(
+                "controls require registered route and verified ordinary result paths"
+            )
+        output.mkdir(parents=True, exist_ok=False)
+        for mode in (
+            "partial_miss",
+            "corrupt",
+            "evict",
+            "post_enqueue",
+            "transient_drain",
+            "persistent_drain",
+            "worker_drain",
+        ):
+            with (output / (mode + ".log")).open("x") as log:
+                subprocess.run(
+                    argv
+                    + [
+                        "--control",
+                        mode,
+                        "--output-dir",
+                        str(output / mode),
+                        "--ordinary-result",
+                        settings["ORDINARY_RESULT"],
+                        "--ordinary-verification",
+                        settings["ORDINARY_VERIFICATION"],
+                    ],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                )
+    else:
+        subprocess.run(argv + ["--output-dir", str(output)], check=True)
 
 
 if __name__ == "__main__":

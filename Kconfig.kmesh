@@ -52,6 +52,14 @@ config KNLP_KMESH_REGISTERED_VERIFICATION
 	string "Independent reference verified.json"
 	default ""
 
+config KNLP_KMESH_REGISTERED_ORDINARY_RESULT
+	string "Historical ordinary-model result.json for failure controls"
+	default ""
+
+config KNLP_KMESH_REGISTERED_ORDINARY_VERIFICATION
+	string "Independent historical verification binding that ordinary result"
+	default ""
+
 endif
 
 config KNLP_REPRODUCE_KMESH_CONTRACTS

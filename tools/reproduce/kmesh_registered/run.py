@@ -20,7 +20,9 @@ LMCACHE_CONFIG = BASELINE / "lmcache-current.yaml"
 sys.path[:0] = [str(ROOT), str(BASELINE), str(BASELINE / "harness")]
 
 
-def service(channel, vllm_source: Path, wheel: Path, lmcache_source: Path):
+def service(
+    channel, vllm_source: Path, wheel: Path, lmcache_source: Path, control="none"
+):
     """Own the importing process; its actual exit is the final release proof."""
     import collective_gate_common as common
 
@@ -32,6 +34,9 @@ def service(channel, vllm_source: Path, wheel: Path, lmcache_source: Path):
     )
     import zmq
 
+    import faults
+
+    fault = faults.install_service(control)
     server = engine = None
     try:
         server, engine = create_managed_raw_server(
@@ -44,8 +49,18 @@ def service(channel, vllm_source: Path, wheel: Path, lmcache_source: Path):
             else server.socket.getsockopt_string(zmq.LAST_ENDPOINT)
         )
         channel.send(("ready", address))
-        if channel.recv() != "stop":
-            raise RuntimeError("unexpected service control message")
+        while True:
+            command = channel.recv()
+            if command == "stop":
+                break
+            if command == "arm":
+                fault.armed = True
+                channel.send(("armed", dict(fault.observed)))
+            elif command == "clean":
+                fault.armed = False
+                channel.send(("cleaned", dict(fault.observed)))
+            else:
+                raise RuntimeError("unexpected service control message")
         server.close()
         server = None
         engine.close()
@@ -102,14 +117,40 @@ def parse_args():
     parser.add_argument(
         "--route", choices=("reference", "registered"), default="registered"
     )
+    parser.add_argument(
+        "--control",
+        choices=(
+            "none",
+            "partial_miss",
+            "corrupt",
+            "evict",
+            "post_enqueue",
+            "transient_drain",
+            "persistent_drain",
+            "worker_drain",
+        ),
+        default="none",
+    )
+    parser.add_argument("--ordinary-result", type=Path)
+    parser.add_argument("--ordinary-verification", type=Path)
     return parser.parse_args()
 
 
 def main():
     from bridge import RegisteredReplay, identity
     import selection
+    import faults
+    import controls
 
     args = parse_args()
+    if args.control != "none" and (
+        args.route != "registered"
+        or args.ordinary_result is None
+        or args.ordinary_verification is None
+    ):
+        raise ValueError(
+            "model controls require registered route and a verified ordinary result"
+        )
     pins = json.loads(args.profile.read_text())
     if args.plan:
         print(json.dumps(pins, indent=2))
@@ -158,6 +199,18 @@ def main():
         for name, path in (("lmcache", args.lmcache_source), ("vllm", args.vllm_source))
     }
     _, records = base._load_trace(args.trace, args.manifest)
+    ordinary_outputs = {}
+    if args.control != "none":
+        verification = json.loads(args.ordinary_verification.read_text())
+        if verification.get("claims", {}).get(
+            "full_collective_lockstep_gate_pass"
+        ) is not True or verification["arm_results"]["ordinary"][
+            "sha256"
+        ] != base._sha256(
+            args.ordinary_result
+        ):
+            raise ValueError("ordinary result differs from independent verification")
+        ordinary_outputs = base._baseline_outputs(args.ordinary_result)
     sys.path.insert(0, str(args.lmcache_source))
     vllm = base._load_vllm_overlay(args.vllm_source, args.wheel_vllm_package)
     import lmcache
@@ -198,14 +251,19 @@ def main():
     parent = None
     try:
         baseline._install_instrumentation(ledger, inject_sibling_failure=False)
-        capture = QualifiedCapture(
-            ledger=ledger,
-            arm="serial_oracle",
-            output_dir=args.output_dir,
-            records=tuple(copy.deepcopy(records)),
-            source=source,
+        capture = (
+            None
+            if args.control != "none"
+            else QualifiedCapture(
+                ledger=ledger,
+                arm="serial_oracle",
+                output_dir=args.output_dir,
+                records=tuple(copy.deepcopy(records)),
+                source=source,
+            )
         )
         selection.install(ledger)
+        worker_fault = faults.install_worker(args.control)
         if args.route == "registered":
             parent, child = mp.get_context("spawn").Pipe()
             process = mp.get_context("spawn").Process(
@@ -215,6 +273,7 @@ def main():
                     args.vllm_source,
                     args.wheel_vllm_package,
                     args.lmcache_source,
+                    args.control,
                 ),
             )
             process.start()
@@ -257,17 +316,37 @@ def main():
             raise ValueError("runtime is not the bounded serial profile")
         if llm.llm_engine.vllm_config.attention_config.backend.name != "TRITON_ATTN":
             raise ValueError("runtime attention backend changed")
-        observations = baseline._execute_arm("serial_oracle", llm, records, ledger)
-        events = ledger.snapshot()
-        recovery = baseline._recovery_evidence(observations, events)
-        numeric_result = capture.finish(
-            arm="serial_oracle",
-            observations=observations,
-            recovery_evidence=recovery,
-            source=source,
-            runtime=runtime,
-        )
-        if args.route == "registered":
+        control_evidence = None
+        if args.control == "none":
+            observations = baseline._execute_arm("serial_oracle", llm, records, ledger)
+            events = ledger.snapshot()
+            recovery = baseline._recovery_evidence(observations, events)
+            numeric_result = capture.finish(
+                arm="serial_oracle",
+                observations=observations,
+                recovery_evidence=recovery,
+                source=source,
+                runtime=runtime,
+            )
+        else:
+            observations, control_evidence = controls.execute(
+                args.control, llm, records, ledger, bridge, parent, worker_fault
+            )
+            if any(
+                o["output_token_ids"] != ordinary_outputs[o["trace_request_id"]]
+                for o in observations
+            ):
+                raise ValueError(
+                    "control model output differs from the ordinary baseline"
+                )
+            events = ledger.snapshot()
+            recovery = {}
+            numeric_result = {
+                "enabled": False,
+                "status": "disabled",
+                "reason": "model failure control",
+            }
+        if args.route == "registered" and args.control == "none":
             stored = [e for e in events if e["action"] == "registered.span.stored"]
             restored = [e for e in events if e["action"] == "registered.span.restored"]
             consumed = [e for e in events if e["action"] == "registered.model.consumed"]
@@ -285,6 +364,7 @@ def main():
                 )
             if any(e["source_start"] == e["destination_start"] for e in restored):
                 raise ValueError("model replay did not exercise shifted positions")
+        if args.route == "registered":
             bridge.close()
             parent.send("stop")
             if receive(parent)[0] != "closed":
@@ -311,11 +391,21 @@ def main():
             {
                 "status": "complete",
                 "kind": (
-                    "registered_native_serial_model"
-                    if args.route == "registered"
-                    else "serial_model_reference"
+                    "registered_model_control"
+                    if args.control != "none"
+                    else (
+                        "registered_native_serial_model"
+                        if args.route == "registered"
+                        else "serial_model_reference"
+                    )
                 ),
                 "route": args.route,
+                "control_evidence": control_evidence,
+                "ordinary_result_sha256": (
+                    None
+                    if args.ordinary_result is None
+                    else base._sha256(args.ordinary_result)
+                ),
                 "source": source,
                 "runtime": runtime,
                 "profile": pins,
