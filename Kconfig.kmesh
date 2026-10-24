@@ -1,6 +1,59 @@
 # SPDX-License-Identifier: MIT
 menu "Exact-prefix reasoning forks"
 
+config KNLP_REPRODUCE_KMESH_REGISTERED
+	bool "Replay serial model repair from registered native spans"
+	default n
+	help
+	  Use the pinned Qwen workload and separate-process CPU-L1 span service.
+	  Keep reference lookup/storage as scheduling controls and feed real
+	  model repair from registered restores. This duplicates storage and
+	  does not measure serving latency or DMA-BUF performance.
+
+if KNLP_REPRODUCE_KMESH_REGISTERED
+
+config KNLP_KMESH_REGISTERED_ROUTE
+	string "Model input route: reference or registered"
+	default "registered"
+
+config KNLP_KMESH_REGISTERED_VLLM_SOURCE
+	string "Clean pinned vLLM checkout"
+	default ""
+
+config KNLP_KMESH_REGISTERED_LMCACHE_SOURCE
+	string "Clean pinned LMCache checkout and matching native extensions"
+	default ""
+
+config KNLP_KMESH_REGISTERED_WHEEL_PACKAGE
+	string "Pinned vLLM wheel package directory"
+	default ""
+
+config KNLP_KMESH_REGISTERED_MODEL_DIR
+	string "Pinned local Qwen snapshot"
+	default ""
+
+config KNLP_KMESH_REGISTERED_TRACE
+	string "Frozen synthetic TokenDance trace.jsonl"
+	default ""
+
+config KNLP_KMESH_REGISTERED_MANIFEST
+	string "Frozen trace manifest.json"
+	default ""
+
+config KNLP_KMESH_REGISTERED_OUTPUT
+	string "Fresh capture directory outside source checkouts"
+	default ""
+
+config KNLP_KMESH_REGISTERED_REFERENCE
+	string "Independently verified serial-reference artifacts directory"
+	default ""
+
+config KNLP_KMESH_REGISTERED_VERIFICATION
+	string "Independent reference verified.json"
+	default ""
+
+endif
+
 config KNLP_REPRODUCE_KMESH_CONTRACTS
 	bool "Qualify CPU ownership, sessions and registered-context lifetime"
 	default n

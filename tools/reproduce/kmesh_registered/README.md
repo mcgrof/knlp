@@ -1,0 +1,53 @@
+<!-- SPDX-License-Identifier: MIT -->
+# Registered serial model replay
+
+This bounded replay moves the TokenDance-style serial repair baseline from
+in-process retrieval to completed native span restores in a separate cache
+process. It uses the actual Qwen model, rotary table, engine cache allocations
+and live request slots. The leader publishes four partial spans containing 416
+tokens. Four siblings restore them at shifted positions and consume them through
+the existing serial CacheBlend repair.
+
+LocalCPU lookup and storage remain scheduling controls. This duplicates storage;
+elapsed time cannot establish serving latency, capacity savings or a DMA-BUF
+benefit. The ordinary multiprocess serving profile remains disabled. This replay
+qualifies CPU-L1 model consumption before changing the storage route.
+
+Use the exact source commits in `profile.json` with the existing
+[RTX runtime and model pins](../tokendance/profile.json). Install the matching
+native extensions and generated protobuf modules as described by the component
+projects. Keep source checkouts clean. Generate the frozen trace using the
+[TokenDance reproducer](../tokendance/README.md), which also produces the
+independently verified serial reference used by the comparison.
+
+```sh
+make defconfig-kmesh-registered-model-cuda
+make kmesh-registered-plan
+```
+
+Set `KMESH_REGISTERED_VLLM_SOURCE`, `KMESH_REGISTERED_LMCACHE_SOURCE`,
+`KMESH_REGISTERED_WHEEL_PACKAGE` and `KMESH_REGISTERED_MODEL_DIR` to the pinned
+local inputs. Set `KMESH_REGISTERED_TRACE` and `KMESH_REGISTERED_MANIFEST` to the
+generated trace files. Set `KMESH_REGISTERED_OUTPUT` to a fresh external capture
+directory. First set `KMESH_REGISTERED_ROUTE=reference` and run
+`make kmesh-registered` with the matching Python interpreter selected through
+`KMESH_REGISTERED_PY`. This captures the in-process reference on the new source.
+Verify it against the independently verified historical serial result. Then use
+`KMESH_REGISTERED_ROUTE=registered` with another fresh output directory and run
+the model again. Both runs use the same source checkout, workload and runtime.
+
+For the first comparison, set `KMESH_REGISTERED_REFERENCE` to the historical
+bundle's `arms/01-serial_oracle/artifacts` directory and
+`KMESH_REGISTERED_VERIFICATION` to its independently generated `verified.json`.
+Run `make kmesh-registered-verify` to compare saved CPU tensors. For the paired
+comparison, point `REFERENCE` to the new reference capture and `VERIFICATION`
+to that capture's passing `comparison.json`. The pair also requires identical
+actual repair selections at every layer. The policy requires
+bitwise K/V, identical selected spans and retrieval masks, logits within the
+existing serial comparison tolerance, and identical generated tokens. A failed
+comparison is retained as evidence; it must not be relabeled a passing run.
+
+All captures remain outside the source trees. The service process is owned by
+the replay and exits before engine allocations can be freed. Checked retirement
+must cover all imported allocations; an uncertain reply requires actual importer
+exit. This runner does not change kernels, drivers or storage media.
