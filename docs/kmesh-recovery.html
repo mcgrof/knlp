@@ -80,6 +80,7 @@ These controls are separate from the normal request heartbeat.</p>
 <tr><td>Ordered CPU registration</td><td>316</td><td>Completed private snapshots, canonical publication, ownership and both public request transports.</td></tr>
 <tr><td>Ordered CUDA registration</td><td>6</td><td>Both public server transports, first-read producer ordering, private normalized GPU bytes and retained failure debt.</td></tr>
 <tr><td>Checked raw-import lifetime</td><td>3</td><td>Real separate-process raw CUDA imports, alias release and injected pre-driver refusal followed by successful retry.</td></tr>
+<tr><td>Raw native-outcome fencing</td><td>6</td><td>Safe preflight retry, conservative import/close quarantine, forwarded local references and alias controls.</td></tr>
 </table></div>
 <p>The CPU controls run with GPU visibility disabled. Every selected setup, body
 and teardown passes; skipped and expected-failure cases cannot qualify. The
@@ -151,8 +152,21 @@ and external driver imports require their own lifetime guarantees. The checked
 primitive still needs integration with raw snapshot preparation and an exact
 server-generation release receipt. Retired handles remain recorded for the
 process lifetime. The three-case runner checks its full exit log and records
-CUDA Python bindings 13.4.4 and CuPy 14.2.0 in the measured environment. This
-qualifies memory lifetime controls before the model and storage comparison.</p>
+CUDA Python bindings 13.4.4 and CuPy 14.2.0 in the measured environment.</p>
+<p><strong>The subsequent six-case native-outcome gate makes retry precise.</strong>
+A failure known to precede native close can be retried. If the driver call may
+have taken effect, its old pointer must not be submitted again: the address
+could have been reused. Unknown import, close or interrupted bookkeeping therefore
+stays quarantined until the importing process ends. Even an absent completed
+mapping record cannot establish that import never occurred. The tests verify
+that an ambiguous outcome causes no second native call.</p>
+<p>Forwarded wrapper metadata also resets the receiving copy's local reference
+count. Closing that copy must preserve the sender's still-active alias. All six
+scoped cases pass with complete source and exit-log verification. Native errors
+are controlled injections before driver effects; these results qualify the
+conservative refusal policy, rather than actual device-fault recovery. The
+broader IPC regression suite separately passes seventeen cases. Service-level
+release receipts and the model/storage comparison remain subsequent gates.</p>
 <p>A real shifted restore must then compare model outputs and repair the state
 whose deeper-layer contents depend on its original preceding context. Rotating
 key positions alone does not make that contextual dependence disappear.
@@ -207,6 +221,11 @@ are distinct from the broader fourteen-case IPC regression suite, whose mixed
 PyTorch metadata fixtures still create an unused export. The scoped gate rejects
 outstanding exporter-reference warnings. It does not qualify actual driver
 faults, exporter death or a complete service teardown protocol.</p>
+<p>For the later native-outcome rules, select
+<code>make defconfig-kmesh-raw-ipc-outcomes-cuda</code> and LMCache
+<code>b08f4c339c73c23d2ba46b7e2c17e880c34a7b19</code>. Run the same native
+commands into a fresh capture directory. This separate six-case profile preserves
+the earlier three-case checkpoint without relabeling its source or evidence.</p>
 </details>
 </section>
 <section id="collective">
