@@ -122,6 +122,19 @@ offline codec restores all four members exactly and rejects corruption.
 Full recomputation and recovery are not numerically equivalent. The
 H100 result record
 binds these findings to the exact sources and verifier digest.</p>
+<p><strong>RTX 4090 reference, October 23, 2026:</strong> the same eight model
+and control arms and independent verifier also pass on LMCache
+<code>daa0b4ddc8551d29d21ff4ac51f913eb29dfed9a</code> and vLLM
+<code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>.
+Serial and collective K/V remain bitwise identical, with zero maximum logit
+difference. Full recomputation versus serial recovery differs by up to
+<code>0.4921875</code>; its numerical diagnostic still fails. The offline codec
+again produces 17,506,917 bytes from 25,165,824 dense bytes, restores every bit
+and rejects corruption. This is an in-process LocalCPU model reference for the
+current branches. It does not exercise the new multiprocess span service or
+DMA-BUF model recovery. Use <code>defconfig-tokendance-rtx4090</code> and the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/tokendance/README.md#rtx-4090-reference-on-the-span-storage-source-branches">pinned RTX instructions</a>;
+the earlier H100 profile and its measurements remain separate.</p>
 <div class="stat-grid">
   <div class="stat"><div class="val">8 / 8</div><div class="label">current H100 cases<br>independently verified</div></div>
   <div class="stat"><div class="val cyan">bitwise</div><div class="label">collective vs serial K/V<br>four recovered siblings</div></div>
@@ -129,7 +142,7 @@ binds these findings to the exact sources and verifier digest.</p>
 </div>
 <div class="table-wrap">
 <table>
-<tr><th scope="col">Measurement</th><th scope="col">Result</th><th scope="col">What it establishes</th></tr>
+<tr><th scope="col">H100 measurement</th><th scope="col">Result</th><th scope="col">What it establishes</th></tr>
 <tr><td class="hi">Serial vs collective</td><td>Raw K/V bits identical; maximum absolute logit difference 0.0.</td><td>Batching preserves this serial recovery baseline for four siblings in this synthetic case.</td></tr>
 <tr><td class="hi">Order, fallback, cleanup</td><td>All eight cases pass their independent checks.</td><td>Reversing request order, missing data, incompatible groups and injected failure obey the bounded contract.</td></tr>
 <tr><td class="hi">Ordinary vs serial</td><td>Maximum absolute logit difference 0.5625; numerical diagnostic fails.</td><td>Recovery is not numerically equivalent to full recomputation. That parity is not an accepted claim.</td></tr>

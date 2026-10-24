@@ -146,6 +146,15 @@ Python dependency directories. They do not install packages or download models.
 Verify RTX captures with `TOKENDANCE_SOURCE_PAIR=rtx4090` and the helper revision
 that produced them. Raw model tensors and timing captures stay outside Git.
 
+On October 23, 2026, all eight RTX arms and the independent verifier passed on
+these source pins. Serial/collective K/V were bitwise identical and their maximum
+absolute logit difference was zero. Ordinary full recomputation versus serial
+recovery differed by up to 0.4921875, so that numerical diagnostic remained
+unaccepted. Offline family encoding produced 17,506,917 bytes from 25,165,824
+dense bytes (69.566%), restored all four members exactly and rejected corruption.
+These are in-process reference results, without separate-process span or DMA-BUF
+execution.
+
 ## Pin the component checkouts and native environment
 
 These pins describe the historical ROCm profile. Use the current CUDA
