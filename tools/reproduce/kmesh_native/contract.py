@@ -21,6 +21,7 @@ PROFILES = {
     "registered-copy": HERE / "profiles" / "registered-copy.json",
     "rotary-transfers": HERE / "profiles" / "rotary-transfers.json",
     "ordered-registration": HERE / "profiles" / "ordered-registration.json",
+    "raw-ipc-lifetime": HERE / "profiles" / "raw-ipc-lifetime.json",
 }
 
 
@@ -106,6 +107,12 @@ def verify(root: Path, name: str = "paged-cache") -> dict:
             raise ValueError("exporter lifecycle warning in execution log")
     if receipt["native_sha256"] != cfg["native_sha256"]:
         raise ValueError("native extension hashes differ")
+    if cfg.get("runtime_packages"):
+        packages = receipt.get("runtime", {}).get("packages", {})
+        if set(packages) != set(cfg["runtime_packages"]) or any(
+            type(version) is not str or not version for version in packages.values()
+        ):
+            raise ValueError("runtime package provenance is incomplete")
     if receipt["exit_code"] != 0 or receipt["device"]["backend"] != "cuda":
         raise ValueError("native execution failed or used another backend")
     if receipt["device"]["count"] != 1:

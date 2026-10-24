@@ -43,6 +43,11 @@ class NativeReceiptTests(unittest.TestCase):
             "source_files_sha256": cfg["source_files_sha256"],
             "protobuf_descriptors_sha256": cfg.get("protobuf_descriptors_sha256", {}),
             "native_sha256": cfg["native_sha256"],
+            "runtime": {
+                "packages": {
+                    name: "synthetic" for name in cfg.get("runtime_packages", [])
+                }
+            },
             "exit_code": 0,
             "device": {"backend": "cuda", "count": 1},
             "selectors": contract.selectors(self.profile_name),
@@ -174,6 +179,15 @@ class OrderedRegistrationReceiptTests(NativeReceiptTests):
     def test_modified_execution_log_cannot_qualify(self):
         (self.root / "execution.log").write_text("edited")
         with self.assertRaisesRegex(ValueError, "log digest"):
+            self.check_receipt(self.receipt)
+
+
+class RawIPCLifetimeReceiptTests(OrderedRegistrationReceiptTests):
+    profile_name = "raw-ipc-lifetime"
+
+    def test_missing_runtime_provenance_cannot_qualify(self):
+        self.receipt["runtime"] = {}
+        with self.assertRaisesRegex(ValueError, "runtime package"):
             self.check_receipt(self.receipt)
 
 

@@ -173,6 +173,10 @@ def main() -> None:
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
             "pytest": importlib.metadata.version("pytest"),
+            "packages": {
+                name: importlib.metadata.version(name)
+                for name in cfg.get("runtime_packages", [])
+            },
         },
         "device": {
             "backend": "cuda",

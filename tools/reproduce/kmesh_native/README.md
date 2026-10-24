@@ -15,6 +15,7 @@ Each pins an independent LMCache source and case set:
 | `registered-copy` | `6776516b3efd156df1fa014bc6f346adce374379` | 3 |
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | 6 |
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
+| `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
 prepared CUDA environment; this runner does not install or rebuild packages.
@@ -110,6 +111,24 @@ still pass through the real public server entry point and typed controls.
 No positive exporter teardown, raw/VMM import lifecycle, actual device fault,
 model-serving, DMA-BUF I/O or speed qualification follows. Engine admission stays
 closed. Use its [316-case CPU profile](../kmesh_contracts/README.md) separately.
+
+The `raw-ipc-lifetime` profile qualifies the next lower-level prerequisite.
+Select `make defconfig-kmesh-raw-ipc-lifetime-cuda` and its pinned source with
+the same native runner commands. Two new cases put the exporter in the parent
+and raw imports in a separate child. They test an injected refusal before native
+close followed by real successful retry, and retirement before the last alias
+releases. The existing shared-allocation reference-count control also runs.
+Each allocation is 64 MiB FP32 with two interior views. Keep the exporter alive
+until its importer exits, including test failure cleanup.
+
+Checked close preserves the mapping and final reference on native failure.
+Retirement blocks new raw imports while existing aliases retain their references.
+Inspection counts only raw-wrapper imports; it cannot prove that PyTorch storage,
+VMM or unrelated driver imports closed. Retired handles remain tombstoned for the
+process lifetime. This prototype has no integrated server receipt or tombstone
+reclamation policy and cannot authorize general exporter release. Actual driver
+faults, process death and model serving remain separate gates. The profile freezes
+wire schemas, checks the complete exit log and records CUDA-binding/CuPy versions.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

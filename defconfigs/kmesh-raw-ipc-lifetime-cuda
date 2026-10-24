@@ -1,0 +1,5 @@
+# Checked raw CUDA import release and shared-allocation alias lifetime.
+CONFIG_KNLP_REPRODUCE_KMESH_NATIVE=y
+CONFIG_KNLP_KMESH_NATIVE_PROFILE="raw-ipc-lifetime"
+CONFIG_KNLP_KMESH_NATIVE_SOURCE=""
+CONFIG_KNLP_KMESH_NATIVE_OUTPUT=""
