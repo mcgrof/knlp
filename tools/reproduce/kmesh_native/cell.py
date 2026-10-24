@@ -2,6 +2,7 @@
 """Execute pinned native-layout or registered-copy controls on CUDA."""
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -37,6 +38,16 @@ class Capture:
                 "wasxfail": getattr(report, "wasxfail", None),
             }
         )
+
+
+def protobuf_hashes(cfg: dict) -> dict:
+    """Hash the loaded wire schemas, including generated optional-field presence."""
+    return {
+        name: hashlib.sha256(
+            importlib.import_module(name).DESCRIPTOR.serialized_pb
+        ).hexdigest()
+        for name in cfg.get("protobuf_descriptors_sha256", {})
+    }
 
 
 def main() -> None:
@@ -83,6 +94,9 @@ def main() -> None:
 
     if Path(lmcache.__file__).resolve().parent != source / "lmcache":
         raise RuntimeError("another LMCache Python package was loaded")
+    descriptors = protobuf_hashes(cfg)
+    if descriptors != cfg.get("protobuf_descriptors_sha256", {}):
+        raise RuntimeError("generated protobuf descriptors differ from the profile")
     native_hashes = {
         "cuda_ops": digest(Path(cuda_ops.__file__)),
         "lmcache_native": digest(Path(native.__file__)),
@@ -116,6 +130,8 @@ def main() -> None:
         )
     )
     torch.cuda.synchronize()
+    if descriptors != protobuf_hashes(cfg):
+        raise RuntimeError("loaded wire descriptors changed during execution")
     if source_hashes != {
         name: digest(source / name) for name in cfg["source_files_sha256"]
     }:
@@ -145,6 +161,7 @@ def main() -> None:
         "harness_files_sha256": helper_hashes,
         "source": {"commit": commit, "clean": not dirty},
         "source_files_sha256": source_hashes,
+        "protobuf_descriptors_sha256": descriptors,
         "native_sha256": native_hashes,
         "loaded_modules": {
             "lmcache": lmcache.__file__,

@@ -193,5 +193,9 @@ class RotaryTransfersReceiptTests(RegisteredStateReceiptTests):
     profile_name = "rotary-transfers"
 
 
+class OrderedRegistrationReceiptTests(RegisteredStateReceiptTests):
+    profile_name = "ordered-registration"
+
+
 if __name__ == "__main__":
     unittest.main()

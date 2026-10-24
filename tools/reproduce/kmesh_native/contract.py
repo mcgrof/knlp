@@ -20,6 +20,7 @@ PROFILES = {
     "paged-cache": HERE / "profile.json",
     "registered-copy": HERE / "profiles" / "registered-copy.json",
     "rotary-transfers": HERE / "profiles" / "rotary-transfers.json",
+    "ordered-registration": HERE / "profiles" / "ordered-registration.json",
 }
 
 
@@ -91,6 +92,18 @@ def verify(root: Path, name: str = "paged-cache") -> dict:
         raise ValueError("wrong or edited source")
     if receipt["source_files_sha256"] != cfg["source_files_sha256"]:
         raise ValueError("source file hashes differ")
+    if (
+        cfg.get("protobuf_descriptors_sha256")
+        and receipt.get("protobuf_descriptors_sha256")
+        != cfg["protobuf_descriptors_sha256"]
+    ):
+        raise ValueError("generated protobuf descriptors differ")
+    if cfg.get("forbidden_log_patterns"):
+        log = root / "execution.log"
+        if receipt.get("execution_log_sha256") != digest(log):
+            raise ValueError("execution log digest differs")
+        if any(pattern in log.read_text() for pattern in cfg["forbidden_log_patterns"]):
+            raise ValueError("exporter lifecycle warning in execution log")
     if receipt["native_sha256"] != cfg["native_sha256"]:
         raise ValueError("native extension hashes differ")
     if receipt["exit_code"] != 0 or receipt["device"]["backend"] != "cuda":
