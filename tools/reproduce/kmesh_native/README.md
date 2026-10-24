@@ -17,6 +17,7 @@ Each pins an independent LMCache source and case set:
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
 | `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
+| `managed-raw-context` | `304df82413dbb9d9d12de145963b5451d1e9eeae` | 9 |
 | `owned-raw-copy` | `ca65f2820a218a84ecba4d452c47da2c1ac1c4f5` | 4 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
@@ -161,6 +162,25 @@ The tests supply receiving identity explicitly and do not expose a raw control
 RPC or service retirement receipt. Run its separate 323-case
 [CPU controls](../kmesh_contracts/README.md) with
 `defconfig-kmesh-owned-raw-copy-cpu`. No model or storage performance is measured.
+
+The `managed-raw-context` profile uses
+`make defconfig-kmesh-managed-raw-context-cuda` and nine separate-process cases.
+Construction retains the context before its first import and drains pointer-table
+uploads on their original initialization stream. Checked close drains the later
+transfer stream, permanently refuses new raw aliases and releases every owned
+reference. Remaining aliases or uncertain native outcomes prevent release.
+A successful repeated close returns the same allocation identities without a
+second driver call. Partial construction remains held until importer exit.
+
+The parent retains a 64 MiB BF16 allocation with two nonoverlapping
+`[2, 16, 4, 2, 8]` views filled with 7 and 9. Actual work on the context stream
+must still be pending before close. Cases include alias lifetime, initialization
+and transfer drain refusal, pre-native close refusal and ambiguous native close.
+Active GDS refusal uses a policy stand-in, not actual backend cleanup. This
+bounded resource primitive requires inactive GDS and does not provide a typed
+managed RPC, service receipt, storage or model result. Ten separate ordinary
+registration/raw-copy regression cases also pass against this source, but are
+outside this nine-case profile. Its paired CPU profile requires 327 cases.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

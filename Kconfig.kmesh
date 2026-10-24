@@ -19,6 +19,7 @@ config KNLP_KMESH_CONTRACTS_PROFILE
 	  transfers, or ordered-registration. Each profile pins its own source
 	  and required cases. Ordered registration keeps serving disabled.
 	  Select owned-raw-copy for partial raw import and cleanup lifetime.
+	  Select managed-raw-context for checked context admission controls.
 
 config KNLP_KMESH_CONTRACTS_SOURCE
 	string "Clean pinned LMCache source with its shared native extension"
@@ -53,6 +54,7 @@ config KNLP_KMESH_NATIVE_PROFILE
 	  Select raw-ipc-lifetime for checked raw mapping release and aliases.
 	  Select raw-ipc-outcomes for native uncertainty and receiver counters.
 	  Select owned-raw-copy for retained raw rotary import and cleanup.
+	  Select managed-raw-context for checked CUDA context retirement.
 	  Each profile pins its source, binaries and cases.
 
 config KNLP_KMESH_NATIVE_SOURCE
