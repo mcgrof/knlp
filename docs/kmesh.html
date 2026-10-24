@@ -121,9 +121,11 @@ alone is insufficient. The existing TokenDance-style baseline uses
 <strong>approximate repair</strong>: it recalculates selected model work before
 reusing the rest.</p>
 <p>We test loading 416 shared tokens through a separate cache process and
-running that same repair algorithm. It preserves the reference's saved
-attention state and next-token scores bit for bit, both when finishing one
-follow-up at a time and when running one model layer, or computation stage,
+running that same repair algorithm. The four follow-ups generate exactly the
+same tokens as when the existing CacheBlend method runs inside the model
+process. Their saved attention state and next-token scores match bit for bit,
+both when finishing one follow-up at a time and when running one model layer,
+or computation stage,
 for all four follow-ups before advancing to the next layer. The group uses
 LMCache's cache in host RAM. Its failure test lets three follow-ups finish
 while the failed one cleans up and retries by recalculating its whole prompt.</p>
@@ -134,8 +136,9 @@ matched pairs, but complete restoration is faster in only four pairs. Checking
 the loaded data still copies it back to the CPU. Combining this storage path
 with the group remains untested. The
 <a href="kmesh-recovery.html">recovery page explains the setup and results
-from the beginning</a>. Matching the approximate repair reference does not
-mean matching full prompt recalculation or establishing a serving-speed gain.</p>
+from the beginning</a>. These runs all use CacheBlend's selective recalculation;
+we have not shown here that it matches recalculating the entire prompt or
+improves serving speed.</p>
 </section>
 
 <section id="questions">
@@ -191,12 +194,14 @@ conclusions; the pages below retain the full measurements.</p>
 <article class="question-group">
 <span class="range">Questions 21–25</span>
 <h3><a href="kmesh-recovery.html">Recovery across processes</a></h3>
-<p>Reusing text at new positions: safe copies, real-model comparisons, SSD loading and processing four requests one model layer at a time.</p>
+<p>Questions 21–23 validate the recovery implementation around existing vLLM
+and LMCache capabilities. Questions 24–25 run the model to compare outputs,
+SSD loading and processing four requests one model layer at a time.</p>
 <ol start="21">
 <li><a href="kmesh-recovery.html#native">Can we move saved state into the right GPU locations?</a></li>
 <li><a href="kmesh-recovery.html#ownership">How does a separate cache process use memory safely?</a></li>
 <li><a href="kmesh-recovery.html#copies">What happens if a copy fails while the GPU is still working?</a></li>
-<li><a href="kmesh-recovery.html#serial">Does the real model produce the same repair result, and does DMA-BUF help?</a></li>
+<li><a href="kmesh-recovery.html#serial">Does loading saved state through another process change the model's output?</a></li>
 <li><a href="kmesh-recovery.html#collective">Can all four requests advance through the model one layer at a time?</a></li>
 </ol></article>
 </div>

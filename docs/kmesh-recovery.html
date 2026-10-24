@@ -50,31 +50,71 @@ context have changed. Simply copying their saved state is insufficient.
 memory. <strong>Repair</strong> means recalculating selected model work so the
 moved state can be used. This experiment uses the existing approximate
 CacheBlend repair algorithm from our
-<a href="kmesh-baselines.html#baseline">TokenDance-style baseline</a>.</p>
+<a href="kmesh-baselines.html#baseline">TokenDance-style reproduction</a>.</p>
+<h3>Which sections test the implementation, and which run the model?</h3>
+<p><strong>Questions 21–23 are implementation checks.</strong> vLLM already
+organizes its saved attention state into memory blocks, and LMCache already
+supports a separate cache process. Those existing capabilities are the starting
+point. The checks test the recovery code we add around them:</p>
+<ul class="experiment-steps">
+<li><strong>Question 21:</strong> Can our restore code write into vLLM's
+existing memory layouts and adjust the saved keys when text moves?</li>
+<li><strong>Question 22:</strong> Do our shared-segment ownership rules keep
+memory safe across LMCache's existing process boundary? The suite also checks
+existing transport behavior.</li>
+<li><strong>Question 23:</strong> Does our code wait for unfinished GPU copies
+before releasing or reusing their memory?</li>
+</ul>
+<p>Passing these checks establishes that the tested implementation handles
+those operations correctly. It does not demonstrate a speed or capacity
+benefit for KMesh. <strong>Questions 24 and 25 run the actual model.</strong>
+Question 24 compares model outputs and measures SSD loading time. Question 25
+checks whether changing the execution order of four requests changes their
+outputs or prevents safe recovery when one fails.</p>
 <h3>What we found</h3>
-<p><strong>The new loading and group-execution paths preserve that repair
-baseline's results in the tested workload.</strong> Reading directly into GPU
-memory reduces the measured storage-read time by 3.7%, but the complete loading
-process is sometimes faster and sometimes slower. The group test uses saved
-state in host RAM; combining group execution with SSD loading remains untested.</p>
-<p>These are prototype correctness and transfer-path results on one RTX 4090,
-measured October 23–24, 2026. Matching an approximate repair baseline does not
-mean matching a model that recalculates the whole prompt. For the real-model
-comparison, <a href="#serial">jump to question 24</a>; for the explanation of
-processing one model layer across all four requests, <a href="#collective">jump
-to question 25</a>. The first three questions explain the safety checks.</p>
+<p><strong>For each of the four requests, its generated tokens were identical
+across these three runs:</strong></p>
+<ol class="experiment-steps">
+<li><strong>Existing method:</strong> Run CacheBlend inside the model process,
+finishing one request before starting the next.</li>
+<li><strong>Move loading to another process:</strong> Obtain saved state from
+the separate cache process, then run the same CacheBlend method, still finishing
+one request at a time.</li>
+<li><strong>Also change the execution order:</strong> Use the separate cache
+process, but run model layer 1 for all four requests, then layer 2 for all four,
+and continue through the model.</li>
+</ol>
+<p>For each request, we also compared the saved attention data and the scores
+used to choose the next token. They matched bit for bit across all three runs.
+In this test,
+moving the data through another process and changing the execution order did
+not change what the existing CacheBlend method computed.</p>
+<p>CacheBlend itself reuses some saved work and recalculates selected parts.
+We have not shown here that this approximate method gives the same result as
+recalculating the entire prompt. The comparison above checks whether our
+engineering changes alter the existing method's output.</p>
+<p>A separate SSD test finds that reading directly into GPU memory reduces
+storage-read time by 3.7%, but the complete loading process is sometimes faster
+and sometimes slower. That test runs one request at a time. The four-request
+group uses saved state in host RAM; combining it with SSD loading remains
+untested.</p>
+<p>These tests ran on one RTX 4090 on October 23–24, 2026. For the model and
+SSD comparisons, <a href="#serial">jump to question 24</a>; for the four-request
+execution order and failure test, <a href="#collective">jump to question 25</a>.</p>
 </div>
 <div class="page-toc"><strong>On this page</strong><ol start="21">
 <li><a href="#native">Can we move saved state into the right GPU locations?</a></li>
 <li><a href="#ownership">How does a separate cache process use memory safely?</a></li>
 <li><a href="#copies">What happens if a copy fails while the GPU is still working?</a></li>
-<li><a href="#serial">Does the real model produce the same repair result, and does DMA-BUF help?</a></li>
+<li><a href="#serial">Does loading saved state through another process change the model's output?</a></li>
 <li><a href="#collective">Can all four requests advance through the model one layer at a time?</a></li>
 </ol></div>
 <section id="native">
 <h2>21. Can we move saved state into the right GPU locations?</h2>
-<p><strong>Yes, in the small GPU tests that precede the model experiment.</strong>
-vLLM divides its saved attention state into memory blocks. Those blocks can
+<p><strong>Implementation check:</strong> This tests our recovery code against
+vLLM's existing memory layouts; it does not introduce vLLM's block management.
+The small GPU tests pass.</p>
+<p>vLLM divides its saved attention state into memory blocks. Those blocks can
 store tokens, attention heads and key/value data in different orders. An
 attention head is one of the model's parallel attention calculations. The
 restore code must find the right addresses for each supported arrangement.</p>
@@ -111,6 +151,9 @@ addressing and GPU operations are real.</p>
 </section>
 <section id="ownership">
 <h2>22. How does a separate cache process use memory safely?</h2>
+<p><strong>Implementation check:</strong> LMCache already supports a separate
+cache process. We test the ownership and memory-lifetime rules added for our
+shared-segment recovery, along with existing transport checks.</p>
 <p>The model worker and cache service run as separate processes on the same
 machine. The cache service holds the shared originals while individual
 requests come and go. Before it accesses GPU memory, the worker
@@ -166,6 +209,8 @@ reuse; they do not authenticate a hostile client.</p>
 </section>
 <section id="copies">
 <h2>23. What happens if a copy fails while the GPU is still working?</h2>
+<p><strong>Implementation check:</strong> This checks our copy ordering and
+cleanup. It does not measure a model-output or performance improvement.</p>
 <p><strong>The memory stays reserved until pending work has actually finished.</strong>
 GPU copies can run asynchronously: the call that submits a copy may return
 before the copy completes. The service must also wait for the model's earlier
@@ -199,11 +244,12 @@ checks; exporter teardown also needs the service's release acknowledgement.</p>
 </details>
 </section>
 <section id="serial">
-<h2>24. Does the real model produce the same repair result, and does DMA-BUF help?</h2>
-<p><strong>It preserves the reference repair result. DMA-BUF gives a small,
-consistent reduction in read-call time, but no consistent reduction in the
-complete restoration time.</strong> The correctness and storage comparisons
-answer separate questions below.</p>
+<h2>24. Does loading saved state through another process change the model's output?</h2>
+<p><strong>For each request, the generated tokens match when loading inside
+the model process and when loading through the separate cache process.</strong>
+Their saved attention data and next-token scores also match exactly. DMA-BUF
+gives a small, consistent reduction in read-call time, but no consistent
+reduction in complete restoration time. These are separate comparisons.</p>
 <h3>What actually ran?</h3>
 <p>The model is Qwen2.5-0.5B-Instruct, a small model with 24 layers. A layer is
 one stage of the model's computation; each request passes through all 24.
@@ -231,10 +277,12 @@ choices at every layer: four children × 24 layers gives 96 comparisons.</p>
 failure after GPU work has been submitted. Recalculation is allowed only after
 pending work finishes and releases the destination memory. If cleanup cannot
 complete, the request must wait or fail safely.</p>
-<div class="note"><strong>What this correctness result means</strong>
-The new process boundary preserves the existing approximate repair algorithm
-for this workload. It does not establish equivalence to full prompt
-recalculation, total memory savings or serving speed. The ordinary multiprocess
+<div class="note"><strong>What was compared</strong>
+Both runs use CacheBlend to reuse saved state and recalculate selected work.
+Moving loading to a separate process gives the same generated tokens, saved
+attention data and next-token scores for these four requests. This does not
+show that CacheBlend matches recalculating the whole prompt, saves total
+memory or improves serving speed. The ordinary multiprocess
 serving connector still refuses this recovery mode; the dedicated reproducer
 is the tested path.</div>
 <h3 id="registered-storage">Does reading directly into GPU memory make this faster?</h3>
@@ -445,15 +493,17 @@ profiles retain their original pins, defconfigs and narrower scopes.</p>
 </section>
 <section id="collective">
 <h2>25. Can all four requests advance through the model one layer at a time?</h2>
-<p><strong>Yes: in the tested group, changing the order preserves the serial
-repair result.</strong> The purpose is to let related requests use the same
+<p><strong>Yes: all four requests generate the same tokens whether we finish
+one request at a time or run one model layer across the group at a time.</strong>
+Their saved attention data and next-token scores also match exactly. The
+purpose is to let related requests use the same
 unchanged saved segments while each maintains its own repair state. This
 experiment checks that the grouping works correctly; it does not establish
 a speed or memory-capacity benefit.</p>
 <p>The motivation for grouping is to bring the requests to the same model
 stage together, so later work can investigate doing their shared work together
-at that stage. Here we first check that this execution order and its failure
-handling preserve the reference result.</p>
+at that stage. Here we first check that changing the execution order leaves
+the model's outputs unchanged and that a failed child can retry safely.</p>
 <h3>What does “layer-major” mean?</h3>
 <p>Label the four children A, B, C and D. Each must pass through the model's
 24 layers. There are two execution orders:</p>
@@ -501,7 +551,9 @@ Combining this group with NVMe/DMA-BUF loading needs its own integration and
 tests. Batched model operations, sharing across multiple GPU workers,
 production serving speed and total memory savings are also unmeasured. The
 ordinary multiprocess serving connector remains disabled for this mode.
-The result here is preservation of the approximate repair baseline.</div>
+All compared successful runs use the same approximate CacheBlend method;
+they produce exactly the same generated tokens, saved attention data and
+next-token scores in this workload.</div>
 <details><summary>Group source and supporting safety tests</summary>
 <p>The group pins LMCache
 <a href="https://github.com/mcgrof/LMCache/commit/b9b5687baf79cabaeca2807eedb04dd13bbb87ed"><code>b9b5687b</code></a>
