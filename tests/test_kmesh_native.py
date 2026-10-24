@@ -191,5 +191,9 @@ class RawIPCLifetimeReceiptTests(OrderedRegistrationReceiptTests):
             self.check_receipt(self.receipt)
 
 
+class RawIPCOutcomesReceiptTests(RawIPCLifetimeReceiptTests):
+    profile_name = "raw-ipc-outcomes"
+
+
 if __name__ == "__main__":
     unittest.main()

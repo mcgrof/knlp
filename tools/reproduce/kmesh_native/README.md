@@ -16,6 +16,7 @@ Each pins an independent LMCache source and case set:
 | `rotary-transfers` | `062c4ea6487f86c91e30b3c98ac7e4e520f19106` | 6 |
 | `ordered-registration` | `27e256e1aae7090c4ccfc5eea587a7fbf93fddae` | 6 |
 | `raw-ipc-lifetime` | `cb31561f6877f16d50e74891d3dc9bf00f888532` | 3 |
+| `raw-ipc-outcomes` | `b08f4c339c73c23d2ba46b7e2c17e880c34a7b19` | 6 |
 
 The profiles pin LMCache source and native binary hashes. Reuse a matching
 prepared CUDA environment; this runner does not install or rebuild packages.
@@ -129,6 +130,16 @@ process lifetime. This prototype has no integrated server receipt or tombstone
 reclamation policy and cannot authorize general exporter release. Actual driver
 faults, process death and model serving remain separate gates. The profile freezes
 wire schemas, checks the complete exit log and records CUDA-binding/CuPy versions.
+
+For later lifetime work, select `make defconfig-kmesh-raw-ipc-outcomes-cuda`
+with its own pinned source. It preserves the three-case checkpoint and extends
+the controls to distinguish safe preflight retry from an ambiguous native result.
+Unknown import or close effects stay quarantined until importer teardown; the
+same native call must not run a second time. An absent completed mapping record
+does not prove import never occurred. The six cases also verify that serialized
+wrappers reset receiver-local counts while the sender keeps its own references.
+Controlled native errors occur before driver effects; no actual device-fault
+recovery or positive service teardown receipt is qualified.
 
 The plan and saved-capture verifier use the standard library and allocate no
 GPU memory. Execution requires one selected CUDA device and a fresh external

@@ -50,6 +50,7 @@ config KNLP_KMESH_NATIVE_PROFILE
 	  Select native paged-cache rotation or separate-process registered
 	  tensor copying, or ordered-registration through public RPC servers.
 	  Select raw-ipc-lifetime for checked raw mapping release and aliases.
+	  Select raw-ipc-outcomes for native uncertainty and receiver counters.
 	  Each profile pins its source, binaries and cases.
 
 config KNLP_KMESH_NATIVE_SOURCE

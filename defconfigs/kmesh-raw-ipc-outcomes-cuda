@@ -1,0 +1,5 @@
+# Raw CUDA native-outcome fencing and process-local receiver reference counts.
+CONFIG_KNLP_REPRODUCE_KMESH_NATIVE=y
+CONFIG_KNLP_KMESH_NATIVE_PROFILE="raw-ipc-outcomes"
+CONFIG_KNLP_KMESH_NATIVE_SOURCE=""
+CONFIG_KNLP_KMESH_NATIVE_OUTPUT=""
