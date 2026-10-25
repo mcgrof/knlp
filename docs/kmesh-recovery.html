@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Can four requests reuse saved attention state when shared text moves? Explain the model checks, DMA-BUF loading comparison and safe failure recovery.">
+<meta name="description" content="KMesh recovery experiments: restore shared attention state safely, compare model outputs across processes, and evaluate DMA-BUF loading and GPU checksums.">
 <title>KMesh: Reusing saved state when shared text moves</title>
 <link rel="canonical" href="https://knlp.io/kmesh-recovery.html">
 <link rel="stylesheet" href="kmesh.css">
@@ -22,107 +22,83 @@
 </nav></header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Reusing saved state</p>
-<span class="eyebrow">Questions 21–25</span>
-<h1>Can requests reuse saved state when shared text moves?</h1>
-<p class="lead">Four follow-up requests need the same text, but place it at
-different positions among their own instructions. We test whether they can
-reuse the model's saved work through a separate cache process, and whether
-reading that work directly from SSD into GPU memory helps.</p>
-<h3>Shared text at different prompt positions</h3>
-<p>When a language model reads a prompt, it builds a <strong>key/value (KV)
-cache</strong>: saved attention state that lets it use earlier tokens without
-recalculating all their work. vLLM runs the model; LMCache stores that state
-outside the engine, in host RAM or on storage. A token is a small piece of text.</p>
-<p>The earlier <a href="kmesh-retention.html#prefetch-demand">retention
-experiment</a> reused the same beginning of a prompt. This experiment asks a
-harder question. Suppose one agent has already read a report. Another agent
-puts new instructions before that report:</p>
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Shared-state recovery</p>
+<span class="eyebrow">Cache recovery and storage</span>
+<h1>Reusing shared context across processes and storage</h1>
+<p class="lead">Related requests often contain the same text at different
+positions. KMesh aims to keep one saved source for each shared segment and
+prepare the model state needed by each request. The work starts with safe
+restoration, then measures model outputs and storage costs before optimizing
+the loading path.</p>
+<h3>Shared source, request-specific model state</h3>
+<p>A language model saves attention state for text it has processed. This is
+its <strong>key/value (KV) cache</strong>. vLLM runs the model; LMCache stores
+saved state outside the engine. Reusing that state can avoid recalculating
+work for the same text. A token is a small piece of text.</p>
+<p>When requests begin with identical text, they can share a cached prefix.
+The next target is text that appears after different instructions:</p>
 <div class="table-wrap"><table>
 <caption>Same report, different preceding text</caption>
 <tr><th scope="col">Request</th><th scope="col">Illustrative prompt order</th></tr>
 <tr><td>First request</td><td>Shared report → question A</td></tr>
 <tr><td>Follow-up</td><td>New instructions → shared report → question B</td></tr>
 </table></div>
-<p>The words of the report are unchanged, but their positions and preceding
-context have changed. Simply copying their saved state is insufficient.
-<strong>Restoration</strong> means loading that state into the follow-up's GPU
-memory. <strong>Repair</strong> means recalculating selected model work so the
-moved state can be used. Our
-<a href="kmesh-baselines.html#baseline">TokenDance-style reproduction</a>
-uses LMCache's <strong>CacheBlend</strong> implementation for that selective
-recalculation. Our extensions identify the shared text segments, adjust their
-saved positions and require recalculation wherever saved state is missing.
-The comparisons below all include these extensions.</p>
-<p>CacheBlend already handles reuse beyond an identical prompt beginning.
-The TokenDance-style case gives KMesh a group of related requests and an
-explicit description of the text they share. The experiment checks how to
-coordinate that reuse across processes and storage.</p>
-<h3>Implementation checks and model experiments</h3>
-<p><strong>Questions 21–23 are implementation checks.</strong> vLLM already
-organizes its saved attention state into memory blocks, and LMCache already
-supports a separate cache process. Those existing capabilities are the starting
-point. The checks test the recovery code we add around them:</p>
-<ul class="experiment-steps">
-<li><strong>Question 21:</strong> Can our restore code write into vLLM's
-existing memory layouts and adjust the saved keys when text moves?</li>
-<li><strong>Question 22:</strong> Do our shared-segment ownership rules keep
-memory safe across LMCache's existing process boundary? The suite also checks
-existing transport behavior.</li>
-<li><strong>Question 23:</strong> Does our code wait for unfinished GPU copies
-before releasing or reusing their memory?</li>
-</ul>
-<p>Passing these checks establishes that the tested implementation handles
-those operations correctly. It does not demonstrate a speed or capacity
-benefit for KMesh. <strong>Questions 24 and 25 run the actual model.</strong>
-Question 24 compares model outputs and measures SSD loading time. Question 25
-checks whether changing the execution order of four requests changes their
-outputs or prevents safe recovery when one fails.</p>
-<h3>Results</h3>
-<p><strong>For each of the four requests, its generated tokens were identical
-across these three runs:</strong></p>
+<p><strong>Restoration</strong> loads saved state into the follow-up's GPU
+memory. <strong>Repair</strong> recalculates selected model work because the
+text now has a different position and preceding context. CacheBlend supplies
+selective recalculation. Our
+<a href="kmesh-baselines.html#baseline">TokenDance-style integration</a> identifies the
+shared segments and their positions, keeps each request's working state
+private, and requires recalculation wherever saved state is missing.</p>
+<h3>Correctness before latency optimization</h3>
+<p>vLLM already manages GPU cache blocks, and LMCache already supports a
+separate cache process. Our recovery code must place state in the requested
+blocks, respect ownership across the process boundary and wait for GPU work
+to finish before memory is reused. These are engineering requirements for
+safe reuse. Their validation establishes correctness, rather than a new
+model algorithm or a performance gain.</p>
+<h3>Established findings</h3>
+<p>For each of four requests, generated tokens, saved attention data and
+next-token scores match exactly across three executions:</p>
 <ol class="experiment-steps">
-<li><strong>Existing TokenDance-style method:</strong> Run our extended LMCache
-CacheBlend code inside the model process, finishing one request before
-starting the next.</li>
-<li><strong>Move loading to another process:</strong> Obtain saved state from
-the separate cache process, then run the same CacheBlend method, still finishing
-one request at a time.</li>
-<li><strong>Also change the execution order:</strong> Use the separate cache
-process, but run model layer 1 for all four requests, then layer 2 for all four,
-and continue through the model.</li>
+<li>Our TokenDance-style CacheBlend code loads and repairs state inside the
+model process, finishing one request at a time.</li>
+<li>The same repair code consumes state loaded through a separate cache
+process, still finishing one request at a time.</li>
+<li>The separate cache process supplies a group that advances all four
+requests through one model layer before moving to the next.</li>
 </ol>
-<p>For each request, we also compared the saved attention data and the scores
-used to choose the next token. They matched bit for bit across all three runs.
-In this test,
-moving the data through another process and changing the execution order did
-not change what our TokenDance-style serial implementation computed.</p>
-<p>CacheBlend itself reuses some saved work and recalculates selected parts.
-We have not shown here that this approximate method gives the same result as
-recalculating the entire prompt. The comparison above checks whether our
-engineering changes alter the existing method's output.</p>
-<p>A separate SSD test finds that reading directly into GPU memory reduces
-storage-read time by 3.7%, but the complete loading process is sometimes faster
-and sometimes slower. That test runs one request at a time with singleflight
-off. It uses the fixed retention code, then deliberately evicts retained data
-before every child to force fresh SSD reads. The four-request group uses saved
-state in host RAM; combining it with SSD loading remains untested.</p>
-<p>These tests ran on one RTX 4090 on October 23–24, 2026. For the model and
-SSD comparisons, <a href="#serial">jump to question 24</a>; for the four-request
-execution order and failure test, <a href="#collective">jump to question 25</a>.</p>
+<p>These comparisons establish that the process boundary and execution order
+leave this workload's results unchanged. All three use approximate reuse of
+saved state; equality to recalculating the entire prompt is a separate question.</p>
+<p>A separate SSD comparison finds 3.7% shorter read-call time with DMA-BUF
+than with host staging, while complete restoration remains mixed. It runs
+children one at a time. Singleflight, which lets matching requests wait for one
+load, is off. The retention fix is enabled, and the benchmark explicitly evicts
+the saved sources before every child to force fresh SSD reads. The grouped model test
+uses sources in host RAM. These results were measured on one RTX 4090 on
+October 23–24, 2026.</p>
+<h3>Next evaluation</h3>
+<p>The immediate optimization target is the integrity check that copies
+12 MiB from GPU memory back to the CPU per child. Computing SHA-256 on the
+GPU could retain the same check while returning only small digests. The next
+comparison would keep the execution order fixed, then evaluate overlap between
+independent storage reads and GPU checks. Both are unmeasured candidates.
+Combining grouped model execution with SSD loading and retaining shared sources
+across children also needs its own evaluation.</p>
 </div>
-<div class="page-toc"><strong>On this page</strong><ol start="21">
-<li><a href="#native">Can we move saved state into the right GPU locations?</a></li>
-<li><a href="#ownership">How does a separate cache process use memory safely?</a></li>
-<li><a href="#copies">What happens if a copy fails while the GPU is still working?</a></li>
-<li><a href="#serial">Does loading saved state through another process change the model's output?</a></li>
-<li><a href="#collective">Testing layer-major execution across four related requests</a></li>
+<div class="page-toc"><strong>Recovery workflow</strong><ol start="21">
+<li><a href="#native">Restoring state into vLLM's GPU cache</a></li>
+<li><a href="#ownership">Owning shared state across processes</a></li>
+<li><a href="#copies">Completing GPU copies before memory reuse</a></li>
+<li><a href="#serial">Evaluating model outputs and DMA-BUF loading costs</a></li>
+<li><a href="#collective">Testing layer-major execution across related requests</a></li>
 </ol></div>
 <section id="native">
-<h2>21. Can we move saved state into the right GPU locations?</h2>
-<p><strong>Implementation check:</strong> This tests our recovery code against
-vLLM's existing memory layouts; it does not introduce vLLM's block management.
-The small GPU tests pass.</p>
+<h2>21. Restoring state into vLLM's GPU cache</h2>
+<p>Before running the model, we verify that restoration places saved state
+in the right vLLM cache blocks. The GPU checks exercise our destination writes
+and position adjustment using allocations managed by vLLM.</p>
 <p>vLLM divides its saved attention state into memory blocks. Those blocks can
 store tokens, attention heads and key/value data in different orders. An
 attention head is one of the model's parallel attention calculations. The
@@ -131,8 +107,8 @@ restore code must find the right addresses for each supported arrangement.</p>
 key vectors, a method called rotary position embedding (RoPE). When shared
 text moves, the restore code adjusts that rotation. This adjustment handles
 position; it does not by itself fix the effect of different preceding text.
-That is why the real-model repair test in <a href="#serial">question 24</a>
-is necessary.</p>
+The <a href="#serial">real-model comparison</a> checks the additional
+recalculation needed when the preceding context changes.</p>
 <p>All 32 required synthetic GPU cases passed on October 23. They check that
 values stay unchanged, moved keys receive the expected positional adjustment,
 and memory outside the requested destination stays untouched. These use small,
@@ -143,7 +119,8 @@ copying and addressing, rather than answer quality or speed.</p>
 tokens are grouped first in memory), separate key/value planes and formats
 that pack keys and values together. They include multiple saved-object groups,
 partly filled final blocks and repeated reuse of destination slots. These
-storage orders are different from the model execution order in question 25.</p>
+storage orders describe memory layout. <a href="#collective">Layer-major
+execution</a> describes the order in which requests pass through model layers.</p>
 <p>Values and keys that stay at the same position preserve their raw BF16 bits,
 including negative zero. BF16 is the two-byte floating-point format used for
 the saved state. Moved keys match an independent CPU rotation with absolute
@@ -159,10 +136,11 @@ addressing and GPU operations are real.</p>
 </details>
 </section>
 <section id="ownership">
-<h2>22. How does a separate cache process use memory safely?</h2>
-<p><strong>Implementation check:</strong> LMCache already supports a separate
-cache process. We test the ownership and memory-lifetime rules added for our
-shared-segment recovery, along with existing transport checks.</p>
+<h2>22. Owning shared state across processes</h2>
+<p>Sharing saved state through LMCache's existing cache process requires clear
+ownership: a request must be allowed to use each allocation, and that allocation
+must remain alive until the request's work finishes. The tests check these
+rules across the process boundary.</p>
 <p>The model worker and cache service run as separate processes on the same
 machine. The cache service holds the shared originals while individual
 requests come and go. Before it accesses GPU memory, the worker
@@ -217,9 +195,10 @@ reuse; they do not authenticate a hostile client.</p>
 </details>
 </section>
 <section id="copies">
-<h2>23. What happens if a copy fails while the GPU is still working?</h2>
-<p><strong>Implementation check:</strong> This checks our copy ordering and
-cleanup. It does not measure a model-output or performance improvement.</p>
+<h2>23. Completing GPU copies before memory reuse</h2>
+<p>Requests can fail while a GPU transfer is still running. We test that the
+recovery code waits for accepted transfers before releasing memory, including
+when the first cleanup attempt fails.</p>
 <p><strong>The memory stays reserved until pending work has actually finished.</strong>
 GPU copies can run asynchronously: the call that submits a copy may return
 before the copy completes. The service must also wait for the model's earlier
@@ -253,7 +232,7 @@ checks; exporter teardown also needs the service's release acknowledgement.</p>
 </details>
 </section>
 <section id="serial">
-<h2>24. Does loading saved state through another process change the model's output?</h2>
+<h2>24. Evaluating model outputs and DMA-BUF loading costs</h2>
 <p><strong>For each request, the generated tokens match when loading inside
 the model process and when loading through the separate cache process.</strong>
 Their saved attention data and next-token scores also match exactly. DMA-BUF
@@ -264,8 +243,7 @@ reduction in complete restoration time. These are separate comparisons.</p>
 one stage of the model's computation; each request passes through all 24.
 One leader request supplies saved attention state for four shared text segments,
 totalling 416 tokens. Four follow-up requests, called <strong>children</strong>,
-each have a 512-token prompt and place those segments at different positions.
-This is the measured workload behind the report illustration above.</p>
+each have a 512-token prompt and place those segments at different positions.</p>
 <h3>The shared-segment workload and the CacheBlend comparison</h3>
 <p><strong>The TokenDance-style case supplies the multi-request workload and
 sharing information; CacheBlend supplies the selective recalculation.</strong>
@@ -274,11 +252,11 @@ different preceding context. Here the application knows which four children
 will reuse which segments. Our integration carries those exact segment
 identities and positions into each request and can coordinate the children
 as a group.</p>
-<p>This lets us test the KMesh questions: can a separate cache process hold
-one unchanged source, can each child restore it into its own model state,
-and can the children advance together without interfering with one another?
-Keeping the same prompts, shared segments and repair settings lets us compare
-changes in loading and execution order against the established serial run.</p>
+<p>The experiment gives the cache process an unchanged source and restores
+it into each child's private model state. It then coordinates the children
+without letting one request alter another's working data. The prompts, shared
+segments and repair settings stay fixed so the comparison isolates loading
+and execution order.</p>
 <p>A stock CacheBlend workload would also be a valid way to study DMA-BUF
 loading. This experiment measures our existing multi-request integration.
 It establishes no advantage of our additions over stock CacheBlend. A direct
@@ -372,7 +350,7 @@ on, and the fixed retention kept one 48 MiB ancestor available across the
 children. It read that ancestor from SSD once. Here, forced eviction takes
 away that cross-child reuse to compare the two storage routes.</p>
 <div class="table-wrap"><table>
-<caption>Which sharing mechanisms were used?</caption>
+<caption>Singleflight, retention and forced SSD reads in the two experiments</caption>
 <tr><th scope="col">Setting</th><th scope="col">Earlier exact-prefix read-once experiment</th><th scope="col">This shifted-segment SSD comparison</th></tr>
 <tr><td>Engine singleflight: one request loads while matching followers wait</td><td>On.</td><td>Off. Children run one at a time.</td></tr>
 <tr><td>Fixed external retention</td><td>On. Keep the loaded ancestor for subsequent children.</td><td>On. The benchmark explicitly evicts the four objects before every child.</td></tr>
@@ -468,7 +446,8 @@ and removed repeat reads. The equal 48 MiB totals describe different workloads.<
 <details><summary>Storage workload, hardware and correctness checks</summary>
 <p>The RTX 4090 system has a Ryzen 9 9950X3D and Samsung 990 PRO 4 TB SSD.
 The backing storage uses XFS regular files on the patched DMA-BUF-capable
-Linux 7.3-rc3 kernel. The Python/PyTorch/CUDA runtime is listed in question 21;
+Linux 7.3-rc3 kernel. The <a href="#native">GPU validation setup</a> records
+the Python/PyTorch/CUDA runtime;
 OpenMP/MKL use two CPU threads. Both routes use a 64 MiB source memory pool,
 a 1 MiB metadata area, queue depth 32, maximum transfer size 128 KiB and the
 same 1 GiB locked-memory allowance. Fresh files are fully initialized and
@@ -677,8 +656,8 @@ the model.</p>
 cache tier</strong>. Some implementation files call it “CPU-L1”; that name means
 a software cache in ordinary system RAM, not the processor's tiny hardware L1
 cache. A separate cache process supplies the data to one model worker.
-The NVMe/DMA-BUF comparison in question 24 ran children serially; it was not
-this group test.</p>
+The <a href="#registered-storage">SSD comparison</a> ran children one at a
+time. Combining that loading path with grouped execution remains untested.</p>
 <h3>Measured comparison</h3>
 <p>On October 24, the in-process serial reference, the serial path using the
 separate cache process and this group path all produced bit-for-bit identical
@@ -707,7 +686,8 @@ next-token scores in this workload.</div>
 <p>The group pins LMCache
 <a href="https://github.com/mcgrof/LMCache/commit/b9b5687baf79cabaeca2807eedb04dd13bbb87ed"><code>b9b5687b</code></a>
 and vLLM <code>9df1493cae0b98380a3c3ecb9b2d41776a6d8735</code>, with the runtime
-listed in question 21. Its supporting profiles pass 694 CPU and 208 CUDA cases,
+recorded in the <a href="#native">GPU validation setup</a>. Its supporting
+profiles pass 694 CPU and 208 CUDA cases,
 overlapping earlier profiles. They test simultaneous inputs, private writeback,
 early close and refusal to release memory while work remains pending, across
 both memory-layout families and both request transports.</p>
