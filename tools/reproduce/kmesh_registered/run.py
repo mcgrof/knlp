@@ -31,6 +31,7 @@ def service(
     storage_file=None,
     storage_settings=None,
     poison_arena=False,
+    checksum_library=None,
 ):
     """Own the importing process; its actual exit is the final release proof."""
     import collective_gate_common as common
@@ -62,7 +63,10 @@ def service(
         server, engine = create_managed_raw_server(**service_args)
         if storage_config is not None:
             observer = storage.StorageObserver(
-                engine.storage_manager, storage_settings, poison_arena=poison_arena
+                engine.storage_manager,
+                storage_settings,
+                poison_arena=poison_arena,
+                checksum_library=checksum_library,
             )
             observer.install()
         server.start()
@@ -190,6 +194,7 @@ def parse_args():
     )
     parser.add_argument("--storage-file", type=Path)
     parser.add_argument("--poison-arena", action="store_true")
+    parser.add_argument("--checksum-library", type=Path)
     parser.add_argument(
         "--model-execution", choices=("serial", "collective-lockstep"), default="serial"
     )
@@ -265,6 +270,21 @@ def main():
         raise ValueError("a backing file requires an explicit storage route")
     if args.storage_route == "cpu-l1" and args.poison_arena:
         raise ValueError("arena conditioning requires an explicit storage route")
+    if args.checksum_library is not None and (
+        args.route != "registered" or args.storage_route != "dma-buf"
+    ):
+        raise ValueError("GPU checksums require registered DMA-BUF restoration")
+    gpu_checksum = None
+    if args.checksum_library is not None:
+        args.checksum_library = args.checksum_library.resolve(strict=True)
+        gpu_checksum = {
+            "library_sha256": hashlib.sha256(
+                args.checksum_library.read_bytes()
+            ).hexdigest(),
+            "kernel_source_sha256": hashlib.sha256(
+                (ROOT / "gpu_sha256.cu").read_bytes()
+            ).hexdigest(),
+        }
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError("output directory must be empty")
     for source_path in (args.lmcache_source, args.vllm_source, ROOT.parents[2]):
@@ -444,6 +464,7 @@ def main():
                     args.storage_file,
                     pins["storage"],
                     args.poison_arena,
+                    args.checksum_library,
                 ),
             )
             process.start()
@@ -625,6 +646,7 @@ def main():
                     storage_evidence,
                     pins["storage"],
                     require_poison=args.poison_arena,
+                    checksum_backend="cuda-sha256" if gpu_checksum else "cpu",
                 )
             client.close()
             client = None
@@ -674,6 +696,7 @@ def main():
                 "model_execution": args.model_execution,
                 "group_failure": args.group_failure,
                 "storage_route": args.storage_route,
+                "gpu_checksum": gpu_checksum,
                 "poison_arena": args.poison_arena,
                 "storage_evidence": storage_evidence,
                 "storage_verification": storage_verification,

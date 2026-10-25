@@ -40,6 +40,10 @@ def main():
     parser.add_argument("--profile", type=Path, default=ROOT / "storage-profile.json")
     parser.add_argument("--trials", type=int, default=7)
     parser.add_argument("--plan", action="store_true")
+    parser.add_argument(
+        "--comparison", choices=("storage", "checksum"), default="storage"
+    )
+    parser.add_argument("--checksum-library", type=Path)
     args = parser.parse_args()
     if not 1 <= args.trials <= 50:
         parser.error("choose one through fifty matched pairs")
@@ -48,10 +52,18 @@ def main():
     helper_hashes = {p.name: digest(p) for p in ROOT.glob("*.py")}
     if profile["storage"]["kind"] != "raw_block_comparison":
         parser.error("storage pair requires its explicit source/runtime profile")
-    order = [
-        list(("staged", "dma-buf") if i % 2 == 0 else ("dma-buf", "staged"))
-        for i in range(args.trials)
-    ]
+    arms = (
+        ("staged", "dma-buf")
+        if args.comparison == "storage"
+        else ("cpu-sha256", "gpu-sha256")
+    )
+    if (args.comparison == "checksum") != (args.checksum_library is not None):
+        parser.error("checksum comparison requires its CUDA checksum library")
+    order = [list(arms if i % 2 == 0 else reversed(arms)) for i in range(args.trials)]
+    library_hash = (
+        None if args.checksum_library is None else digest(args.checksum_library)
+    )
+    kernel_hash = digest(ROOT / "gpu_sha256.cu")
     if args.plan:
         print(json.dumps({"profile": profile, "trial_order": order}, indent=2))
         return
@@ -81,7 +93,14 @@ def main():
     for name in names:
         common += ["--" + name, str(getattr(args, name.replace("-", "_")).resolve())]
 
-    def run(relative, route, storage_route="cpu-l1", *, poison_arena=False):
+    def run(
+        relative,
+        route,
+        storage_route="cpu-l1",
+        *,
+        poison_arena=False,
+        gpu_checksum=False,
+    ):
         root = output / relative
         root.parent.mkdir(parents=True, exist_ok=True)
         with root.with_suffix(".log").open("x") as log:
@@ -95,7 +114,12 @@ def main():
                     "--output-dir",
                     str(root),
                 ]
-                + (["--poison-arena"] if poison_arena else []),
+                + (["--poison-arena"] if poison_arena else [])
+                + (
+                    ["--checksum-library", str(args.checksum_library.resolve())]
+                    if gpu_checksum
+                    else []
+                ),
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 check=True,
@@ -112,7 +136,7 @@ def main():
             "same-source reference differs from the historical serial baseline"
         )
 
-    def check_storage(root, route, *, poison_arena=False):
+    def check_storage(root, route, *, poison_arena=False, gpu_checksum=False):
         import storage_verify
 
         numerical = compare(root, reference, reference / "comparison.json")
@@ -127,23 +151,44 @@ def main():
             or result["poison_arena"] is not poison_arena
         ):
             raise ValueError("a paired model run used different experiment inputs")
+        expected_checksum = (
+            {"library_sha256": library_hash, "kernel_source_sha256": kernel_hash}
+            if gpu_checksum
+            else None
+        )
+        if result.get("gpu_checksum") != expected_checksum:
+            raise ValueError(
+                "checksum library or kernel source differs from the paired inputs"
+            )
         checked = storage_verify.verify(
             route,
             result["storage_evidence"],
             profile["storage"],
             require_poison=poison_arena,
+            checksum_backend="cuda-sha256" if gpu_checksum else "cpu",
         )
         if result["storage_verification"] != checked:
             raise ValueError("storage verification differs from its actual evidence")
         return result
 
+    def route_for(arm):
+        return arm if args.comparison == "storage" else "dma-buf"
+
     qualifications = []
-    for route in ("staged", "dma-buf"):
-        root = run(f"qualification/{route}", "registered", route, poison_arena=True)
-        check_storage(root, route, poison_arena=True)
+    for arm in arms:
+        route, gpu_checksum = route_for(arm), arm == "gpu-sha256"
+        root = run(
+            f"qualification/{arm}",
+            "registered",
+            route,
+            poison_arena=True,
+            gpu_checksum=gpu_checksum,
+        )
+        check_storage(root, route, poison_arena=True, gpu_checksum=gpu_checksum)
         qualifications.append(
             {
                 "route": route,
+                "arm": arm,
                 "result_path": str(root.relative_to(output) / "result.json"),
                 "result_sha256": digest(root / "result.json"),
                 "comparison_sha256": digest(root / "comparison.json"),
@@ -153,9 +198,15 @@ def main():
 
     rows = []
     for trial, routes in enumerate(order):
-        for route in routes:
-            root = run(f"trial-{trial:02d}/{route}", "registered", route)
-            result = check_storage(root, route)
+        for arm in routes:
+            route, gpu_checksum = route_for(arm), arm == "gpu-sha256"
+            root = run(
+                f"trial-{trial:02d}/{arm}",
+                "registered",
+                route,
+                gpu_checksum=gpu_checksum,
+            )
+            result = check_storage(root, route, gpu_checksum=gpu_checksum)
             events = root / "events.jsonl"
             if digest(events) != result["event_ledger_sha256"]:
                 raise ValueError("model timing events differ from the bound result")
@@ -176,7 +227,8 @@ def main():
             rows.append(
                 {
                     "trial": trial,
-                    "route": route,
+                    "route": arm,
+                    "storage_route": route,
                     "result_path": str(root.relative_to(output) / "result.json"),
                     "result_sha256": digest(root / "result.json"),
                     "comparison_sha256": digest(root / "comparison.json"),
@@ -204,9 +256,13 @@ def main():
         paired.append(
             {
                 "trial": trial,
-                "dma_minus_staged_ns": {
-                    name: pair["dma-buf"][name] - pair["staged"][name]
-                    for name in pair["staged"]
+                (
+                    "dma_minus_staged_ns"
+                    if args.comparison == "storage"
+                    else "gpu_minus_cpu_ns"
+                ): {
+                    name: pair[arms[1]][name] - pair[arms[0]][name]
+                    for name in pair[arms[0]]
                 },
             }
         )
@@ -216,6 +272,9 @@ def main():
             "status": "complete",
             "passed": True,
             "trial_order": order,
+            "comparison": args.comparison,
+            "checksum_library_sha256": library_hash,
+            "checksum_kernel_sha256": kernel_hash if library_hash else None,
             "reference_result_sha256": digest(reference / "result.json"),
             "profile_sha256": profile_hash,
             "helper_sha256": helper_hashes,

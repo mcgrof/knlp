@@ -283,3 +283,11 @@ request/plan evidence enforces the causal chain through the empty retry plan
 and actual request completion. All four native group sources must close with
 no physical work pending. This token/cleanup control has mixed repaired and
 recomputed K/V and is separate from the complete raw-tensor success comparison.
+
+### Exact GPU SHA-256 evaluation
+
+The [GPU checksum guide](GPU_INTEGRITY.md) describes the standalone byte checks
+and a CPU/GPU checksum comparison with the DMA-BUF route fixed. It preserves
+the current whole-object SHA-256 format, uses an optional caller-built CUDA
+library, and leaves LMCache's default checksum path unchanged. Select
+`defconfig-kmesh-registered-gpu-checksum-cuda` for the model comparison.

@@ -3,10 +3,21 @@
 
 
 def verify(
-    route: str, evidence: dict, settings: dict, *, require_poison: bool = False
+    route: str,
+    evidence: dict,
+    settings: dict,
+    *,
+    require_poison: bool = False,
+    checksum_backend: str = "cpu",
 ) -> dict:
     if route not in ("staged", "dma-buf"):
         raise ValueError("unknown storage route")
+    if checksum_backend not in ("cpu", "cuda-sha256") or (
+        checksum_backend == "cuda-sha256" and route != "dma-buf"
+    ):
+        raise ValueError("unsupported checksum backend and storage route")
+    if evidence.get("checksum_backend", "cpu") != checksum_backend:
+        raise ValueError("checksum execution differs from the requested backend")
     if evidence.get("close_buffers_reusable") is not True:
         raise ValueError("storage arena lacks checked physical shutdown")
     if evidence["storage_manager"].get("is_healthy") is not True:
@@ -136,8 +147,23 @@ def verify(
             or len(hashes) != objects
             or any(row["state"] != "loaded-needs-repair" for row in restores)
             or any(row["payload_bytes"] != payload for row in hashes)
+            or any(
+                row.get("checksum_backend", "cpu") != checksum_backend for row in hashes
+            )
             or sum(row["host_payload_copy_bytes"] for row in hashes)
-            != (objects * payload if route == "dma-buf" else 0)
+            != (
+                objects * payload
+                if route == "dma-buf" and checksum_backend == "cpu"
+                else 0
+            )
+            or (
+                checksum_backend == "cuda-sha256"
+                and any(
+                    row.get("checksum_backend") != "cuda-sha256"
+                    or row.get("host_digest_copy_bytes") != 32
+                    for row in hashes
+                )
+            )
         ):
             raise ValueError("restored source or full integrity-check coverage differs")
         results.append(
@@ -149,6 +175,9 @@ def verify(
                 "checksum_ns": sum(row["elapsed_ns"] for row in hashes),
                 "integrity_host_copy_bytes": sum(
                     row["host_payload_copy_bytes"] for row in hashes
+                ),
+                "integrity_host_digest_bytes": sum(
+                    row.get("host_digest_copy_bytes", 0) for row in hashes
                 ),
                 "payload_read_bytes": objects * payload,
                 "native_payload_read_operations": len(operations),

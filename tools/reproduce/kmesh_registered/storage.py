@@ -238,7 +238,14 @@ def evict_settled_l1_keys(manager, keys, deadline: float) -> int:
 class StorageObserver:
     """Own bounded observation hooks in the importing experiment process."""
 
-    def __init__(self, manager, settings: dict, *, poison_arena: bool = False):
+    def __init__(
+        self,
+        manager,
+        settings: dict,
+        *,
+        poison_arena: bool = False,
+        checksum_library=None,
+    ):
         adapters = manager.l2_adapters()
         if len(adapters) != 1:
             raise ValueError("cold comparison requires one actual L2 adapter")
@@ -256,6 +263,11 @@ class StorageObserver:
         self.poison_arena = poison_arena
         self.conditioning = False
         self.conditioning_work = None
+        self.gpu_checksum = None
+        if checksum_library is not None:
+            from gpu_integrity import CudaSha256
+
+            self.gpu_checksum = CudaSha256(checksum_library)
 
     def install(self) -> None:
         """Install process-local admission, I/O and timing observations."""
@@ -327,15 +339,28 @@ class StorageObserver:
         @wraps(checksum)
         def hash_source(obj):
             start = time.perf_counter_ns()
-            result = checksum(obj)
             tensor = obj.get_tensor(0)
+            use_gpu = self.gpu_checksum is not None and self.phase != "source"
+            if use_gpu:
+                result = self.gpu_checksum.hexdigest(tensor)
+            else:
+                result = checksum(obj)
+                if self.gpu_checksum is not None:
+                    if self.gpu_checksum.hexdigest(tensor) != result:
+                        raise RuntimeError(
+                            "GPU hash differs from the CPU source digest"
+                        )
             self.rows.append(
                 {
                     "kind": "checksum",
                     "phase": self.phase,
                     "elapsed_ns": time.perf_counter_ns() - start,
                     "payload_bytes": obj.get_size(),
-                    "host_payload_copy_bytes": obj.get_size() if tensor.is_cuda else 0,
+                    "host_payload_copy_bytes": (
+                        obj.get_size() if tensor.is_cuda and not use_gpu else 0
+                    ),
+                    "host_digest_copy_bytes": 32 if use_gpu else 0,
+                    "checksum_backend": "cuda-sha256" if use_gpu else "cpu",
                 }
             )
             return result
@@ -416,6 +441,7 @@ class StorageObserver:
             "storage_manager": self.manager.report_status(),
             "location": self.location,
             "poisoned_l1_arena": self.poison_arena,
+            "checksum_backend": "cuda-sha256" if self.gpu_checksum else "cpu",
         }
 
     def close(self) -> None:

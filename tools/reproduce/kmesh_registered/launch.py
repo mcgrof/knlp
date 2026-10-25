@@ -15,6 +15,8 @@ FIELDS = (
     "STORAGE_ROUTE",
     "STORAGE_FILE",
     "TRIALS",
+    "COMPARISON",
+    "CHECKSUM_LIBRARY",
     "ROUTE",
     "VLLM_SOURCE",
     "LMCACHE_SOURCE",
@@ -44,6 +46,7 @@ def main():
     settings["STORAGE_ROUTE"] = "cpu-l1"
     settings["MODEL_EXECUTION"] = "serial"
     settings["TRIALS"] = 7
+    settings["COMPARISON"] = "storage"
     prefix = "CONFIG_KNLP_KMESH_REGISTERED_"
     if args.config.is_file():
         for line in args.config.read_text().splitlines():
@@ -114,6 +117,7 @@ def main():
             "--output-dir",
             str(output),
         ]
+        argv += ["--comparison", settings["COMPARISON"]]
     else:
         argv = [
             sys.executable,
@@ -129,6 +133,8 @@ def main():
         ]
         if settings["STORAGE_FILE"]:
             argv += ["--storage-file", settings["STORAGE_FILE"]]
+    if settings["CHECKSUM_LIBRARY"]:
+        argv += ["--checksum-library", settings["CHECKSUM_LIBRARY"]]
     for key, option in names.items():
         if key != "OUTPUT":
             argv.extend(("--" + option, settings[key]))

@@ -33,6 +33,18 @@ config KNLP_KMESH_REGISTERED_STORAGE_PAIR
 	bool "Run a verified reference and alternating matched storage pairs"
 	default n
 
+config KNLP_KMESH_REGISTERED_COMPARISON
+	string "Paired comparison: storage or checksum"
+	default "storage"
+	help
+	  Checksum holds DMA-BUF reads fixed and compares ordinary CPU SHA-256
+	  with the experimental CUDA implementation. It requires a caller-built
+	  library and does not change LMCache's default checksum path.
+
+config KNLP_KMESH_REGISTERED_CHECKSUM_LIBRARY
+	string "Caller-built CUDA SHA-256 shared library; empty keeps CPU checksums"
+	default ""
+
 config KNLP_KMESH_REGISTERED_TRIALS
 	int "Number of matched storage pairs"
 	default 7

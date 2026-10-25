@@ -304,6 +304,46 @@ class StorageReceipt(unittest.TestCase):
                     16384 if route == "dma-buf" else 0,
                 )
 
+    def test_gpu_checksum_requires_digests_without_a_payload_download(self):
+        settings, evidence = synthetic_evidence("dma-buf")
+        evidence["checksum_backend"] = "cuda-sha256"
+        for row in evidence["rows"]:
+            if row["kind"] == "checksum":
+                row.update(
+                    checksum_backend="cuda-sha256",
+                    host_payload_copy_bytes=0,
+                    host_digest_copy_bytes=32,
+                )
+        result = storage_verify.verify(
+            "dma-buf", evidence, settings, checksum_backend="cuda-sha256"
+        )
+        self.assertTrue(result["passed"])
+        self.assertEqual(
+            [child["integrity_host_copy_bytes"] for child in result["children"]],
+            [0, 0],
+        )
+        self.assertEqual(
+            [child["integrity_host_digest_bytes"] for child in result["children"]],
+            [64, 64],
+        )
+        for change in (
+            {"host_payload_copy_bytes": 4096},
+            {"host_digest_copy_bytes": 31},
+            {"checksum_backend": "cpu"},
+        ):
+            bad = copy.deepcopy(evidence)
+            next(row for row in bad["rows"] if row["kind"] == "checksum").update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                storage_verify.verify(
+                    "dma-buf", bad, settings, checksum_backend="cuda-sha256"
+                )
+        with self.assertRaises(ValueError):
+            storage_verify.verify("dma-buf", evidence, settings)
+        with self.assertRaises(ValueError):
+            storage_verify.verify(
+                "staged", evidence, settings, checksum_backend="cuda-sha256"
+            )
+
     def test_incomplete_receipts_never_qualify_a_storage_route(self):
         for route in ("staged", "dma-buf"):
             for case in (

@@ -58,3 +58,42 @@ the operation and exception frames, then use the caller's actual device-drain
 handling before releasing memory. The dedicated KMesh service already owns
 source leases and quarantines unresolved operations. Kernel correctness alone
 does not qualify the restoration integration or production serving.
+
+## Compare complete restoration with DMA-BUF reads fixed
+
+Use the existing [registered replay setup](README.md#matched-storage-routes),
+including the independently verified historical reference and pinned source,
+model, native binaries and runtime. Select the checksum configuration:
+
+```sh
+make defconfig-kmesh-registered-gpu-checksum-cuda
+make kmesh-registered-plan
+# Set the source, model, trace, reference, interpreter and capture paths.
+export KMESH_REGISTERED_CHECKSUM_LIBRARY=/path/outside/checkouts/libkmesh_sha256.so
+make kmesh-registered-storage-pair
+```
+
+This configuration sets `KMESH_REGISTERED_COMPARISON=checksum`. Both arms use
+the same DMA-BUF SSD route. The default is seven matched pairs with alternating
+CPU/GPU checksum order. A fresh same-source serial reference must match the
+historical reference, and both arms must pass the poisoned-source-pool data
+arrival check before timings. The compiled kernel and source hashes are bound
+to each GPU result. Model K/V, next-token scores, generated tokens and selected
+recomputation positions must match the serial reference.
+
+The observer replaces only the dedicated reproducer's checksum call. LMCache
+and vLLM stay at the storage profile's exact pins; production checksum defaults
+are unchanged. Before timing children, every saved object retains its CPU
+SHA-256 as an independent reference. The GPU call must match it. Each child's
+restore also checks against that saved CPU digest before position adjustment.
+The ordinary ownership, completion and failed-operation drain handling remains
+active. Device-fault injection is not part of this checksum comparison.
+
+Singleflight stays off. The retention fix stays enabled, and explicit eviction
+before each child forces the same 12 MiB SSD read in both arms. GPU checksum
+receipts must show zero payload-download bytes and four 32-byte digests per
+child. Keep source checksum parity separate from timing, and report storage
+read calls, checking, complete restoration and the outer model-repair interval.
+Those intervals are nested and must not be added together. Full numerical
+captures and duplicate reference storage remain active; this is a controlled
+restore experiment, not a serving-throughput measurement.
