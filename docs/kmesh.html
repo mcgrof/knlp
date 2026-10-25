@@ -52,12 +52,12 @@ cache serve later lookups without reading the SSD again?
 in host RAM or an external GPU arena. Application notice can then move
 preparation before the follow-ups arrive. KMesh investigates this
 coordination and the lifetime of shared inference state.</p>
-<h3 id="cascade-offload">How does this extend cascade's idea?</h3>
-<p><strong>This part of KMesh extends cascade's shared-prefix principle
-through offloading and restoration.</strong> Both organize work around a
-shared ancestor and its private branches.
-<a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade
-attention</a> reuses shared-prefix KV reads across queries during decoding.
+<h3 id="cascade-offload">Extending FlashInfer's cascade ideas to caching and offloading</h3>
+<p><strong>KMesh applies the shared-prefix ideas behind
+<a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's
+cascade attention</a> to caching, offloading and restoration.</strong> Both
+organize work around a shared ancestor and its private branches. Cascade
+attention reuses shared-prefix KV reads across queries during decoding.
 It computes attention for their private suffixes separately, then merges
 the prefix and suffix results for each query.</p>
 <p>The offload work carries that structure through the memory hierarchy:
