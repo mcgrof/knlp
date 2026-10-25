@@ -121,6 +121,10 @@ alone is insufficient. Our TokenDance-style implementation extends LMCache's
 <strong>CacheBlend</strong> code: it supplies the shared segments and their
 positions, recalculates missing positions, and uses CacheBlend to select
 additional work before reusing the rest.</p>
+<p>CacheBlend already supports non-prefix reuse. The TokenDance-style case
+adds an explicit group of related requests and identifies their shared text
+segments for KMesh. These tests compare our loading and coordination changes;
+they establish no advantage over stock CacheBlend's repair method.</p>
 <p>We test loading 416 shared tokens through a separate cache process and
 running that same repair algorithm. The four follow-ups generate exactly the
 same tokens as when that extended TokenDance-style method runs inside the model
@@ -143,6 +147,11 @@ this storage path with the group remains untested. The
 from the beginning</a>. These runs all use CacheBlend's selective recalculation;
 we have not shown here that it matches recalculating the entire prompt or
 improves serving speed.</p>
+<p>Computing the corruption checksum on the GPU is a concrete next candidate:
+it could replace a 12 MiB payload copy back to the CPU with small digests.
+Overlapping independent SSD reads and GPU checks is another candidate. The
+<a href="kmesh-recovery.html#gpu-integrity">recovery page explains what would
+need to change and how to evaluate it</a>; neither optimization has been measured.</p>
 </section>
 
 <section id="questions">

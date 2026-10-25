@@ -54,6 +54,10 @@ uses LMCache's <strong>CacheBlend</strong> implementation for that selective
 recalculation. Our extensions identify the shared text segments, adjust their
 saved positions and require recalculation wherever saved state is missing.
 The comparisons below all include these extensions.</p>
+<p>CacheBlend already handles reuse beyond an identical prompt beginning.
+The TokenDance-style case gives KMesh a group of related requests and an
+explicit description of the text they share. The experiment checks how to
+coordinate that reuse across processes and storage.</p>
 <h3>Which sections test the implementation, and which run the model?</h3>
 <p><strong>Questions 21–23 are implementation checks.</strong> vLLM already
 organizes its saved attention state into memory blocks, and LMCache already
@@ -262,6 +266,24 @@ One leader request supplies saved attention state for four shared text segments,
 totalling 416 tokens. Four follow-up requests, called <strong>children</strong>,
 each have a 512-token prompt and place those segments at different positions.
 This is the measured workload behind the report illustration above.</p>
+<h3>Why use this case instead of a stock CacheBlend example?</h3>
+<p><strong>The TokenDance-style case supplies the multi-request workload and
+sharing information; CacheBlend supplies the selective recalculation.</strong>
+Original CacheBlend already addresses combining cached text chunks with
+different preceding context. Here the application knows which four children
+will reuse which segments. Our integration carries those exact segment
+identities and positions into each request and can coordinate the children
+as a group.</p>
+<p>This lets us test the KMesh questions: can a separate cache process hold
+one unchanged source, can each child restore it into its own model state,
+and can the children advance together without interfering with one another?
+Keeping the same prompts, shared segments and repair settings lets us compare
+changes in loading and execution order against the established serial run.</p>
+<p>A stock CacheBlend workload would also be a valid way to study DMA-BUF
+loading. This experiment measures our existing multi-request integration.
+It establishes no advantage of our additions over stock CacheBlend. A direct
+comparison would need a separate stock CacheBlend control with clearly defined
+segment inputs and recomputation settings, alongside full-prompt recalculation.</p>
 <h3 id="repair-implementation">Which repair implementation does this use?</h3>
 <p><strong>It uses our TokenDance-style recovery code built on LMCache's
 CacheBlend implementation.</strong> LMCache calls the feature
@@ -323,6 +345,21 @@ avoids the host staging step for the storage read.</li>
 the retention fix is present and enabled in both routes.</strong> We run seven
 matched pairs, alternating which route goes first. Each pair runs all four
 children through each route, one child at a time.</p>
+<h3>Why was singleflight off?</h3>
+<p>The earlier <strong>engine singleflight</strong> mechanism joins requests
+with an identical prefix, so they can adopt one restored prefix inside vLLM.
+This workload puts shared text at different positions after different input.
+Each child therefore keeps its own position-adjusted and repaired model state.
+That exact-prefix mechanism is not the mechanism for sharing these interior
+segments. Prefix caching is disabled in this fixture so recovery is attributed
+to the explicitly named segments.</p>
+<p><strong>Sharing one stored source is still useful.</strong> Several children
+can use the same unchanged saved bytes while keeping their repaired GPU copies
+private. Retaining that source across children, and joining simultaneous loads
+of it, are the relevant storage optimizations. This particular transfer test
+runs children serially and forces a fresh load for every child, so it can time
+the SSD routes. The combined shifted-segment read-once serving test remains
+to be evaluated.</p>
 <p>The test explicitly removes the four retained objects from LMCache's memory
 tier before <strong>every child</strong>. Each child therefore reads the same
 saved objects from SSD again: <strong>12 MiB per child, 48 MiB across four
@@ -368,6 +405,61 @@ route copies the entire 12 MiB payload back to the CPU for a SHA-256 checksum.
 It also copies the shared GPU source into each child's private working memory.
 The table measures those remaining costs too. It does not demonstrate a path
 with no host copies.</p>
+<h3 id="gpu-integrity">Should we compute the checksum on the GPU?</h3>
+<p><strong>Yes: GPU-side SHA-256 is a concrete candidate to evaluate.</strong>
+The current restore code copies each of four padded 3 MiB source objects to
+the CPU and hashes it there. Hashing those bytes where they already reside on
+the GPU could replace the 12 MiB return transfer with four 32-byte digests:
+<strong>128 bytes per child</strong>, or a small pass/fail result if comparison
+also runs on the GPU. The hash must cover the same original bytes, including
+padding, before any position adjustment.</p>
+<p>The measured integrity stage is 0.722 ms slower on the GPU route than on
+the staged route, while read calls are 0.152 ms faster. This makes the integrity
+path worth isolating. It does not tell us how fast GPU hashing will be or
+predict the complete-restore gain. Moving the checksum changes the integrity
+implementation; the CacheBlend recalculation method can stay fixed.</p>
+<p>There is an implementation to investigate:
+<a href="https://docs.nvidia.com/cuda/cupqc/overview/feature_cupqc_hash.html">NVIDIA's
+cuPQC-Hash</a> provides device-side SHA-256, and its
+<a href="https://docs.nvidia.com/cuda/cupqc/overview/requirements.html">requirements</a>
+list the RTX 4090's GPU architecture. This is a candidate, not a qualified
+dependency or a measured result for this workload.</p>
+<p><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html">CUDA
+streams</a> also let independent work overlap. A useful target is to read the
+next object while hashing a completed object, then restore verified data into
+the child's private model buffers. The current code waits for loading, checks
+the checksum, then restores and waits for GPU completion. Implementing overlap
+requires changing that sequence.</p>
+<details><summary>Proposed checksum and overlap evaluation — no results yet</summary>
+<p>First compare the GPU checksum against the current CPU SHA-256 for the exact
+same bytes and object boundaries. Then compare complete restoration with CPU
+hashing versus GPU hashing while keeping operation order unchanged. Finally
+add overlap between independent object reads and checks. Keep the model,
+storage route, read sizes, retention and forced-eviction settings fixed so each
+comparison answers one question.</p>
+<p>Our storage route uses <code>io_uring</code>. It is not automatically ordered
+in a CUDA stream. The implementation must establish I/O completion and GPU
+visibility before launching a dependent hash kernel, then use CUDA events to
+order consumers after successful checking. NVIDIA documents the
+<a href="https://docs.nvidia.com/cuda/gpudirect-rdma/index.html#synchronization-and-memory-ordering">ordering
+requirements for peer writes</a>. CUDA streams provide the computation schedule;
+the storage-to-CUDA handoff still needs explicit qualification.</p>
+<p>The current checksum is one ordinary SHA-256 per complete 3 MiB object.
+Hashing smaller pieces independently and combining their digests would change
+that result. Earlier model-layer consumption would also need a clear integrity
+rule for each part; the current whole-object check completes before use.
+Start with identical digests and pipeline independent objects.</p>
+<p>Check corruption rejection, padding coverage, missing data and cancellation
+while work is pending. Keep buffers reserved until I/O and hash kernels finish.
+Model outputs must still match the serial comparison. Keep independent CPU
+hashes and full tensor captures in separate qualification runs so they do not
+reintroduce the full return transfer into the optimized timing.</p>
+<p>Measure storage calls, checking, complete restoration and model readiness,
+plus host transfer bytes and GPU work. Keep GPU hashing only if correctness
+and cleanup pass and repeated complete-restore measurements improve. GPU launch
+cost, contention with model computation and the limited number of independent
+objects can offset the saved copy. No speedup has been measured yet.</p>
+</details>
 <p>This test is separate from the earlier
 <a href="kmesh-retention.html#prefetch-demand">read-once retention result</a>.
 Here, forcing a fresh read for every child causes 48 MiB of reads across four

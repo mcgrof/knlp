@@ -17,6 +17,12 @@ reference already includes these extensions. It is our TokenDance-style
 reproduction, rather than the TokenDance authors' implementation or an
 unmodified upstream CacheBlend run. The group uses `LMCBlender.blend_group()`.
 
+The TokenDance-style fixture supplies an explicit group and shared segment
+identities. CacheBlend already supports non-prefix reuse. Holding this existing
+workload and repair configuration fixed isolates the loading and coordination
+changes. It does not compare the integration's value against stock CacheBlend;
+that comparison needs its own stock control and clearly specified segment inputs.
+
 LocalCPU lookup and storage remain scheduling controls. This duplicates storage;
 elapsed time cannot establish serving latency, capacity savings or a DMA-BUF
 benefit. The ordinary multiprocess serving profile remains disabled. This replay
@@ -157,6 +163,13 @@ singleflight gate is inactive. The storage configuration selects
 `prefetch_policy=retain` and leaves `prefetch_join_overlaps=false`, so the
 storage manager's optional joining of simultaneous fills is also off.
 
+The earlier engine singleflight joins identical prefixes so requests can adopt
+one engine prefix. These children put shared text at different positions and
+keep private repaired model state. That exact-prefix gate does not provide
+their segment-sharing semantics. Storage can still retain and share the
+unchanged source bytes, or join overlapping source loads. The current fixture
+runs children serially and evicts before each one to measure the storage route.
+
 Before each child, the runner confirms that the exact four immutable source keys are visible in the
 NVMe tier, releases its lookup locks, waits for outstanding L1 leases, and evicts
 those keys from external L1. Every child reads the same 12 MiB source set again,
@@ -195,6 +208,13 @@ SHA-256, and the direct route copies canonical bytes into private engine slots
 before repair. Reference storage, model instrumentation and raw tensor capture
 also remain active. The comparison does not establish production serving speed,
 total memory savings or elimination of all host transfers.
+
+GPU-side SHA-256 and overlap between independent object reads and GPU checks
+are proposed follow-ups, not implemented modes of this reproducer. The current
+integrity function copies every padded object to the CPU before SHA-256. A
+GPU implementation must produce identical per-object digests, establish
+external-I/O completion and visibility before hashing, and hold all buffers
+through completion. See the [evaluation discussion](https://knlp.io/kmesh-recovery.html#gpu-integrity).
 
 ## Registered layer-major model group
 
