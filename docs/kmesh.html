@@ -137,8 +137,8 @@ while the failed one cleans up and retries by recalculating its whole prompt.</p
 <p>A separate SSD comparison runs follow-ups one at a time. DMA-BUF, Linux's
 buffer-sharing interface, lets the SSD read directly into GPU memory instead
 of staging the read in host RAM. Read-call time falls by 3.7% across seven
-matched pairs, but complete restoration is faster in only four pairs. Checking
-the loaded data still copies it back to the CPU. This storage comparison has
+matched pairs, but complete restoration is faster in only four pairs. In that
+comparison, checking the loaded data still copies it back to the CPU. This storage comparison has
 singleflight off and fixed retention on; it explicitly evicts the retained
 objects before every child to force fresh SSD reads. The earlier read-once
 experiment kept retention and singleflight on across the children. Combining
@@ -147,11 +147,14 @@ this storage path with the group remains untested. The
 from the beginning</a>. These runs all use CacheBlend's selective recalculation;
 we have not shown here that it matches recalculating the entire prompt or
 improves serving speed.</p>
-<p>Computing the corruption checksum on the GPU is a concrete next candidate:
-it could replace a 12 MiB payload copy back to the CPU with small digests.
-Overlapping independent SSD reads and GPU checks is another candidate. The
-<a href="kmesh-recovery.html#gpu-integrity">recovery page explains what would
-need to change and how to evaluate it</a>; neither optimization has been measured.</p>
+<p>A follow-up keeps DMA-BUF reads fixed and computes the same SHA-256 checksum
+on the GPU. It returns 128 digest bytes per child instead of downloading the
+12 MiB source payload for checking. Our tested CUDA kernel is much slower than
+CPU hashing, and complete restoration is slower in all seven matched pairs.
+Model outputs still match exactly. We keep CPU hashing as the default; this
+result concerns one kernel and the existing whole-object format. The
+<a href="kmesh-recovery.html#gpu-integrity">GPU checksum results and reproduction
+instructions</a> give the measurements and the next optimization targets.</p>
 </section>
 
 <section id="questions">

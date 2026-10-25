@@ -209,12 +209,14 @@ before repair. Reference storage, model instrumentation and raw tensor capture
 also remain active. The comparison does not establish production serving speed,
 total memory savings or elimination of all host transfers.
 
-GPU-side SHA-256 and overlap between independent object reads and GPU checks
-are proposed follow-ups, not implemented modes of this reproducer. The current
-integrity function copies every padded object to the CPU before SHA-256. A
-GPU implementation must produce identical per-object digests, establish
-external-I/O completion and visibility before hashing, and hold all buffers
-through completion. See the [evaluation discussion](https://knlp.io/kmesh-recovery.html#gpu-integrity).
+An optional [exact GPU SHA-256 comparison](GPU_INTEGRITY.md) now holds the
+DMA-BUF route fixed and replaces only the dedicated experiment's checksum.
+It preserves the full padded-object digest, verifies GPU results against saved
+CPU digests, and retains existing completion and source-ownership handling.
+The tested kernel returns fewer bytes but makes complete restoration slower
+in all seven matched pairs; CPU hashing stays the default. Independent
+read/hash overlap remains unimplemented. See the
+[published measurements](https://knlp.io/kmesh-recovery.html#gpu-integrity).
 
 ## Registered layer-major model group
 

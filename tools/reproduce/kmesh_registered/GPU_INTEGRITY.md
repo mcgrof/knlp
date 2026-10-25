@@ -97,3 +97,12 @@ read calls, checking, complete restoration and the outer model-repair interval.
 Those intervals are nested and must not be added together. Full numerical
 captures and duplicate reference storage remain active; this is a controlled
 restore experiment, not a serving-throughput measurement.
+
+## Measured outcome
+
+The tested kernel preserves exact model outputs and removes the checksum's
+payload download, but it makes complete restoration slower in all seven matched
+pairs. CPU hashing remains the default. The [published results](https://knlp.io/kmesh-recovery.html#gpu-integrity)
+report the standalone and full-model timings, runtime and limitations. This
+result concerns the scalar CUDA kernel and current whole-object digest format;
+it does not rule out every GPU hash implementation.

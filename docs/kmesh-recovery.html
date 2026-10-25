@@ -78,14 +78,13 @@ load, is off. The retention fix is enabled, and the benchmark explicitly evicts
 the saved sources before every child to force fresh SSD reads. The grouped model test
 uses sources in host RAM. These results were measured on one RTX 4090 on
 October 23–24, 2026.</p>
-<h3>Next evaluation</h3>
-<p>The immediate optimization target is the integrity check that copies
-12 MiB from GPU memory back to the CPU per child. Computing SHA-256 on the
-GPU could retain the same check while returning only small digests. The next
-comparison would keep the execution order fixed, then evaluate overlap between
-independent storage reads and GPU checks. Both are unmeasured candidates.
-Combining grouped model execution with SSD loading and retaining shared sources
-across children also needs its own evaluation.</p>
+<h3>Optimization decision</h3>
+<p>A follow-up <a href="#gpu-integrity">GPU SHA-256 test</a> removes the checksum's
+12 MiB payload download, but our CUDA kernel makes complete restoration slower
+in every matched pair. CPU hashing remains the default. Another GPU candidate
+must improve complete restoration before adding read/hash overlap. Combining
+grouped model execution with SSD loading and retaining shared sources across
+children also needs its own evaluation.</p>
 </div>
 <div class="page-toc"><strong>Recovery workflow</strong><ol start="21">
 <li><a href="#native">Restoring state into vLLM's GPU cache</a></li>
@@ -383,61 +382,99 @@ route copies the entire 12 MiB payload back to the CPU for a SHA-256 checksum.
 It also copies the shared GPU source into each child's private working memory.
 The table measures those remaining costs too. It does not demonstrate a path
 with no host copies.</p>
-<h3 id="gpu-integrity">Evaluating GPU-side checksums and overlap</h3>
-<p><strong>GPU-side SHA-256 is a concrete candidate to evaluate.</strong>
-The current restore code copies each of four padded 3 MiB source objects to
-the CPU and hashes it there. Hashing those bytes where they already reside on
-the GPU could replace the 12 MiB return transfer with four 32-byte digests:
-<strong>128 bytes per child</strong>, or a small pass/fail result if comparison
-also runs on the GPU. The hash must cover the same original bytes, including
-padding, before any position adjustment.</p>
-<p>The measured integrity stage is 0.722 ms slower on the GPU route than on
-the staged route, while read calls are 0.152 ms faster. This makes the integrity
-path worth isolating. It does not tell us how fast GPU hashing will be or
-predict the complete-restore gain. Moving the checksum changes the integrity
-implementation; the CacheBlend recalculation method can stay fixed.</p>
-<p>There is an implementation to investigate:
-<a href="https://docs.nvidia.com/cuda/cupqc/overview/feature_cupqc_hash.html">NVIDIA's
-cuPQC-Hash</a> provides device-side SHA-256, and its
-<a href="https://docs.nvidia.com/cuda/cupqc/overview/requirements.html">requirements</a>
-list the RTX 4090's GPU architecture. This is a candidate, not a qualified
-dependency or a measured result for this workload.</p>
-<p><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html">CUDA
-streams</a> also let independent work overlap. A useful target is to read the
-next object while hashing a completed object, then restore verified data into
-the child's private model buffers. The current code waits for loading, checks
-the checksum, then restores and waits for GPU completion. Implementing overlap
-requires changing that sequence.</p>
-<details><summary>Proposed checksum and overlap evaluation — no results yet</summary>
-<p>First compare the GPU checksum against the current CPU SHA-256 for the exact
-same bytes and object boundaries. Then compare complete restoration with CPU
-hashing versus GPU hashing while keeping operation order unchanged. Finally
-add overlap between independent object reads and checks. Keep the model,
-storage route, read sizes, retention and forced-eviction settings fixed so each
-comparison answers one question.</p>
-<p>Our storage route uses <code>io_uring</code>. It is not automatically ordered
-in a CUDA stream. The implementation must establish I/O completion and GPU
-visibility before launching a dependent hash kernel, then use CUDA events to
-order consumers after successful checking. NVIDIA documents the
-<a href="https://docs.nvidia.com/cuda/gpudirect-rdma/index.html#synchronization-and-memory-ordering">ordering
-requirements for peer writes</a>. CUDA streams provide the computation schedule;
-the storage-to-CUDA handoff still needs explicit qualification.</p>
-<p>The current checksum is one ordinary SHA-256 per complete 3 MiB object.
-Hashing smaller pieces independently and combining their digests would change
-that result. Earlier model-layer consumption would also need a clear integrity
-rule for each part; the current whole-object check completes before use.
-Start with identical digests and pipeline independent objects.</p>
-<p>Check corruption rejection, padding coverage, missing data and cancellation
-while work is pending. Keep buffers reserved until I/O and hash kernels finish.
-Model outputs must still match the serial comparison. Keep independent CPU
-hashes and full tensor captures in separate qualification runs so they do not
-reintroduce the full return transfer into the optimized timing.</p>
-<p>Measure storage calls, checking, complete restoration and model readiness,
-plus host transfer bytes and GPU work. Keep GPU hashing only if correctness
-and cleanup pass and repeated complete-restore measurements improve. GPU launch
-cost, contention with model computation and the limited number of independent
-objects can offset the saved copy. No speedup has been measured yet.</p>
+<h3 id="gpu-integrity">GPU SHA-256: exact checksums, slower restoration</h3>
+<p><strong>The tested GPU checksum removes the payload download but makes
+complete restoration slower in all seven matched pairs.</strong> We keep CPU
+hashing as the default for this profile. The result applies to our experimental
+CUDA kernel and the existing whole-object checksum format.</p>
+<p>The original storage comparison above used CPU SHA-256 in both routes.
+This follow-up holds the DMA-BUF route fixed and changes only the checksum
+implementation. Both arms keep the retention fix enabled, singleflight off and
+explicit eviction before every child. Each child reads the same four padded
+3 MiB objects from SSD, then uses the same CacheBlend repair code.</p>
+<p>Before timing, every saved object receives an independent CPU digest. The
+GPU implementation must match it. During restoration, it hashes the same complete
+bytes, including padding, before position adjustment. Its four 32-byte digests
+return <strong>128 bytes per child</strong>, replacing the checksum's
+<strong>12 MiB payload download</strong>. This byte reduction is specific to
+the checksum; full model-state captures remain active.</p>
+<div class="table-wrap" role="region" aria-label="CPU versus GPU checksum restoration" tabindex="0"><table class="storage-timings">
+<caption>Same DMA-BUF reads and model repair; CPU versus GPU SHA-256, October 24, 2026</caption>
+<tr><th scope="col">Timed part of the work</th><th scope="col">CPU checksum median</th><th scope="col">GPU checksum median</th><th scope="col">Median paired change</th><th scope="col">Pairs faster with GPU hashing</th></tr>
+<tr><td>Storage backend read calls</td><td>3.909 ms</td><td>4.048 ms</td><td>+0.140 ms</td><td>2/7</td></tr>
+<tr><td>Checking source bytes for corruption</td><td>7.812 ms</td><td>249.388 ms</td><td>+241.524 ms</td><td>0/7</td></tr>
+<tr><td>Complete restoration into the child's GPU memory</td><td>17.319 ms</td><td>259.192 ms</td><td>+242.187 ms</td><td>0/7</td></tr>
+<tr><td>Restoration, instrumented model repair and source cleanup</td><td>190.037 ms</td><td>435.585 ms</td><td>+244.127 ms</td><td>0/7</td></tr>
+</table></div>
+<p>For each pair, take the median of its four children for each arm. The table
+shows the medians across seven pairs and the median of their paired changes.
+Positive changes mean GPU hashing is slower. Read calls and checking are inside
+restoration, which is inside the final row; these intervals must not be added.</p>
+<p><strong>All model comparisons pass.</strong> The same-source reference and
+sixteen registered runs cover two poisoned-buffer arrival checks and fourteen
+timed arms. Each registered run matches the reference's raw keys, values,
+next-token scores, generated tokens, retrieval masks and all 96 per-layer
+recalculation choices. Maximum numerical differences are 0.0. Every arm completes
+its native reads and releases the source buffers with checked physical cleanup.</p>
+<h3>Four whole-object hashes limit parallel work</h3>
+<p>Our kernel assigns one GPU thread to each complete object. Standard
+<a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf">SHA-256</a>
+processes each message's 64-byte blocks in order, carrying the previous result
+forward. A 3 MiB object has 49,152 data blocks, followed by the hash's padding
+block. The four objects supply only four independent chains.</p>
+<p>A standalone test isolates this computation using deterministic synthetic
+bytes. Across fifteen trials with rotating method order, hashing the full
+12 MiB set takes <strong>5.512 ms with CPU hashing,
+including the download</strong>, 249.010 ms with four serial GPU calls,
+and 62.252 ms when one GPU call hashes all four objects concurrently.
+The concurrent case is an opportunity check; the model restore still hashes
+sources one at a time. Returning fewer bytes cannot compensate for this
+kernel's much longer computation.</p>
+<p>This does not rule out a faster GPU implementation. It does show that moving
+our existing whole-object SHA-256 calculation onto this kernel is a poor
+optimization. Keep the measured CPU path while evaluating another candidate.</p>
+<details><summary>Checksum qualification, runtime and reproduction</summary>
+<p>The standalone checks cover 66 zero, all-one and random byte cases across
+empty and unaligned inputs and SHA-256 padding boundaries. They also check a
+published <code>abc</code> vector and BF16 raw bytes. Four byte corruptions change only
+the affected object's digest and match an independent CPU checksum. A producer
+CUDA event orders writes before hashing on another stream. These are byte and
+ordering controls, not device-fault injection.</p>
+<p>The model comparison uses the same 24 GiB CUDA GPU and runtime as the
+<a href="#native">GPU validation setup</a>, with two OpenMP/MKL CPU threads.
+The CUDA kernel is built with NVCC 13.4.92, optimization enabled and native
+architecture 89 code. LMCache remains at <code>fe15939e</code>, vLLM at
+<code>9df1493c</code> and the model at its pinned revision. The
+<a href="https://github.com/mcgrof/knlp/commit/2322f4b4">checksum reproducer</a>
+changes the dedicated experiment's observer; it leaves production defaults
+unchanged. It uses our standard-based CUDA kernel. cuPQC was not tested.</p>
+<p>Follow the
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_registered/GPU_INTEGRITY.md">GPU checksum guide</a>
+to build the kernel, run standalone checks and select
+<code>defconfig-kmesh-registered-gpu-checksum-cuda</code>. With the source,
+model and reference paths configured, <code>make kmesh-registered-storage-pair</code>
+runs the seven checksum pairs. Both arms must first load correct bytes after
+the entire free 64 MiB source pool is filled with invalid data.</p>
+<p>GPU hashing starts only after the existing storage path completes its reads.
+The service keeps source leases through checking and restoration, and its
+existing failed-operation handling retains memory until an actual device
+drain. Source CPU checks and GPU warmup happen before timed children. Full
+numerical captures and duplicate reference storage remain active. These are
+instrumented restore measurements, not production serving latency or total
+memory savings.</p>
 </details>
+<h3>Further optimization targets</h3>
+<p>Overlapping independent SSD reads and GPU checks remains untested. It should
+first use a checksum implementation that can improve complete restoration.
+Changing to independently hashed smaller pieces could expose more parallel
+work, but it would change the integrity format; combining those digests does
+not reproduce the current whole-object SHA-256. That needs a separate design
+and matched comparison.</p>
+<p><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html">CUDA streams</a>
+can overlap independent GPU work. Our <code>io_uring</code> reads are not
+automatically ordered in a CUDA stream: any new overlap must establish external
+I/O completion and GPU visibility before hashing, then retain buffers until
+both storage and GPU consumers finish.</p>
 <p>This test is separate from the earlier
 <a href="kmesh-retention.html#prefetch-demand">read-once retention result</a>.
 Here, forcing a fresh read for every child causes 48 MiB of reads across four
