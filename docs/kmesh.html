@@ -112,7 +112,7 @@ pressure and assumes useful advance notice. A separate
 holding an ancestor can displace more useful cache hits than it saves.
 The measured early-loading gains apply to both transfer paths; the
 comparison does not establish DMA-BUF superiority or a production policy.</div>
-<h3>Beyond a shared beginning: what if the same text moves?</h3>
+<h3>Reusing shared text at new prompt positions</h3>
 <p>The retention results above share an identical beginning of a prompt. A
 separate experiment asks whether four follow-ups can reuse saved state for
 the same text when each puts different instructions before it. Moving the
@@ -215,7 +215,7 @@ SSD loading and processing four requests one model layer at a time.</p>
 <li><a href="kmesh-recovery.html#ownership">How does a separate cache process use memory safely?</a></li>
 <li><a href="kmesh-recovery.html#copies">What happens if a copy fails while the GPU is still working?</a></li>
 <li><a href="kmesh-recovery.html#serial">Does loading saved state through another process change the model's output?</a></li>
-<li><a href="kmesh-recovery.html#collective">Can all four requests advance through the model one layer at a time?</a></li>
+<li><a href="kmesh-recovery.html#collective">Testing layer-major execution across four related requests</a></li>
 </ol></article>
 </div>
 </section>

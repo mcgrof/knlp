@@ -218,6 +218,12 @@ through completion. See the [evaluation discussion](https://knlp.io/kmesh-recove
 
 ## Registered layer-major model group
 
+This order follows the collective KV reuse design in
+[TokenDance, sections 4.2 and 5](https://arxiv.org/html/2604.03143v1#S4.SS2),
+by Zhuohang Bian and coauthors. This profile qualifies execution order and
+cleanup across a separate cache process. The paper also batches compatible
+calculations; this profile keeps request calculations separate.
+
 The group consumer asks whether several children can safely consume the same
 immutable registered sources while keeping their repair buffers and engine
 destinations private. It advances all children through one layer before moving

@@ -29,7 +29,7 @@
 different positions among their own instructions. We test whether they can
 reuse the model's saved work through a separate cache process, and whether
 reading that work directly from SSD into GPU memory helps.</p>
-<h3>Start with the problem</h3>
+<h3>Shared text at different prompt positions</h3>
 <p>When a language model reads a prompt, it builds a <strong>key/value (KV)
 cache</strong>: saved attention state that lets it use earlier tokens without
 recalculating all their work. vLLM runs the model; LMCache stores that state
@@ -58,7 +58,7 @@ The comparisons below all include these extensions.</p>
 The TokenDance-style case gives KMesh a group of related requests and an
 explicit description of the text they share. The experiment checks how to
 coordinate that reuse across processes and storage.</p>
-<h3>Which sections test the implementation, and which run the model?</h3>
+<h3>Implementation checks and model experiments</h3>
 <p><strong>Questions 21–23 are implementation checks.</strong> vLLM already
 organizes its saved attention state into memory blocks, and LMCache already
 supports a separate cache process. Those existing capabilities are the starting
@@ -78,7 +78,7 @@ benefit for KMesh. <strong>Questions 24 and 25 run the actual model.</strong>
 Question 24 compares model outputs and measures SSD loading time. Question 25
 checks whether changing the execution order of four requests changes their
 outputs or prevents safe recovery when one fails.</p>
-<h3>What we found</h3>
+<h3>Results</h3>
 <p><strong>For each of the four requests, its generated tokens were identical
 across these three runs:</strong></p>
 <ol class="experiment-steps">
@@ -116,7 +116,7 @@ execution order and failure test, <a href="#collective">jump to question 25</a>.
 <li><a href="#ownership">How does a separate cache process use memory safely?</a></li>
 <li><a href="#copies">What happens if a copy fails while the GPU is still working?</a></li>
 <li><a href="#serial">Does loading saved state through another process change the model's output?</a></li>
-<li><a href="#collective">Can all four requests advance through the model one layer at a time?</a></li>
+<li><a href="#collective">Testing layer-major execution across four related requests</a></li>
 </ol></div>
 <section id="native">
 <h2>21. Can we move saved state into the right GPU locations?</h2>
@@ -259,14 +259,14 @@ the model process and when loading through the separate cache process.</strong>
 Their saved attention data and next-token scores also match exactly. DMA-BUF
 gives a small, consistent reduction in read-call time, but no consistent
 reduction in complete restoration time. These are separate comparisons.</p>
-<h3>What actually ran?</h3>
+<h3>Model and workload</h3>
 <p>The model is Qwen2.5-0.5B-Instruct, a small model with 24 layers. A layer is
 one stage of the model's computation; each request passes through all 24.
 One leader request supplies saved attention state for four shared text segments,
 totalling 416 tokens. Four follow-up requests, called <strong>children</strong>,
 each have a 512-token prompt and place those segments at different positions.
 This is the measured workload behind the report illustration above.</p>
-<h3>Why use this case instead of a stock CacheBlend example?</h3>
+<h3>The shared-segment workload and the CacheBlend comparison</h3>
 <p><strong>The TokenDance-style case supplies the multi-request workload and
 sharing information; CacheBlend supplies the selective recalculation.</strong>
 Original CacheBlend already addresses combining cached text chunks with
@@ -284,7 +284,7 @@ loading. This experiment measures our existing multi-request integration.
 It establishes no advantage of our additions over stock CacheBlend. A direct
 comparison would need a separate stock CacheBlend control with clearly defined
 segment inputs and recomputation settings, alongside full-prompt recalculation.</p>
-<h3 id="repair-implementation">Which repair implementation does this use?</h3>
+<h3 id="repair-implementation">CacheBlend repair and the TokenDance-style integration</h3>
 <p><strong>It uses our TokenDance-style recovery code built on LMCache's
 CacheBlend implementation.</strong> LMCache calls the feature
 <a href="https://docs.lmcache.ai/legacy/kv_cache_optimizations/blending.html">CacheBlend,
@@ -312,7 +312,7 @@ CacheBlend's selection determines which restored positions receive additional
 work, and our extension adds every position missing restored state. This is
 approximate reuse of earlier computation; the comparison is against the same
 method running serially, rather than recalculating the entire prompt.</p>
-<h3>Did moving the data through another process change the result?</h3>
+<h3>Model outputs across the cache-process boundary</h3>
 <p><strong>No differences were observed against that reference in this test.</strong>
 All four children have bit-for-bit identical saved keys and values and
 <strong>logits</strong>, the scores used to choose the next token. Their generated
@@ -322,7 +322,7 @@ choices at every layer: four children × 24 layers gives 96 comparisons.</p>
 failure after GPU work has been submitted. Recalculation is allowed only after
 pending work finishes and releases the destination memory. If cleanup cannot
 complete, the request must wait or fail safely.</p>
-<div class="note"><strong>What was compared</strong>
+<div class="note"><strong>Comparison scope</strong>
 Both runs use CacheBlend to reuse saved state and recalculate selected work.
 Moving loading to a separate process gives the same generated tokens, saved
 attention data and next-token scores for these four requests. This does not
@@ -330,7 +330,7 @@ show that CacheBlend matches recalculating the whole prompt, saves total
 memory or improves serving speed. The ordinary multiprocess
 serving connector still refuses this recovery mode; the dedicated reproducer
 is the tested path.</div>
-<h3 id="registered-storage">Does reading directly into GPU memory make this faster?</h3>
+<h3 id="registered-storage">DMA-BUF loading measurements</h3>
 <p>We compare two ways of loading the saved segments from an NVMe SSD, a fast
 PCIe-connected solid-state drive. The model, data and repair algorithm stay the
 same. Children still run one at a time.</p>
@@ -345,7 +345,7 @@ avoids the host staging step for the storage read.</li>
 the retention fix is present and enabled in both routes.</strong> We run seven
 matched pairs, alternating which route goes first. Each pair runs all four
 children through each route, one child at a time.</p>
-<h3>Why was singleflight off?</h3>
+<h3>Singleflight and shared-source reuse</h3>
 <p>The earlier <strong>engine singleflight</strong> mechanism joins requests
 with an identical prefix, so they can adopt one restored prefix inside vLLM.
 This workload puts shared text at different positions after different input.
@@ -405,8 +405,8 @@ route copies the entire 12 MiB payload back to the CPU for a SHA-256 checksum.
 It also copies the shared GPU source into each child's private working memory.
 The table measures those remaining costs too. It does not demonstrate a path
 with no host copies.</p>
-<h3 id="gpu-integrity">Should we compute the checksum on the GPU?</h3>
-<p><strong>Yes: GPU-side SHA-256 is a concrete candidate to evaluate.</strong>
+<h3 id="gpu-integrity">Evaluating GPU-side checksums and overlap</h3>
+<p><strong>GPU-side SHA-256 is a concrete candidate to evaluate.</strong>
 The current restore code copies each of four padded 3 MiB source objects to
 the CPU and hashes it there. Hashing those bytes where they already reside on
 the GPU could replace the 12 MiB return transfer with four 32-byte digests:
@@ -631,19 +631,15 @@ profiles retain their original pins, defconfigs and narrower scopes.</p>
 </details>
 </section>
 <section id="collective">
-<h2>25. Can all four requests advance through the model one layer at a time?</h2>
-<p><strong>Yes: all four requests generate the same tokens whether we finish
-one request at a time or run one model layer across the group at a time.</strong>
-Their saved attention data and next-token scores also match exactly. The
-purpose is to let related requests use the same
-unchanged saved segments while each maintains its own repair state. This
-experiment checks that the grouping works correctly; it does not establish
-a speed or memory-capacity benefit.</p>
-<p>The motivation for grouping is to bring the requests to the same model
-stage together, so later work can investigate doing their shared work together
-at that stage. Here we first check that changing the execution order leaves
-the model's outputs unchanged and that a failed child can retry safely.</p>
-<h3>What does “layer-major” mean?</h3>
+<h2>25. Testing layer-major execution across four related requests</h2>
+<p>We test a layer-major execution schedule for four related requests. Each
+child advances through one model layer before any child moves to the next.
+Bringing the children to the same model stage gives the runtime a place to
+coordinate work on their shared segments.</p>
+<p>This experiment compares that schedule with finishing one child at a time.
+It checks model outputs and recovery after a failed child while each request
+keeps its own mutable state.</p>
+<h3>Layer-major execution</h3>
 <p>Label the four children A, B, C and D. Each must pass through the model's
 24 layers. There are two execution orders:</p>
 <div class="table-wrap"><table>
@@ -656,7 +652,21 @@ the model's outputs unchanged and that a failed child can retry safely.</p>
 arranged in memory, and it does not mean combining the four children's math
 into one batched calculation. This implementation still runs each child's
 tensor operations separately on one GPU worker.</p>
-<h3>What is shared, and what stays private?</h3>
+<h3>Prior work and the scope of this experiment</h3>
+<p><strong>The direct precedent is TokenDance's KV Collector, described by
+Zhuohang Bian and coauthors in 2026.</strong>
+<a href="https://arxiv.org/html/2604.03143v1#S4.SS2">Section 4.2</a> describes
+coordinating related requests at each model layer and batching their position
+adjustment and difference calculations. Section 5 describes a separate retrieval
+and computation generator for each request, advanced together across layers.
+TokenDance uses CacheBlend's selective recomputation as its default backend.</p>
+<p>We apply this existing design rather than introduce a new KMesh scheduling
+algorithm. Our current test applies it to saved state
+supplied by a separate cache process, with private child buffers and checked
+failure cleanup. Tensor calculations remain separate. The test establishes
+correct outputs and cleanup; a speed or memory-capacity benefit remains
+unmeasured.</p>
+<h3>Shared sources and private request state</h3>
 <p>The group first loads all four segments for all four children: sixteen
 placements in total. The original saved segments are shared and remain
 unchanged. Each child keeps its own GPU destination blocks and working buffers,
@@ -669,13 +679,13 @@ a software cache in ordinary system RAM, not the processor's tiny hardware L1
 cache. A separate cache process supplies the data to one model worker.
 The NVMe/DMA-BUF comparison in question 24 ran children serially; it was not
 this group test.</p>
-<h3>What did the comparison show?</h3>
+<h3>Measured comparison</h3>
 <p>On October 24, the in-process serial reference, the serial path using the
 separate cache process and this group path all produced bit-for-bit identical
 keys, values and next-token scores. All four children's generated tokens and
 all 96 per-layer recalculation choices also match. Each child restores the
 same 416 shared tokens within a 512-token prompt.</p>
-<h3>What if one child fails?</h3>
+<h3>Recovery after one child fails</h3>
 <p>We deliberately fail child B after it finishes its first actual model layer.
 A, C and D finish with the serial reference's generated tokens and recalculation
 choices. B waits for its pending work to finish, discards all restored state
@@ -685,7 +695,7 @@ source handles close with no pending work.</p>
 <p>This failure test checks safe fallback and sibling isolation. The mixed
 repaired/recalculated run checks generated tokens and cleanup; the successful
 group run is the one with the complete raw-state and next-token-score comparison.</p>
-<div class="note"><strong>What remains to be demonstrated</strong>
+<div class="note"><strong>Further tests</strong>
 Combining this group with NVMe/DMA-BUF loading needs its own integration and
 tests. Batched model operations, sharing across multiple GPU workers,
 production serving speed and total memory savings are also unmeasured. The
