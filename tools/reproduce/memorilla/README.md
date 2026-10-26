@@ -101,6 +101,12 @@ remote StorageManager routing or speed advantage is claimed.
 
 ## Reusable stress command
 
+The [system qualification](../../../docs/context-artifacts.html#system-qualification)
+reports complete public-wheel dependency checks, concurrent checkpoint
+controls, storage pressure, cancellation and recovery. Mmap remains the
+performance baseline: a working catalog and adapter do not establish a speed
+advantage. The new port's checks are separate from the original paper scores.
+
 The separate CPU bank stressor uses the same native mmap implementation,
 catalog and real LMCache host allocator as checkpoint inference:
 

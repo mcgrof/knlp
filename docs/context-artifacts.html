@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#checkpoint-results">What ran</a><a href="#replay-scheduling">Replay controls</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#checkpoint-results">What ran</a><a href="#replay-scheduling">Replay controls</a><a href="#system-qualification">System tests</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
 <header class="wrap">
 <div class="eyebrow">Context reuse · checkpoint inference · October 2026</div>
 <h1>Reusable context,<br>typed by its consumer.</h1>
@@ -117,7 +117,7 @@ make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
 <tr><td>PersonalizationV4</td><td>Short-answer accuracy</td><td>66.65</td><td>66.65</td></tr>
 </tbody></table></div>
 <p class="caption">Scores are percentages; ROUGE-L uses the code’s 0–100 scale. There are 32,860 questions. Reader release <code>f6b15af5</code>, data <code>c6b0d7ee</code> and author source <code>005854d1</code> stay pinned. The inference and storage modules in clean source <a href="https://github.com/mcgrof/knlp/tree/8ecc3952a873de1d1e1c02632089aaba1fd05478/tools/reproduce/memorilla"><code>8ecc3952</code></a> match the measured snapshot byte for byte.</p>
-<p>The adapter matches every original prediction on the 100-question PubMedQA benchmark and the 10,557-question NarrativeQA benchmark. The latter uses a 64 MiB host arena, 355 bank loads and 10,202 resident hits. Another 73,856 stress requests pass all 37 same-trace comparisons. These qualify the host-artifact component and selected inference paths. Complete LMCache package compatibility and other storage backends have separate qualification gates.</p>
+<p>The adapter matches every original prediction on the 100-question PubMedQA benchmark and the 10,557-question NarrativeQA benchmark. The latter uses a 64 MiB host arena, 355 bank loads and 10,202 resident hits. Another 73,856 stress requests pass all 37 same-trace comparisons. These qualify the host-artifact component and selected inference paths. The <a href="#system-qualification">later system qualification</a> checks a complete public-wheel package stack; other storage backends retain separate gates.</p>
 <p>Independent CPU rescoring reproduces the inspected generation metrics. Exact paper-checkpoint lineage remains unverified: the <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/blob/f6b15af56aa687861c8d2d03b1cd8f7979881361/README.md">release card</a> labels Stage 3 as <code>epoch-00</code>, while the recipe runs five epochs and the source evaluation example names <code>epoch-04</code>. Those labels alone do not establish which weights produced the paper table. The runner records the discrepancy and preserves the observed scores.</p>
 <p>Read size depends on the selected collection. PubMedQA has a 20 KiB median bank and a 40 KiB maximum; NarrativeQA has a 6,975 KiB median and a 34,800 KiB maximum. These are question-weighted tensor payload sizes. The unchanged reader consumes every row of its selected bank. The author’s indexed mmap already skips other collections in a shard; our current adapter materializes one artifact per bank. Both file paths use the Linux page cache. Logical bytes do not establish device-command sizes or a kernel-patch speedup.</p>
 </section>
@@ -139,8 +139,44 @@ make memorilla-stress TRACE=/path/to/control/trace.json \
   MEMORILLA_PYTHON=/path/to/python</pre>
 <p>Keep the trace, batch size, scheduling mode, engine options and model/data pins fixed when comparing storage paths. The <a href="https://github.com/mcgrof/knlp/tree/2026-10-23-feature-context-artifacts/tools/reproduce/memorilla">runner documentation</a> explains exact-string comparison, tensor diagnostics, effective-runtime receipts and the reference presets. No kernel installation or kernel A/B test is part of this qualification.</p>
 </section>
+<section id="system-qualification">
+<div class="eyebrow">10 / System qualification</div><h2>Stress the storage contract and keep the mmap baseline.</h2>
+<p>The new port passes a complete 240-package dependency check with stock public vLLM 0.29.0, Torch 2.13.0 and Transformers 5.20.2 on Python 3.13. A normal LMCache wheel matches all 721 Python files in its pinned source, with no unexpected modules. Its supported <code>NO_GPU_EXT=1</code> build includes native host extensions; this qualification covers the host-artifact path. The original Memorilla model and evaluation source remain unchanged. GPU KV kernels, optional backends and all eight paper scores on this newer runtime remain separate gates.</p>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/2026-10-25-feature-memorilla-system/tools/reproduce/memorilla/requirements-port.lock">resolved dependency lock</a> and <a href="https://github.com/mcgrof/knlp/tree/2026-10-25-feature-memorilla-system/tools/reproduce/memorilla">reproduction instructions</a> keep this port separate from the original-author preset. No training or kernel modification is required.</p>
+<h3>Concurrent checkpoint reads preserve the answers.</h3>
+<p>Eight diagnostic controls compare original mmap and LMCache with one and eight bank-fetch clients on PubMedQA and NarrativeQA. Storage workers fetch banks before each ordered batch; the original collator, learned reader and decoder preserve request order. These are parallel storage clients feeding one offline engine, with batch size four, in-process scheduling, eager execution and decoder prefix caching disabled. They are not independent online decoder clients.</p>
+<p>The campaign completes 3,168 checkpoint requests in 22 workers, plus two deliberately interrupted workers. All 14 selected comparisons match inputs and answer strings exactly. All ten instrumented comparisons also match nonempty collated-input, reader-output and decoder-prompt hashes. Both paths abort four active decoder requests, drain them and reproduce the control after retrying on the same engine. Separate workers are killed with four requests still active; fresh processes reproduce their controls.</p>
+<p>Uninstrumented 256-request timing controls include bank preparation, collation and generation, with model load and bank conversion reported separately. The table shows requests per second on one 24 GiB GPU; it is not individual request latency or a cross-device comparison.</p>
+<div class="table-wrap"><table><thead><tr><th>Trace</th><th>Original mmap</th><th>LMCache residency</th><th>LMCache, eviction each batch</th></tr></thead><tbody>
+<tr><td>PubMedQA</td><td>4.69–4.70 requests/s</td><td>4.66 requests/s</td><td>4.68 requests/s</td></tr>
+<tr><td>NarrativeQA</td><td>17.93–17.96 requests/s</td><td>17.45 requests/s</td><td>17.47 requests/s</td></tr>
+</tbody></table></div>
+<p class="caption">Reader, decoder and data revisions match the released-checkpoint controls above. The adapter uses a 64 KiB small-bank arena or 64 MiB large-bank arena. These short timing controls show no generation-speed advantage. All per-case outputs and comparisons are complete. A full filesystem prevented the final monitoring summary; no aggregate telemetry result or clean enclosing-job status is claimed.</p>
+<h3>Memory limits must include the page cache.</h3>
+<p>A separate CPU matrix completes 56 cases across all 100 PubMedQA banks and 355 NarrativeQA banks. Every one of 251,914 completed reads matches the expected full bank bytes, shape and dtype; 6,134 queued reads cancel. Running reads drain. Cases cover one and eight clients, hot and initially cold files, 2/8 GiB process-tree limits, two order-balanced repeats, and 32-client sharing. There are no out-of-memory kills.</p>
+<p>The common full-byte validating consumer forces mmap pages to be read. These CPU service timings include validation, copies and capacity retries, rather than treating lazy view creation as completed I/O. The table gives medians over two repeats with eight clients and four CPU cores. It does not measure decoder latency or storage-device command sizes.</p>
+<div class="table-wrap"><table><thead><tr><th>Banks / condition</th><th>Mmap reads/s</th><th>Adapter reads/s</th><th>Mmap p95</th><th>Adapter p95</th></tr></thead><tbody>
+<tr><td>PubMedQA, hot</td><td>22,653</td><td>2,945</td><td>0.490 ms</td><td>7.767 ms</td></tr>
+<tr><td>NarrativeQA, hot</td><td>1,257</td><td>524</td><td>14.729 ms</td><td>32.060 ms</td></tr>
+<tr><td>NarrativeQA, initially cold</td><td>711</td><td>501</td><td>28.536 ms</td><td>33.501 ms</td></tr>
+<tr><td>NarrativeQA, 2 GiB limit</td><td>408</td><td>445</td><td>35.235 ms</td><td>38.150 ms</td></tr>
+</tbody></table></div>
+<p>The large working set contains about 2.41 GiB of tensors. Initially cold 8 GiB cases peak at about 3,122 MiB charged memory for mmap and 3,590 MiB for the adapter, including setup. Both use the Linux page cache. Under a 2 GiB limit, both trigger real reclaim and remain correct; measured storage reads rise to about 6,152/6,689 MiB, respectively. The adapter's 64 MiB arena therefore does not bound total host memory. Cloned tensors, runtime allocations and file pages all matter.</p>
+<p>File residency is measured with <code>mincore</code>. Cold controls evict only owned payload files, never the global page cache. Already-hot file pages can be charged to an earlier process group, so hot-case accounting alone cannot establish physical memory use. The small working set fits either limit and shows no reclaim. A limit is not itself proof of pressure.</p>
+<p>Mmap wins the hot CPU comparisons. The adapter's modest throughput lead in the eight-client pressure case comes with worse p95 latency and more storage reads; the one-client pressure case favors mmap. This is no general storage-speed win. One-bank sharing does work: 32 clients produce one adapter load and 8,191 or 1,023 resident hits. That demonstrates process-local sharing, not one host allocation shared across processes.</p>
+<h3>Failures and provenance stay explicit.</h3>
+<p>Ten real allocator/catalog fault checks pass: miss coalescing, active-lease eviction and close rejection, capacity backpressure, corruption, short reads, missing files and identities, oversize banks, and recovery after killing a reader between allocation and read completion. Recovered bytes and allocator cleanup are checked. Queued storage cancellation, decoder abort and process restart are distinct tests; none is a power-loss guarantee.</p>
+<pre>make memorilla-storage-stress MEMORILLA_PYTHON=/path/to/python \
+  STORAGE_BENCHMARK=narrativeqa STORAGE_CLIENTS=8 \
+  STORAGE_REQUESTS=1024 STORAGE_CACHE=cold \
+  STORAGE_OUTPUT=/path/to/new/results
+make memorilla-storage-faults MEMORILLA_PYTHON=/path/to/python \
+  STORAGE_OUTPUT=/path/to/new/fault-fixtures</pre>
+<p>A read-only audit finds unchanged public source, model and data revisions, with no paper-run manifest in the inspected release metadata, histories and documentation. The <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/blob/f6b15af56aa687861c8d2d03b1cd8f7979881361/README.md">release card</a> still labels Stage 3 as <code>epoch-00</code>, while the <a href="https://github.com/snap-stanford/memorilla/blob/005854d13ced2dfe56588fb721eb78db5ec13f6a/README.md">evaluation example</a> names <code>epoch-04</code>. These labels do not prove the weights are wrong. Exact paper-checkpoint lineage remains unverified.</p>
+<p><strong>Decision:</strong> retain mmap as the fast baseline. The adapter demonstrates a usable typed catalog, integrity checks, bounded leases and process-local sharing, with measurable costs. The unchanged reader still needs every row in its selected bank. Future changes to copying or mmap-backed leases can use this stressor and these controls before any speed claim.</p>
+</section>
 <section id="sources">
-<div class="eyebrow">10 / Primary sources</div><h2>Read the methods and the implementation.</h2>
+<div class="eyebrow">11 / Primary sources</div><h2>Read the methods and the implementation.</h2>
 <ol class="refs">
 <li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
 <li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
@@ -149,6 +185,6 @@ make memorilla-stress TRACE=/path/to/control/trace.json \
 </ol>
 </section>
 </main>
-<footer class="wrap">knlp · Context artifact and checkpoint evaluation · October 23, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
+<footer class="wrap">knlp · Context artifact and checkpoint evaluation · October 25, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
 </body>
 </html>
