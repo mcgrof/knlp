@@ -317,6 +317,7 @@ def main():
         "author_source": inputs["source_revision"],
         "runner_sha256": digest(Path(__file__)),
         "workloads_sha256": digest(Path(__file__).with_name("workloads.py")),
+        "bank_prefetch_sha256": digest(Path(__file__).with_name("bank_prefetch.py")),
         "checkpoint_folder": folder,
         "checkpoint_release": checkpoint_release,
         "checkpoint_sha256": digest(checkpoint / "memory.pt"),
@@ -325,6 +326,7 @@ def main():
         "encoder_revision": ENCODER,
         "runtime_profile": cfg["profile"],
         "offline_scheduling": scheduling,
+        "bank_fetch_clients": cfg.get("clients", 1),
         "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
         "hip": torch.version.hip,
@@ -451,9 +453,25 @@ def main():
             gpu_memory_utilization=cfg["gpu_fraction"],
             cache_dir=args.cache_dir,
         )
+        bank_clients = None
+        if cfg.get("clients", 1) > 1:
+            from memorilla.embeddings import EmbeddingStore
+
+            from .bank_prefetch import ConcurrentBanks
+
+            factory = (
+                None
+                if cfg["profile"] == "lmcache"
+                else lambda: EmbeddingStore(
+                    benchmark.config,
+                    benchmark.split,
+                    root=inputs["assets"]["data"]["path"],
+                )
+            )
+            bank_clients = ConcurrentBanks(store, cfg["clients"], factory)
         collator = MemoryCollator(
             model.tokenizer,
-            {(benchmark.config, benchmark.split): store},
+            {(benchmark.config, benchmark.split): bank_clients or store},
             num_memories=model.memory.num_memories,
             max_length=benchmark.max_length,
             system_prompt=benchmark.system_prompt,
@@ -472,12 +490,18 @@ def main():
                 if cfg["evict_every"] and index % cfg["evict_every"] == 0 and stores:
                     store.evict()
                 tick = time.monotonic()
+                if bank_clients:
+                    bank_clients.prepare([entry["collection_id"] for entry in current])
+                banks_ready = time.monotonic()
                 batch = collator(
                     [
                         items[entry["row"]] | {"collection_id": entry["collection_id"]}
                         for entry in current
                     ]
                 )
+                if bank_clients:
+                    bank_clients.finish()
+                collated = time.monotonic()
                 diagnostics = {}
                 if observed or hook is not None:
                     diagnostics["batch_input_sha256"] = fingerprint(
@@ -510,6 +534,9 @@ def main():
                                 "prediction": prediction,
                                 "batch_seconds": elapsed,
                                 "batch_size": len(current),
+                                "bank_prepare_seconds": banks_ready - tick,
+                                "collate_seconds": collated - banks_ready,
+                                "model_seconds": elapsed - (collated - tick),
                                 **diagnostics,
                             }
                         )
@@ -530,12 +557,16 @@ def main():
                 "batch_seconds_p95": percentile(durations, 0.95),
                 "batch_seconds_p99": percentile(durations, 0.99),
                 "generation_seconds": total_generation,
+                "bank_fetch_clients": cfg.get("clients", 1),
+                "bank_capacity_retries": bank_clients.retries if bank_clients else 0,
                 "requests_per_second": len(trace) / total_generation,
                 "repeated_question_prediction_changes": inconsistent,
                 "note": "Synchronous batched replay; batch latency is not individual request latency. Numeric output changes are reported, not silently tolerated.",
             },
         )
         del model, memory
+        if bank_clients:
+            bank_clients.close()
         if hook is not None:
             hook.remove()
         release_gpu_memory()

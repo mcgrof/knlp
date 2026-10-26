@@ -172,6 +172,16 @@ the document bank. This is a synthetic input-isolation test, not a scored
 paper example. It uses the same original collator, reader and decoder. `KNLP_MEM_EVICT_EVERY` explicitly clears adapter residency every N
 batches and leaves the Linux page cache unchanged.
 
+`KNLP_MEM_CLIENTS` controls parallel bank fetches before each complete
+decoder batch in port stress mode. The original collator consumes results
+in request order, including repeated collections. The learned reader and
+decoder stay on the caller thread, so storage completion order cannot change
+decoder batch composition. This tests storage contention feeding an offline
+engine; it does not simulate independent online decoder clients. Original
+author mode requires one bank client. Request receipts separate bank
+preparation, collation and model-call times; diagnostic hashing adds overhead
+to the model-call interval and must be disabled for timing comparisons.
+
 A `TRACE` replay validates its row bounds, collection, checkpoint, data and
 prompt identities before running. It does not silently regenerate a new
 schedule. Every replay saves its complete request schedule and append-only predictions,

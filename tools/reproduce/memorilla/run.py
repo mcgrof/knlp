@@ -77,6 +77,7 @@ def configuration(path):
         ("batch", 32),
         ("pool_bytes", 67108864),
         ("requests", 1000),
+        ("clients", 1),
         ("seed", 23),
         ("rows", 0),
         ("evict_every", 0),
@@ -110,6 +111,8 @@ def configuration(path):
         raise ValueError("scheduling must be runtime, inprocess or batch")
     if cfg["profile"] == "author" and cfg["scheduling"] != "runtime":
         raise ValueError("original author mode rejects scheduling overrides")
+    if cfg["profile"] == "author" and cfg["clients"] != 1:
+        raise ValueError("original author mode rejects concurrent bank clients")
     if cfg.get("singleton_reference") == "y" and (
         cfg["batch"] != 1
         or cfg["scheduling"] != "inprocess"
@@ -121,7 +124,8 @@ def configuration(path):
             "max_num_seqs=1 and enable_prefix_caching=false"
         )
     if (
-        min(cfg["batch"], cfg["pool_bytes"], cfg["requests"]) < 1
+        min(cfg["batch"], cfg["pool_bytes"], cfg["requests"], cfg["clients"]) < 1
+        or cfg["clients"] > 128
         or min(cfg["rows"], cfg["evict_every"]) < 0
     ):
         raise ValueError("invalid workload bounds")

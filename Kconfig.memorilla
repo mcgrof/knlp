@@ -66,6 +66,15 @@ config KNLP_MEM_REQUESTS
 	int "Stress requests per benchmark"
 	range 1 10000000
 	default 1000
+config KNLP_MEM_CLIENTS
+	int "Concurrent bank-fetch clients before each ordered decoder batch"
+	range 1 128
+	default 1
+	help
+	  Port stress replay can fetch collections concurrently while preserving
+	  the original collator and complete decoder batch order. This exercises
+	  shared-bank storage contention, not concurrent engine.generate calls.
+	  Original author mode requires one client.
 config KNLP_MEM_PATTERN
 	string "Stress pattern: sequential, shuffle, random, hot"
 	default "shuffle"
