@@ -132,24 +132,28 @@ cgroup limits and counters. No kernel modification is required.
 
 ### Clean public-wheel port environment
 
-`requirements-port.in` defines a separate port candidate. Build a fresh Python
-3.13 environment, preinstall its Torch/build prerequisites, then resolve all
-requirements together and synchronize to the resulting lock file. LMCache's
+`requirements-port.lock` pins the qualified Linux Python 3.13 port environment;
+`requirements-port.in` contains the top-level resolution inputs. Use a fresh
+environment with a C++ compiler and Rust build tools. LMCache's
 supported `NO_GPU_EXT=1` host build includes native host extensions and full
 runtime dependency resolution. This profile does not qualify GPU KV kernels.
 
 ```sh
-NO_GPU_EXT=1 uv pip compile --no-build-isolation tools/reproduce/memorilla/requirements-port.in \
-  -o /path/to/requirements.lock
-NO_GPU_EXT=1 uv pip sync --no-build-isolation /path/to/requirements.lock
-uv pip check
+uv venv --python 3.13 /path/to/env
+uv pip install --python /path/to/env/bin/python torch==2.13.0 \
+  setuptools==80.10.2 setuptools-scm==10.3.4 ninja==1.13.2 wheel==0.48.0
+NO_GPU_EXT=1 uv pip sync --python /path/to/env/bin/python \
+  --no-build-isolation tools/reproduce/memorilla/requirements-port.lock
+uv pip check --python /path/to/env/bin/python
 ```
 
-Compile under the same build profile as synchronization. Install build
-prerequisites and select the target environment before these commands. No
+To refresh the lock, use `NO_GPU_EXT=1 uv pip compile --no-build-isolation`
+with `requirements-port.in`, then qualify the resulting environment again.
+Compile under the same build profile as synchronization. No
 dependency-conflict suppression is part of qualification. The runner checks
 normal installed LMCache wheels against every Python implementation file in
-the pinned public checkout and records extension hashes. It also accepts an
+the pinned public checkout, rejects unexpected Python files and records
+extension hashes. It also accepts an
 unchanged editable checkout. Memorilla model/evaluation source remains pinned
 and unmodified; this is explicitly a port rather than its original packaging.
 
