@@ -257,22 +257,15 @@ def main():
 
         serving.LLM = partial(serving.LLM, **cfg["engine_options"])
 
+    lmcache_installation = None
     if cfg["profile"] == "lmcache":
         import lmcache
 
-        for module, expected in [(lmcache, LMCACHE)]:
-            checkout = Path(module.__file__).resolve().parent.parent
-            actual = subprocess.check_output(
-                ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
-            ).strip()
-            if actual != expected:
-                raise ValueError(
-                    f"{module.__name__} checkout must be {expected}, got {actual}"
-                )
-            subprocess.run(
-                ["git", "-C", str(checkout), "diff", "--exit-code", "HEAD", "--"],
-                check=True,
-            )
+        from .environment import verify_package
+
+        lmcache_installation = verify_package(
+            lmcache, Path(cfg["root"]) / "source/lmcache", LMCACHE
+        )
 
     if cfg["profile"] == "author" and (
         torch.version.hip is not None or not torch.cuda.is_available()
@@ -340,6 +333,7 @@ def main():
         "vllm_engine_version": vllm.__version__,
         "vllm_engine_tree_sha256": fingerprint(engine_files),
         "catalog_source_revision": VLLM if cfg["profile"] == "lmcache" else None,
+        "lmcache_installation": lmcache_installation,
         "engine_options": cfg.get("engine_options", {}),
         "diagnostics": cfg.get("diagnostics") == "y",
         "torch_precision": {
