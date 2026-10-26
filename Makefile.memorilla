@@ -2,7 +2,7 @@
 MEMORILLA_PYTHON ?= $(PYTHON)
 MEMORILLA_RUN = $(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.run
 .PHONY: memorilla memorilla-fetch memorilla-doctor memorilla-benchmark \
- memorilla-stress memorilla-compare
+ memorilla-stress memorilla-compare memorilla-storage-stress memorilla-storage-faults
 memorilla memorilla-doctor:
 	@$(MEMORILLA_RUN) doctor --config $(CONFIG_FILE)
 memorilla-fetch:
@@ -13,6 +13,19 @@ memorilla-stress:
 	@$(MEMORILLA_RUN) stress --config $(CONFIG_FILE) $(if $(TRACE),--trace "$(TRACE)")
 memorilla-compare:
 	@$(MEMORILLA_RUN) compare --reference $(REFERENCE) --observed $(OBSERVED)
+STORAGE_BENCHMARK ?= pubmedqa
+STORAGE_CLIENTS ?= 8
+STORAGE_REQUESTS ?= 1024
+STORAGE_CACHE ?= unchanged
+STORAGE_OUTPUT ?= build/memorilla/storage-stress
+memorilla-storage-stress:
+	@$(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.storage_stress \
+	 --config $(CONFIG_FILE) --benchmark $(STORAGE_BENCHMARK) \
+	 --clients $(STORAGE_CLIENTS) --requests $(STORAGE_REQUESTS) \
+	 --file-cache $(STORAGE_CACHE) --output $(STORAGE_OUTPUT)
+memorilla-storage-faults:
+	@$(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.storage_faults \
+	 --config $(CONFIG_FILE) --directory $(STORAGE_OUTPUT)
 ifeq ($(CONFIG_KNLP_REPRODUCE_MEMORILLA),y)
 MEMORILLA_CONFLICTS := $(foreach v,KNLP_CONTEXT_ARTIFACTS MODEL_GNN \
  GOOGLE_MUVERA_SMALL MUVERA_SMALL SUBLIMINAL_LEARNING \

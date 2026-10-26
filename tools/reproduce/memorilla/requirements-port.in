@@ -1,0 +1,17 @@
+# The unchanged Memorilla source is loaded by the runner, not installed with
+# its original, conflicting CUDA dependency pins. Original-author evaluation
+# retains its separate Python 3.11 environment and original requirements.
+vllm==0.29.0
+lmcache @ git+https://github.com/mcgrof/LMCache.git@d8d0fd7fa5869880384eea883c8f7b59a64cf29f
+lightning==2.6.1
+datasets==4.1.1
+pyarrow>=21,<26
+nltk==3.9.2
+rouge-score==0.1.2
+setuptools>=77.0.3,<81.0.0
+setuptools_scm
+ninja
+wheel
+packaging
+pytest
+kconfiglib

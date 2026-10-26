@@ -101,6 +101,58 @@ remote StorageManager routing or speed advantage is claimed.
 
 ## Reusable stress command
 
+The separate CPU bank stressor uses the same native mmap implementation,
+catalog and real LMCache host allocator as checkpoint inference:
+
+```sh
+make memorilla-storage-stress MEMORILLA_PYTHON=/path/to/python \
+  STORAGE_BENCHMARK=narrativeqa STORAGE_CLIENTS=8 \
+  STORAGE_REQUESTS=1024 STORAGE_OUTPUT=/path/to/new/results
+make memorilla-storage-faults MEMORILLA_PYTHON=/path/to/python \
+  STORAGE_OUTPUT=/path/to/new/fault-fixtures
+```
+
+Each CPU bank request validates all bytes and geometry against the original
+store. Select a new output directory for each run; existing captures are
+rejected before loading inputs. Latency includes the full-byte validating consumer, so a lazy mmap
+view is not reported as a completed read. Lookup and consumer times are also
+separate. Concurrent capacity exhaustion uses bounded, measured backpressure.
+Queued-future cancellation drains reads already running. The fault suite
+tests active leases, coalesced misses, capacity, corruption, short/missing
+files and identities, and process restart after an interrupted allocated read.
+These are storage-service checks, separate from decoder request cancellation.
+
+`STORAGE_CACHE=hot` warms payload files; `cold` requests per-file eviction
+only for files inside the configured work root. It never drops the global
+page cache. Actual page residency is measured with `mincore`, and the report
+includes process and cgroup memory, faults and process I/O counters. A cold
+initial cache does not make every subsequent read cold. Use a process memory
+budget smaller than the working set for sustained pressure; retain its actual
+cgroup limits and counters. No kernel modification is required.
+
+### Clean public-wheel port environment
+
+`requirements-port.in` defines a separate port candidate. Build a fresh Python
+3.13 environment, preinstall its Torch/build prerequisites, then resolve all
+requirements together and synchronize to the resulting lock file. LMCache's
+supported `NO_GPU_EXT=1` host build includes native host extensions and full
+runtime dependency resolution. This profile does not qualify GPU KV kernels.
+
+```sh
+NO_GPU_EXT=1 uv pip compile --no-build-isolation tools/reproduce/memorilla/requirements-port.in \
+  -o /path/to/requirements.lock
+NO_GPU_EXT=1 uv pip sync --no-build-isolation /path/to/requirements.lock
+uv pip check
+```
+
+Compile under the same build profile as synchronization. Install build
+prerequisites and select the target environment before these commands. No
+dependency-conflict suppression is part of qualification. The runner checks
+normal installed LMCache wheels against every Python implementation file in
+the pinned public checkout and records extension hashes. It also accepts an
+unchanged editable checkout. Memorilla model/evaluation source remains pinned
+and unmodified; this is explicitly a port rather than its original packaging.
+
 ```sh
 make memorilla-stress MEMORILLA_PYTHON=/path/to/python
 # Replay the same saved requests with another preset or batch size:
