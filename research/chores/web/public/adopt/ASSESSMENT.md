@@ -84,6 +84,8 @@ In particular, a skipped job can report success; it is not demonstrated test
 coverage. Queue validation must cover the combined candidate. An offline
 model review cannot substitute for a required native or human review.
 
-The offline helper supplies no native GitHub, mailing-list or production adapter.
+The disposable local Git adapter used in tests exercises reference transactions,
+duplicate/lost-response recovery and post-merge evidence with controlled fake
+producers. It is not a qualified GitHub, mailing-list or production adapter.
 Production merge and a real-project pilot remain disabled pending their own
 trusted integration and maintainer decisions.

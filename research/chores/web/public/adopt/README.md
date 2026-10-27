@@ -222,8 +222,9 @@ a policy command, calls a provider, posts a review or merges a branch.
 Every assessment includes `authority_verified: false`. See
 [the assessment contract](ASSESSMENT.md) before consuming its output.
 
-These offline tools do not qualify a production forge, hostile-code runner,
-corporate account or real hardware. No native integration is supplied here.
+The local Git integration under test uses disposable repositories, native
+reference transactions and a fake resource source. It does not qualify a
+production forge, hostile-code runner, corporate account or real hardware.
 A production adapter must authenticate policy, CI/review sources and grants,
 enforce current head/target conditions at the writer, and reconcile operation
 receipts. Automatic production merge remains unsupported until that adapter
