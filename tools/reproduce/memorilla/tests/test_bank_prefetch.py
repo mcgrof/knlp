@@ -93,3 +93,14 @@ def test_original_author_rejects_concurrent_override(tmp_path):
     )
     with pytest.raises(ValueError, match="author mode rejects concurrent"):
         configuration(path)
+
+
+def test_interrupted_owned_batch_can_be_drained_and_discarded():
+    class Store:
+        def documents(self, key):
+            return key
+
+    banks = ConcurrentBanks(Store(), 2)
+    banks.prepare([1, 2])
+    banks.close(discard=True)
+    assert not banks.prepared

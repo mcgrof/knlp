@@ -62,6 +62,10 @@ class ConcurrentBanks:
             raise RuntimeError("collator did not consume its complete bank batch")
         self.prepared.clear()
 
-    def close(self):
+    def close(self, *, discard=False):
+        """Drain work, optionally discard an interrupted owned-tensor batch."""
         self.executor.shutdown(wait=True, cancel_futures=True)
-        self.finish()
+        if discard:
+            self.prepared.clear()
+        else:
+            self.finish()

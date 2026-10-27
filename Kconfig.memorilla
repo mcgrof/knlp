@@ -55,6 +55,16 @@ config KNLP_MEM_SCORER_FRACTION
 config KNLP_MEM_POOL_BYTES
 	int "LMCache host arena bytes"
 	default 67108864
+config KNLP_MEM_INPUT_PIPELINE
+	string "Document batch assembly: author, leased-fp16, leased-bf16"
+	default "author"
+	help
+	  The port and LMCache paths may copy document banks directly into an
+	  owned batch. leased-fp16 removes the intermediate bank clone while
+	  preserving the original padded conversion. leased-bf16 casts valid
+	  rows directly into the final batch and initializes padding there.
+	  Both preserve complete reader inputs and bounded source lifetimes.
+	  Original author mode accepts author only.
 config KNLP_MEM_ENGINE_JSON
 	string "Port-only vLLM engine options JSON"
 	default "{}"

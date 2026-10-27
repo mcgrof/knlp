@@ -7,6 +7,24 @@ from tools.reproduce.memorilla.run import BENCHMARKS, configuration
 from tools.reproduce.memorilla.workloads import compare, fingerprint, schedule
 
 
+def test_explicit_input_pipeline_preserves_author_control(tmp_path):
+    path = tmp_path / "config"
+    common = "CONFIG_KNLP_REPRODUCE_MEMORILLA=y\n"
+    path.write_text(common + "CONFIG_KNLP_MEM_LMCACHE=y\n")
+    assert configuration(path)["input_pipeline"] == "author"
+    path.write_text(
+        common
+        + 'CONFIG_KNLP_MEM_LMCACHE=y\nCONFIG_KNLP_MEM_INPUT_PIPELINE="leased-bf16"\n'
+    )
+    assert configuration(path)["input_pipeline"] == "leased-bf16"
+    path.write_text(
+        common
+        + 'CONFIG_KNLP_MEM_AUTHOR=y\nCONFIG_KNLP_MEM_INPUT_PIPELINE="leased-bf16"\n'
+    )
+    with pytest.raises(ValueError, match="collator overrides"):
+        configuration(path)
+
+
 @pytest.mark.parametrize("pattern", ["sequential", "shuffle", "random", "hot"])
 def test_schedule_replay_and_bounds(pattern):
     left = schedule(17, 1003, 23, pattern)

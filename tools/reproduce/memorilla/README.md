@@ -113,6 +113,29 @@ publication costs; cached metadata does not remove those costs.
 Question embeddings retain the author's mmap path. No automatic KV attachment,
 remote StorageManager routing or speed advantage is claimed.
 
+## Direct batch assembly
+
+The optional `memorilla-lmcache-bf16` and `memorilla-port-bf16` defconfigs
+select `KNLP_MEM_INPUT_PIPELINE="leased-bf16"`. They use the same prompts,
+reader, masks and question embeddings. Each valid FP16 document row is
+copied and cast into its final owned BF16 batch, and padding is initialized
+there. LMCache releases each source lease after its synchronous CPU copy.
+This avoids the intermediate ownership clone and padded FP16 conversion.
+The native preset provides the same collation change over mmap collections.
+
+`leased-fp16` retains the padded FP16 conversion as a copy-only control.
+The existing presets default to the unchanged author collator. Original
+author mode rejects either override. These options apply to benchmark
+and stress commands and record the selected pipeline in provenance.
+Bank workers fill disjoint batch rows and drain before a failed batch is
+discarded. A batch can exceed the arena in aggregate, but each bank must
+fit individually. Batch size and decoder scheduling remain explicit.
+
+This is an optional consumer adapter, not a new LMCache storage backend.
+Whole-load catalog and SHA256 checks remain enabled. CPU batch equality
+does not by itself establish checkpoint or performance qualification on a
+new runtime.
+
 ## Reusable stress command
 
 The [system qualification](../../../docs/context-artifacts.html#system-qualification)

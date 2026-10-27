@@ -88,6 +88,11 @@ def configuration(path):
         if not 0 < cfg[key] < 1:
             raise ValueError(f"invalid {key}")
     cfg.setdefault("pattern", "shuffle")
+    cfg.setdefault("input_pipeline", "author")
+    if cfg["input_pipeline"] not in {"author", "leased-fp16", "leased-bf16"}:
+        raise ValueError("unknown document input pipeline")
+    if cfg["profile"] == "author" and cfg["input_pipeline"] != "author":
+        raise ValueError("original author mode rejects collator overrides")
     cfg["engine_options"] = json.loads(cfg.get("engine_json", "{}"))
     allowed = {
         "enforce_eager",

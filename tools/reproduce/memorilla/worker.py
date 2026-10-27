@@ -276,6 +276,33 @@ def main():
     from memorilla.utils import release_gpu_memory, seed_everything
     from memorilla.vllm import MemoryVLLM
 
+    input_pipeline = cfg.get("input_pipeline", "author")
+    if input_pipeline not in {"author", "leased-fp16", "leased-bf16"}:
+        raise ValueError("unknown document input pipeline")
+    if cfg["profile"] == "author" and input_pipeline != "author":
+        raise ValueError("original author mode rejects collator overrides")
+    collators = []
+    bank_clients = None
+    if input_pipeline != "author":
+        from .input_batch import LeasedMemoryCollator
+
+        class ConfiguredMemoryCollator(LeasedMemoryCollator):
+            def __init__(self, *args, **kwargs):
+                super().__init__(
+                    *args,
+                    clients=cfg.get("clients", 1),
+                    final_dtype=(
+                        torch.bfloat16
+                        if input_pipeline == "leased-bf16"
+                        else torch.float16
+                    ),
+                    **kwargs,
+                )
+                collators.append(self)
+
+        MemoryCollator = ConfiguredMemoryCollator
+        author.MemoryCollator = ConfiguredMemoryCollator
+
     if cfg.get("engine_options"):
         from functools import partial
 
@@ -353,6 +380,7 @@ def main():
         "runtime_profile": cfg["profile"],
         "offline_scheduling": scheduling,
         "bank_fetch_clients": cfg.get("clients", 1),
+        "input_pipeline": input_pipeline,
         "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
         "hip": torch.version.hip,
@@ -406,208 +434,225 @@ def main():
         return benchmark, dataset, native
 
     author.load_target = load_target
-    before = usage()
-    start = time.monotonic()
-    if opts.mode == "benchmark":
-        # The original driver constructs its collator/reader/engine, generates
-        # the complete split and calls its original scorers.
-        author.main(args)
-        metric_path = opts.output / "author-results" / name / "metrics.json"
-        metrics = json.loads(metric_path.read_text())
-        key, target = BENCHMARKS[name][1:]
-        write(
-            opts.output / "paper-comparison.json",
-            {
-                "paper_table": 11,
-                "metric": key,
-                "paper_percent": target,
-                "observed_percent": metrics[key],
-                "delta_percentage_points": metrics[key] - target,
-                "checkpoint_lineage_verified_against_paper": False,
-                "checkpoint_release": checkpoint_release,
-                "claim": "released-checkpoint evaluation; scores are observations, not an exact-reproduction gate",
-            },
-        )
-    else:
-        seed_everything(cfg["seed"])
-        benchmark, dataset, store = load_target(protocols[name], args)
-        items = MemoryDataset([(benchmark.config, benchmark.split, dataset)])
-        rows = min(len(items), cfg["rows"] or len(items))
-        order = schedule(rows, cfg["requests"], cfg["seed"], cfg["pattern"])
-
-        def request(row, request_id, bank_row):
-            if type(bank_row) is not int or not 0 <= bank_row < len(items):
-                raise ValueError("trace bank row is outside the selected split")
-            return request_record(
-                dataset[row],
-                dataset[bank_row],
-                row,
-                bank_row,
-                request_id,
+    try:
+        before = usage()
+        start = time.monotonic()
+        if opts.mode == "benchmark":
+            # The original driver constructs its collator/reader/engine, generates
+            # the complete split and calls its original scorers.
+            author.main(args)
+            metric_path = opts.output / "author-results" / name / "metrics.json"
+            metrics = json.loads(metric_path.read_text())
+            key, target = BENCHMARKS[name][1:]
+            write(
+                opts.output / "paper-comparison.json",
                 {
-                    "data": DATA,
-                    "checkpoint": provenance["checkpoint_sha256"],
-                    "decoder_revision": provenance["decoder_revision"],
-                    "encoder_revision": ENCODER,
-                    "protocol": provenance["protocol"],
+                    "paper_table": 11,
+                    "metric": key,
+                    "paper_percent": target,
+                    "observed_percent": metrics[key],
+                    "delta_percentage_points": metrics[key] - target,
+                    "checkpoint_lineage_verified_against_paper": False,
+                    "checkpoint_release": checkpoint_release,
+                    "claim": "released-checkpoint evaluation; scores are observations, not an exact-reproduction gate",
                 },
             )
+        else:
+            seed_everything(cfg["seed"])
+            benchmark, dataset, store = load_target(protocols[name], args)
+            items = MemoryDataset([(benchmark.config, benchmark.split, dataset)])
+            rows = min(len(items), cfg["rows"] or len(items))
+            order = schedule(rows, cfg["requests"], cfg["seed"], cfg["pattern"])
 
-        trace = [
-            request(0 if cfg.get("bank_swap") == "y" else row, f"{name}:{i}", row)
-            for i, row in enumerate(order)
-        ]
-        if cfg.get("trace"):
-            from .workloads import validate_trace
-
-            supplied = json.loads(Path(cfg["trace"]).read_text())
-            validate_trace(supplied, len(items))
-            for entry in supplied:
-                if entry != request(
-                    entry["row"], entry["request_id"], entry.get("bank_row")
-                ):
-                    raise ValueError(
-                        "trace input identity differs from the selected checkpoint/data/protocol"
-                    )
-            trace = supplied
-        write(opts.output / "trace.json", trace)
-        memory = author.MemoryModule.from_pretrained(checkpoint)
-        model = MemoryVLLM(
-            decoder,
-            memory,
-            max_model_len=benchmark.max_length,
-            gpu_memory_utilization=cfg["gpu_fraction"],
-            cache_dir=args.cache_dir,
-        )
-        bank_clients = None
-        if cfg.get("clients", 1) > 1:
-            from memorilla.embeddings import EmbeddingStore
-
-            from .bank_prefetch import ConcurrentBanks
-
-            factory = (
-                None
-                if cfg["profile"] == "lmcache"
-                else lambda: EmbeddingStore(
-                    benchmark.config,
-                    benchmark.split,
-                    root=inputs["assets"]["data"]["path"],
+            def request(row, request_id, bank_row):
+                if type(bank_row) is not int or not 0 <= bank_row < len(items):
+                    raise ValueError("trace bank row is outside the selected split")
+                return request_record(
+                    dataset[row],
+                    dataset[bank_row],
+                    row,
+                    bank_row,
+                    request_id,
+                    {
+                        "data": DATA,
+                        "checkpoint": provenance["checkpoint_sha256"],
+                        "decoder_revision": provenance["decoder_revision"],
+                        "encoder_revision": ENCODER,
+                        "protocol": provenance["protocol"],
+                    },
                 )
-            )
-            bank_clients = ConcurrentBanks(store, cfg["clients"], factory)
-        collator = MemoryCollator(
-            model.tokenizer,
-            {(benchmark.config, benchmark.split): bank_clients or store},
-            num_memories=model.memory.num_memories,
-            max_length=benchmark.max_length,
-            system_prompt=benchmark.system_prompt,
-            suffix=benchmark.suffix,
-            train=False,
-        )
-        observed, hook = (
-            observe_tensors(model) if cfg.get("diagnostics") == "y" else ({}, None)
-        )
-        durations, inconsistent = [], []
-        seen = {}
-        total_generation = 0
-        with (opts.output / "requests.jsonl").open("w") as receipt:
-            for index, offset in enumerate(range(0, len(trace), cfg["batch"])):
-                current = trace[offset : offset + cfg["batch"]]
-                if cfg["evict_every"] and index % cfg["evict_every"] == 0 and stores:
-                    store.evict()
-                tick = time.monotonic()
-                if bank_clients:
-                    bank_clients.prepare([entry["collection_id"] for entry in current])
-                banks_ready = time.monotonic()
-                batch = collator(
-                    [
-                        items[entry["row"]] | {"collection_id": entry["collection_id"]}
-                        for entry in current
-                    ]
-                )
-                if bank_clients:
-                    bank_clients.finish()
-                collated = time.monotonic()
-                diagnostics = {}
-                if observed or hook is not None:
-                    diagnostics["batch_input_sha256"] = fingerprint(
-                        {key: tensor_digest(value) for key, value in batch.items()}
-                    )
-                texts = model.generate(**batch, max_new_tokens=benchmark.max_new_tokens)
-                torch.cuda.synchronize()
-                elapsed = time.monotonic() - tick
-                durations.append(elapsed)
-                total_generation += elapsed
-                for position, (request, text) in enumerate(
-                    zip(current, texts, strict=True)
-                ):
-                    prediction = clean_generation(text)
-                    semantic_key = request["input_digest"]
-                    if semantic_key in seen and seen[semantic_key] != prediction:
-                        inconsistent.append(request["request_id"])
-                    seen[semantic_key] = prediction
-                    if hook is not None:
-                        diagnostics["reader_sha256"] = observed["reader_sha256"][
-                            position
-                        ]
-                        diagnostics["prompt_sha256"] = observed["prompt_sha256"][
-                            position
-                        ]
-                    receipt.write(
-                        json.dumps(
-                            request
-                            | {
-                                "prediction": prediction,
-                                "batch_seconds": elapsed,
-                                "batch_size": len(current),
-                                "bank_prepare_seconds": banks_ready - tick,
-                                "collate_seconds": collated - banks_ready,
-                                "model_seconds": elapsed - (collated - tick),
-                                **diagnostics,
-                            }
+
+            trace = [
+                request(0 if cfg.get("bank_swap") == "y" else row, f"{name}:{i}", row)
+                for i, row in enumerate(order)
+            ]
+            if cfg.get("trace"):
+                from .workloads import validate_trace
+
+                supplied = json.loads(Path(cfg["trace"]).read_text())
+                validate_trace(supplied, len(items))
+                for entry in supplied:
+                    if entry != request(
+                        entry["row"], entry["request_id"], entry.get("bank_row")
+                    ):
+                        raise ValueError(
+                            "trace input identity differs from the selected checkpoint/data/protocol"
                         )
-                        + "\n"
+                trace = supplied
+            write(opts.output / "trace.json", trace)
+            memory = author.MemoryModule.from_pretrained(checkpoint)
+            model = MemoryVLLM(
+                decoder,
+                memory,
+                max_model_len=benchmark.max_length,
+                gpu_memory_utilization=cfg["gpu_fraction"],
+                cache_dir=args.cache_dir,
+            )
+            bank_clients = None
+            if cfg.get("clients", 1) > 1 and input_pipeline == "author":
+                from memorilla.embeddings import EmbeddingStore
+
+                from .bank_prefetch import ConcurrentBanks
+
+                factory = (
+                    None
+                    if cfg["profile"] == "lmcache"
+                    else lambda: EmbeddingStore(
+                        benchmark.config,
+                        benchmark.split,
+                        root=inputs["assets"]["data"]["path"],
                     )
-                receipt.flush()
+                )
+                bank_clients = ConcurrentBanks(store, cfg["clients"], factory)
+            collator = MemoryCollator(
+                model.tokenizer,
+                {(benchmark.config, benchmark.split): bank_clients or store},
+                num_memories=model.memory.num_memories,
+                max_length=benchmark.max_length,
+                system_prompt=benchmark.system_prompt,
+                suffix=benchmark.suffix,
+                train=False,
+            )
+            observed, hook = (
+                observe_tensors(model) if cfg.get("diagnostics") == "y" else ({}, None)
+            )
+            durations, inconsistent = [], []
+            seen = {}
+            total_generation = 0
+            with (opts.output / "requests.jsonl").open("w") as receipt:
+                for index, offset in enumerate(range(0, len(trace), cfg["batch"])):
+                    current = trace[offset : offset + cfg["batch"]]
+                    if (
+                        cfg["evict_every"]
+                        and index % cfg["evict_every"] == 0
+                        and stores
+                    ):
+                        store.evict()
+                    tick = time.monotonic()
+                    if bank_clients:
+                        bank_clients.prepare(
+                            [entry["collection_id"] for entry in current]
+                        )
+                    banks_ready = time.monotonic()
+                    batch = collator(
+                        [
+                            items[entry["row"]]
+                            | {"collection_id": entry["collection_id"]}
+                            for entry in current
+                        ]
+                    )
+                    if bank_clients:
+                        bank_clients.finish()
+                    collated = time.monotonic()
+                    diagnostics = {}
+                    if observed or hook is not None:
+                        diagnostics["batch_input_sha256"] = fingerprint(
+                            {key: tensor_digest(value) for key, value in batch.items()}
+                        )
+                    texts = model.generate(
+                        **batch, max_new_tokens=benchmark.max_new_tokens
+                    )
+                    torch.cuda.synchronize()
+                    elapsed = time.monotonic() - tick
+                    durations.append(elapsed)
+                    total_generation += elapsed
+                    for position, (request, text) in enumerate(
+                        zip(current, texts, strict=True)
+                    ):
+                        prediction = clean_generation(text)
+                        semantic_key = request["input_digest"]
+                        if semantic_key in seen and seen[semantic_key] != prediction:
+                            inconsistent.append(request["request_id"])
+                        seen[semantic_key] = prediction
+                        if hook is not None:
+                            diagnostics["reader_sha256"] = observed["reader_sha256"][
+                                position
+                            ]
+                            diagnostics["prompt_sha256"] = observed["prompt_sha256"][
+                                position
+                            ]
+                        receipt.write(
+                            json.dumps(
+                                request
+                                | {
+                                    "prediction": prediction,
+                                    "batch_seconds": elapsed,
+                                    "batch_size": len(current),
+                                    "bank_prepare_seconds": banks_ready - tick,
+                                    "collate_seconds": collated - banks_ready,
+                                    "model_seconds": elapsed - (collated - tick),
+                                    **diagnostics,
+                                }
+                            )
+                            + "\n"
+                        )
+                    receipt.flush()
+            write(
+                opts.output / "stress-summary.json",
+                {
+                    "requests": len(trace),
+                    "unique_inputs": len(seen),
+                    "unique_questions": len({entry["row"] for entry in trace}),
+                    "unique_collections": len(
+                        {entry["collection_id"] for entry in trace}
+                    ),
+                    "synthetic_bank_pairs": any(
+                        entry["row"] != entry["bank_row"] for entry in trace
+                    ),
+                    "batch_seconds_p50": percentile(durations, 0.5),
+                    "batch_seconds_p95": percentile(durations, 0.95),
+                    "batch_seconds_p99": percentile(durations, 0.99),
+                    "generation_seconds": total_generation,
+                    "bank_fetch_clients": cfg.get("clients", 1),
+                    "bank_capacity_retries": (
+                        bank_clients.retries if bank_clients else 0
+                    ),
+                    "requests_per_second": len(trace) / total_generation,
+                    "repeated_question_prediction_changes": inconsistent,
+                    "note": "Synchronous batched replay; batch latency is not individual request latency. Numeric output changes are reported, not silently tolerated.",
+                },
+            )
+            del model, memory
+            if hook is not None:
+                hook.remove()
+            release_gpu_memory()
         write(
-            opts.output / "stress-summary.json",
+            opts.output / "resources.json",
             {
-                "requests": len(trace),
-                "unique_inputs": len(seen),
-                "unique_questions": len({entry["row"] for entry in trace}),
-                "unique_collections": len({entry["collection_id"] for entry in trace}),
-                "synthetic_bank_pairs": any(
-                    entry["row"] != entry["bank_row"] for entry in trace
-                ),
-                "batch_seconds_p50": percentile(durations, 0.5),
-                "batch_seconds_p95": percentile(durations, 0.95),
-                "batch_seconds_p99": percentile(durations, 0.99),
-                "generation_seconds": total_generation,
-                "bank_fetch_clients": cfg.get("clients", 1),
-                "bank_capacity_retries": bank_clients.retries if bank_clients else 0,
-                "requests_per_second": len(trace) / total_generation,
-                "repeated_question_prediction_changes": inconsistent,
-                "note": "Synchronous batched replay; batch latency is not individual request latency. Numeric output changes are reported, not silently tolerated.",
+                "before": before,
+                "after": usage(),
+                "elapsed_seconds": time.monotonic() - start,
+                "note": "Driver-process usage only; engine children and device I/O are not fully attributed.",
             },
         )
-        del model, memory
+    finally:
+        for collator in collators:
+            collator.close()
         if bank_clients:
-            bank_clients.close()
-        if hook is not None:
-            hook.remove()
-        release_gpu_memory()
-    write(
-        opts.output / "resources.json",
-        {
-            "before": before,
-            "after": usage(),
-            "elapsed_seconds": time.monotonic() - start,
-            "note": "Driver-process usage only; engine children and device I/O are not fully attributed.",
-        },
-    )
-    for store in stores:
-        write(opts.output / "storage.json", store.stats())
-        store.close()
+            bank_clients.close(discard=sys.exc_info()[0] is not None)
+        for store in stores:
+            write(opts.output / "storage.json", store.stats())
+            store.close()
 
 
 if __name__ == "__main__":

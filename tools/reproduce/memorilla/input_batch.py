@@ -35,8 +35,14 @@ class LeasedMemoryCollator(MemoryCollator):
         self._executor = (
             ThreadPoolExecutor(max_workers=clients) if clients > 1 else None
         )
-        self._batch_lock = threading.Lock()
+        self._batch_lock = threading.RLock()
         self._closed = False
+
+    def __call__(self, batch):
+        with self._batch_lock:
+            if self._closed:
+                raise RuntimeError("document collator is closed")
+            return super().__call__(batch)
 
     def _documents(self, batch):
         with self._batch_lock:
@@ -77,8 +83,10 @@ class LeasedMemoryCollator(MemoryCollator):
                     store, key = source
                     store.copy_documents(key, destination)
                 else:
-                    if source.dtype != torch.float16:
-                        raise ValueError("document banks must contain float16 values")
+                    if source.dtype != torch.float16 or source.device.type != "cpu":
+                        raise ValueError(
+                            "document banks must contain CPU float16 values"
+                        )
                     destination.copy_(source)
                 if self._final_dtype == torch.bfloat16:
                     embeds[index, shape[0] :].zero_()
