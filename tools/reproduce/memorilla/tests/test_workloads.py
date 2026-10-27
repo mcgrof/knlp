@@ -25,6 +25,24 @@ def test_explicit_input_pipeline_preserves_author_control(tmp_path):
         configuration(path)
 
 
+def test_attach_configuration_requires_a_pinned_import_receipt(tmp_path):
+    path = tmp_path / "config"
+    common = (
+        "CONFIG_KNLP_REPRODUCE_MEMORILLA=y\nCONFIG_KNLP_MEM_LMCACHE=y\n"
+        'CONFIG_KNLP_MEM_ARTIFACT_MODE="attach"\n'
+    )
+    path.write_text(common)
+    with pytest.raises(ValueError, match="manifest"):
+        configuration(path)
+    receipt = tmp_path / "sets.json"
+    receipt.write_text('{"schema": 1, "sets": {"pubmedqa": "' + "a" * 64 + '"}}')
+    path.write_text(common + f'CONFIG_KNLP_MEM_ARTIFACT_SET_MANIFEST="{receipt}"\n')
+    assert configuration(path)["artifact_sets"] == {"pubmedqa": "a" * 64}
+    receipt.write_text('{"schema": 1, "sets": {"pubmedqa": "bad"}}')
+    with pytest.raises(ValueError, match="artifact set ID"):
+        configuration(path)
+
+
 @pytest.mark.parametrize("pattern", ["sequential", "shuffle", "random", "hot"])
 def test_schedule_replay_and_bounds(pattern):
     left = schedule(17, 1003, 23, pattern)

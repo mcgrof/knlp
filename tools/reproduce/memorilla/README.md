@@ -145,6 +145,33 @@ build and CPU. The arena limit does not include this scratch or output
 batches. Published geometry is reused by artifact identity; every actual
 payload lease keeps the existing consumer, header and load-integrity checks.
 
+## Import once and attach a pinned set
+
+`make memorilla-import` performs input verification and document publication
+on the CPU. It writes `artifact-sets.json` under the configured work root,
+or the path selected by `IMPORT_OUTPUT`. The receipt pins a content-addressed
+set for each selected benchmark. A complete set appears only after all
+payloads and catalog entries are durable. Repeating the same import is
+idempotent; an existing different receipt requires a new output path.
+
+To reuse an import, select `KNLP_MEM_ARTIFACT_MODE="attach"` and set
+`KNLP_MEM_ARTIFACT_SET_MANIFEST` to that receipt. An empty value uses
+`artifact-sets.json` under the work root. The
+`memorilla-lmcache-bf16-attach` preset selects this path; run
+`memorilla-import` first to create its receipt. Import can bootstrap that
+preset, while inference refuses a missing receipt. Each worker checks the
+reader, source index, question vectors, collection metadata and file extents.
+It opens the pinned set without reconstructing or republishing document
+banks. The first acquisition of a nonresident bank still reads and hashes
+its complete payload before exposure. An unrequested corrupt payload is
+detected on acquisition, not by a whole-corpus scan during attach.
+
+The default `import` mode retains full source comparison and publication.
+Use it for a source audit or a fresh conversion. Both modes retain the
+runner's normal input doctor, including its full asset checks; charge that
+outer command cost as well as worker setup. The native index/question files
+and the original source assets remain required by the current author store.
+
 ## Reusable stress command
 
 The [system qualification](../../../docs/context-artifacts.html#system-qualification)

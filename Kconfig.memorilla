@@ -65,6 +65,16 @@ config KNLP_MEM_INPUT_PIPELINE
 	  rows directly into the final batch and initializes padding there.
 	  Both preserve complete reader inputs and bounded source lifetimes.
 	  Original author mode accepts author only.
+config KNLP_MEM_ARTIFACT_MODE
+	string "LMCache artifact setup: import or attach"
+	default "import"
+	help
+	  Import validates and publishes document collections. Attach opens
+	  an explicitly pinned imported set without reconstructing collections.
+	  Payload misses still verify complete bytes and catalog identity.
+config KNLP_MEM_ARTIFACT_SET_MANIFEST
+	string "Receipt from memorilla-import for attach mode"
+	default ""
 config KNLP_MEM_ENGINE_JSON
 	string "Port-only vLLM engine options JSON"
 	default "{}"

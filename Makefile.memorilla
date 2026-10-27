@@ -2,11 +2,14 @@
 MEMORILLA_PYTHON ?= $(PYTHON)
 MEMORILLA_RUN = $(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.run
 .PHONY: memorilla memorilla-fetch memorilla-doctor memorilla-benchmark \
- memorilla-stress memorilla-compare memorilla-storage-stress memorilla-storage-faults
+ memorilla-stress memorilla-compare memorilla-storage-stress memorilla-storage-faults memorilla-import
 memorilla memorilla-doctor:
 	@$(MEMORILLA_RUN) doctor --config $(CONFIG_FILE)
 memorilla-fetch:
 	@$(MEMORILLA_RUN) fetch --config $(CONFIG_FILE)
+memorilla-import:
+	@$(MEMORILLA_PYTHON) -m tools.reproduce.memorilla.import_artifacts \
+	 --config $(CONFIG_FILE) $(if $(IMPORT_OUTPUT),--output "$(IMPORT_OUTPUT)")
 memorilla-benchmark:
 	@$(MEMORILLA_RUN) benchmark --config $(CONFIG_FILE)
 memorilla-stress:

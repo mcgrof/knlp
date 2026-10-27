@@ -50,7 +50,7 @@ def digest(path):
     return h.hexdigest()
 
 
-def configuration(path):
+def configuration(path, *, resolve_artifact_sets=True):
     cfg = {}
     for line in path.read_text().splitlines():
         if line.startswith("CONFIG_KNLP_MEM_") and "=" in line:
@@ -93,6 +93,29 @@ def configuration(path):
         raise ValueError("unknown document input pipeline")
     if cfg["profile"] == "author" and cfg["input_pipeline"] != "author":
         raise ValueError("original author mode rejects collator overrides")
+    cfg.setdefault("artifact_mode", "import")
+    if cfg["artifact_mode"] not in {"import", "attach"}:
+        raise ValueError("unknown artifact preparation mode")
+    if cfg["artifact_mode"] == "attach":
+        if cfg["profile"] != "lmcache":
+            raise ValueError("artifact attach requires the LMCache profile")
+    if cfg["artifact_mode"] == "attach" and resolve_artifact_sets:
+        from tools.reproduce.context_artifacts.artifacts import (
+            digest as validate_digest,
+        )
+
+        receipt_path = Path(
+            cfg.get("artifact_set_manifest")
+            or (Path(cfg["root"]) / "artifact-sets.json")
+        )
+        if not receipt_path.is_file():
+            raise ValueError("attach requires a manifest from memorilla-import")
+        receipt = json.loads(receipt_path.read_text())
+        if receipt.get("schema") != 1 or not isinstance(receipt.get("sets"), dict):
+            raise ValueError("invalid imported artifact-set manifest")
+        cfg["artifact_sets"] = receipt["sets"]
+        for benchmark in cfg["benchmarks"]:
+            validate_digest(cfg["artifact_sets"].get(benchmark), "artifact set ID")
     cfg["engine_options"] = json.loads(cfg.get("engine_json", "{}"))
     allowed = {
         "enforce_eager",

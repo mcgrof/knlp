@@ -102,11 +102,19 @@ class ArtifactEmbeddingStore:
     Document conversion/publication precedes measured generation.
     """
 
-    def __init__(self, native, cfg, checkpoint, output):
+    def __init__(self, native, cfg, checkpoint, output, *, mode=None):
+        mode = mode or cfg.get("artifact_mode", "import")
+        if mode not in {"import", "attach"}:
+            raise ValueError("unknown artifact preparation mode")
+        self.mode = mode
+        import torch
+
         from lmcache.v1.memory_allocators.host_memory_allocator import (
             HostMemoryAllocator,
         )
-        from safetensors.torch import save_file
+        from types import MappingProxyType
+
+        from . import artifact_set
 
         from tools.reproduce.context_artifacts.artifacts import (
             ConsumerIdentity,
@@ -128,53 +136,142 @@ class ArtifactEmbeddingStore:
         )
         self.ids = {}
         self._shapes = {}
-        checkpoint_hash = digest(checkpoint / "memory.pt")
-        for collection in native.collection_ids.tolist():
-            source = directory / f"{DATA}-{int(collection)}.safetensors"
-            vectors = native.documents(collection)
-            if not source.exists():
-                save_file({"embeddings": vectors.contiguous()}, str(source))
-            # A retained bank must still match its pinned native source.
-            import torch
-            from safetensors.torch import load_file
-
-            if not torch.equal(load_file(str(source))["embeddings"], vectors):
-                raise ValueError(
-                    "retained collection differs from pinned author source"
-                )
-            manifest = ContextArtifactManifest(
-                1,
-                "memorilla-evaluation",
-                "document_embeddings",
-                "Memorilla",
-                cfg["source_revision"],
-                checkpoint_hash,
-                (self.consumer,),
-                digest(source),
-                inspect_payload(source),
-                DocumentMetadata(
-                    ConsumerIdentity("Qwen/Qwen3-Embedding-4B", ENCODER),
-                    fingerprint(
-                        {
-                            "data": DATA,
-                            "benchmark": native.config,
-                            "split": native.split,
-                        }
-                    ),
-                    fingerprint(
-                        {
-                            "data": DATA,
-                            "benchmark": native.config,
-                            "collection": collection,
-                        }
-                    ),
-                    vectors.shape[0],
-                    vectors.shape[1],
-                ),
+        try:
+            checkpoint_hash = digest(checkpoint / "memory.pt")
+            source_identity = artifact_set.identity(
+                native, cfg, checkpoint, checkpoint_hash
             )
-            self.ids[int(collection)] = self.registry.register(manifest, source)
-            self._shapes[manifest.artifact_id] = manifest.tensors[0].shape
-        write(output / "artifacts.json", self.ids)
+            if mode == "attach":
+                self.set_id = cfg.get("artifact_sets", {}).get(native.config)
+                self.ids = artifact_set.load(
+                    directory,
+                    source_identity,
+                    self.set_id,
+                    native.collection_ids.tolist(),
+                )
+                lengths = dict(
+                    zip(
+                        native.collection_ids.tolist(),
+                        native._length.tolist(),
+                        strict=True,
+                    )
+                )
+                for collection, artifact_id in self.ids.items():
+                    manifest = self.registry.resolve(artifact_id, self.consumer)
+                    expected_metadata = DocumentMetadata(
+                        ConsumerIdentity("Qwen/Qwen3-Embedding-4B", ENCODER),
+                        fingerprint(
+                            {
+                                "data": DATA,
+                                "benchmark": native.config,
+                                "split": native.split,
+                            }
+                        ),
+                        fingerprint(
+                            {
+                                "data": DATA,
+                                "benchmark": native.config,
+                                "collection": collection,
+                            }
+                        ),
+                        int(lengths[collection]),
+                        source_identity["embedding_dim"],
+                    )
+                    if (
+                        manifest.namespace != "memorilla-evaluation"
+                        or manifest.representation != "document_embeddings"
+                        or manifest.producer != "Memorilla"
+                        or manifest.source_revision != cfg["source_revision"]
+                        or manifest.checkpoint_digest != checkpoint_hash
+                        or manifest.consumers != (self.consumer,)
+                        or manifest.metadata != expected_metadata
+                        or manifest.tensors[0].dtype != "F16"
+                    ):
+                        raise ValueError(
+                            "imported collection metadata differs from its source"
+                        )
+                    artifact_set.check_extent(
+                        self.registry.storage.prepare(artifact_id)
+                    )
+                    if len(self._shapes) < self.registry.storage.max_read_plans:
+                        self._shapes[artifact_id] = manifest.tensors[0].shape
+            else:
+                for collection in native.collection_ids.tolist():
+                    source = directory / f"{DATA}-{int(collection)}.safetensors"
+                    vectors = native.documents(collection)
+                    if (
+                        vectors.dtype != torch.float16
+                        or vectors.shape[1] != source_identity["embedding_dim"]
+                    ):
+                        raise ValueError(
+                            "document vectors differ from the reader input"
+                        )
+                    if not source.exists():
+                        artifact_set.save_bank(source, vectors)
+                    # A retained bank must still match its pinned native source.
+                    from safetensors.torch import load_file
+
+                    retained = load_file(str(source))["embeddings"]
+                    if (
+                        retained.shape != vectors.shape
+                        or retained.dtype != vectors.dtype
+                        or not torch.equal(
+                            retained.view(torch.uint8),
+                            vectors.contiguous().view(torch.uint8),
+                        )
+                    ):
+                        raise ValueError(
+                            "retained collection differs from pinned author source"
+                        )
+                    manifest = ContextArtifactManifest(
+                        1,
+                        "memorilla-evaluation",
+                        "document_embeddings",
+                        "Memorilla",
+                        cfg["source_revision"],
+                        checkpoint_hash,
+                        (self.consumer,),
+                        digest(source),
+                        inspect_payload(source),
+                        DocumentMetadata(
+                            ConsumerIdentity("Qwen/Qwen3-Embedding-4B", ENCODER),
+                            fingerprint(
+                                {
+                                    "data": DATA,
+                                    "benchmark": native.config,
+                                    "split": native.split,
+                                }
+                            ),
+                            fingerprint(
+                                {
+                                    "data": DATA,
+                                    "benchmark": native.config,
+                                    "collection": collection,
+                                }
+                            ),
+                            vectors.shape[0],
+                            vectors.shape[1],
+                        ),
+                    )
+                    self.ids[int(collection)] = self.registry.register(manifest, source)
+                    if len(self._shapes) < self.registry.storage.max_read_plans:
+                        self._shapes[manifest.artifact_id] = manifest.tensors[0].shape
+                self.set_id = artifact_set.publish(directory, source_identity, self.ids)
+            self._shapes = MappingProxyType(self._shapes)
+            write(output / "artifacts.json", self.ids)
+            write(
+                output / "artifact-set.json",
+                {"set_id": self.set_id, "mode": mode, "identity": source_identity},
+            )
+        except BaseException:
+            self.registry.close()
+            self.catalog.close()
+            raise
+
+    @classmethod
+    def attach(cls, native, cfg, checkpoint, output):
+        """Open a pinned imported set; retain verification on each payload miss."""
+        return cls(native, cfg, checkpoint, output, mode="attach")
 
     def documents(self, collection):
         with self.registry.lease(
@@ -184,7 +281,11 @@ class ArtifactEmbeddingStore:
 
     def collection_shape(self, collection):
         """Resolve admitted geometry without reserving payload memory."""
-        return self._shapes[self.ids[int(collection)]]
+        artifact_id = self.ids[int(collection)]
+        shape = self._shapes.get(artifact_id)
+        if shape is None:
+            shape = self.registry.resolve(artifact_id, self.consumer).tensors[0].shape
+        return shape
 
     def copy_documents(self, collection, destination):
         """Finish a synchronous CPU copy before releasing the bank lease."""
@@ -221,6 +322,8 @@ class ArtifactEmbeddingStore:
             "resident_objects": len(store.resident),
             "capacity_waits": store.capacity_waits,
             "capacity_wait_seconds": store.capacity_wait_seconds,
+            "artifact_set_id": self.set_id,
+            "artifact_mode": self.mode,
         }
 
     def close(self):
@@ -384,6 +487,7 @@ def main():
         "offline_scheduling": scheduling,
         "bank_fetch_clients": cfg.get("clients", 1),
         "input_pipeline": input_pipeline,
+        "artifact_mode": cfg.get("artifact_mode", "import"),
         "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
         "hip": torch.version.hip,
@@ -434,6 +538,8 @@ def main():
         if cfg["profile"] == "lmcache":
             native = ArtifactEmbeddingStore(native, cfg, checkpoint, opts.output)
             stores.append(native)
+            provenance["artifact_set_id"] = native.set_id
+            write(opts.output / "provenance.json", provenance)
         return benchmark, dataset, native
 
     author.load_target = load_target
