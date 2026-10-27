@@ -368,3 +368,17 @@ def test_masked_context_prefill_matches_joint_prompt():
             out["first_logits"][row], single["first_logits"][0], atol=1e-4, rtol=1e-4
         )
 
+
+def test_weights_digest_covers_every_parameter():
+    model = M.tiny_base(seed=7)
+    before = M.weights_digest(model)
+    assert before == M.weights_digest(M.tiny_base(seed=7))
+    # one element of one tensor the old eight-tensor sample never visited
+    names = sorted(n for n, _ in model.named_parameters())
+    target = dict(model.named_parameters())[names[3]]
+    with torch.no_grad():
+        target.view(-1)[-1] += 1e-3
+    assert M.weights_digest(model) != before
+    # the digest binds dtype as well as values (``to`` converts in place)
+    changed = M.weights_digest(model)
+    assert M.weights_digest(model.to(torch.bfloat16)) != changed

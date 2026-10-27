@@ -207,18 +207,25 @@ def config_digest(config: Any) -> str:
     return sha256_bytes(canonical(data).encode())
 
 
-def weights_digest(model: nn.Module, sample: int = 8) -> str:
-    """Digest of a fixed sample of parameter tensors; cheap identity check
-    that two processes loaded the same weights."""
-    names = sorted(name for name, _ in model.named_parameters())
-    step = max(1, len(names) // sample)
-    chosen = names[::step][:sample]
-    params = dict(model.named_parameters())
+def _tensor_bytes(tensor: torch.Tensor) -> bytes:
+    """Raw bytes of a tensor in its own dtype, without an up-cast."""
+    flat = tensor.detach().contiguous().cpu().reshape(-1)
+    return flat.view(torch.uint8).numpy().tobytes()
+
+
+def weights_digest(model: nn.Module) -> str:
+    """Digest over the complete model state: every parameter and buffer in
+    name order, with its dtype, shape and raw bytes. A change to any single
+    element changes the digest, so two processes that report the same value
+    hold the same weights in the same precision."""
+    state = model.state_dict()
     digest = hashlib.sha256()
-    for name in chosen:
-        tensor = params[name].detach().to(torch.float32).cpu().contiguous()
+    for name in sorted(state):
+        tensor = state[name]
         digest.update(name.encode())
-        digest.update(tensor.numpy().tobytes())
+        digest.update(str(tensor.dtype).encode())
+        digest.update(json.dumps(list(tensor.shape)).encode())
+        digest.update(_tensor_bytes(tensor))
     return digest.hexdigest()
 
 
