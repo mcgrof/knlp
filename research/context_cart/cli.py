@@ -33,6 +33,7 @@ def _model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dtype", default=None)
     parser.add_argument("--memory-slots", type=int, default=None)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--attn", default=None, help="sdpa or eager")
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument(
         "--source-revision",
@@ -55,6 +56,8 @@ def _spec(args: argparse.Namespace):
         values["memory_slots"] = args.memory_slots
     if args.allow_download:
         values["local_files_only"] = False
+    if getattr(args, "attn", None):
+        values["attn_implementation"] = args.attn
     spec = M.ModelSpec(**values)
     if spec.is_tiny and spec.revision == M.DEFAULT_REVISION:
         spec = dataclasses.replace(
@@ -456,6 +459,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
         (lo, hi),
         args.max_new,
         args.device,
+        style=args.style,
     )
     print(
         json.dumps(
@@ -522,6 +526,118 @@ def cmd_fit(args: argparse.Namespace) -> None:
             },
             indent=1,
         )
+    )
+
+
+def _eos(tokenizer) -> tuple[int, ...]:
+    ids = tokenizer.eos_token_id
+    return tuple(int(i) for i in ([ids] if isinstance(ids, int) else ids))
+
+
+def cmd_cas_parity(args: argparse.Namespace) -> None:
+    from . import cas_native as N
+    from . import longhealth as LH
+    from . import model as M
+
+    out = Path(args.out)
+    if args.stage == "compare":
+        stages = {}
+        for item in args.stages or []:
+            name, _, directory = item.partition("=")
+            stages[name] = Path(directory)
+        report = N.compare_stages(stages, args.reference, out / "parity.json")
+        print(json.dumps(report, indent=1))
+        return
+    R.configure_threads()
+    spec = _spec(args)
+    data, digest = LH.load_benchmark(Path(args.benchmark))
+    questions = LH.patient_questions(data, args.patient, args.max_q)
+    tokenizer = M.load_tokenizer(spec)
+    if args.stage == "native":
+        record = N.run_native_stage(
+            spec.name,
+            Path(args.cartridge),
+            questions,
+            out,
+            args.device,
+            args.steps,
+            _eos(tokenizer),
+            tokenizer,
+        )
+    elif args.stage == "reader":
+        record = N.run_reader_stage(
+            spec,
+            Path(args.cartridge),
+            questions,
+            out,
+            args.device,
+            args.steps,
+            _source_revision(args)["revision"],
+            Path(args.native_dir) if args.native_dir else None,
+        )
+    else:
+        raise SystemExit(f"unknown stage {args.stage}")
+    record["benchmark_digest"] = digest
+    R.dump_json(out / "stage.json", record)
+    print(f"{record['stage']}: {len(record['questions'])} prompts under {out}")
+
+
+def cmd_cas_import(args: argparse.Namespace) -> None:
+    from . import cas_bridge as B
+    from . import longhealth as LH
+    from . import model as M
+    from . import replay as RP
+
+    R.configure_threads()
+    spec = _spec(args)
+    tokenizer = M.load_tokenizer(spec)
+    base = M.load_base(spec, args.device)
+    reader = M.Reader(base, eos_ids=_eos(tokenizer), pad_id=int(tokenizer.pad_token_id))
+    identity = M.reader_identity(base, tokenizer, spec)
+    data, digest = LH.load_benchmark(Path(args.benchmark))
+    questions = LH.patient_questions(data, args.patient, args.max_q)
+    rows = LH.questions_jsonl_rows(questions)
+    for row, q in zip(rows, questions):
+        row["answer"] = q.correct
+    cart = B.load_native_cartridge(Path(args.cartridge), dtype=spec.torch_dtype())
+    sink = B.sink_rows(base)
+    sink_match = B.prefix_max_abs_diff(
+        sink, [(k[:, :, :1], v[:, :, :1]) for k, v in cart.prefix("cpu")]
+    )
+    out = Path(args.out)
+    entry = {
+        "world_id": args.patient,
+        "prefix": cart.prefix(args.device),
+        "positions": cart.positions,
+        "reader_start": cart.reader_start,
+        "questions": rows,
+        "extra": {
+            "native_path": str(args.cartridge),
+            "native_digest": cart.file_digest,
+            "native_tensor_digest": B.digest_native(cart),
+            "frozen_rows": cart.frozen_rows,
+        },
+    }
+    index = RP.produce_prefixes(
+        reader,
+        tokenizer,
+        identity,
+        [entry],
+        out / "producer",
+        _source_revision(args)["revision"],
+        cart.file_digest,
+        args.namespace,
+        args.max_new,
+        style="longhealth",
+        reference=True,
+    )
+    index["benchmark_digest"] = digest
+    index["sink_max_abs_diff_vs_model"] = sink_match
+    R.dump_json(out / "producer" / "index.json", index)
+    consumer_rows = [{k: v for k, v in r.items() if k != "answer"} for r in rows]
+    D.write_jsonl(out / "questions.jsonl", consumer_rows)
+    print(
+        f"imported {args.patient}: {cart.rows} rows, sink max abs diff vs model {sink_match:.3e}"
     )
 
 
@@ -597,8 +713,36 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--range", default="0:8")
     p.add_argument("--max-new", type=int, default=16)
+    p.add_argument("--style", default="ledger", help="ledger or longhealth")
     _model_args(p)
     p.set_defaults(func=cmd_replay)
+
+    p = sub.add_parser("cas-parity", help="native cartridge reader against this reader")
+    p.add_argument("--stage", required=True, help="native | reader | compare")
+    p.add_argument("--cartridge", default=None, help="native cartridge file")
+    p.add_argument("--benchmark", default=None, help="LongHealth benchmark json")
+    p.add_argument("--patient", default="patient_02")
+    p.add_argument("--max-q", type=int, default=20)
+    p.add_argument("--out", required=True)
+    p.add_argument("--steps", type=int, default=32)
+    p.add_argument("--native-dir", default=None)
+    p.add_argument("--stages", action="append", help="name=dir for compare")
+    p.add_argument("--reference", default="reader-eager")
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_parity)
+
+    p = sub.add_parser(
+        "cas-import", help="export a native cartridge and its replay reference"
+    )
+    p.add_argument("--cartridge", required=True)
+    p.add_argument("--benchmark", required=True)
+    p.add_argument("--patient", default="patient_02")
+    p.add_argument("--max-q", type=int, default=20)
+    p.add_argument("--out", required=True)
+    p.add_argument("--namespace", default="cas-native-import")
+    p.add_argument("--max-new", type=int, default=32)
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_import)
 
     p = sub.add_parser(
         "compare-replay", help="score consumers against the live reference"
