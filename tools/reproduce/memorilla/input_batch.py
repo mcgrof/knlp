@@ -7,6 +7,8 @@ import threading
 import torch
 from memorilla.data import MemoryCollator
 
+from .tensor_copy import copy_fp16_cpu
+
 
 class LeasedMemoryCollator(MemoryCollator):
     """Copy document banks directly into the author's owned padded batch.
@@ -87,7 +89,7 @@ class LeasedMemoryCollator(MemoryCollator):
                         raise ValueError(
                             "document banks must contain CPU float16 values"
                         )
-                    destination.copy_(source)
+                    copy_fp16_cpu(source, destination)
                 if self._final_dtype == torch.bfloat16:
                     embeds[index, shape[0] :].zero_()
                 mask[index, : shape[0]] = False

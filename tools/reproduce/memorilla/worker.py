@@ -127,6 +127,7 @@ class ArtifactEmbeddingStore:
             self.catalog, HostMemoryAllocator(cfg["pool_bytes"])
         )
         self.ids = {}
+        self._shapes = {}
         checkpoint_hash = digest(checkpoint / "memory.pt")
         for collection in native.collection_ids.tolist():
             source = directory / f"{DATA}-{int(collection)}.safetensors"
@@ -172,6 +173,7 @@ class ArtifactEmbeddingStore:
                 ),
             )
             self.ids[int(collection)] = self.registry.register(manifest, source)
+            self._shapes[manifest.artifact_id] = manifest.tensors[0].shape
         write(output / "artifacts.json", self.ids)
 
     def documents(self, collection):
@@ -182,12 +184,13 @@ class ArtifactEmbeddingStore:
 
     def collection_shape(self, collection):
         """Resolve admitted geometry without reserving payload memory."""
-        manifest = self.registry.resolve(self.ids[int(collection)], self.consumer)
-        return manifest.tensors[0].shape
+        return self._shapes[self.ids[int(collection)]]
 
     def copy_documents(self, collection, destination):
         """Finish a synchronous CPU copy before releasing the bank lease."""
         import torch
+
+        from .tensor_copy import copy_fp16_cpu
 
         if destination.device.type != "cpu" or destination.dtype not in (
             torch.float16,
@@ -200,7 +203,7 @@ class ArtifactEmbeddingStore:
             source = tensors["embeddings"]
             if source.dtype != torch.float16 or source.shape != destination.shape:
                 raise ValueError("document destination differs from bank geometry")
-            destination.copy_(source)
+            copy_fp16_cpu(source, destination)
 
     def question(self, row):
         return self.native.question(row)

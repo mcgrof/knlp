@@ -136,6 +136,15 @@ Whole-load catalog and SHA256 checks remain enabled. CPU batch equality
 does not by itself establish checkpoint or performance qualification on a
 new runtime.
 
+Large BF16 row copies may use up to 1 MiB of FP32 scratch per active copy.
+FP16 values are exact in FP32 before the final BF16 rounding. A chunk that
+contains NaNs uses Torch's direct conversion to preserve its NaN encodings.
+Banks that fit one scratch chunk retain the direct path. The helper is
+checked over all 65,536 FP16 bit patterns; its speed depends on the Torch
+build and CPU. The arena limit does not include this scratch or output
+batches. Published geometry is reused by artifact identity; every actual
+payload lease keeps the existing consumer, header and load-integrity checks.
+
 ## Reusable stress command
 
 The [system qualification](../../../docs/context-artifacts.html#system-qualification)
