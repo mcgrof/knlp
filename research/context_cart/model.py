@@ -337,23 +337,39 @@ class Writer(nn.Module):
             self.memory.copy_(state["memory"].to(self.memory.device, self.memory.dtype))
 
     def encode(
-        self, source_ids: torch.Tensor
+        self,
+        source_ids: torch.Tensor,
+        slots: int | None = None,
+        checkpoint: bool = False,
     ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], int]:
         """Return per-layer (key, value) rows at the memory positions, each
         shaped ``[B, kv_heads, M, head_dim]`` in the base dtype, and ``L``.
-        Source rows are discarded; nothing else leaves the writer."""
+        Source rows are discarded; nothing else leaves the writer.
+
+        ``slots`` uses the first rows of the memory bank only, so one writer
+        serves sources that need different cartridge sizes; unused rows are
+        never part of the sequence. ``checkpoint`` recomputes each decoder
+        layer in the backward pass and derives the memory rows' keys and
+        values from the layer inputs, which keeps a long source's activation
+        memory to one layer at a time without relying on the library cache.
+        """
         if source_ids.dim() != 2:
             raise ValueError("source_ids must be [B, L]")
         batch, length = source_ids.shape
-        slots = self.memory.shape[0]
+        bank = int(self.memory.shape[0])
+        slots = bank if slots is None else int(slots)
+        if not 0 < slots <= bank:
+            raise ValueError(f"slots must be in 1..{bank}")
         embed = self.inner.embed_tokens(source_ids)
-        memory = self.memory.to(embed.dtype).unsqueeze(0).expand(batch, -1, -1)
+        memory = self.memory[:slots].to(embed.dtype).unsqueeze(0).expand(batch, -1, -1)
         inputs = torch.cat([embed, memory], dim=1)
         positions = (
             torch.arange(length + slots, device=inputs.device)
             .unsqueeze(0)
             .expand(batch, -1)
         )
+        if checkpoint:
+            return self._encode_checkpointed(inputs, positions, length), length
         out = self.inner(
             inputs_embeds=inputs,
             position_ids=positions,
@@ -370,6 +386,68 @@ class Writer(nn.Module):
                 raise RuntimeError("writer cache length does not match the input")
             prefix.append((keys[:, :, length:, :], values[:, :, length:, :]))
         return prefix, length
+
+    def _encode_checkpointed(
+        self, inputs: torch.Tensor, positions: torch.Tensor, length: int
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        from torch.utils.checkpoint import checkpoint
+
+        inner = self.inner
+        cos, sin = inner.rotary_emb(inputs, positions)
+        hidden = inputs
+        prefix = []
+        for layer in inner.layers:
+            # the memory rows' keys and values are a function of this layer's
+            # input at the memory positions; computed outside the checkpoint
+            prefix.append(
+                memory_key_value(
+                    layer, hidden[:, length:], cos[:, length:], sin[:, length:]
+                )
+            )
+            hidden = checkpoint(
+                _decoder_layer, layer, hidden, cos, sin, positions, use_reentrant=False
+            )
+        return prefix
+
+
+def _decoder_layer(
+    layer: nn.Module,
+    hidden: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    positions: torch.Tensor,
+) -> torch.Tensor:
+    """One decoder layer over the whole sequence with causal attention and no
+    cache; the library's attention implementation treats a missing mask as
+    causal for more than one query."""
+    out = layer(
+        hidden,
+        attention_mask=None,
+        position_ids=positions,
+        position_embeddings=(cos, sin),
+        use_cache=False,
+    )
+    return out[0] if isinstance(out, tuple) else out
+
+
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    half = x.shape[-1] // 2
+    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)
+
+
+def memory_key_value(
+    layer: nn.Module, hidden: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Keys (after normalisation and rotary embedding) and values of
+    ``hidden`` positions exactly as the layer's attention computes them,
+    using the layer's own (adapter-wrapped) projections."""
+    attention = layer.self_attn
+    normed = layer.input_layernorm(hidden)
+    shape = (*normed.shape[:-1], -1, attention.head_dim)
+    keys = attention.k_norm(attention.k_proj(normed).view(shape)).transpose(1, 2)
+    values = attention.v_proj(normed).view(shape).transpose(1, 2)
+    keys = keys * cos.unsqueeze(1) + _rotate_half(keys) * sin.unsqueeze(1)
+    return keys, values
 
 
 def cache_layer(cache: Any, layer: int) -> tuple[torch.Tensor, torch.Tensor]:

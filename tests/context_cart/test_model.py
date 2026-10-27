@@ -382,3 +382,71 @@ def test_weights_digest_covers_every_parameter():
     # the digest binds dtype as well as values (``to`` converts in place)
     changed = M.weights_digest(model)
     assert M.weights_digest(model.to(torch.bfloat16)) != changed
+
+
+def _writer_pair(slots: int = 4, seed: int = 21):
+    pytest.importorskip("peft")
+    torch.manual_seed(0)
+    base = M.tiny_base(seed=seed)
+    spec = M.ModelSpec(
+        name="tiny",
+        revision=FAKE_REVISION,
+        dtype="float32",
+        memory_slots=slots,
+        lora_rank=2,
+        lora_alpha=4,
+    )
+    return M.Writer(base, spec, init_rows=[5, 6, 7, 8][:slots])
+
+
+def _prefix_score(prefix, weights):
+    return sum(
+        (k * wk).sum() + (v * wv).sum() for (k, v), (wk, wv) in zip(prefix, weights)
+    )
+
+
+def test_checkpointed_encode_matches_cache_path_values_and_gradients():
+    writer = _writer_pair()
+    source = torch.randint(2, 512, (2, 9))
+    gen = torch.Generator().manual_seed(4)
+    plain, length = writer.encode(source)
+    weights = [
+        (torch.randn(k.shape, generator=gen), torch.randn(v.shape, generator=gen))
+        for k, v in plain
+    ]
+    _prefix_score(plain, weights).backward()
+    grads = {
+        n: p.grad.clone()
+        for n, p in writer.named_parameters()
+        if p.requires_grad and p.grad is not None
+    }
+    writer.zero_grad(set_to_none=True)
+    ckpt, length2 = writer.encode(source, checkpoint=True)
+    assert length == length2 == 9
+    for (k, v), (ck, cv) in zip(plain, ckpt):
+        assert torch.allclose(k, ck, atol=1e-5) and torch.allclose(v, cv, atol=1e-5)
+    _prefix_score(ckpt, weights).backward()
+    again = {
+        n: p.grad.clone()
+        for n, p in writer.named_parameters()
+        if p.requires_grad and p.grad is not None
+    }
+    assert set(grads) == set(again) and grads
+    for name in grads:
+        assert torch.allclose(grads[name], again[name], atol=1e-5), name
+
+
+def test_partial_slot_bank_equals_prefix_of_full_bank():
+    writer = _writer_pair(slots=4)
+    source = torch.randint(2, 512, (1, 7))
+    with torch.no_grad():
+        full, _ = writer.encode(source)
+        part, _ = writer.encode(source, slots=2)
+        part_ckpt, _ = writer.encode(source, slots=2, checkpoint=True)
+    for (k, v), (pk, pv), (ck, cv) in zip(full, part, part_ckpt):
+        assert pk.shape[2] == 2
+        assert torch.allclose(k[:, :, :2], pk, atol=1e-6)
+        assert torch.allclose(v[:, :, :2], pv, atol=1e-6)
+        assert torch.allclose(pk, ck, atol=1e-5)
+    with pytest.raises(ValueError):
+        writer.encode(source, slots=5)
