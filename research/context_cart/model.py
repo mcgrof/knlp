@@ -131,7 +131,7 @@ def load_base(spec: ModelSpec, device: torch.device | str) -> nn.Module:
     model = AutoModelForCausalLM.from_pretrained(
         spec.name,
         revision=spec.revision,
-        torch_dtype=spec.torch_dtype(),
+        dtype=spec.torch_dtype(),
         attn_implementation=spec.attn_implementation,
         local_files_only=spec.local_files_only,
     )

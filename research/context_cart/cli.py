@@ -248,6 +248,24 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         metrics = E.metrics(rows)
         metrics["timing"] = dataclasses.asdict(timing)
         metrics.update(extra)
+        if args.stock_control:
+            summary, control_rows = E.stock_control(
+                reader,
+                tokenizer,
+                arm,
+                worlds,
+                items,
+                args.max_new,
+                context,
+                limit=args.stock_control,
+            )
+            E.write_rows(out_dir / f"{arm}_stock_control.jsonl", control_rows)
+            metrics["stock_control"] = summary
+            print(
+                f"{args.pool} {arm} stock control: ids equal {summary['ids_equal']}/{summary['items']}, "
+                f"stock EM {summary['stock_em']}, cached EM {summary['cached_em']}",
+                flush=True,
+            )
         R.dump_json(out_dir / f"{arm}_metrics.json", metrics)
         record["arms"][arm] = metrics
         print(
@@ -537,6 +555,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--max-new", type=int, default=16)
     p.add_argument("--summary-max-new", type=int, default=64)
     p.add_argument("--tail-tokens", type=int, default=64)
+    p.add_argument(
+        "--stock-control",
+        type=int,
+        default=0,
+        help="also answer the first N items of each text arm with stock library generation and record agreement",
+    )
     p.add_argument("--text-arms", default="")
     p.add_argument(
         "--artifact-arm", action="append", help="name=directory of exported cartridges"

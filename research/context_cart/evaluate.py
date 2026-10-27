@@ -301,6 +301,91 @@ def answer_text_arm(
 
 
 @torch.no_grad()
+def stock_control(
+    reader: M.Reader,
+    tokenizer: Any,
+    arm: str,
+    worlds: list[dict[str, Any]],
+    items: list[Item],
+    max_new_tokens: int,
+    context_by_world: dict[str, str] | None = None,
+    limit: int = 16,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Independent implementation control for a text arm.
+
+    The stock library generation path receives the joint prompt (context and
+    question in one sequence, so the source is prefilled again for every
+    question) at batch one, with no custom cache handling. The same items are
+    answered through this module's cached path at batch one. Equal generated
+    token ids show that the split prompt, the masked context prefix and the
+    greedy loop reproduce stock generation on the real weights; a small
+    number of disagreements on near-tied tokens is possible in BF16.
+    """
+    by_world = {w["world_id"]: w for w in worlds}
+    rows: list[dict[str, Any]] = []
+    for item in items[:limit]:
+        world = by_world[item.world_id]
+        context = (context_by_world or {}).get(item.world_id, "")
+        content = P.user_message(
+            arm, item.question, source_text=world["source_text"], context=context
+        )
+        ids = torch.tensor([P.prompt_ids(tokenizer, content)], device=reader.device)
+        out = reader.model.generate(
+            input_ids=ids,
+            attention_mask=torch.ones_like(ids),
+            do_sample=False,
+            num_beams=1,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=list(reader.eos_ids),
+            pad_token_id=reader.pad_id,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+        )
+        generated = out[0, ids.shape[1] :].tolist()
+        stock_ids = M.strip_generation(generated, reader.eos_ids, reader.pad_id)
+        stock_pred = tokenizer.decode(stock_ids, skip_special_tokens=True).strip()
+        cached, _ = answer_text_arm(
+            reader, tokenizer, arm, [world], [item], 1, max_new_tokens, context_by_world
+        )
+        row = {
+            "world_id": item.world_id,
+            "qid": item.qid,
+            "family": item.family,
+            "gold": item.answer,
+            "stock_pred": stock_pred,
+            "stock_ids": stock_ids,
+            "cached_pred": cached[0]["pred"],
+            "cached_ids": cached[0]["pred_ids"],
+            "ids_equal": stock_ids == cached[0]["pred_ids"],
+            "answers_equal": stock_pred == cached[0]["pred"],
+            "prompt_tokens": int(ids.shape[1]),
+        }
+        if item.answer is not None:
+            row["stock_em"] = bool(
+                D.exact_match(stock_pred, item.answer, item.attribute)
+            )
+            row["cached_em"] = bool(cached[0]["em"])
+        rows.append(row)
+    scored = [r for r in rows if "stock_em" in r]
+    summary = {
+        "arm": arm,
+        "items": len(rows),
+        "ids_equal": sum(r["ids_equal"] for r in rows),
+        "answers_equal": sum(r["answers_equal"] for r in rows),
+        "stock_em": (
+            (sum(r["stock_em"] for r in scored) / len(scored)) if scored else None
+        ),
+        "cached_em": (
+            (sum(r["cached_em"] for r in scored) / len(scored)) if scored else None
+        ),
+        "batch": 1,
+        "note": "stock path prefills the source per question; its time is not a serving baseline",
+    }
+    return summary, rows
+
+
+@torch.no_grad()
 def write_summaries(
     reader: M.Reader,
     tokenizer: Any,

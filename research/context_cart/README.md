@@ -98,6 +98,13 @@ python -m research.context_cart.cli fit --dataset /path/dataset \
 python -m research.context_cart.cli report --run-dir /path/run
 ```
 
+`evaluate --stock-control N` also answers the first N items of each text arm
+with stock library generation on the joint prompt and records how many
+generated token sequences equal the cached path's. It is an implementation
+control for the split prompt, masked context prefix and greedy loop on the
+real weights, not a serving baseline: the stock path prefills the source
+again for every question.
+
 `smoke.sh` runs every stage on a tiny random model with the real tokenizer on
 a CPU in about two minutes. The unit tests run with
 `python -m pytest tests/context_cart -q`.
