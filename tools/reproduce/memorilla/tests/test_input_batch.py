@@ -72,9 +72,10 @@ def collator(cls, store, **kwargs):
 
 
 @pytest.mark.parametrize("clients", [1, 8])
-def test_complete_batch_matches_author_with_duplicates_and_padding(clients):
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_complete_batch_matches_author_with_duplicates_and_padding(clients, dtype):
     store = Store()
-    observed = collator(LeasedMemoryCollator, store, clients=clients)
+    observed = collator(LeasedMemoryCollator, store, clients=clients, final_dtype=dtype)
     expected = collator(author.MemoryCollator, store)(items())
     batch = observed(items())
     for name, tensor in expected.items():
@@ -128,4 +129,33 @@ def test_invalid_geometry_refuses_before_copy():
     with pytest.raises(ValueError, match="geometry"):
         observed(items())
     assert not store.completed
+    observed.close()
+
+
+def test_direct_cast_preserves_special_values_and_padding_bits():
+    store = Store()
+    special = torch.tensor(
+        [
+            0.0,
+            -0.0,
+            float("inf"),
+            -float("inf"),
+            float("nan"),
+            65504,
+            2**-24,
+            -(2**-24),
+        ],
+        dtype=torch.float16,
+    )
+    for tensor in store.values.values():
+        tensor[:] = special
+    observed = collator(
+        LeasedMemoryCollator, store, clients=8, final_dtype=torch.bfloat16
+    )
+    expected = collator(author.MemoryCollator, store)(items())
+    actual = observed(items())
+    for name in expected:
+        assert torch.equal(
+            actual[name].view(torch.uint8), expected[name].view(torch.uint8)
+        )
     observed.close()

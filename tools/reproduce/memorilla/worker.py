@@ -189,8 +189,11 @@ class ArtifactEmbeddingStore:
         """Finish a synchronous CPU copy before releasing the bank lease."""
         import torch
 
-        if destination.device.type != "cpu" or destination.dtype != torch.float16:
-            raise ValueError("document destination must be a CPU float16 tensor")
+        if destination.device.type != "cpu" or destination.dtype not in (
+            torch.float16,
+            torch.bfloat16,
+        ):
+            raise ValueError("document destination must be CPU float16 or bfloat16")
         with self.registry.lease(
             self.ids[int(collection)], self.consumer, timeout=120.0
         ) as tensors:

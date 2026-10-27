@@ -14,8 +14,10 @@ class LeasedMemoryCollator(MemoryCollator):
     External stores provide collection_shape() and copy_documents(). The
     latter must finish its CPU copy before releasing the source lease.
     Ordinary stores may return mmap views through documents(); these views
-    remain referenced until the batch copies finish. Prompt, mask, question
-    and dtype processing otherwise follow the original collator.
+    remain referenced until the batch copies finish. The optional bfloat16
+    destination casts only valid rows and zeros padding directly, avoiding
+    a padded float16 intermediate. Prompt, mask and question processing
+    otherwise follow the original collator.
 
     Calls are serialized. Each copy worker holds at most one bank lease and
     releases it before accepting another task, so aggregate batch bytes may
@@ -26,9 +28,10 @@ class LeasedMemoryCollator(MemoryCollator):
     def __init__(self, *args, clients=1, final_dtype=torch.float16, **kwargs):
         if type(clients) is not int or clients < 1:
             raise ValueError("clients must be a positive integer")
-        if final_dtype != torch.float16:
-            raise ValueError("only float16 batch assembly is supported")
+        if final_dtype not in (torch.float16, torch.bfloat16):
+            raise ValueError("batch dtype must be float16 or bfloat16")
         super().__init__(*args, **kwargs)
+        self._final_dtype = final_dtype
         self._executor = (
             ThreadPoolExecutor(max_workers=clients) if clients > 1 else None
         )
@@ -56,7 +59,15 @@ class LeasedMemoryCollator(MemoryCollator):
                 raise ValueError("document banks need a shared positive width")
             max_docs = max(shape[0] for _, shape in sources)
             width = sources[0][1][1]
-            embeds = torch.zeros(len(sources), max_docs, width, dtype=torch.float16)
+            if self._final_dtype == torch.float16:
+                embeds = torch.zeros(len(sources), max_docs, width, dtype=torch.float16)
+            else:
+                # Every valid row is overwritten before exposure. Initialize
+                # only padding, whose conversion would otherwise do no useful
+                # work. An incomplete destination never leaves this method.
+                embeds = torch.empty(
+                    len(sources), max_docs, width, dtype=torch.bfloat16
+                )
             mask = torch.ones(len(sources), max_docs, dtype=torch.bool)
 
             def copy_row(index):
@@ -69,6 +80,8 @@ class LeasedMemoryCollator(MemoryCollator):
                     if source.dtype != torch.float16:
                         raise ValueError("document banks must contain float16 values")
                     destination.copy_(source)
+                if self._final_dtype == torch.bfloat16:
+                    embeds[index, shape[0] :].zero_()
                 mask[index, : shape[0]] = False
 
             if self._executor is None:
