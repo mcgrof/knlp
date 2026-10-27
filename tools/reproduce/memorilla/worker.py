@@ -175,7 +175,9 @@ class ArtifactEmbeddingStore:
         write(output / "artifacts.json", self.ids)
 
     def documents(self, collection):
-        with self.registry.lease(self.ids[int(collection)], self.consumer) as tensors:
+        with self.registry.lease(
+            self.ids[int(collection)], self.consumer, timeout=120.0
+        ) as tensors:
             return tensors["embeddings"].clone()
 
     def question(self, row):
@@ -192,10 +194,12 @@ class ArtifactEmbeddingStore:
             "logical_bytes": store.read_bytes,
             "resident_hits": store.cache_hits,
             "resident_objects": len(store.resident),
+            "capacity_waits": store.capacity_waits,
+            "capacity_wait_seconds": store.capacity_wait_seconds,
         }
 
     def close(self):
-        self.registry.storage.close()
+        self.registry.close()
         self.catalog.close()
 
 

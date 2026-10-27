@@ -23,8 +23,8 @@ CHECKPOINT_RELEASE_LABELS = {
 DATA = "c6b0d7eea65659254115ed31dd26869eb6dc0586"
 DECODER = "b968826d9c46dd6066d109eabc6255188de91218"
 ENCODER = "5cf2132abc99cad020ac570b19d031efec650f2b"
-VLLM = "21a71b62a2a72a12dcf23e44c3fac21143d7b9ee"
-LMCACHE = "d8d0fd7fa5869880384eea883c8f7b59a64cf29f"
+VLLM = "198199bc44da513a6eceee206cec9c62d55d190a"
+LMCACHE = "e438be9d81ce8b76b135b813a107d9b189abdd33"
 BENCHMARKS = {
     "pubmedqa": (100, "accuracy", 59.00),
     "factkg": (9041, "accuracy", 84.33),
@@ -175,7 +175,7 @@ def fetch(cfg):
                         "clone",
                         "--single-branch",
                         "--branch",
-                        "2026-10-23-feature-context-artifacts",
+                        "2026-10-26-feature-context-artifacts",
                         f"https://github.com/mcgrof/{name}.git",
                         str(target),
                     ],

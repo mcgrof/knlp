@@ -6,7 +6,7 @@ reader, prompt construction, frozen decoder and scorers. The storage adapter
 uses the same driver with document collections supplied by LMCache. It does
 not convert Memorilla into a KV prefix or replace its learned reader.
 
-Start from the public knlp branch `2026-10-23-feature-context-artifacts`.
+Start from the public knlp branch `2026-10-26-feature-context-artifacts`.
 Select one preset:
 
 | Defconfig | Purpose |
@@ -68,8 +68,8 @@ vLLM pin replace that explicitly selected runtime.
 
 | Repository | Public branch | Exact commit |
 | --- | --- | --- |
-| [vLLM](https://github.com/mcgrof/vllm/tree/2026-10-23-feature-context-artifacts) | `2026-10-23-feature-context-artifacts` | `21a71b62a2a72a12dcf23e44c3fac21143d7b9ee` |
-| [LMCache](https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-context-artifacts) | `2026-10-23-feature-context-artifacts` | `d8d0fd7fa5869880384eea883c8f7b59a64cf29f` |
+| [vLLM](https://github.com/mcgrof/vllm/tree/2026-10-26-feature-context-artifacts) | `2026-10-26-feature-context-artifacts` | `198199bc44da513a6eceee206cec9c62d55d190a` |
+| [LMCache](https://github.com/mcgrof/LMCache/tree/2026-10-26-feature-context-artifacts) | `2026-10-26-feature-context-artifacts` | `e438be9d81ce8b76b135b813a107d9b189abdd33` |
 
 The worker checks catalog and LMCache source revisions and tracked changes,
 and records the separately imported engine path/version. Full fork-engine
@@ -96,6 +96,14 @@ collections are converted and verified before generation. Publication and
 conversion time are included in whole-worker time, but not replay batch time.
 The unchanged author collator expects owned CPU tensors, so this adapter copies
 out of a lease before returning a collection. That ownership copy is explicit.
+
+The adapter caches validated manifests, file read plans and tensor layouts
+under a bounded entry budget. A resident hit still checks the consumer and
+header. Every payload reload still checks the catalog and hashes the full
+collection. Allocator pressure waits for capacity for up to 120 seconds
+instead of repeatedly parsing the same metadata. This wait does not cancel
+file operations already in progress. Setup retains source validation and
+publication costs; cached metadata does not remove those costs.
 Question embeddings retain the author's mmap path. No automatic KV attachment,
 remote StorageManager routing or speed advantage is claimed.
 

@@ -2,7 +2,7 @@
 # its original, conflicting CUDA dependency pins. Original-author evaluation
 # retains its separate Python 3.11 environment and original requirements.
 vllm==0.29.0
-lmcache @ git+https://github.com/mcgrof/LMCache.git@d8d0fd7fa5869880384eea883c8f7b59a64cf29f
+lmcache @ git+https://github.com/mcgrof/LMCache.git@e438be9d81ce8b76b135b813a107d9b189abdd33
 lightning==2.6.1
 datasets==4.1.1
 pyarrow>=21,<26

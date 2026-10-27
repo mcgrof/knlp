@@ -108,6 +108,27 @@ idle-object eviction, and coalescing of simultaneous misses for one artifact.
 The adapter is an external-artifact store, not the prompt-token KV cache or
 an automatic connection to every LMCache storage-manager backend.
 
+Repeated leases admit an immutable read plan and typed tensor layout once.
+Both metadata caches default to 1,024 entries; `max_prepared` changes that
+budget independently of the payload arena. This is an entry count, not a
+total memory limit. Active leases, caller-retained plans, tensor copies and
+the page cache require their own memory accounting. A prepared plan belongs
+to the store that issued it and does not reserve payload capacity.
+
+Resident hits reuse the admitted metadata and compare the safetensors header
+before creating fresh tensor views. Each payload miss still reads the current
+catalog record and rejects a change, then hashes every newly loaded byte.
+Preparing a plan does not make mutable source files safe. Consumer identity
+is checked on every typed lease, including resident hits.
+
+`lease(..., timeout=seconds)` can wait for another lease to release capacity
+without repeating admission. The deadline bounds coalescing and capacity
+waiting; it does not interrupt file or catalog operations already running.
+The default of zero retains immediate capacity failure and ordinary miss
+coalescing. An oversized artifact with no releasable capacity fails rather
+than waiting indefinitely. Catalog transactions close their SQLite
+connections when each operation finishes.
+
 A collection remains the logical read unit. It can occupy its own file or
 an exact byte range in a larger file. Each range currently contains a
 complete safetensors artifact, including its header. Direct registration of
