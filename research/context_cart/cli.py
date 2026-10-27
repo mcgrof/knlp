@@ -641,6 +641,195 @@ def cmd_cas_import(args: argparse.Namespace) -> None:
     )
 
 
+def _native_paths(items: list[str] | None) -> dict[str, Path]:
+    out = {}
+    for item in items or []:
+        patient, _, path = item.partition("=")
+        out[patient] = Path(path)
+    return out
+
+
+def cmd_cas_prepare(args: argparse.Namespace) -> None:
+    from . import distill as DS
+    from . import model as M
+
+    spec = _spec(args)
+    tokenizer = M.load_tokenizer(spec)
+    prepared = DS.prepare(
+        Path(args.out),
+        tokenizer,
+        Path(args.records),
+        Path(args.parquets),
+        _native_paths(args.native),
+        Path(args.benchmark),
+        tuple(args.train.split(",")),
+        args.select,
+        args.test,
+        args.wrong_source,
+        args.fixed,
+        args.train_groups,
+        args.question_groups,
+        args.holdout_groups,
+        args.split_seed,
+        args.max_reader_tokens,
+    )
+    print(
+        json.dumps(
+            {
+                "memory_bank_rows": prepared["memory_bank_rows"],
+                "sources": {p: s["rows"] for p, s in prepared["sources"].items()},
+                "splits": {
+                    p: {
+                        k: v
+                        for k, v in sp.items()
+                        if k.endswith("elements") or k.endswith("tokens")
+                    }
+                    for p, sp in prepared["splits"].items()
+                },
+                "overlap_max_jaccard": prepared["overlap_audit"]["max_jaccard"],
+            },
+            indent=1,
+        )
+    )
+
+
+def cmd_cas_train(args: argparse.Namespace) -> None:
+    from . import distill as DS
+
+    values: dict[str, Any] = {}
+    if args.config:
+        values.update(json.loads(Path(args.config).read_text()))
+    for item in args.set or []:
+        key, _, raw = item.partition("=")
+        target = values
+        parts = key.split(".")
+        for part in parts[:-1]:
+            target = target.setdefault(part, {})
+        target[parts[-1]] = json.loads(raw)
+    cfg = DS.DistillConfig(**values)
+    summary = DS.train(cfg)
+    print(
+        json.dumps(
+            {
+                k: summary.get(k)
+                for k in (
+                    "selected_checkpoint",
+                    "train_seconds",
+                    "updates_run",
+                    "peak_memory",
+                    "profile",
+                    "exposure",
+                    "reader_unchanged",
+                )
+            },
+            indent=1,
+            default=str,
+        )
+    )
+
+
+def cmd_cas_export(args: argparse.Namespace) -> None:
+    """Generated cartridges from a writer checkpoint for the listed
+    patients (``patient`` or ``patient@rows`` for a wrong-source control),
+    exported as artifacts and as native files, plus the replay reference."""
+    import torch
+
+    from . import cas_bridge as B
+    from . import distill as DS
+    from . import longhealth as LH
+    from . import model as M
+    from . import replay as RP
+
+    R.configure_threads()
+    spec = _spec(args)
+    prepared = DS.load_prepared(Path(args.prepared))
+    tokenizer = M.load_tokenizer(spec)
+    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    torch.manual_seed(int(payload["config"]["seed"]))
+    reader_base = M.load_base(spec, args.device)
+    writer_base = M.load_base(spec, args.device)
+    writer = M.Writer(writer_base, spec, payload["init_rows"])
+    writer.load_trainable_state(payload["trainable"])
+    writer.eval()
+    reader = M.Reader(
+        reader_base, eos_ids=_eos(tokenizer), pad_id=int(tokenizer.pad_token_id)
+    )
+    identity = M.reader_identity(reader_base, tokenizer, spec)
+    dtype = spec.torch_dtype()
+    sink_cart = B.load_native_cartridge(Path(prepared["sink"]["path"]), dtype=dtype)
+    sink = [
+        (k[:, :, :1].to(args.device), v[:, :, :1].to(args.device))
+        for k, v in sink_cart.prefix("cpu")
+    ]
+    data, digest = LH.load_benchmark(Path(args.benchmark))
+    out = Path(args.out)
+    entries = []
+    natives = {}
+    for item in args.patient:
+        name, _, rows = item.partition("@")
+        source = DS.Source(**prepared["sources"][name])
+        override = int(rows) if rows else None
+        prefix, start = DS.export_generated(
+            writer, reader, source, sink, dtype, override
+        )
+        world = name if not rows else f"{name}_as_{rows}"
+        questions = LH.patient_questions(
+            data, name if not rows else args.target or name
+        )
+        qrows = LH.questions_jsonl_rows(questions)
+        for row, q in zip(qrows, questions):
+            row["answer"] = q.correct
+            row["world_id"] = world
+        entries.append(
+            {
+                "world_id": world,
+                "prefix": prefix,
+                "positions": range(0, start),
+                "reader_start": start,
+                "questions": qrows,
+                "extra": {
+                    "source_patient": name,
+                    "source_digest": source.record_digest,
+                    "source_tokens": len(source.source_ids),
+                    "rows": start,
+                    "writer_checkpoint": R.file_digest(Path(args.checkpoint)),
+                    "sink_digest": prepared["sink"]["native_tensor_digest"],
+                },
+            }
+        )
+        out.mkdir(parents=True, exist_ok=True)
+        natives[world] = B.save_native_cartridge(
+            out / f"{world}.native.pt", prefix, frozen_rows=1
+        )
+    index = RP.produce_prefixes(
+        reader,
+        tokenizer,
+        identity,
+        entries,
+        out / "producer",
+        _source_revision(args)["revision"],
+        R.file_digest(Path(args.checkpoint)),
+        "cas-generated",
+        args.max_new,
+        style="longhealth",
+        reference=args.replay_reference,
+    )
+    index["native_files"] = natives
+    index["benchmark_digest"] = digest
+    index["checkpoint"] = {
+        "path": str(args.checkpoint),
+        "update": payload.get("update"),
+    }
+    R.dump_json(out / "producer" / "index.json", index)
+    consumer_rows = [
+        {k: v for k, v in r.items() if k != "answer"}
+        for e in entries
+        for r in e["questions"]
+    ]
+    D.write_jsonl(out / "questions.jsonl", consumer_rows)
+    print(f"exported {[e['world_id'] for e in entries]} to {out}")
+
+
 def cmd_cas_panel(args: argparse.Namespace) -> None:
     """LongHealth Table 15 panel for one patient through this reader:
     ``native:<file>`` arms import a native cartridge, ``full`` puts the
@@ -698,10 +887,25 @@ def cmd_cas_panel(args: argparse.Namespace) -> None:
                 "rows": cart.rows,
                 "artifact_id": loaded.manifest.artifact_id,
             }
+        elif name == "artifact":
+            label, _, directory = value.partition("=")
+            loaded = A.load_prefix(Path(directory), identity, args.device)
+            prefix, first_position = loaded.prefix, loaded.first_position
+            arm = label
+            extra = {
+                "artifact_dir": directory,
+                "artifact_id": loaded.manifest.artifact_id,
+                "rows": loaded.rows,
+                "extra": loaded.extra,
+            }
         elif name == "full":
-            doc_text = LH.record_text(data, args.patient)
+            doc_text = (
+                Path(args.record).read_text(encoding="utf-8")
+                if args.record
+                else LH.record_text(data, args.patient)
+            )
             arm = "full"
-            extra = {"record_chars": len(doc_text)}
+            extra = {"record_chars": len(doc_text), "record": args.record}
         elif name == "empty":
             arm = "empty"
         else:
@@ -928,11 +1132,55 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--full-batch", type=int, default=2)
     p.add_argument("--max-completion", type=int, default=2048)
     p.add_argument(
-        "--arm", action="append", required=True, help="native:<file> | full | empty"
+        "--arm",
+        action="append",
+        required=True,
+        help="native:<file> | artifact:<label>=<dir> | full | empty",
     )
+    p.add_argument("--record", default=None, help="record text file for the full arm")
     p.add_argument("--out", required=True)
     _model_args(p)
     p.set_defaults(func=cmd_cas_panel)
+
+    p = sub.add_parser("cas-prepare", help="freeze writer-screen inputs")
+    p.add_argument("--out", required=True)
+    p.add_argument("--records", required=True)
+    p.add_argument("--parquets", required=True)
+    p.add_argument("--native", action="append", help="patient=file")
+    p.add_argument("--benchmark", required=True)
+    p.add_argument("--train", default="patient_01,patient_03,patient_05")
+    p.add_argument("--select", default="patient_06")
+    p.add_argument("--test", default="patient_02")
+    p.add_argument("--wrong-source", default="patient_01")
+    p.add_argument("--fixed", default="patient_01")
+    p.add_argument("--train-groups", type=int, default=256)
+    p.add_argument("--question-groups", type=int, default=16)
+    p.add_argument("--holdout-groups", type=int, default=64)
+    p.add_argument("--split-seed", type=int, default=20261027)
+    p.add_argument("--max-reader-tokens", type=int, default=2048)
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_prepare)
+
+    p = sub.add_parser("cas-train", help="train the source-conditioned writer")
+    p.add_argument("--config", default=None)
+    p.add_argument("--set", action="append", help="key=json overrides")
+    p.set_defaults(func=cmd_cas_train)
+
+    p = sub.add_parser("cas-export", help="generated cartridges from a checkpoint")
+    p.add_argument("--prepared", required=True)
+    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--benchmark", required=True)
+    p.add_argument(
+        "--patient", action="append", required=True, help="patient or patient@rows"
+    )
+    p.add_argument(
+        "--target", default=None, help="question patient for a wrong-source export"
+    )
+    p.add_argument("--out", required=True)
+    p.add_argument("--max-new", type=int, default=32)
+    p.add_argument("--replay-reference", action="store_true")
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_export)
 
     p = sub.add_parser("cas-rope-check", help="position-shift equivalence on the model")
     p.add_argument("--shift", type=int, default=600)
