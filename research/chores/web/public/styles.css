@@ -613,6 +613,55 @@ section {
   color: var(--cyan);
 }
 
+.adoption section {
+  margin-bottom: 48px;
+}
+
+.adoption section > p {
+  max-width: 900px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.adoption h2 {
+  margin-bottom: 18px;
+}
+
+.adoption-prompt {
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 14px/1.8 var(--mono);
+}
+
+.adoption-table {
+  overflow-x: auto;
+}
+
+.adoption table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.adoption th,
+.adoption td {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.adoption a {
+  color: var(--cyan);
+}
+
 noscript {
   color: var(--amber);
 }

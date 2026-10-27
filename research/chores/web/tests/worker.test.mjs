@@ -157,3 +157,39 @@ test("briefing items put priority before recency", () => {
     ],
   );
 });
+
+test("adoption page and all local downloads are served read-only with security headers", async () => {
+  const root = new URL("../public/", import.meta.url);
+  const paths = new Set(["/self-maintenance.html"]);
+  const html = await readFile(new URL("self-maintenance.html", root), "utf8");
+  for (const match of html.matchAll(/(?:href|src)="(\/[^"]+)"/g)) {
+    paths.add(match[1]);
+  }
+  const guide = await readFile(new URL("adopt/README.md", root), "utf8");
+  for (const match of guide.matchAll(/\]\(([^)#]+)\)/g)) {
+    if (!match[1].includes(":")) paths.add("/adopt/" + match[1]);
+  }
+  const env = {
+    ASSETS: {
+      async fetch(request) {
+        const path = new URL(request.url).pathname;
+        const file = path === "/" ? "index.html" : path.slice(1);
+        return new Response(await readFile(new URL(file, root)));
+      },
+    },
+  };
+  for (const path of paths) {
+    const response = await worker.fetch(
+      new Request("https://chores.knlp.io" + path), env,
+    );
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get("Content-Security-Policy"), /script-src 'self'/);
+    assert.doesNotMatch(response.headers.get("Content-Security-Policy"), /unsafe-inline/);
+    assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+    assert.ok((await response.text()).length > 0);
+    const denied = await worker.fetch(
+      new Request("https://chores.knlp.io" + path, { method: "POST" }), env,
+    );
+    assert.equal(denied.status, 405);
+  }
+});

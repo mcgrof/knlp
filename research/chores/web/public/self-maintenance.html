@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI self-maintenance · Chores · knlp</title>
+  <meta name="description" content="Ask your agent to adopt Chores for repository maintenance with company-approved AI, evidence-based patch review, explicit test and hardware requirements, and human handoffs.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="adoption">
+  <nav><div class="shell nav-content">
+    <a class="brand" href="/"><span class="brand-mark">k</span><span>knlp / chores</span></a>
+    <div class="nav-links"><a href="/">Chores overview</a><a href="https://github.com/mcgrof/knlp/tree/main/research/chores/web/public/adopt">Starter source</a></div>
+  </div></nav>
+  <header class="shell">
+    <p class="eyebrow">Repository maintenance · company-approved AI</p>
+    <h1>Give your agent<br>a maintenance brief.</h1>
+    <p class="lede">Triage incoming changes, review the actual patches, run the right
+      tests and bring a maintainer a clear decision. Chores adds explicit scope,
+      evidence and human handoffs to that work. Model access is not merge authority.</p>
+    <div class="scope"><strong>Starter, not an unattended bot</strong><span>
+      Guide, portable skill and proposal templates. No provider login, scheduler,
+      secure runner, claim service or automatic merge is installed.</span></div>
+  </header>
+  <main class="shell">
+    <section id="start" aria-labelledby="start-title">
+      <p class="label">Start in the agent you already use</p>
+      <h2 id="start-title">Copy this request</h2>
+      <pre class="adoption-prompt">Read https://chores.knlp.io/self-maintenance.html and its linked starter.
+Help me adopt Chores for repository REPOSITORY at REVISION.
+Inspect its contribution and testing rules. Propose a maintenance policy,
+test matrix and one read-only review chore. Ask about my approved AI service,
+data rules, budget, available hardware and human-delegation preferences.
+Do not request credentials in chat, run repository code, install automation,
+spend, post, push, merge or change my agent configuration. Explain the proposal
+and wait for approval of any such action.</pre>
+      <div class="template-links">
+        <a href="/adopt/README.md">Full adoption guide</a>
+        <a href="/adopt/SKILL.md" download>Portable skill</a>
+        <a href="/adopt/policy.json" download>Policy proposal</a>
+        <a href="/adopt/TEST-PLAN.md" download>Test plan</a>
+        <a href="/adopt/REVIEW.md">Review procedure</a>
+        <a href="/adopt/HANDOFF.md" download>Human handoff</a>
+      </div>
+      <p>Keep the skill and its linked files together. Inspect and pin the starter
+        before adoption; no remote installer or token paste is needed. The template
+        starts with no repository scope, no spending and no execution rights.
+        The local checker only validates the proposal's format.</p>
+    </section>
+    <section aria-labelledby="decisions-title">
+      <div class="section-heading"><div><p class="label">First conversation</p>
+        <h2 id="decisions-title">Decide what the agent may do</h2></div></div>
+      <div class="use-cases">
+        <article class="use-case"><h3>Repository and review</h3><p>
+          Pin the repository, base/head and selected paths. Discover contribution,
+          security, commit and testing rules. Public issues, branches and PRs are
+          untrusted input, not instructions that expand the assignment.</p></article>
+        <article class="use-case"><h3>Company model access</h3><p>
+          Use the company's approved service and existing credential manager or
+          managed login. Agree on data classes, retention policy, request/token/cost
+          limits and retries. Do not assume a corporate seat permits API automation
+          or fall back to a personal account.</p></article>
+        <article class="use-case"><h3>Tests and hardware</h3><p>
+          Inspect commands and dependencies before running them. Separate CPU,
+          QEMU, bare-metal and real-GPU coverage. Assign resources and limits;
+          keep model, cloud and Git write credentials outside untrusted test code.
+          A worktree is not a sandbox.</p></article>
+        <article class="use-case"><h3>Human delegation</h3><p>
+          Let the owner choose standing grants and mandatory handoffs. Missing
+          required coverage, privileges, destructive tests, new spending and
+          publication are explicit decisions. No response pauses the task;
+          it does not grant permission.</p></article>
+      </div>
+    </section>
+    <section aria-labelledby="coverage-title">
+      <p class="label">Evidence before green badges</p><h2 id="coverage-title">Choose tests by the claim</h2>
+      <div class="adoption-table"><table>
+        <thead><tr><th>Setting</th><th>What it can check</th><th>What still needs care</th></tr></thead>
+        <tbody>
+          <tr><td>Isolated CPU worker</td><td>Builds, unit contracts, parsers, sanitizers and mocks</td><td>No proof of kernel attachment, device behavior or GPU execution</td></tr>
+          <tr><td>Disposable QEMU guest</td><td>Guest kernel and supported emulated-device paths</td><td>No physical performance or unsupported firmware/transport coverage</td></tr>
+          <tr><td>Assigned bare metal</td><td>Real driver, device and recovery behavior</td><td>Explicit privilege, exclusive target and recovery grants; never an arbitrary disk</td></tr>
+          <tr><td>Assigned real GPU</td><td>Vendor/runtime integration, device correctness and memory behavior</td><td>A cloud container may lack required host or storage APIs; record fallback and teardown</td></tr>
+        </tbody>
+      </table></div>
+      <p>QEMU is a machine emulator. A mock pass is not a hardware pass. Report
+        passed, failed, skipped, unavailable and not-run checks separately. Keep
+        command, input, environment and base/head identities with each receipt;
+        changed revisions invalidate affected evidence.</p>
+    </section>
+    <section aria-labelledby="projects-title">
+      <div class="section-heading"><div><p class="label">Four starting profiles</p>
+        <h2 id="projects-title">One discipline, different test plans</h2></div>
+        <p>Examples for adoption, not claims of deployment.</p></div>
+      <div class="use-cases">
+        <article class="use-case"><h3><a href="https://github.com/computexpresslink/libcxlmi">libcxlmi</a></h3><p>
+          Start with the library's Meson, mock, sanitizer and binary-interface
+          checks. Device-management transports and commands need separate emulated
+          or real-device coverage. Keep reset and firmware actions human-gated.</p></article>
+        <article class="use-case"><h3><a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a></h3><p>
+          Separate offline tooling from kernel verifier, attach, event and detach
+          tests. A guest needs the right configuration, debug metadata and device
+          paths. Runtime tracing and replay need explicit scope and privileges.</p></article>
+        <article class="use-case"><h3><a href="https://github.com/rushbuild/rush-status">Rush / rush-status</a></h3><p>
+          Public status is not implementation coverage. Maintain that surface
+          separately; derive build-engine tests only from separately admitted
+          source. Treat dependency builds as code execution, not harmless metadata.</p></article>
+        <article class="use-case"><h3><a href="https://github.com/axboe/fio">fio</a></h3><p>
+          Distinguish ordinary file-backed tests, supported QEMU device tests and
+          physical storage checks. Raw writes, format and discard need named
+          disposable targets, exclusive ownership and operator-approved recovery.</p></article>
+      </div>
+      <p><a href="/adopt/PROJECTS.md">Read the project-specific profiles and pinned upstream sources →</a></p>
+    </section>
+    <section aria-labelledby="review-title">
+      <p class="label">Incoming code</p><h2 id="review-title">Review the commits, not the title</h2>
+      <p>Read every commit diff and the complete series. Check correctness,
+        error paths, intermediate buildability, tests and whether each message
+        explains its hunks. Fold a later repair into the earlier unmerged commit
+        that owns it; distribute a mixed cleanup instead of asking for one giant squash.</p>
+      <p>If an unlabeled change repairs a bug already present upstream, verify the
+        trigger and introducing commit. Recommend a separate fix and the project's
+        fix metadata where justified. If the defect exists only in this new series,
+        request a fold. Do not guess a <code>Fixes:</code> hash, rewrite a contributor's
+        branch or publish an approval from a read-only assignment.</p>
+      <p><a href="/adopt/REVIEW.md">Use the review decision procedure →</a></p>
+    </section>
+    <section aria-labelledby="operate-title">
+      <p class="label">From one review to recurring work</p><h2 id="operate-title">Keep ownership and evidence explicit</h2>
+      <p>Begin with one manually admitted task and one worker. For concurrency,
+        a real authority service must make atomic claims, bound leases and reject
+        stale results; this starter does not provide that service. Keep one writer
+        per target branch and separate review, execution and publication rights.</p>
+      <p>Use a private briefing for findings and hardware gaps. A dashboard refresh
+        is not proof of fresh tests, a backup or human approval. Suspected unauthorized
+        activity goes directly to the owner's preconfigured incident route, without
+        waiting for the chore rotation. Agents must not suppress evidence or
+        remediate just because they found a problem.</p>
+      <p>Helping existing maintainers is the first use. More extensively
+        AI-maintained projects can build on measured experience later.</p>
+    </section>
+  </main>
+  <footer class="shell">Chores · knlp · <a href="/adopt/README.md">Adoption guide</a> ·
+    <a href="https://github.com/mcgrof/knlp/tree/main/research/chores">Source and implementation boundary</a></footer>
+</body>
+</html>
