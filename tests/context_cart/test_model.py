@@ -12,7 +12,7 @@ import torch
 
 from research.context_cart import artifact as A
 from research.context_cart import model as M
-from tools.reproduce.context_artifacts.artifacts import ArtifactError
+from tools.reproduce.context_artifacts.artifacts import ArtifactError, canonical
 
 FAKE_REVISION = "a" * 40
 FAKE_SOURCE_REVISION = "b" * 40
@@ -224,11 +224,13 @@ def test_export_reload_bit_exact_and_parity(tmp_path: Path):
     reader = M.Reader(model, eos_ids=(1,), pad_id=0)
     identity = _identity(model)
     prefix = [(k.detach(), v.detach()) for k, v in _random_prefix(model, 4)]
+    # rows made at logical positions 12..15; the reader starts at 16
     result = A.export_prefix(
         tmp_path / "cart",
         prefix,
         identity,
-        first_position=16,
+        positions=range(12, 16),
+        reader_start=16,
         source_revision=FAKE_SOURCE_REVISION,
         checkpoint_digest=FAKE_CHECKPOINT,
         namespace="test",
@@ -237,6 +239,7 @@ def test_export_reload_bit_exact_and_parity(tmp_path: Path):
     assert result.tensor_bytes == 2 * 2 * 4 * 2 * 8 * 4
     loaded = A.load_prefix(tmp_path / "cart", identity, "cpu")
     assert loaded.rows == 4 and loaded.first_position == 16
+    assert loaded.positions == (12, 13, 14, 15)
     for (k, v), (lk, lv) in zip(prefix, loaded.prefix):
         assert torch.equal(k, lk) and torch.equal(v, lv)
     assert M.prefix_digest(prefix) == loaded.tensor_digest
@@ -249,8 +252,22 @@ def test_export_reload_bit_exact_and_parity(tmp_path: Path):
     # the prefix rows are untouched by cache extension
     assert M.prefix_digest(loaded.prefix) == loaded.tensor_digest
     manifest = json.loads((tmp_path / "cart" / "manifest.json").read_text())
-    assert manifest["metadata"]["positions"] == list(range(16, 20))
+    # stored-row positions, not the reader start, live in the manifest
+    assert manifest["metadata"]["positions"] == list(range(12, 16))
     assert manifest["representation"] == "prefix_kv"
+    # a reader start inside the stored span is refused at export time
+    with pytest.raises(ArtifactError):
+        A.export_prefix(
+            tmp_path / "bad",
+            prefix,
+            identity,
+            positions=range(12, 16),
+            reader_start=15,
+            source_revision=FAKE_SOURCE_REVISION,
+            checkpoint_digest=FAKE_CHECKPOINT,
+            namespace="test",
+            extra={},
+        )
 
 
 def test_loader_rejects_identity_geometry_positions_and_corruption(tmp_path: Path):
@@ -261,7 +278,8 @@ def test_loader_rejects_identity_geometry_positions_and_corruption(tmp_path: Pat
         tmp_path / "cart",
         prefix,
         identity,
-        first_position=16,
+        positions=range(12, 16),
+        reader_start=16,
         source_revision=FAKE_SOURCE_REVISION,
         checkpoint_digest=FAKE_CHECKPOINT,
         namespace="test",
@@ -289,6 +307,14 @@ def test_loader_rejects_identity_geometry_positions_and_corruption(tmp_path: Pat
         A.load_prefix(tmp_path / "cart", identity, "cpu")
     manifest_path.write_bytes(original)
     A.load_prefix(tmp_path / "cart", identity, "cpu")
+    # the old contract (positions shifted by the prefix length) is refused:
+    # a canonical manifest whose rows overlap the recorded reader start
+    shifted = json.loads(original)
+    shifted["metadata"]["positions"] = [16, 17, 18, 19]
+    manifest_path.write_bytes(canonical(shifted))
+    with pytest.raises(ArtifactError, match="reader_start"):
+        A.load_prefix(tmp_path / "cart", identity, "cpu")
+    manifest_path.write_bytes(original)
     # corrupted payload byte
     payload = tmp_path / "cart" / "payload.safetensors"
     data = bytearray(payload.read_bytes())
@@ -341,3 +367,4 @@ def test_masked_context_prefill_matches_joint_prompt():
         torch.testing.assert_close(
             out["first_logits"][row], single["first_logits"][0], atol=1e-4, rtol=1e-4
         )
+

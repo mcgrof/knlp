@@ -100,11 +100,15 @@ def produce(
         )
         prefix, length = writer.encode(source)
         prefix = [(k.detach(), v.detach()) for k, v in prefix]
-        first_position = length + int(prefix[0][0].shape[2])
+        rows = int(prefix[0][0].shape[2])
+        # memory rows were produced right after the source: positions L..L+M-1
+        positions = range(length, length + rows)
+        first_position = length + rows
         result = A.export_prefix(
             out_dir / "cartridges" / world["world_id"],
             prefix,
             identity,
+            positions,
             first_position,
             source_revision,
             checkpoint_digest,
@@ -122,7 +126,8 @@ def produce(
             "tensor_bytes": result.tensor_bytes,
             "tensor_digest": M.prefix_digest(prefix),
             "first_position": first_position,
-            "rows": int(prefix[0][0].shape[2]),
+            "positions": [positions[0], positions[-1]],
+            "rows": rows,
             "source_digest": world["source_digest"],
         }
         if not reference:

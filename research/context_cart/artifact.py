@@ -17,7 +17,7 @@ import dataclasses
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 from safetensors.torch import load_file, save_file
@@ -49,21 +49,43 @@ class ExportResult:
     directory: str
 
 
+def check_positions(positions: Sequence[int], reader_start: int, rows: int) -> None:
+    """The stored rows carry exact logical positions; the reader's first token
+    sits strictly after every stored row."""
+    values = [int(v) for v in positions]
+    if len(values) != rows:
+        raise ArtifactError("one position per stored row is required")
+    if any(v < 0 for v in values):
+        raise ArtifactError("positions must be non-negative")
+    if any(b <= a for a, b in zip(values, values[1:])):
+        raise ArtifactError("positions must be strictly increasing")
+    if int(reader_start) <= values[-1]:
+        raise ArtifactError("reader_start must follow every stored position")
+
+
 def export_prefix(
     directory: Path,
     prefix: list[tuple[torch.Tensor, torch.Tensor]],
     identity: dict[str, Any],
-    first_position: int,
+    positions: Sequence[int],
+    reader_start: int,
     source_revision: str,
     checkpoint_digest: str,
     namespace: str,
     extra: dict[str, Any],
     index: int = 0,
 ) -> ExportResult:
-    """Write one cartridge: payload, manifest, and return its identity."""
+    """Write one cartridge: payload, manifest, and return its identity.
+
+    ``positions`` are the logical positions the stored keys were produced at
+    (post-rotary keys are position bound); ``reader_start`` is the logical
+    position of the first reader token. The two are recorded separately.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     tensors = M.to_thd(prefix, index)
     rows = next(iter(tensors.values())).shape[0]
+    check_positions(positions, reader_start, rows)
+    positions = tuple(int(v) for v in positions)
     geometry = identity["geometry"]
     for layer in range(geometry["layers"]):
         for plane in ("key", "value"):
@@ -79,7 +101,7 @@ def export_prefix(
     metadata = {
         "config_digest": identity["config_digest"],
         "weights_digest": identity["weights_digest"],
-        "first_position": str(first_position),
+        "reader_start": str(int(reader_start)),
         "rows": str(rows),
         "dtype": identity["dtype"],
         "extra": canonical(extra).decode(),
@@ -109,7 +131,7 @@ def export_prefix(
             logical_tokens=rows,
             physical_tokens=rows,
             block_size=rows,
-            positions=tuple(range(first_position, first_position + rows)),
+            positions=positions,
             layout="THD",
             quantization="none",
         ),
@@ -130,7 +152,8 @@ def export_prefix(
 class LoadedPrefix:
     prefix: list[tuple[torch.Tensor, torch.Tensor]]
     manifest: ContextArtifactManifest
-    first_position: int
+    first_position: int  # the reader's first logical position (reader_start)
+    positions: tuple[int, ...]  # logical positions of the stored rows
     rows: int
     payload_digest: str
     tensor_digest: str
@@ -188,12 +211,13 @@ def load_prefix(
         raise ArtifactError("model weights digest mismatch")
     if file_meta.get("dtype") != identity["dtype"]:
         raise ArtifactError("reader dtype mismatch")
-    first_position = int(file_meta["first_position"])
+    if "reader_start" not in file_meta:
+        raise ArtifactError("artifact predates the reader_start contract")
+    first_position = int(file_meta["reader_start"])
     rows = int(file_meta["rows"])
     if rows != meta.logical_tokens or rows != meta.physical_tokens:
         raise ArtifactError("row count mismatch")
-    if meta.positions != tuple(range(first_position, first_position + rows)):
-        raise ArtifactError("positions do not match the recorded first position")
+    check_positions(meta.positions, first_position, rows)
     validate_seconds = time.perf_counter() - t1
     t2 = time.perf_counter()
     tensors = load_file(str(payload), device="cpu")
@@ -217,6 +241,7 @@ def load_prefix(
         prefix=prefix,
         manifest=manifest,
         first_position=first_position,
+        positions=tuple(int(v) for v in meta.positions),
         rows=rows,
         payload_digest=manifest.payload_digest,
         tensor_digest=M.prefix_digest(prefix),
