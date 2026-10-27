@@ -180,6 +180,25 @@ class ArtifactEmbeddingStore:
         ) as tensors:
             return tensors["embeddings"].clone()
 
+    def collection_shape(self, collection):
+        """Resolve admitted geometry without reserving payload memory."""
+        manifest = self.registry.resolve(self.ids[int(collection)], self.consumer)
+        return manifest.tensors[0].shape
+
+    def copy_documents(self, collection, destination):
+        """Finish a synchronous CPU copy before releasing the bank lease."""
+        import torch
+
+        if destination.device.type != "cpu" or destination.dtype != torch.float16:
+            raise ValueError("document destination must be a CPU float16 tensor")
+        with self.registry.lease(
+            self.ids[int(collection)], self.consumer, timeout=120.0
+        ) as tensors:
+            source = tensors["embeddings"]
+            if source.dtype != torch.float16 or source.shape != destination.shape:
+                raise ValueError("document destination differs from bank geometry")
+            destination.copy_(source)
+
     def question(self, row):
         return self.native.question(row)
 
