@@ -256,7 +256,10 @@ def run_cart_mode(patients_data):
     di = int(DEVICE.split(":")[1]) if ":" in DEVICE else 0
     torch.cuda.set_device(di)
     tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
-    model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
+    # load the BF16 checkpoint as BF16: the FP32 detour needs twice the
+    # memory and casts back to the same values
+    model = FlexQwen3ForCausalLM.from_pretrained(MODEL, dtype=torch.bfloat16)
+    model = model.to(DEVICE)
     model.eval()
     ac = AttnConfig(
         n_layers=model.config.num_hidden_layers,
