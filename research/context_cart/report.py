@@ -47,6 +47,7 @@ def arms_in(directory: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def reader_gate(full_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    E.require_complete(full_rows)
     m = E.metrics(full_rows)
     families_ok = all(v >= READER_GATE["family"] for v in m["by_family"].values())
     return {
@@ -65,6 +66,15 @@ def pilot_gate(
     def pick(name: str) -> list[dict[str, Any]]:
         rows = arms.get(name, [])
         return [r for r in rows if stratum is None or r["stratum"] == stratum]
+
+    # every arm in the gate answers the same complete question set
+    E.require_complete(pick(learned))
+    expected = set(E.population(pick(learned)))
+    for name in ("full", "empty", "untrained", wrong) + (
+        ("summary",) if "summary" in arms else ()
+    ):
+        E.require_complete(pick(name), expected=expected)
+        E.require_matched(pick(learned), pick(name), (learned, name))
 
     full, empty, untrained = (
         E.metrics(pick("full")),

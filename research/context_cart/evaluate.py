@@ -467,17 +467,68 @@ def per_world_em(rows: list[dict[str, Any]]) -> dict[str, float]:
     return {w: sum(v) / len(v) for w, v in by_world.items()}
 
 
+def population(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str | None]:
+    """The scored (world, question) keys of an arm with their gold answers.
+    Duplicate keys are an error: a question answered twice is not a larger
+    sample."""
+    out: dict[tuple[str, str], str | None] = {}
+    for r in rows:
+        if "em" not in r:
+            continue
+        key = (r["world_id"], r["qid"])
+        if key in out:
+            raise ValueError(f"duplicate scored question {key}")
+        out[key] = r.get("gold")
+    return out
+
+
+def require_matched(
+    rows_a: list[dict[str, Any]], rows_b: list[dict[str, Any]], names=("a", "b")
+) -> None:
+    """Two arms compare only over identical question sets with identical
+    gold answers. Missing worlds are never intersected away."""
+    pa, pb = population(rows_a), population(rows_b)
+    if set(pa) != set(pb):
+        missing_b = sorted(set(pa) - set(pb))[:4]
+        missing_a = sorted(set(pb) - set(pa))[:4]
+        raise ValueError(
+            f"arm populations differ: {len(pa)} vs {len(pb)} questions; "
+            f"{names[0]} lacks {missing_a}, {names[1]} lacks {missing_b}"
+        )
+    mismatched = [k for k in pa if pa[k] != pb[k]]
+    if mismatched:
+        raise ValueError(f"gold answers differ between arms at {mismatched[:4]}")
+
+
+def require_complete(
+    rows: list[dict[str, Any]],
+    families: tuple[str, ...] = D.FAMILIES,
+    expected: set[tuple[str, str]] | None = None,
+) -> None:
+    """An arm used for a gate holds every family and, when known, exactly the
+    expected question keys."""
+    keys = population(rows)
+    present = {r["family"] for r in rows if "em" in r}
+    missing = [f for f in families if f not in present]
+    if missing:
+        raise ValueError(f"families absent from the arm: {missing}")
+    if expected is not None and set(keys) != set(expected):
+        raise ValueError(f"arm holds {len(keys)} questions, expected {len(expected)}")
+
+
 def paired_bootstrap(
     rows_a: list[dict[str, Any]],
     rows_b: list[dict[str, Any]],
     resamples: int = 2000,
     seed: int = 20261025,
 ) -> dict[str, Any]:
-    """95% interval of mean(world EM a - world EM b), resampling whole worlds."""
+    """95% interval of mean(world EM a - world EM b), resampling whole worlds
+    over an exactly matched population."""
     import random
 
+    require_matched(rows_a, rows_b)
     a, b = per_world_em(rows_a), per_world_em(rows_b)
-    worlds = sorted(set(a) & set(b))
+    worlds = sorted(a)
     diffs = [a[w] - b[w] for w in worlds]
     rng = random.Random(seed)
     means = []
