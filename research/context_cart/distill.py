@@ -61,6 +61,9 @@ class DistillConfig:
     log_every: int = 1
     device: str = "cuda"
     checkpoint_writer: bool = True
+    # directory holding the native cartridge files by basename when the
+    # prepared manifest's absolute paths belong to another host
+    cart_dir: str | None = None
     model: dict[str, Any] = dataclasses.field(
         default_factory=lambda: dataclasses.asdict(M.ModelSpec())
     )
@@ -225,8 +228,24 @@ def panel_loss(
     }
 
 
-def load_prepared(prepared_dir: Path) -> dict[str, Any]:
-    return R.load_json(prepared_dir / "prepared.json")
+def load_prepared(
+    prepared_dir: Path, cart_dir: str | Path | None = None
+) -> dict[str, Any]:
+    """The prepared manifest; with ``cart_dir`` every native cartridge path
+    is re-rooted there by basename (the files travel with the bundle)."""
+    prepared = R.load_json(prepared_dir / "prepared.json")
+    if cart_dir:
+        root = Path(cart_dir)
+
+        def move(path: str) -> str:
+            return str(root / Path(path).name)
+
+        prepared["sink"]["path"] = move(prepared["sink"]["path"])
+        prepared["controls"] = {k: move(v) for k, v in prepared["controls"].items()}
+        for source in prepared["sources"].values():
+            if source.get("native_cartridge"):
+                source["native_cartridge"] = move(source["native_cartridge"])
+    return prepared
 
 
 def load_elements(path: Path) -> list[S.Element]:
@@ -259,7 +278,7 @@ def train(cfg: DistillConfig) -> dict[str, Any]:
     spec = cfg.spec()
     device = cfg.device
     dtype = spec.torch_dtype()
-    prepared = load_prepared(Path(cfg.prepared_dir))
+    prepared = load_prepared(Path(cfg.prepared_dir), cfg.cart_dir)
     sources = {
         p: Source(**{k: v for k, v in s.items()})
         for p, s in prepared["sources"].items()

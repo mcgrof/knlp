@@ -742,7 +742,7 @@ def cmd_cas_export(args: argparse.Namespace) -> None:
 
     R.configure_threads()
     spec = _spec(args)
-    prepared = DS.load_prepared(Path(args.prepared))
+    prepared = DS.load_prepared(Path(args.prepared), args.cart_dir)
     tokenizer = M.load_tokenizer(spec)
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     torch.manual_seed(int(payload["config"]["seed"]))
@@ -1175,6 +1175,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument(
         "--target", default=None, help="question patient for a wrong-source export"
+    )
+    p.add_argument(
+        "--cart-dir", default=None, help="directory of the native cartridge files"
     )
     p.add_argument("--out", required=True)
     p.add_argument("--max-new", type=int, default=32)
