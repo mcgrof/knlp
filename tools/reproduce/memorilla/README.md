@@ -6,8 +6,9 @@ reader, prompt construction, frozen decoder and scorers. The storage adapter
 uses the same driver with document collections supplied by LMCache. It does
 not convert Memorilla into a KV prefix or replace its learned reader.
 
-Start from the public knlp branch `2026-10-26-feature-context-artifacts`.
-Select one preset:
+The baseline presets are published on
+`2026-10-26-feature-context-artifacts`. Optional input-pipeline presets
+require a checkout that contains those additions. Select one preset:
 
 | Defconfig | Purpose |
 | --- | --- |
@@ -145,6 +146,16 @@ build and CPU. The arena limit does not include this scratch or output
 batches. Published geometry is reused by artifact identity; every actual
 payload lease keeps the existing consumer, header and load-integrity checks.
 
+`KNLP_MEM_DOCUMENT_PREFETCH=y` adds one FIFO read/verification thread for
+large one-client external-bank batches. It holds at most two loans from
+the current batch and releases a consumed loan before submitting another.
+The arena must hold each individual bank, but need not hold the whole
+batch. Eight-client batches keep their acquire/copy/release workers;
+small banks stay direct. The option adds CPU work and requires an
+immutable store for the collator lifetime. Geometry metadata has a
+separate bound of 1,024 entries. Closing drains accepted work; a running
+synchronous read finishes before its lease is released.
+
 ## Import once and attach a pinned set
 
 `make memorilla-import` performs input verification and document publication
@@ -171,6 +182,26 @@ Use it for a source audit or a fresh conversion. Both modes retain the
 runner's normal input doctor, including its full asset checks; charge that
 outer command cost as well as worker setup. The native index/question files
 and the original source assets remain required by the current author store.
+
+For a new reusable import, select all intended benchmarks before importing:
+
+```sh
+make defconfig DEFCONFIG=memorilla-lmcache-bf16-attach
+make olddefconfig
+make menuconfig
+# Select the work root and all benchmarks that this import will contain.
+make memorilla-fetch MEMORILLA_PYTHON=/path/to/python
+make memorilla-import MEMORILLA_PYTHON=/path/to/python
+make memorilla-doctor MEMORILLA_PYTHON=/path/to/python
+make memorilla-stress MEMORILLA_PYTHON=/path/to/python
+```
+
+Preserve the catalog, artifact files, source assets and receipt together.
+For a different benchmark set, use `IMPORT_OUTPUT=/path/to/new-receipt.json`
+when importing and select that path with `KNLP_MEM_ARTIFACT_SET_MANIFEST`
+when attaching. The existing author and adapter presets keep their original
+collator. All new assembly options remain opt-in and need workload-specific
+comparisons with both unchanged and equivalently optimized native mmap.
 
 ## Reusable stress command
 
