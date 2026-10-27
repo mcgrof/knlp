@@ -71,6 +71,12 @@ vLLM pin replace that explicitly selected runtime.
 | [vLLM](https://github.com/mcgrof/vllm/tree/2026-10-26-feature-context-artifacts) | `2026-10-26-feature-context-artifacts` | `198199bc44da513a6eceee206cec9c62d55d190a` |
 | [LMCache](https://github.com/mcgrof/LMCache/tree/2026-10-26-feature-context-artifacts) | `2026-10-26-feature-context-artifacts` | `e438be9d81ce8b76b135b813a107d9b189abdd33` |
 
+When upgrading from an earlier dated integration, use a new `KNLP_MEM_ROOT`
+or update separate clean copies of both source checkouts to these exact pins.
+`memorilla-fetch` preserves existing checkouts; it does not retarget them.
+The worker rejects a mismatched source or installed package. Keep the original
+control's work root and environment unchanged.
+
 The worker checks catalog and LMCache source revisions and tracked changes,
 and records the separately imported engine path/version. Full fork-engine
 qualification is distinct from testing these catalog modules.

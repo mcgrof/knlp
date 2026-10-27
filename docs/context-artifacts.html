@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#checkpoint-results">What ran</a><a href="#replay-scheduling">Replay controls</a><a href="#system-qualification">System tests</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#architecture">Architecture</a><a href="#checkpoint-results">What ran</a><a href="#replay-scheduling">Replay controls</a><a href="#system-qualification">System tests</a><a href="#prepared-reads">Repeated reads</a><a href="#comparison">REFRAG comparison</a><a href="#target">Target</a><a href="#sources">Sources</a></div></nav>
 <header class="wrap">
 <div class="eyebrow">Context reuse · checkpoint inference · October 2026</div>
 <h1>Reusable context,<br>typed by its consumer.</h1>
@@ -94,14 +94,14 @@ make olddefconfig
 python -m tools.reproduce.context_artifacts.reader_probe --help</code></pre>
 <p class="muted">The file preset needs explicit paths, a source lock, a manifest, and a payload. Selecting it does not download models or establish serving support. The real LPC transport fixture requires a supplied compatible checkpoint; its weights are not distributed here.</p>
 <h3>Checkpoint inference and reusable stress replay</h3>
-<p>The dated <a href="https://github.com/mcgrof/knlp/tree/2026-10-23-feature-context-artifacts/tools/reproduce/memorilla">checkpoint runner</a> provides <code>memorilla-author</code>, <code>memorilla-port-control</code>, and <code>memorilla-lmcache</code> defconfigs. The default evaluates the complete 100-question PubMedQA test with released weights and original scorers. Select <code>all</code> for the eight supervised benchmarks. No training is required.</p>
+<p>The dated <a href="https://github.com/mcgrof/knlp/tree/2026-10-26-feature-context-artifacts/tools/reproduce/memorilla">checkpoint runner</a> provides <code>memorilla-author</code>, <code>memorilla-port-control</code>, and <code>memorilla-lmcache</code> defconfigs. The default evaluates the complete 100-question PubMedQA test with released weights and original scorers. Select <code>all</code> for the eight supervised benchmarks. No training is required.</p>
 <pre><code>make defconfig DEFCONFIG=memorilla-author
 make olddefconfig
 make menuconfig
 make memorilla-fetch MEMORILLA_PYTHON=/path/to/python
 make memorilla-benchmark MEMORILLA_PYTHON=/path/to/python
 make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
-<p>The same stress command works with the adapter preset and can replay a saved request trace. Public dated branches of <a href="https://github.com/mcgrof/vllm/tree/2026-10-23-feature-context-artifacts">vLLM</a> and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-23-feature-context-artifacts">LMCache</a> supply the catalog and storage dependencies. Read the runner instructions for exact commits, environments, saved-trace comparison, and the distinction between the original CUDA runtime and a separately qualified runtime. Released checkpoint lineage does not establish an exact reproduction of every paper score. These commands are separate from the CPU transport results above.</p>
+<p>The same stress command works with the adapter preset and can replay a saved request trace. Public dated branches of <a href="https://github.com/mcgrof/vllm/tree/2026-10-26-feature-context-artifacts">vLLM</a> and <a href="https://github.com/mcgrof/LMCache/tree/2026-10-26-feature-context-artifacts">LMCache</a> supply the catalog and storage dependencies. Read the runner instructions for exact commits, environments, saved-trace comparison, and the distinction between the original CUDA runtime and a separately qualified runtime. Released checkpoint lineage does not establish an exact reproduction of every paper score. These commands are separate from the CPU transport results above.</p>
 </section>
 <section id="checkpoint-results">
 <div class="eyebrow">08 / Checkpoint evaluation</div><h2>Use the release, report the measured scores.</h2>
@@ -137,7 +137,7 @@ make defconfig DEFCONFIG=memorilla-lmcache-batch-replay
 make menuconfig
 make memorilla-stress TRACE=/path/to/control/trace.json \
   MEMORILLA_PYTHON=/path/to/python</pre>
-<p>Keep the trace, batch size, scheduling mode, engine options and model/data pins fixed when comparing storage paths. The <a href="https://github.com/mcgrof/knlp/tree/2026-10-23-feature-context-artifacts/tools/reproduce/memorilla">runner documentation</a> explains exact-string comparison, tensor diagnostics, effective-runtime receipts and the reference presets. No kernel installation or kernel A/B test is part of this qualification.</p>
+<p>Keep the trace, batch size, scheduling mode, engine options and model/data pins fixed when comparing storage paths. The <a href="https://github.com/mcgrof/knlp/tree/2026-10-26-feature-context-artifacts/tools/reproduce/memorilla">runner documentation</a> explains exact-string comparison, tensor diagnostics, effective-runtime receipts and the reference presets. No kernel installation or kernel A/B test is part of this qualification.</p>
 </section>
 <section id="system-qualification">
 <div class="eyebrow">10 / System qualification</div><h2>Stress the storage contract and keep the mmap baseline.</h2>
@@ -175,8 +175,23 @@ make memorilla-storage-faults MEMORILLA_PYTHON=/path/to/python \
 <p>A read-only audit finds unchanged public source, model and data revisions, with no paper-run manifest in the inspected release metadata, histories and documentation. The <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B/blob/f6b15af56aa687861c8d2d03b1cd8f7979881361/README.md">release card</a> still labels Stage 3 as <code>epoch-00</code>, while the <a href="https://github.com/snap-stanford/memorilla/blob/005854d13ced2dfe56588fb721eb78db5ec13f6a/README.md">evaluation example</a> names <code>epoch-04</code>. These labels do not prove the weights are wrong. Exact paper-checkpoint lineage remains unverified.</p>
 <p><strong>Decision:</strong> retain mmap as the fast baseline. The adapter demonstrates a usable typed catalog, integrity checks, bounded leases and process-local sharing, with measurable costs. The unchanged reader still needs every row in its selected bank. Future changes to copying or mmap-backed leases can use this stressor and these controls before any speed claim.</p>
 </section>
+<section id="prepared-reads">
+<div class="eyebrow">11 / Prepared reads</div><h2>Reuse validated metadata on repeated reads.</h2>
+<p>The host adapter caches immutable file read plans, typed manifests and validated tensor layouts. Resident reads check the consumer and stored header, then create fresh views of the actual allocation. Each payload reload still compares the current catalog and hashes every loaded byte. The collator still receives its own tensor copy. The original mmap baseline and full-collection reader remain available.</p>
+<p>Metadata caches default to 1,024 entries, separately from the payload arena. Entry budgets do not bound caller-held plans, active references, cloned tensors or the Linux page cache. A bounded capacity wait reuses the admitted plan while another lease releases memory; it does not repeat metadata parsing on every retry. Its deadline does not interrupt file operations already running. Catalog transactions close their SQLite connections after each operation.</p>
+<p>A CPU replay completes 264,192 exact bank reads in 48 processes. Three process blocks rotate native mmap, old adapter and prepared-read adapter order on one host, with hot relevant files and a full-byte validating consumer. Each normal case uses all 100 PubMedQA or 355 NarrativeQA banks, one or eight clients, a 64 MiB arena and one Torch CPU thread. The table gives the median of three process medians.</p>
+<div class="table-wrap"><table><thead><tr><th>Case</th><th>Old fetch service p50</th><th>Prepared fetch service p50</th><th>Old whole worker</th><th>Prepared whole worker</th></tr></thead><tbody>
+<tr><td>PubMedQA, one client</td><td>73.59 µs</td><td>21.14 µs</td><td>4.32 s</td><td>4.22 s</td></tr>
+<tr><td>PubMedQA, eight clients</td><td>685.29 µs</td><td>213.51 µs</td><td>4.42 s</td><td>3.82 s</td></tr>
+<tr><td>NarrativeQA, one client</td><td>6.600 ms</td><td>6.590 ms</td><td>16.89 s</td><td>19.65 s</td></tr>
+<tr><td>NarrativeQA, eight clients</td><td>11.634 ms</td><td>9.057 ms</td><td>10.83 s</td><td>10.23 s</td></tr>
+</tbody></table></div>
+<p>Small-bank fetch service improves about 71% and 69% versus the old adapter. Whole-worker gains are much smaller because they include imports, setup and file warming. Large one-client whole-worker time gets worse despite nearly unchanged fetch service; this screen does not explain the startup/setup variation. Large-bank hashing remains. With a deliberately tiny 64 KiB small-bank arena and eight clients, throughput rises from 2,641 to 3,139 reads/s while median service worsens from 1.616 to 1.972 ms. There is no general latency or decoder-speed win.</p>
+<p>The installed-wheel and catalog tests cover admitted-plan ownership, changed catalogs, corrupt bytes, layout reuse, metadata eviction, consumer rejection, wait expiry and failed-load wakeups. Ten real allocator/catalog fault controls also pass. Another 9,216 exact reads pass with a 1,024-descriptor process limit; fresh conversion/publication controls run separately. The prepared-read revision also completes 768 checkpoint requests in 24 workers on the public-wheel CUDA port described above. All 16 selected input/string comparisons match exactly; all eight diagnostic comparisons also match collated tensors, reader outputs and decoder prompt tensors. These are fixed-batch released-checkpoint controls, with the same reader, decoder and data pins. They do not establish a decoder speedup or resolve paper-checkpoint lineage.</p>
+<p>Use the <a href="https://github.com/mcgrof/knlp/tree/2026-10-26-feature-context-artifacts/tools/reproduce/memorilla">dated runner and dependency pins</a> for this implementation, and the <a href="https://github.com/mcgrof/knlp/tree/2026-10-26-feature-context-artifacts/tools/reproduce/context_artifacts">adapter instructions</a> for metadata budgets, lease ownership and deadline scope. No training or kernel change is required.</p>
+</section>
 <section id="sources">
-<div class="eyebrow">11 / Primary sources</div><h2>Read the methods and the implementation.</h2>
+<div class="eyebrow">12 / Primary sources</div><h2>Read the methods and the implementation.</h2>
 <ol class="refs">
 <li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
 <li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
@@ -185,6 +200,6 @@ make memorilla-storage-faults MEMORILLA_PYTHON=/path/to/python \
 </ol>
 </section>
 </main>
-<footer class="wrap">knlp · Context artifact and checkpoint evaluation · October 25, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
+<footer class="wrap">knlp · Context artifact and checkpoint evaluation · October 26, 2026. Paper mechanisms, proposed integration, and measured implementation results are identified separately.</footer>
 </body>
 </html>
