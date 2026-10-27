@@ -132,6 +132,23 @@ def test_invalid_geometry_refuses_before_copy():
     observed.close()
 
 
+def test_admitted_geometry_cache_is_bounded_and_small_banks_stay_direct():
+    store = Store()
+    observed = collator(
+        LeasedMemoryCollator,
+        store,
+        clients=1,
+        prefetch=True,
+        final_dtype=torch.bfloat16,
+        max_geometries=2,
+    )
+    observed(items())
+    assert observed.stats()["geometry_entries"] == 2
+    assert observed.stats()["prefetch_batches"] == 0
+    assert observed._reader is None
+    observed.close()
+
+
 def test_direct_cast_preserves_special_values_and_padding_bits():
     store = Store()
     special = torch.tensor(

@@ -28,9 +28,13 @@ class Native:
         self.directory = directory
         directory.mkdir()
         self.collection_ids = torch.tensor([0, 1, 2])
-        self._length = torch.tensor([1000, 1500, 700])
+        self._length = torch.tensor([40000, 48000, 36000])
         self.values = {
-            i: torch.arange(int(n) * 8, dtype=torch.float16).reshape(int(n), 8) / 64
+            i: torch.arange(int(n) * 8, dtype=torch.int32)
+            .remainder(1024)
+            .to(torch.float16)
+            .reshape(int(n), 8)
+            / 64
             for i, n in enumerate(self._length)
         }
         save_file(
@@ -64,7 +68,7 @@ def imported(tmp_path):
         b"synthetic reader identity, not model weights"
     )
     (checkpoint / "config.json").write_text('{"embedding_dim": 8}')
-    cfg = {"root": str(tmp_path), "pool_bytes": 32768, "source_revision": AUTHOR}
+    cfg = {"root": str(tmp_path), "pool_bytes": 1048576, "source_revision": AUTHOR}
     store = ArtifactEmbeddingStore(native, cfg, checkpoint, tmp_path / "import")
     key = store.set_id
     ids = dict(store.ids)
@@ -155,7 +159,7 @@ native=SimpleNamespace(config='synthetic',split='test',directory=Path(value['nat
 root=Path(value['cfg']['root'])
 store=ArtifactEmbeddingStore.attach(native,value['cfg'],Path(value['checkpoint']),root/'restarted')
 for key,length in zip(native.collection_ids.tolist(),native._length.tolist(),strict=True):
-    expected=torch.arange(length*8,dtype=torch.float16).reshape(length,8)/64
+    expected=torch.arange(length*8,dtype=torch.int32).remainder(1024).to(torch.float16).reshape(length,8)/64
     assert torch.equal(store.documents(key),expected)
 loads=store.registry.storage.read_count
 store.close()
@@ -175,3 +179,64 @@ assert store.registry.storage.allocator.memcheck()
         "collections": 3,
         "loads": 3,
     }
+
+
+def test_fifo_prefetch_progresses_when_two_banks_do_not_fit_together(imported):
+    from tools.reproduce.memorilla.input_batch import LeasedMemoryCollator
+    from tools.reproduce.memorilla.tests.test_input_batch import (
+        Tokenizer,
+        collator,
+        items,
+    )
+    from memorilla.data import MemoryCollator
+
+    native, checkpoint, cfg, ids, root = imported
+    store = ArtifactEmbeddingStore.attach(native, cfg, checkpoint, root / "prefetch")
+    actual = collator(
+        LeasedMemoryCollator,
+        store,
+        clients=1,
+        prefetch=True,
+        final_dtype=torch.bfloat16,
+    )
+    expected = collator(MemoryCollator, native)(items())
+    batch = actual(items())
+    for key in expected:
+        assert torch.equal(
+            batch[key].view(torch.uint8), expected[key].view(torch.uint8)
+        )
+    stats = actual.stats()
+    assert stats["prefetch_batches"] == 1
+    assert stats["active_prefetch_loans"] == 0
+    assert 1 <= stats["peak_prefetch_loans"] <= 2
+    assert not any(store.registry.storage.active.values())
+    actual.close()
+    store.close()
+
+
+def test_prefetch_copy_failure_drains_and_releases_every_loan(imported, monkeypatch):
+    import tools.reproduce.memorilla.input_batch as module
+    from tools.reproduce.memorilla.tests.test_input_batch import collator, items
+
+    native, checkpoint, cfg, ids, root = imported
+    store = ArtifactEmbeddingStore.attach(
+        native, cfg, checkpoint, root / "prefetch-fault"
+    )
+    actual = collator(
+        module.LeasedMemoryCollator,
+        store,
+        clients=1,
+        prefetch=True,
+        final_dtype=torch.bfloat16,
+    )
+
+    def fail(*args, **kwargs):
+        raise OSError("injected foreground copy failure")
+
+    monkeypatch.setattr(module, "copy_fp16_cpu", fail)
+    with pytest.raises(OSError, match="foreground copy"):
+        actual(items())
+    assert actual.stats()["active_prefetch_loans"] == 0
+    assert not any(store.registry.storage.active.values())
+    actual.close()
+    store.close()

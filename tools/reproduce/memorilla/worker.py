@@ -10,6 +10,7 @@ import resource
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -291,7 +292,7 @@ class ArtifactEmbeddingStore:
         """Finish a synchronous CPU copy before releasing the bank lease."""
         import torch
 
-        from .tensor_copy import copy_fp16_cpu
+        from .tensor_copy import DIRECT_ELEMENTS, copy_fp16_cpu
 
         if destination.device.type != "cpu" or destination.dtype not in (
             torch.float16,
@@ -304,7 +305,23 @@ class ArtifactEmbeddingStore:
             source = tensors["embeddings"]
             if source.dtype != torch.float16 or source.shape != destination.shape:
                 raise ValueError("document destination differs from bank geometry")
-            copy_fp16_cpu(source, destination)
+            if destination.dtype == torch.float16 or source.numel() <= DIRECT_ELEMENTS:
+                destination.copy_(source)
+            else:
+                copy_fp16_cpu(source, destination)
+
+    @contextmanager
+    def lease_documents(self, collection):
+        """Borrow verified CPU values; this pinned store permits thread handoff.
+
+        No thread-owned lock or thread-local mode spans the yield in the
+        underlying typed/store leases. The consumer must close this context
+        only after synchronous consumption, and must not retain its views.
+        """
+        with self.registry.lease(
+            self.ids[int(collection)], self.consumer, timeout=120.0
+        ) as tensors:
+            yield tensors["embeddings"]
 
     def question(self, row):
         return self.native.question(row)
@@ -397,6 +414,7 @@ def main():
                 super().__init__(
                     *args,
                     clients=cfg.get("clients", 1),
+                    prefetch=cfg.get("document_prefetch") == "y",
                     final_dtype=(
                         torch.bfloat16
                         if input_pipeline == "leased-bf16"
@@ -487,6 +505,7 @@ def main():
         "offline_scheduling": scheduling,
         "bank_fetch_clients": cfg.get("clients", 1),
         "input_pipeline": input_pipeline,
+        "document_prefetch": cfg.get("document_prefetch") == "y",
         "artifact_mode": cfg.get("artifact_mode", "import"),
         "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
@@ -732,6 +751,9 @@ def main():
                     "batch_seconds_p95": percentile(durations, 0.95),
                     "batch_seconds_p99": percentile(durations, 0.99),
                     "generation_seconds": total_generation,
+                    "document_batch_stats": (
+                        collator.stats() if input_pipeline != "author" else None
+                    ),
                     "bank_fetch_clients": cfg.get("clients", 1),
                     "bank_capacity_retries": (
                         bank_clients.retries if bank_clients else 0

@@ -5,8 +5,11 @@ import math
 
 import torch
 
+DEFAULT_SCRATCH_BYTES = 1024 * 1024
+DIRECT_ELEMENTS = DEFAULT_SCRATCH_BYTES // 4
 
-def copy_fp16_cpu(source, destination, *, scratch_bytes=1024 * 1024):
+
+def copy_fp16_cpu(source, destination, *, scratch_bytes=DEFAULT_SCRATCH_BYTES):
     """Copy CPU FP16 values into an owned FP16 or BF16 destination.
 
     Large BF16 copies use a bounded FP32 staging buffer. Every finite FP16

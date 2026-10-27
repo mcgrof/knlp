@@ -72,6 +72,15 @@ config KNLP_MEM_ARTIFACT_MODE
 	  Import validates and publishes document collections. Attach opens
 	  an explicitly pinned imported set without reconstructing collections.
 	  Payload misses still verify complete bytes and catalog identity.
+config KNLP_MEM_DOCUMENT_PREFETCH
+	bool "Overlap one bank reader with BF16 batch copies"
+	default n
+	help
+	  With leased-bf16 and one bank client, read and verify known current
+	  batch banks on one extra CPU thread while the caller copies a prior
+	  bank. At most two bank loans are pending. Large external banks use
+	  this path; small banks and already available mmap views stay direct.
+	  Multiple bank clients retain their existing parallel-copy path.
 config KNLP_MEM_ARTIFACT_SET_MANIFEST
 	string "Receipt from memorilla-import for attach mode"
 	default ""

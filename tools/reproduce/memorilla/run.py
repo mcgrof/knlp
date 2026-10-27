@@ -93,6 +93,11 @@ def configuration(path, *, resolve_artifact_sets=True):
         raise ValueError("unknown document input pipeline")
     if cfg["profile"] == "author" and cfg["input_pipeline"] != "author":
         raise ValueError("original author mode rejects collator overrides")
+    cfg.setdefault("document_prefetch", "n")
+    if cfg["document_prefetch"] not in {"y", "n"}:
+        raise ValueError("document prefetch must be y or n")
+    if cfg["document_prefetch"] == "y" and cfg["input_pipeline"] != "leased-bf16":
+        raise ValueError("document prefetch requires leased-bf16 inputs")
     cfg.setdefault("artifact_mode", "import")
     if cfg["artifact_mode"] not in {"import", "attach"}:
         raise ValueError("unknown artifact preparation mode")
