@@ -641,6 +641,161 @@ def cmd_cas_import(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_cas_panel(args: argparse.Namespace) -> None:
+    """LongHealth Table 15 panel for one patient through this reader:
+    ``native:<file>`` arms import a native cartridge, ``full`` puts the
+    record in the prompt, ``empty`` gives no context."""
+    import torch
+
+    from . import artifact as A
+    from . import cas_bridge as B
+    from . import longhealth as LH
+
+    R.configure_threads()
+    spec = _spec(args)
+    tokenizer, reader, identity = _reader_only(spec, args.device)
+    data, digest = LH.load_benchmark(Path(args.benchmark))
+    questions = LH.patient_questions(data, args.patient, args.max_q)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    record: dict[str, Any] = {
+        "patient": args.patient,
+        "benchmark_digest": digest,
+        "identity": identity,
+        "runs": args.runs,
+        "seed": args.seed,
+        "batch": args.batch,
+        "max_completion": args.max_completion,
+        "arms": {},
+        "environment": R.environment(),
+    }
+    for item in args.arm:
+        name, _, value = item.partition(":")
+        sync = torch.cuda.synchronize if torch.cuda.is_available() else (lambda: None)
+        sync()
+        t0 = time.perf_counter()
+        prefix, first_position, doc_text, extra = None, 0, None, {}
+        if name == "native":
+            cart = B.load_native_cartridge(Path(value), dtype=spec.torch_dtype())
+            art_dir = out / f"artifact_{Path(value).stem}"
+            A.export_prefix(
+                art_dir,
+                cart.prefix("cpu"),
+                identity,
+                cart.positions,
+                cart.reader_start,
+                _source_revision(args)["revision"],
+                cart.file_digest,
+                "cas-native-import",
+                {"native_path": str(value), "native_digest": cart.file_digest},
+            )
+            loaded = A.load_prefix(art_dir, identity, args.device)
+            prefix, first_position = loaded.prefix, loaded.first_position
+            arm = f"native_{Path(value).stem}"
+            extra = {
+                "cartridge": str(value),
+                "cartridge_digest": cart.file_digest,
+                "rows": cart.rows,
+                "artifact_id": loaded.manifest.artifact_id,
+            }
+        elif name == "full":
+            doc_text = LH.record_text(data, args.patient)
+            arm = "full"
+            extra = {"record_chars": len(doc_text)}
+        elif name == "empty":
+            arm = "empty"
+        else:
+            raise SystemExit(f"unknown arm {item}")
+        batch = args.batch if name != "full" else args.full_batch
+        rows = LH.answer_panel(
+            reader,
+            tokenizer,
+            prefix,
+            first_position,
+            questions,
+            args.runs,
+            args.seed,
+            batch,
+            args.max_completion,
+            doc_text=doc_text,
+        )
+        sync()
+        seconds = time.perf_counter() - t0
+        E_rows = Path(out / f"{arm}_rows.jsonl")
+        D.write_jsonl(E_rows, rows)
+        summary = LH.summarize(rows)
+        summary.update(extra)
+        summary["seconds"] = seconds
+        summary["batch"] = batch
+        summary["prompt_tokens_mean"] = sum(r["prompt_tokens"] for r in rows) / len(
+            rows
+        )
+        record["arms"][arm] = summary
+        print(
+            f"{args.patient} {arm}: acc {summary['acc_mean']:.4f} +/- {summary['acc_std']:.4f} "
+            f"per run {summary['per_run_acc']} cap hits {[c['cap_hits'] for c in summary['per_run_counts']]} "
+            f"({seconds:.0f} s)",
+            flush=True,
+        )
+        R.dump_json(out / "panel.json", record)
+    R.dump_json(out / "panel.json", record)
+
+
+def cmd_cas_rope_check(args: argparse.Namespace) -> None:
+    """Position-shift equivalence on the pinned model: keys produced at
+    shifted positions equal the re-rotated originals."""
+    import torch
+
+    from . import cas_bridge as B
+    from . import model as M
+
+    spec = _spec(args)
+    tokenizer, reader, identity = _reader_only(spec, args.device)
+    model = reader.model
+    ids = tokenizer(
+        "The patient was admitted with chest pain and", add_special_tokens=False
+    )["input_ids"]
+    base = list(range(7, 7 + len(ids)))
+    shifted = [p + args.shift for p in base]
+
+    def keys_at(positions):
+        x = torch.tensor([ids], device=args.device)
+        pos = torch.tensor([positions], device=args.device)
+        out = model.model(
+            input_ids=x,
+            position_ids=pos,
+            attention_mask=torch.ones_like(x),
+            use_cache=True,
+        )
+        return [
+            tuple(t.clone() for t in M.cache_layer(out.past_key_values, l))
+            for l in range(reader.geometry.layers)
+        ]
+
+    with torch.no_grad():
+        k0, k1 = keys_at(base), keys_at(shifted)
+        worst_rel, worst_rt, worst_val = 0.0, 0.0, 0.0
+        for (a, va), (b, vb) in zip(k0, k1):
+            moved = B.rerotate_keys(model, a, base, shifted)
+            rel = float((moved - b.float()).norm() / b.float().norm())
+            back = B.rerotate_keys(model, moved.to(a.dtype), shifted, base)
+            rt = float((back - a.float()).norm() / a.float().norm())
+            worst_rel = max(worst_rel, rel)
+            worst_rt = max(worst_rt, rt)
+            worst_val = max(worst_val, float((va.float() - vb.float()).abs().max()))
+    result = {
+        "identity": {k: identity[k] for k in ("model", "revision", "rope_digest")},
+        "tokens": len(ids),
+        "shift": args.shift,
+        "shift_equivalence_rel_error_max": worst_rel,
+        "round_trip_rel_error_max": worst_rt,
+        "values_max_abs_diff": worst_val,
+        "dtype": spec.dtype,
+    }
+    R.dump_json(Path(args.out), result)
+    print(json.dumps(result, indent=1))
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     from . import report as REP
 
@@ -762,6 +917,28 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--max-new", type=int, default=16)
     _model_args(p)
     p.set_defaults(func=cmd_fit)
+
+    p = sub.add_parser("cas-panel", help="LongHealth panel through this reader")
+    p.add_argument("--benchmark", required=True)
+    p.add_argument("--patient", default="patient_02")
+    p.add_argument("--max-q", type=int, default=20)
+    p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--seed", type=int, default=20261027)
+    p.add_argument("--batch", type=int, default=20)
+    p.add_argument("--full-batch", type=int, default=2)
+    p.add_argument("--max-completion", type=int, default=2048)
+    p.add_argument(
+        "--arm", action="append", required=True, help="native:<file> | full | empty"
+    )
+    p.add_argument("--out", required=True)
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_panel)
+
+    p = sub.add_parser("cas-rope-check", help="position-shift equivalence on the model")
+    p.add_argument("--shift", type=int, default=600)
+    p.add_argument("--out", required=True)
+    _model_args(p)
+    p.set_defaults(func=cmd_cas_rope_check)
 
     p = sub.add_parser("report", help="recompute scores and gates")
     p.add_argument("--run-dir", required=True)
