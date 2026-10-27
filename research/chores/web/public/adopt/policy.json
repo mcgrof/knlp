@@ -1,63 +1,43 @@
 {
-  "schema_version": 1,
-  "status": "proposal",
-  "repository": {
-    "url": null,
-    "base_ref": null,
-    "revision": null,
-    "category": null,
-    "include": [],
-    "exclude": []
-  },
+  "schema_version": 2,
+  "status": "draft",
+  "repository": null,
+  "target_branch": null,
+  "merge_method": "ff-only",
+  "endpoint": "review",
+  "approved_at": null,
+  "expires_at": null,
   "model_access": {
-    "service_alias": null,
-    "credential_ref": null,
-    "company_policy_ref": null,
-    "allowed_data_classes": [],
-    "request_limit_per_task": 0,
-    "token_limit_per_task": 0,
-    "cost_limit_per_task": 0.0,
-    "currency": "USD",
-    "personal_account_fallback": false
+    "route": null,
+    "data_classes": [],
+    "request_limit": 0,
+    "token_limit": 0,
+    "cost_limit": 0,
+    "currency": "USD"
   },
-  "authority": {
-    "read_paths": [],
-    "write_paths": [],
-    "execute_tests": false,
-    "post_reviews": false,
-    "push": false,
-    "merge": false,
-    "rewrite_history": false,
-    "provision_resources": false,
-    "remediate": false,
-    "edit_policy": false
+  "classes": {},
+  "protected_paths": [
+    ".github/**",
+    "maintenance/**"
+  ],
+  "tests": {},
+  "post_merge_tests": [],
+  "applicability_rules": {},
+  "limits": {
+    "repair_attempts": 0,
+    "elapsed_seconds": 0,
+    "requests": 0,
+    "tokens": 0,
+    "cost": 0,
+    "ci_runs": 0
   },
-  "test_plan_ref": "TEST-PLAN.md",
-  "resources": [],
+  "retry": {
+    "limit": 0,
+    "transient_reasons": []
+  },
   "delegation": {
-    "owner_alias": null,
-    "incident_route_ref": null,
-    "required_for": [
-      "missing-required-coverage",
-      "privilege-or-destructive-test",
-      "new-resource-or-spend",
-      "policy-or-credential-change",
-      "publication-or-merge",
-      "conflicting-writer",
-      "suspected-unauthorized-activity"
-    ],
-    "on_no_response": "pause-affected-task"
+    "route": null,
+    "response_seconds": 0
   },
-  "coordination": {
-    "admission": "manual-single-worker",
-    "authority_store_ref": null,
-    "lease_seconds": 0,
-    "single_writer_per_branch": true,
-    "stale_results": "reject"
-  },
-  "schedule": {
-    "enabled": false,
-    "max_tasks_per_day": 0,
-    "retry_limit": 0
-  }
+  "observation_max_age_seconds": 0
 }

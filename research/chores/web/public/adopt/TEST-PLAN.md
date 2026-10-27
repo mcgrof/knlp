@@ -15,6 +15,12 @@ Required build, lint, format, unit, integration and regression gates:
 
 Command provenance (file and commit), dependencies and why each check applies:
 
+Selected endpoint (reviewed patch / published change / verified merge):
+
+Trusted baseline policy digest and effective authority receipt:
+
+Current target, head and combined tested revision / merge-queue identity:
+
 ## Test matrix
 
 Add one row per required check. Do not infer that the examples were executed.
@@ -50,6 +56,19 @@ bounded boot/attach test and recovery; physical checks that remain required:
 Base/head comparison and existing environmental failures:
 
 Required but unavailable checks and their effect on acceptance:
+
+Expected producer, runner, artifact digest, resource grant and observation age:
+
+Required post-merge checks on the actual resulting revision:
+
+Operation identity and durable publication/merge receipt; reconcile unknown
+outcomes before retrying. Native writers must check current head/target
+atomically, not rely on this form or an offline `ready` result.
+
+Repair/retry, elapsed-time, model and CI budgets already consumed:
+
+Failure response: pause affected merges, retain evidence, notify the selected
+route, and use the separate approved repair/revert procedure:
 
 Next bounded request to the owner or hardware operator:
 

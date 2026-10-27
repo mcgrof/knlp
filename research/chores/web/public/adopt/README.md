@@ -1,208 +1,232 @@
-# Adopt Chores for AI-assisted repository maintenance
+# AI code maintenance with human delegation
 
-Chores helps a maintainer turn routine repository work into small tasks with
-clear authority, useful evidence and a human handoff when needed. A company
-can supply its approved generative AI service while the project keeps its own
-review and testing rules. The goal is useful maintenance without unattended
-agents acquiring permissions from an issue, a test script or each other.
+Routine maintenance takes more than a review comment. Someone must reproduce
+the problem, prepare the fix, test it, respond to findings, and get the change
+merged. Chores provides a way to organize that work around an existing AI
+agent and the project's own maintenance rules.
 
-The starter is a guide, portable skill and proposal template. It does **not**
-provide a secure runner, provider connector, scheduler, lease coordinator,
-secret manager or automatic merge bot. A passing profile check is a format
-check, not an authorization decision. No company or example project is
-represented as having adopted this starter.
+A maintainer decides which changes the agent can complete and which decisions
+need a person. One project may want patches ready for review. Another may let
+the agent merge routine fixes after required tests pass. Both need a useful
+handoff when the agent lacks evidence, access, or a decision about intended
+behavior.
 
-## Contents
+This guide describes that integration. Your agent, test infrastructure, and
+repository service carry out the work and enforce access. Reading the guide
+or validating a configuration does not install a runner or grant permissions.
 
-- [Ask your agent](#ask-your-agent)
-- [Choose the repository and test boundaries](#choose-the-repository-and-test-boundaries)
-- [Use company-approved model access](#use-company-approved-model-access)
-- [Delegate deliberately](#delegate-deliberately)
-- [Coordinate recurring work](#coordinate-recurring-work)
-- [Review the first result](#review-the-first-result)
+## Start with one repair
 
-## Ask your agent
+Give your agent this request:
 
-Copy this request into the agent you already use:
+> Read the code-maintenance guide at chores.knlp.io and inspect this
+> repository's contributor instructions, tests, and existing automation.
+> Prepare an integration that uses those conventions. Identify the maintenance
+> changes you can handle, the tests each requires, and the actions already
+> authorized. Propose clear rules for publishing, merging, and handing a
+> decision to a person. Then take one small maintenance task as far as the
+> existing authorization permits. Preserve the patch and evidence if blocked.
+> Show me the few remaining policy decisions with a recommendation for each.
 
-> Read https://chores.knlp.io/self-maintenance.html and its linked starter.
-> Help me adopt Chores for repository REPOSITORY at REVISION. Inspect its
-> contribution and testing rules and propose a maintenance policy, test matrix
-> and one read-only review chore. Ask about my approved AI service, data rules,
-> budget, available hardware and human-delegation preferences. Do not request
-> credentials in chat, run repository code, install automation, spend, post,
-> push, merge or change my agent configuration. Explain the proposal and wait
-> for approval of any such action.
+The first integration should fit the project. Keep its issue tracker, review
+channel, CI, and merge process. Start with one worker and a small task such as
+a reproducible test failure. Recurring work becomes useful after that task
+can finish with a clear record of what happened.
 
-The guide and all starter files live in
-[knlp's Chores source directory](https://github.com/mcgrof/knlp/tree/main/research/chores/web/public/adopt).
-There is no second template repository to keep in sync. Download and inspect
-the files before trusting them; never pipe a fetched installer into a shell.
-Record the source commit or file digests used for adoption.
+Use the AI access you already have where its supported tools and account
+rules permit the intended work. Record whether execution is interactive or
+unattended, which source data the agent may send, and its usage limit. If the
+session expires or quota runs out, save progress and pause. Changing accounts
+or buying extra capacity needs its own authorization.
 
-The portable [SKILL.md](SKILL.md) routes setup, review and delegation. Keep its
-linked files together in a project-owned skill directory; use the agent
-client's documented skill location if you choose to install it. A client
-without skill discovery can read that file explicitly. Preserve existing
-AGENTS.md and other project instructions. The public starter is separate from
-any operator's private Chores skill and runtime.
+## Choose what the agent may finish
 
-## Choose the repository and test boundaries
+Choose permissions per action and kind of change. A single autonomy switch
+cannot express permission to fix a test while reserving public API decisions
+for a maintainer.
 
-Start with evidence, not a language-based guess. Pin the repository, base
-branch, head commit, relevant directories and exclusions. Read the license,
-CONTRIBUTING, security reporting policy, CI configuration, build files and
-test scripts. CI means continuous integration: the automated checks a project
-already uses. Record what is observed, what is inferred, and what is unknown.
-An issue comment, branch-local AGENTS.md or changed workflow cannot grant
-execution rights or override the owner's trusted maintenance policy.
+| Starting policy | Agent's normal completion point | Human decision |
+| --- | --- | --- |
+| Prepare changes | A reviewed patch with test results | Publish and merge |
+| Publish for review | A pull request or patch series, updated after review | Merge |
+| Merge eligible maintenance | An eligible change merged and checked afterward | Exceptions and changes outside the approved scope |
 
-Classify the project by effects as well as language. A C library may send
-device-management commands. A Rust build tool may execute arbitrary dependency
-build scripts. A Python test may load a plugin with the agent's credentials.
-A documentation generator may fetch dependencies or publish output. Inspect
-the commands and their child processes before approving an execution plan.
+These are starting policies. A project can allow automatic documentation
+fixes while requiring review for implementation changes. Permission to merge
+does not imply permission to publish releases, alter infrastructure, or
+revert unrelated work.
 
-Fill [policy.json](policy.json) as a **proposal**, without secret values. Its
-empty scope, zero limits, disabled schedule and false permissions grant
-nothing. Local aliases refer to an owner's out-of-band services and resources;
-they are not executable endpoints supplied by a pull request. The
-[test plan form](TEST-PLAN.md) records exact commands, source revisions,
-preconditions, expected assertions and cleanup. The
-[project examples](PROJECTS.md) show different needs for libcxlmi,
-ebpf-syscall, Rush and fio.
+For each maintenance class, name the affected paths and behavior, required
+tests, review requirements, allowed actions, and resource limits. Also name
+protected areas such as public interfaces, persistent formats, authentication,
+and the maintenance policy itself. Use the most restrictive applicable rule
+when a change crosses classes. An unclassified change needs a decision.
 
-After inspection, [check_profile.py](check_profile.py) can check the proposal's
-shape locally with Python 3.11 or newer, without extra packages:
+Path matching helps select rules; it cannot establish that a change is
+harmless. A one-line change can alter an interface, and a documentation file
+can contain an executable example. Review the effect as well as the filename.
+Read the effective policy from a trusted revision. An agent's proposed policy
+edit must not give that same change new privileges.
+
+Once the maintainer adopts a rule, the agent should use it. Repeatedly asking
+for permission already granted adds work without improving the decision.
+
+## Carry the task through to completion
+
+Begin with a specific problem and a stopping condition. For a bug, reproduce
+the failure or record the best available evidence. For maintenance without a
+failure, establish the behavior that must remain unchanged. Check whether
+someone already owns the task before preparing a competing patch.
+
+Make a focused repair and run the tests selected by its effects. Read the
+whole change, including generated files and intermediate commits when the
+project reviews a series. Fix findings within the task's scope. If repeated
+attempts reach the agreed time or cost limit, preserve the useful work and
+explain the unresolved problem.
+
+Publish through the project's normal channel when allowed. A pull request and
+an emailed patch series need different adapters, but both need a stable task
+identity, the submitted revision, and a record of the outcome. An uncertain
+submission response requires checking what happened before sending it again.
+
+Before merging, verify that the candidate is still the reviewed change, its
+required tests and approvals are current, blocking findings are resolved,
+and the project's native protections permit the merge. A rebase or target
+branch update can make earlier evidence stale. Revalidate the affected checks
+or use the project's merge queue to test the combined result. Do not weaken
+checks to make a task eligible.
+
+After the merge, record the resulting revision and run the agreed follow-up
+checks. A merged change with failing validation remains open work. Stop
+related automatic merges, report the failure, and prepare a repair or revert
+under the project's recovery policy.
+
+## Match tests to the behavior changed
+
+Test requirements describe the evidence needed. Resource permissions describe
+where and how the test may run. Keep both explicit: access to a powerful
+machine does not make it the right test environment.
+
+| Project type | Common checks | Changes that need additional evidence |
+| --- | --- | --- |
+| Portable library | Build, unit tests, sanitizers, compatibility checks | Device transport or firmware interaction needs the required device coverage |
+| Kernel integration | Build and checks in a disposable guest | Loading, attaching, and observing behavior needs a supported kernel, configuration, and features |
+| Build tool | Clean and incremental builds, deterministic outputs, cache invalidation | Platform behavior needs the affected platform; dependency changes need the relevant dependency cases |
+| Storage tool | File-backed correctness tests and emulated feature tests | Device behavior needs suitable hardware; performance claims need controlled comparisons |
+
+A mock can test error handling without proving real-device behavior. An
+emulated device can exercise a protocol without qualifying physical timing.
+A successful build cannot substitute for a required runtime test. Accept a
+substitute only when the maintainer's test policy says it answers the same
+question.
+
+Each test should identify its assertion, environment, permitted resources,
+expected duration, and cleanup. Destructive tests require an explicit
+disposable target and operator-approved scope. Hardware identity and access
+details can stay in the private runner configuration.
+
+Record passed, failed, skipped, unavailable, inconclusive and cancelled
+results separately. Exclude a test as not applicable only under a trusted
+rule for this change. Bind results to the tested source revision and relevant
+environment. Missing required coverage blocks merging. Optional coverage
+may remain missing if the policy
+allows it and the report says so plainly.
+
+## Hand over the decision, with the work attached
+
+A useful handoff explains what is complete, what prevents progress, and the
+smallest decision or action needed. Include the patch, relevant test results,
+recommended next step, alternatives, and what the agent will do while waiting.
+
+Projects choose who receives each kind of handoff and when to interrupt them.
+Routine reviews can be batched. A busy test machine can remain queued until
+its resource deadline. Suspected corruption or unauthorized activity needs
+the project's immediate incident channel. Silence leaves a decision pending.
+
+Three examples show the difference:
+
+- **A documentation repair completes.** The change fits an approved class,
+  required checks pass, and the merge policy permits it. The agent merges,
+  checks the result, and includes the completion in the next summary.
+- **A device change waits for evidence.** Unit tests pass, but a required
+  hardware test cannot run. The agent preserves the patch and sends the
+  operator the test, prerequisites, and expected result. It resumes when
+  valid evidence arrives.
+- **A behavior change needs judgment.** Two plausible fixes produce different
+  public behavior. The agent explains the tradeoff and recommends one. The
+  maintainer decides; the agent then completes the authorized implementation.
+
+Record whether a human decision applies only to the current revision or
+changes the standing policy. That distinction lets later routine work finish
+without reopening the same question.
+
+## Check the integration before expanding it
+
+Try one real repair through its chosen completion point. Also exercise a
+missing required test, a changed candidate revision, and an action the policy
+denies. Confirm that interrupted work resumes without duplicate submissions
+or lost evidence, and that failed post-merge checks reach the right person.
+
+Judge the integration by completed repairs, maintainer time, missed defects,
+unnecessary interruptions, and total resource use. Compare it with the
+project's existing agent-and-CI workflow. Add scheduling or more workers only
+when they solve an observed bottleneck.
+
+The adoption materials are a starting point for that work. Keep the project
+policy small, the evidence specific, and the remaining human decision clear.
+
+## Offline tools and integration status
+
+The [portable skill](SKILL.md), [policy proposal](policy.json),
+[test plan](TEST-PLAN.md), [review procedure](REVIEW.md),
+[human handoff](HANDOFF.md) and [generic profiles](PROJECTS.md) belong together.
+The policy proposal is not an input to the existing Chores status builder.
+A project's accepted task events can feed a private briefing through a separate
+adapter; a dashboard never grants permission.
+
+[maintenance.py](maintenance.py) prepares bounded local inventory, checks policy
+format/completeness and assesses supplied task facts. Install the existing
+Chores dependency `jsonschema>=4.20` in a task-local Python 3.11+ environment.
+Keep the [schemas](schemas/policy-v2.json) directory beside the script. Download
+and inspect source before running it; never pipe a remote installer to a shell.
 
 ```sh
-python3 check_profile.py policy.json
+python3 maintenance.py init --repo . --output /tmp/maintenance-proposal
+python3 maintenance.py check-profile /tmp/maintenance-proposal/policy.proposed.json
+python3 maintenance.py check-profile policy.approved.json --complete
+python3 maintenance.py assess-task --policy policy.approved.json --task task.json \
+  --evidence evidence.json --snapshot snapshot.json --now 2030-01-01T12:00:00Z
 ```
 
-Keep it beside the shipped `policy.json`; check a customized proposal under a
-different filename so the reference template remains intact. Inputs are capped
-at 64 KiB. The checker rejects unknown fields and malformed scalar types and
-keeps the proposal's schedule disabled. It does not check path ownership,
-credential validity, actual budgets, resource access or completeness. It cannot
-detect arbitrary secrets hidden in string values. No field can turn a proposal
-into a grant; runtime activation requires a separately reviewed integration.
+Choose a new output directory: init never replaces an existing directory.
+It reads at most 64 fixed instruction/build/workflow files, at most 32 KiB
+each and 512 KiB total. It uses read-only Git metadata inspection and records
+command candidates by source line, revision and hash without executing them.
+It does not follow repository-content symlinks or copy raw file contents.
+Missing or skipped files become visible inventory gaps.
+Dirty or untracked files keep their content hash but have a null source
+revision; a baseline commit must not be presented as their command source.
 
-| Test setting | Useful evidence | Does not establish |
-| --- | --- | --- |
-| Isolated CPU worker | Parsing, unit contracts, builds, sanitizers, mock devices | Kernel attachment, physical-device behavior, GPU execution |
-| Disposable QEMU guest | Guest boot, kernel options, supported emulated devices, failure paths | Physical timing, firmware behavior, or hardware features the emulator lacks |
-| Assigned bare-metal worker | Real drivers, devices, storage and recovery paths under a recorded configuration | Other devices or machines; permission to reboot or overwrite a disk |
-| Assigned real GPU, local or cloud | Device kernels, memory behavior, driver/runtime integration | Other GPU vendors, CPU fallback equivalence, or physical storage access from a container |
+The versioned schemas for [policy](schemas/policy-v2.json),
+[task](schemas/task-v1.json), [evidence](schemas/evidence-v1.json),
+[snapshot](schemas/snapshot-v1.json) and [assessment](schemas/assessment-v1.json)
+share [fixed types](schemas/common-v1.json). Inputs are limited to 256 KiB per
+document. Unknown keys/versions, duplicate keys, nonfinite values, malformed
+timestamps and hashes are rejected. Schema references resolve locally only.
+The old shape-only proposal format is retired; [check_profile.py](check_profile.py)
+is a compatibility entrypoint for the new proposal checker.
 
-QEMU is a machine emulator. Select a supported guest and device model for the
-question; an unimplemented operation is unavailable coverage, not a pass.
-For kernel work, identify required configuration, debug metadata, modules,
-verifier/attach paths, guest console and timeout recovery. For a real GPU,
-record vendor/runtime/API, required memory, devices exposed to the job and
-whether fallback occurred. A rented GPU container is not necessarily a
-bare-metal host and may not expose the required storage or privileged APIs.
+An incomplete draft may pass syntax checking but fails `--complete`.
+Even a complete document is not authenticated approval. No helper executes
+a policy command, calls a provider, posts a review or merges a branch.
+Every assessment includes `authority_verified: false`. See
+[the assessment contract](ASSESSMENT.md) before consuming its output.
 
-Testing proposed code executes untrusted code. Use a disposable boundary with
-no company model token, Git write credential, cloud control-plane token, SSH
-agent, sensitive host mounts or production network access. A Git worktree is
-not a sandbox. A container is not sufficient isolation for every hostile
-kernel/device workload. Approve dependencies and egress through a controlled
-provisioning step; keep privileged preparation outside the model's runner.
+These offline tools do not qualify a production forge, hostile-code runner,
+corporate account or real hardware. No native integration is supplied here.
+A production adapter must authenticate policy, CI/review sources and grants,
+enforce current head/target conditions at the writer, and reconcile operation
+receipts. Automatic production merge remains unsupported until that adapter
+is selected and qualified. No real adopter pilot has run.
 
-Run the least costly test that answers the question, then the required higher
-fidelity checks. Do not substitute a CPU mock for a required real-GPU test,
-or an emulated device for a required physical one. Compare the same checks at
-base and head where useful, and test the intended integration revision.
-After a base/head/configuration change, decide which checks must be repeated.
-Never import test green status from a different revision without that link.
-
-## Use company-approved model access
-
-An existing managed agent login, approved API gateway or credential broker
-can provide model access. This guide does not require a particular provider
-or claim that a seat license permits unattended API use. Confirm the
-company's provider, model, account, endpoint, project approval and automation
-policy with its responsible owner. Record only a credential **reference**;
-keep the credential in the approved manager. Do not copy browser sessions,
-tokens or personal logins to make a provider adapter work.
-
-Define permitted input classes before sending data: public code, internal
-code, customer data, embargoed security reports and derived logs can need
-different handling. Check the service's retention, training use, regional
-processing, logging, access control and contractual requirements through the
-company's approved policy. Public input can still be hostile. A crash log
-can contain private paths or secrets. Do not silently change provider when a
-quota fails or upload more data to diagnose an access problem.
-
-Set per-task and daily request/token/cost/time limits with bounded retries.
-Record measured usage where the service supplies it and mark unknown usage
-as unknown. Subscription access is not a claim of zero cost. Independent
-quotas and billing controls must enforce limits; a prompt cannot do so.
-Inference, CI, storage and rented hardware have separate budgets. Cloud
-creation, cancellation and teardown belong to a separately authorized
-operator, with a receipt even when the test fails before useful work.
-
-## Delegate deliberately
-
-The owner chooses how much maintenance can run within a standing grant.
-For a first pilot, permit read-only triage and local review drafts. A later
-grant might admit known tests on a pre-provisioned disposable worker, then
-bounded patch drafting. Posting a public review, adding a review label,
-approving a PR, rewriting history, pushing and merging are separate actions.
-The starter enables none of them automatically.
-
-Record which actions always need a person and which named tests may run
-without another prompt. A hardware operator can accept a bounded test request
-without receiving merge rights or model credentials. Ask for human judgment
-on conflicting requirements, compatibility changes, suspected vulnerabilities,
-missing required hardware or disagreement that cannot be resolved from
-evidence. Follow the project's private security-reporting route for an
-embargoed issue; do not post an exploit or secret in a public review.
-
-Use [HANDOFF.md](HANDOFF.md): identify the blocked decision, evidence, exact
-requested action, resource and data boundaries, expected result and safe
-fallback. A person supplies only the missing authority or fact. No response
-pauses the affected task; it does not turn a request into approval. Suspected
-unauthorized agent activity goes directly to the preconfigured owner route,
-without waiting for the routine queue or permission from the suspected peer.
-
-## Coordinate recurring work
-
-Record a queue key such as repository + immutable head + chore type + policy
-revision. Deduplicate observations before spending model calls. Prioritize
-credible security/correctness issues, regressions and blocking reviews ahead
-of cosmetic work, with the reason visible. Batch unchanged routine signals;
-retain urgent reporting separately. Begin with a human admitting one task,
-not a timer that starts agents because a dashboard is green.
-
-For several workers, use one authoritative claim store with atomic acceptance,
-expiring leases, heartbeats, attempt limits and a fencing generation that
-prevents a former worker from submitting or publishing after losing its
-lease. Task ownership and branch writer ownership are distinct. A second
-reviewer does not need write rights. Cancellation stops new effects and
-revokes publication authority; a lost worker does not transfer its authority
-to a peer by conversation. Review recovery and same-user failure modes.
-
-The starter does not implement that coordinator. Until one is selected and
-tested, keep manual, single-worker admission. Do not use a network-shared
-SQLite writer or independent edits to a JSON file as an assumed distributed
-lock. Retain one durable ledger, immutable evidence by content hash and
-bounded lightweight projections. Do not copy the whole database for every
-dashboard refresh. Backup age, event observation time and dashboard refresh
-time are different facts. A read-only dashboard is not an approval service.
-
-## Review the first result
-
-Require an executive conclusion: what matters, what was checked, what is
-blocked and what the maintainer should do next. Keep raw reasoning out of the
-main card. Link the exact base/head, command receipts, failures, skips,
-unavailable tests, model usage and review evidence in detail. The
-[review procedure](REVIEW.md) explains how to identify a bug fix from its diff
-and when to ask for a squash without rewriting someone else's work.
-
-Pilot one representative incoming change per project. Include an ordinary
-review, a hardware-required case and a deliberately missing permission before
-enabling recurrence. Measure useful findings accepted by maintainers, false
-positives, review time, duplicate work, stale-result rejection, coverage gaps,
-handoff delay, model cost and operator effort. A new AI-maintained project is
-a possible later use; helping existing maintainers is useful without it.
+Source: [knlp Chores starter](https://github.com/mcgrof/knlp/tree/main/research/chores/web/public/adopt).

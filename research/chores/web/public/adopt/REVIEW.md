@@ -80,3 +80,16 @@ test matrix with exact identities. Recommend accept, revise or blocked with a
 reason; the maintainer retains the decision. Draft public wording separately
 and post only through an explicitly approved route with duplicate prevention.
 If delivery is uncertain, record unknown rather than blindly posting twice.
+
+## Finish within the selected policy
+
+A review-only assignment ends with a reviewed patch. A maintenance assignment
+may also include repair, publication or merge under independent standing
+grants; reuse those grants without repeatedly asking for the same permission.
+Repair findings within scope, rerun affected tests and review the final series.
+Recheck native protections, current head/target and expected check producers
+before merging; only the native writer can enforce freshness atomically.
+Verify the actual merged revision before recording completion. A failing
+follow-up check needs a recovery handoff and pauses affected automatic merges.
+Use [HANDOFF.md](HANDOFF.md) for decisions beyond the assignment, with completed
+work, the exact question, recommendation, alternatives, evidence and deadline.

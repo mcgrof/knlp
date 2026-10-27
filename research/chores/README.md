@@ -103,8 +103,9 @@ The [self-maintenance adoption guide](web/public/self-maintenance.html) and
 [portable starter](web/public/adopt/README.md) help another maintainer set up
 AI-assisted reviews using an approved model service. They include a proposal
 profile, test and human-handoff forms, a commit-review procedure and scoped
-examples for libcxlmi, ebpf-syscall, Rush's public status repo and fio. These
-are adoption materials, not a maintenance runner or new authority service.
+generic workload profiles. Offline helpers inventory local conventions, check
+versioned documents and assess declared action gates. These are adoption
+materials and advisory tools, not a production merge service.
 
 The code in this directory begins with a status projection, not a security
 monitor or maintenance runner. It publishes which parts of Chores are

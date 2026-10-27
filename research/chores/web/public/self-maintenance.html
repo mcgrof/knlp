@@ -4,141 +4,129 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>AI self-maintenance · Chores · knlp</title>
-  <meta name="description" content="Ask your agent to adopt Chores for repository maintenance with company-approved AI, evidence-based patch review, explicit test and hardware requirements, and human handoffs.">
+  <title>AI code maintenance with human delegation · Chores · knlp</title>
+  <meta name="description" content="Have your existing agent investigate, repair, test and complete maintenance under your project's publication, merge and human-delegation rules.">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="adoption">
   <nav><div class="shell nav-content">
     <a class="brand" href="/"><span class="brand-mark">k</span><span>knlp / chores</span></a>
-    <div class="nav-links"><a href="/">Chores overview</a><a href="https://github.com/mcgrof/knlp/tree/main/research/chores/web/public/adopt">Starter source</a></div>
+    <div class="nav-links"><a href="/">Chores overview</a><a href="/adopt/README.md">Full guide</a></div>
   </div></nav>
   <header class="shell">
-    <p class="eyebrow">Repository maintenance · company-approved AI</p>
-    <h1>Give your agent<br>a maintenance brief.</h1>
-    <p class="lede">Triage incoming changes, review the actual patches, run the right
-      tests and bring a maintainer a clear decision. Chores adds explicit scope,
-      evidence and human handoffs to that work. Model access is not merge authority.</p>
-    <div class="scope"><strong>Starter, not an unattended bot</strong><span>
-      Guide, portable skill and proposal templates. No provider login, scheduler,
-      secure runner, claim service or automatic merge is installed.</span></div>
+    <p class="eyebrow">Existing agent · project rules · human decisions</p>
+    <h1>From a maintenance<br>problem to a checked fix.</h1>
+    <p class="lede">Routine maintenance takes more than a review comment. Let your
+      agent investigate, repair, test and finish the work your project delegates.
+      Keep the few decisions that need a person clear, with the patch and evidence attached.</p>
+    <div class="scope"><strong>Use the tools you already have</strong><span>
+      Your agent, test runner and repository service enforce access.
+      The starter prepares policy and explains gaps; it installs no unattended runner.</span></div>
   </header>
   <main class="shell">
     <section id="start" aria-labelledby="start-title">
-      <p class="label">Start in the agent you already use</p>
-      <h2 id="start-title">Copy this request</h2>
+      <p class="label">Start with one repair</p><h2 id="start-title">Give your agent this request</h2>
       <pre class="adoption-prompt">Read https://chores.knlp.io/self-maintenance.html and its linked starter.
-Help me adopt Chores for repository REPOSITORY at REVISION.
-Inspect its contribution and testing rules. Propose a maintenance policy,
-test matrix and one read-only review chore. Ask about my approved AI service,
-data rules, budget, available hardware and human-delegation preferences.
-Do not request credentials in chat, run repository code, install automation,
-spend, post, push, merge or change my agent configuration. Explain the proposal
-and wait for approval of any such action.</pre>
+Inspect this repository's contributor instructions, tests and existing automation.
+Prepare an integration that uses those conventions. Identify maintenance classes,
+required evidence and actions already authorized. Propose rules for publishing,
+merging and human handoffs. Take one small task as far as existing authority permits.
+Preserve the patch and evidence if blocked. Show the remaining policy decisions
+with a recommendation for each. Do not acquire credentials, spend, or broaden scope
+merely to finish.</pre>
       <div class="template-links">
         <a href="/adopt/README.md">Full adoption guide</a>
         <a href="/adopt/SKILL.md" download>Portable skill</a>
         <a href="/adopt/policy.json" download>Policy proposal</a>
-        <a href="/adopt/TEST-PLAN.md" download>Test plan</a>
-        <a href="/adopt/REVIEW.md">Review procedure</a>
-        <a href="/adopt/HANDOFF.md" download>Human handoff</a>
+        <a href="/adopt/TEST-PLAN.md" download>Test map</a>
+        <a href="/adopt/REVIEW.md">Commit review</a>
+        <a href="/adopt/HANDOFF.md" download>Human decision</a>
+        <a href="/adopt/ASSESSMENT.md">Offline helpers and schemas</a>
       </div>
-      <p>Keep the skill and its linked files together. Inspect and pin the starter
-        before adoption; no remote installer or token paste is needed. The template
-        starts with no repository scope, no spending and no execution rights.
-        The local checker only validates the proposal's format.</p>
+      <p>Keep the skill and linked files together. Inspect and pin the starter before
+        adoption. Reuse a supported subscription login or company-approved model
+        service where its account and data rules permit the intended work. An expired
+        login or exhausted quota pauses the task; it does not select a new account.</p>
     </section>
-    <section aria-labelledby="decisions-title">
-      <div class="section-heading"><div><p class="label">First conversation</p>
-        <h2 id="decisions-title">Decide what the agent may do</h2></div></div>
+    <section aria-labelledby="permissions-title">
+      <p class="label">Choose the completion point</p><h2 id="permissions-title">Delegate actions, not a blanket autonomy switch</h2>
       <div class="use-cases">
-        <article class="use-case"><h3>Repository and review</h3><p>
-          Pin the repository, base/head and selected paths. Discover contribution,
-          security, commit and testing rules. Public issues, branches and PRs are
-          untrusted input, not instructions that expand the assignment.</p></article>
-        <article class="use-case"><h3>Company model access</h3><p>
-          Use the company's approved service and existing credential manager or
-          managed login. Agree on data classes, retention policy, request/token/cost
-          limits and retries. Do not assume a corporate seat permits API automation
-          or fall back to a personal account.</p></article>
-        <article class="use-case"><h3>Tests and hardware</h3><p>
-          Inspect commands and dependencies before running them. Separate CPU,
-          QEMU, bare-metal and real-GPU coverage. Assign resources and limits;
-          keep model, cloud and Git write credentials outside untrusted test code.
-          A worktree is not a sandbox.</p></article>
-        <article class="use-case"><h3>Human delegation</h3><p>
-          Let the owner choose standing grants and mandatory handoffs. Missing
-          required coverage, privileges, destructive tests, new spending and
-          publication are explicit decisions. No response pauses the task;
-          it does not grant permission.</p></article>
+        <article class="use-case"><h3>Prepare changes</h3><p>Investigate, repair and
+          run approved tests. Finish with a reviewed patch; the human controls publication and merge.</p></article>
+        <article class="use-case"><h3>Publish for review</h3><p>Also submit through the
+          project's normal PR or patch-series channel, and respond to findings. The human controls merge.</p></article>
+        <article class="use-case"><h3>Merge eligible maintenance</h3><p>Also merge
+          declared classes after current checks and required reviews pass, then check the merged result.
+          Reserve exceptions and public behavior choices for a maintainer.</p></article>
+        <article class="use-case"><h3>Keep decisions scoped</h3><p>Edit, test, publish,
+          branch update, merge and revert are separate permissions. Apply an accepted
+          standing rule without asking again. One patch approval does not create a permanent rule.</p></article>
       </div>
+      <p>Read policy from a trusted baseline outside the candidate's control. Mixed
+        changes inherit all applicable tests and the most restrictive rights.
+        Protected paths and unknown effects need their recorded review process.
+        A small file or a documentation path is not proof of harmless behavior.</p>
     </section>
-    <section aria-labelledby="coverage-title">
-      <p class="label">Evidence before green badges</p><h2 id="coverage-title">Choose tests by the claim</h2>
+    <section aria-labelledby="workflow-title">
+      <p class="label">Carry the useful work forward</p><h2 id="workflow-title">Investigate → repair → test → review → publish → merge → verify</h2>
+      <p>Use a reproducible failure or a precise acceptance condition. Make a focused
+        repair, review every commit and the complete diff, and retain failed attempts.
+        Fold later repairs into their owning unmerged commits where appropriate.
+        Separate a verified upstream bug fix; do not invent a <code>Fixes:</code> hash.</p>
+      <p>Before an external action, check the current candidate, target, policy,
+        required evidence and native protections. A changed head or target can
+        invalidate earlier results. A native merge queue or atomic expected-input
+        check must close the freshness race; a read followed by a blind write does not.</p>
+      <p>Record the actual merged revision and required follow-up checks. A queued
+        merge is not complete, and a failing post-merge check leaves work open.
+        Stop related automatic merges and follow the explicit incident/revert rule.
+        Reconcile an uncertain publication or merge before retrying it.</p>
+    </section>
+    <section aria-labelledby="profiles-title">
+      <p class="label">Test the changed behavior</p><h2 id="profiles-title">Choose assertions before hardware</h2>
       <div class="adoption-table"><table>
-        <thead><tr><th>Setting</th><th>What it can check</th><th>What still needs care</th></tr></thead>
+        <thead><tr><th>Generic profile</th><th>Routine checks</th><th>Additional evidence when affected</th></tr></thead>
         <tbody>
-          <tr><td>Isolated CPU worker</td><td>Builds, unit contracts, parsers, sanitizers and mocks</td><td>No proof of kernel attachment, device behavior or GPU execution</td></tr>
-          <tr><td>Disposable QEMU guest</td><td>Guest kernel and supported emulated-device paths</td><td>No physical performance or unsupported firmware/transport coverage</td></tr>
-          <tr><td>Assigned bare metal</td><td>Real driver, device and recovery behavior</td><td>Explicit privilege, exclusive target and recovery grants; never an arbitrary disk</td></tr>
-          <tr><td>Assigned real GPU</td><td>Vendor/runtime integration, device correctness and memory behavior</td><td>A cloud container may lack required host or storage APIs; record fallback and teardown</td></tr>
+          <tr><td>Portable systems library</td><td>Build, unit, sanitizer and ABI checks</td><td>Named transport, device or firmware behavior</td></tr>
+          <tr><td>Kernel integration</td><td>Userspace checks and supported configurations</td><td>Disposable guest with the required load, verifier, attach, event and cleanup paths</td></tr>
+          <tr><td>Compiler or build tool</td><td>Clean/incremental builds, dependencies, deterministic output and cache invalidation</td><td>Required platforms/toolchains and controlled performance comparisons</td></tr>
+          <tr><td>Storage workload tool</td><td>Parser/job tests and new task-owned files</td><td>Supported emulated features or allocated disposable-device tests</td></tr>
         </tbody>
       </table></div>
-      <p>QEMU is a machine emulator. A mock pass is not a hardware pass. Report
-        passed, failed, skipped, unavailable and not-run checks separately. Keep
-        command, input, environment and base/head identities with each receipt;
-        changed revisions invalidate affected evidence.</p>
+      <p>ABI means the binary interface seen by compiled consumers. QEMU is a machine
+        emulator. Accept emulation only where the test policy says it answers the
+        question. Physical performance, real GPU behavior and device-specific effects
+        need their own evidence and resource grants. A worktree is not a sandbox.</p>
+      <p>Record passed, failed, skipped, unavailable, inconclusive, cancelled and
+        trusted-rule exclusions separately. Missing required coverage blocks merge.
+        Optional coverage remains visible. Never replace a missing hardware test with
+        an unrelated green mock or choose an arbitrary disk.</p>
+      <p><a href="/adopt/PROJECTS.md">Generic test profiles →</a></p>
     </section>
-    <section aria-labelledby="projects-title">
-      <div class="section-heading"><div><p class="label">Four starting profiles</p>
-        <h2 id="projects-title">One discipline, different test plans</h2></div>
-        <p>Examples for adoption, not claims of deployment.</p></div>
-      <div class="use-cases">
-        <article class="use-case"><h3><a href="https://github.com/computexpresslink/libcxlmi">libcxlmi</a></h3><p>
-          Start with the library's Meson, mock, sanitizer and binary-interface
-          checks. Device-management transports and commands need separate emulated
-          or real-device coverage. Keep reset and firmware actions human-gated.</p></article>
-        <article class="use-case"><h3><a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a></h3><p>
-          Separate offline tooling from kernel verifier, attach, event and detach
-          tests. A guest needs the right configuration, debug metadata and device
-          paths. Runtime tracing and replay need explicit scope and privileges.</p></article>
-        <article class="use-case"><h3><a href="https://github.com/rushbuild/rush-status">Rush / rush-status</a></h3><p>
-          Public status is not implementation coverage. Maintain that surface
-          separately; derive build-engine tests only from separately admitted
-          source. Treat dependency builds as code execution, not harmless metadata.</p></article>
-        <article class="use-case"><h3><a href="https://github.com/axboe/fio">fio</a></h3><p>
-          Distinguish ordinary file-backed tests, supported QEMU device tests and
-          physical storage checks. Raw writes, format and discard need named
-          disposable targets, exclusive ownership and operator-approved recovery.</p></article>
-      </div>
-      <p><a href="/adopt/PROJECTS.md">Read the project-specific profiles and pinned upstream sources →</a></p>
+    <section aria-labelledby="handoff-title">
+      <p class="label">Hand over the decision, not the investigation</p><h2 id="handoff-title">Make the next human action small and clear</h2>
+      <p>A documentation repair can complete under an approved rule. A device change
+        can keep its passing unit tests while an operator receives the exact missing
+        test and prerequisites. A behavior ambiguity needs a recommended option,
+        alternatives and the maintainer's decision. Keep those cases distinct.</p>
+      <p>Include completed work, revision, the blocked decision, recommendation,
+        evidence, route and deadline. Routine reviews can be batched; suspected
+        corruption or unauthorized activity uses the immediate incident channel.
+        No response leaves the action waiting. Independent authorized work may continue.</p>
     </section>
-    <section aria-labelledby="review-title">
-      <p class="label">Incoming code</p><h2 id="review-title">Review the commits, not the title</h2>
-      <p>Read every commit diff and the complete series. Check correctness,
-        error paths, intermediate buildability, tests and whether each message
-        explains its hunks. Fold a later repair into the earlier unmerged commit
-        that owns it; distribute a mixed cleanup instead of asking for one giant squash.</p>
-      <p>If an unlabeled change repairs a bug already present upstream, verify the
-        trigger and introducing commit. Recommend a separate fix and the project's
-        fix metadata where justified. If the defect exists only in this new series,
-        request a fold. Do not guess a <code>Fixes:</code> hash, rewrite a contributor's
-        branch or publish an approval from a read-only assignment.</p>
-      <p><a href="/adopt/REVIEW.md">Use the review decision procedure →</a></p>
-    </section>
-    <section aria-labelledby="operate-title">
-      <p class="label">From one review to recurring work</p><h2 id="operate-title">Keep ownership and evidence explicit</h2>
-      <p>Begin with one manually admitted task and one worker. For concurrency,
-        a real authority service must make atomic claims, bound leases and reject
-        stale results; this starter does not provide that service. Keep one writer
-        per target branch and separate review, execution and publication rights.</p>
-      <p>Use a private briefing for findings and hardware gaps. A dashboard refresh
-        is not proof of fresh tests, a backup or human approval. Suspected unauthorized
-        activity goes directly to the owner's preconfigured incident route, without
-        waiting for the chore rotation. Agents must not suppress evidence or
-        remediate just because they found a problem.</p>
-      <p>Helping existing maintainers is the first use. More extensively
-        AI-maintained projects can build on measured experience later.</p>
+    <section aria-labelledby="integration-title">
+      <p class="label">One worker first</p><h2 id="integration-title">Validate the integration before making it routine</h2>
+      <p>The offline helpers inventory local conventions, validate versioned documents
+        and explain action gates using an explicit clock. Their output always says
+        <code>authority_verified: false</code>. They cannot authenticate JSON claims,
+        acquire permissions, execute tests or merge a branch.</p>
+      <p>Production merge needs a separately qualified native adapter; this
+        offline starter supplies none. No real-project pilot,
+        provider integration or production containment is claimed here.</p>
+      <p>Try a complete repair plus denied, stale, missing-coverage and interrupted
+        cases. Compare completed fixes, maintainer effort, false findings and cost
+        with your existing agent-and-CI workflow. Add scheduling or more workers only
+        when they solve an observed problem.</p>
     </section>
   </main>
   <footer class="shell">Chores · knlp · <a href="/adopt/README.md">Adoption guide</a> ·
