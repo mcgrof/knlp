@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/common-v1.json",
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+    },
+    "rev": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$(?![\\s\\S])"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*\\\\)[^\\x00-\\x1f]+$(?![\\s\\S])"
+    },
+    "selector": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*\\\\)(?:[^*?\\[\\]\\x00-\\x1f]+|[^*?\\[\\]\\x00-\\x1f]+/\\*\\*)$(?![\\s\\S])"
+    },
+    "action": {
+      "enum": [
+        "investigate",
+        "edit",
+        "test",
+        "review",
+        "publish",
+        "branch_update",
+        "merge",
+        "verify",
+        "revert"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "skipped",
+        "unavailable",
+        "inconclusive",
+        "not_applicable",
+        "cancelled"
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "ci_runs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        }
+      },
+      "required": [
+        "requests",
+        "tokens",
+        "cost",
+        "ci_runs"
+      ],
+      "additionalProperties": false
+    },
+    "change": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*\\\\)[^\\x00-\\x1f]+$(?![\\s\\S])"
+        },
+        "previous_path": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*\\\\)[^\\x00-\\x1f]+$(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed"
+          ]
+        },
+        "file_type": {
+          "enum": [
+            "regular",
+            "symlink",
+            "submodule"
+          ]
+        },
+        "file_mode": {
+          "type": "string",
+          "pattern": "^[0-7]{6}$(?![\\s\\S])"
+        },
+        "behavior": {
+          "enum": [
+            "ordinary",
+            "executable_example",
+            "generated_api",
+            "test_removal",
+            "policy_change",
+            "unknown"
+          ]
+        },
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "classification": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "enum": [
+                "deterministic",
+                "reviewer",
+                "model"
+              ]
+            },
+            "reviewer_ref": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "receipt": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "method",
+            "reviewer_ref",
+            "receipt",
+            "rationale"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "path",
+        "previous_path",
+        "kind",
+        "file_type",
+        "file_mode",
+        "behavior",
+        "classes",
+        "classification"
+      ],
+      "additionalProperties": false
+    },
+    "test": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+        },
+        "command_revision": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$(?![\\s\\S])"
+        },
+        "environment_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+        },
+        "environment_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "producer_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+        },
+        "required_assertions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "requires_resource": {
+          "type": "boolean"
+        },
+        "max_age_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        }
+      },
+      "required": [
+        "command_id",
+        "command_revision",
+        "environment_id",
+        "environment_digest",
+        "producer_id",
+        "required_assertions",
+        "capabilities",
+        "requires_resource",
+        "max_age_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "grant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "capabilities",
+        "expires_at",
+        "revoked"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

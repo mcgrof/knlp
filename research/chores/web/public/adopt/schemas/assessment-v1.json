@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/assessment-v1.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "needs_human",
+        "waiting_resource",
+        "retryable",
+        "blocked",
+        "complete"
+      ]
+    },
+    "next_action": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/action"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "detail": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+      },
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "policy_digest": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+    },
+    "head": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+    },
+    "target": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+    },
+    "authority_verified": {
+      "const": false
+    },
+    "summary": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+    },
+    "handoff": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "completed_work": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "decision": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "recommendation": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "alternatives": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "route": {
+              "anyOf": [
+                {
+                  "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "response_deadline": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            }
+          },
+          "required": [
+            "completed_work",
+            "decision",
+            "recommendation",
+            "alternatives",
+            "evidence",
+            "route",
+            "response_deadline"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "next_action",
+    "reasons",
+    "missing_evidence",
+    "policy_digest",
+    "head",
+    "target",
+    "authority_verified",
+    "summary",
+    "handoff"
+  ],
+  "additionalProperties": false
+}

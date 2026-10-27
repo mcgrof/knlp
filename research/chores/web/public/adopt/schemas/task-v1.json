@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/task-v1.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "task_id": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+    },
+    "repository": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+    },
+    "classes": {
+      "type": "array",
+      "items": {
+        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+      },
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "next_action": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/action"
+    },
+    "endpoint": {
+      "enum": [
+        "review",
+        "publish",
+        "verify"
+      ]
+    },
+    "head": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+    },
+    "target": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+    },
+    "policy_digest": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "started_at": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/change"
+      },
+      "maxItems": 128,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "repository",
+    "classes",
+    "next_action",
+    "endpoint",
+    "head",
+    "target",
+    "policy_digest",
+    "attempt",
+    "started_at",
+    "changes"
+  ],
+  "additionalProperties": false
+}

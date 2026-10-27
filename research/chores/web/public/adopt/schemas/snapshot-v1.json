@@ -1,0 +1,953 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/snapshot-v1.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "task_id": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+    },
+    "observations": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "digest": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+                    },
+                    "repository": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                    },
+                    "target_branch": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                    },
+                    "baseline_revision": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "authority_id": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                    },
+                    "revoked": {
+                      "type": "boolean"
+                    },
+                    "expires_at": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                    }
+                  },
+                  "required": [
+                    "digest",
+                    "repository",
+                    "target_branch",
+                    "baseline_revision",
+                    "authority_id",
+                    "revoked",
+                    "expires_at"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "digest": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+                      },
+                      "repository": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                      },
+                      "target_branch": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                      },
+                      "baseline_revision": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "authority_id": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "revoked": {
+                        "type": "boolean"
+                      },
+                      "expires_at": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                      }
+                    },
+                    "required": [
+                      "digest",
+                      "repository",
+                      "target_branch",
+                      "baseline_revision",
+                      "authority_id",
+                      "revoked",
+                      "expires_at"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "candidate": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "head": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "target": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/change"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "merge_method": {
+                      "enum": [
+                        "ff-only",
+                        "squash",
+                        "merge-queue"
+                      ]
+                    },
+                    "tested_revision": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "queue_id": {
+                      "anyOf": [
+                        {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "head",
+                    "target",
+                    "changes",
+                    "merge_method",
+                    "tested_revision",
+                    "queue_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "target": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "changes": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/change"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "merge_method": {
+                        "enum": [
+                          "ff-only",
+                          "squash",
+                          "merge-queue"
+                        ]
+                      },
+                      "tested_revision": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "queue_id": {
+                        "anyOf": [
+                          {
+                            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "target",
+                      "changes",
+                      "merge_method",
+                      "tested_revision",
+                      "queue_id"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "head": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "target": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "policy_digest": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+                    },
+                    "decision": {
+                      "enum": [
+                        "approved",
+                        "pending",
+                        "denied",
+                        "conflict"
+                      ]
+                    },
+                    "approved_actions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/action"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "expires_at": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                    }
+                  },
+                  "required": [
+                    "head",
+                    "target",
+                    "policy_digest",
+                    "decision",
+                    "approved_actions",
+                    "blockers",
+                    "expires_at"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "target": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "policy_digest": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+                      },
+                      "decision": {
+                        "enum": [
+                          "approved",
+                          "pending",
+                          "denied",
+                          "conflict"
+                        ]
+                      },
+                      "approved_actions": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/action"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "blockers": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "expires_at": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "target",
+                      "policy_digest",
+                      "decision",
+                      "approved_actions",
+                      "blockers",
+                      "expires_at"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "protections": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "head": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "target": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "required_checks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "producers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "allowed_methods": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "ff-only",
+                          "squash",
+                          "merge-queue"
+                        ]
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "atomic_freshness": {
+                      "enum": [
+                        "compare-and-swap",
+                        "merge-queue",
+                        "none"
+                      ]
+                    },
+                    "native_reviews_satisfied": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "head",
+                    "target",
+                    "required_checks",
+                    "producers",
+                    "allowed_methods",
+                    "atomic_freshness",
+                    "native_reviews_satisfied",
+                    "blockers"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "target": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "required_checks": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "producers": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "allowed_methods": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "ff-only",
+                            "squash",
+                            "merge-queue"
+                          ]
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "atomic_freshness": {
+                        "enum": [
+                          "compare-and-swap",
+                          "merge-queue",
+                          "none"
+                        ]
+                      },
+                      "native_reviews_satisfied": {
+                        "type": "boolean"
+                      },
+                      "blockers": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "target",
+                      "required_checks",
+                      "producers",
+                      "allowed_methods",
+                      "atomic_freshness",
+                      "native_reviews_satisfied",
+                      "blockers"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "unavailable_tests": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/grant"
+                      },
+                      "maxItems": 128,
+                      "uniqueItems": true
+                    },
+                    "usage": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/usage"
+                    },
+                    "worker_generation": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000
+                    },
+                    "lease_generation": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000
+                    },
+                    "lease_expires_at": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                    }
+                  },
+                  "required": [
+                    "capabilities",
+                    "unavailable_tests",
+                    "grants",
+                    "usage",
+                    "worker_generation",
+                    "lease_generation",
+                    "lease_expires_at"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "unavailable_tests": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "grants": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/grant"
+                        },
+                        "maxItems": 128,
+                        "uniqueItems": true
+                      },
+                      "usage": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/usage"
+                      },
+                      "worker_generation": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "lease_generation": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "lease_expires_at": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+                      }
+                    },
+                    "required": [
+                      "capabilities",
+                      "unavailable_tests",
+                      "grants",
+                      "usage",
+                      "worker_generation",
+                      "lease_generation",
+                      "lease_expires_at"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "effects": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "observed_at": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+            },
+            "source": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "receipt": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "operation_id": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                    },
+                    "state": {
+                      "enum": [
+                        "none",
+                        "unknown",
+                        "reviewed",
+                        "published",
+                        "merged",
+                        "verified",
+                        "post_merge_failed",
+                        "cancelled"
+                      ]
+                    },
+                    "head": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "target": {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                    },
+                    "merged_revision": {
+                      "anyOf": [
+                        {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "receipt": {
+                      "anyOf": [
+                        {
+                          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operation_id",
+                    "state",
+                    "head",
+                    "target",
+                    "merged_revision",
+                    "receipt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "source",
+            "receipt",
+            "value"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "operation_id": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                      },
+                      "state": {
+                        "enum": [
+                          "none",
+                          "unknown",
+                          "reviewed",
+                          "published",
+                          "merged",
+                          "verified",
+                          "post_merge_failed",
+                          "cancelled"
+                        ]
+                      },
+                      "head": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "target": {
+                        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                      },
+                      "merged_revision": {
+                        "anyOf": [
+                          {
+                            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "receipt": {
+                        "anyOf": [
+                          {
+                            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "operation_id",
+                      "state",
+                      "head",
+                      "target",
+                      "merged_revision",
+                      "receipt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "observations"
+  ],
+  "additionalProperties": false
+}

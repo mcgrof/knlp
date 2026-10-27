@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/policy-v2.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "approved"
+      ]
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_branch": {
+      "anyOf": [
+        {
+          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "merge_method": {
+      "enum": [
+        "ff-only",
+        "squash",
+        "merge-queue"
+      ]
+    },
+    "endpoint": {
+      "enum": [
+        "review",
+        "publish",
+        "verify"
+      ]
+    },
+    "approved_at": {
+      "anyOf": [
+        {
+          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model_access": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "anyOf": [
+            {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data_classes": {
+          "type": "array",
+          "items": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "request_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "token_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "cost_limit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "route",
+        "data_classes",
+        "request_limit",
+        "token_limit",
+        "cost_limit",
+        "currency"
+      ],
+      "additionalProperties": false
+    },
+    "classes": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/selector"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/action"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "required_tests": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "human_review": {
+              "enum": [
+                "before_publish",
+                "before_merge",
+                "on_exception"
+              ]
+            },
+            "classification": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "enum": [
+                    "deterministic",
+                    "reviewer",
+                    "model"
+                  ]
+                },
+                "reviewer_ref": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "method",
+                "reviewer_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "paths",
+            "actions",
+            "required_tests",
+            "human_review",
+            "classification"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "maxProperties": 128
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/selector"
+      },
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "tests": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$": {
+          "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/test"
+        }
+      },
+      "additionalProperties": false,
+      "maxProperties": 128
+    },
+    "post_merge_tests": {
+      "type": "array",
+      "items": {
+        "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+      },
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "applicability_rules": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$": {
+          "type": "object",
+          "properties": {
+            "test_id": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            "classes": {
+              "type": "array",
+              "items": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+              },
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "reason": {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+            }
+          },
+          "required": [
+            "test_id",
+            "classes",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "maxProperties": 128
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "repair_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "elapsed_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "ci_runs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        }
+      },
+      "required": [
+        "repair_attempts",
+        "elapsed_seconds",
+        "requests",
+        "tokens",
+        "cost",
+        "ci_runs"
+      ],
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "transient_reasons": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "RUNNER_INTERRUPTED",
+              "TRANSIENT_FETCH_FAILURE",
+              "MODEL_UNAVAILABLE"
+            ]
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "limit",
+        "transient_reasons"
+      ],
+      "additionalProperties": false
+    },
+    "delegation": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "anyOf": [
+            {
+              "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        }
+      },
+      "required": [
+        "route",
+        "response_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "observation_max_age_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "repository",
+    "target_branch",
+    "merge_method",
+    "endpoint",
+    "approved_at",
+    "expires_at",
+    "model_access",
+    "classes",
+    "protected_paths",
+    "tests",
+    "post_merge_tests",
+    "applicability_rules",
+    "limits",
+    "retry",
+    "delegation",
+    "observation_max_age_seconds"
+  ],
+  "additionalProperties": false
+}

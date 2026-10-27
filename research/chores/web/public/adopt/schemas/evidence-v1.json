@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/adopt/schemas/evidence-v1.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "task_id": {
+      "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "head": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+          },
+          "target": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+          },
+          "tested_revision": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+          },
+          "command_revision": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/rev"
+          },
+          "environment_id": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "environment_digest": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+          },
+          "producer_id": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "artifact_digest": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/sha"
+          },
+          "runner_id": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+          },
+          "resource_grant": {
+            "anyOf": [
+              {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/text"
+          },
+          "completed_at": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/timestamp"
+          },
+          "outcome": {
+            "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/outcome"
+          },
+          "assertions": {
+            "type": "object",
+            "patternProperties": {
+              "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$": {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/outcome"
+              }
+            },
+            "additionalProperties": false,
+            "maxProperties": 128
+          },
+          "applicability_rule": {
+            "anyOf": [
+              {
+                "$ref": "https://chores.knlp.io/adopt/schemas/common-v1.json#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transient_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "RUNNER_INTERRUPTED",
+                  "TRANSIENT_FETCH_FAILURE",
+                  "MODEL_UNAVAILABLE"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "test_id",
+          "head",
+          "target",
+          "tested_revision",
+          "command_revision",
+          "environment_id",
+          "environment_digest",
+          "producer_id",
+          "artifact_digest",
+          "runner_id",
+          "resource_grant",
+          "receipt",
+          "completed_at",
+          "outcome",
+          "assertions",
+          "applicability_rule",
+          "transient_reason"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "results"
+  ],
+  "additionalProperties": false
+}
