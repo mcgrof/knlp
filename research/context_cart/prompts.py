@@ -15,9 +15,11 @@ from typing import Any
 
 INSTRUCTION = (
     "You answer questions about a staff ledger. Reply with only the answer "
-    "value: a team name, a number, a badge code, or a person's full name. "
-    "Do not explain."
+    "value and nothing else: a team name, a locker number, a badge code, or "
+    "a person's full name. Do not repeat the ledger sentence and do not "
+    "explain."
 )
+ANSWER_SUFFIX = "Answer (value only):"
 
 SUMMARY_INSTRUCTION = (
     "Write a compact summary of the following staff ledger in at most 60 words. "
@@ -45,13 +47,14 @@ def user_message(
     """Text arms carry their context in the user turn. Every other arm name
     (empty, untrained, learned, wrong, and seed-suffixed variants) gets the
     instruction and question only; its context, if any, is the cache."""
+    tail = f"Question: {question}\n{ANSWER_SUFFIX}"
     if arm == "full":
-        return f"{INSTRUCTION}\n\nLedger:\n{source_text}\n\nQuestion: {question}"
+        return f"{INSTRUCTION}\n\nLedger:\n{source_text}\n\n{tail}"
     if arm == "tail":
-        return f"{INSTRUCTION}\n\nLedger excerpt:\n{context}\n\nQuestion: {question}"
+        return f"{INSTRUCTION}\n\nLedger excerpt:\n{context}\n\n{tail}"
     if arm == "summary":
-        return f"{INSTRUCTION}\n\nLedger summary:\n{context}\n\nQuestion: {question}"
-    return f"{INSTRUCTION}\n\nQuestion: {question}"
+        return f"{INSTRUCTION}\n\nLedger summary:\n{context}\n\n{tail}"
+    return f"{INSTRUCTION}\n\n{tail}"
 
 
 def render_prompt(tokenizer: Any, content: str) -> str:
