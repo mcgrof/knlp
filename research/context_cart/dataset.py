@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 DATA_SEED = 20261025
-DATASET_VERSION = 2
+DATASET_VERSION = 3
 SOURCE_TOKENS = 1024
 LIVE_STAFF = 8
 ARCHIVED_STAFF = 4
@@ -1036,12 +1036,47 @@ def _diagnostic_questions(
             )
         )
     cand_c["linked"] = linked_badge + cand_c["linked"]
+    # an evaluation question may depend only on records the fit questions
+    # supervise, so changing an unseen fact cannot move the evaluation
+    covered = fit_support(fit)
+    cand_c = {
+        family: [q for q in qs if set(q.support) <= covered]
+        for family, qs in cand_c.items()
+    }
     evaluation = _select_balanced(rng, cand_c, 2)
     fit_texts = {q.text for q in fit}
     for q in evaluation:
         if q.text in fit_texts:
             raise RuntimeError("evaluation question duplicates a fit question")
+    uncovered = uncovered_support(fit, evaluation)
+    if uncovered:
+        raise RuntimeError(f"evaluation depends on unsupervised records {uncovered}")
     return fit, evaluation
+
+
+def fit_support(questions: Iterable[Any]) -> set[str]:
+    """Record ids whose values the questions' answers depend on."""
+    out: set[str] = set()
+    for q in questions:
+        support = q.support if hasattr(q, "support") else q["support"]
+        out.update(support)
+    return out
+
+
+def uncovered_support(
+    fit: Iterable[Any], evaluation: Iterable[Any]
+) -> dict[str, list[str]]:
+    """Evaluation questions whose support is not fully covered by the fit
+    questions, keyed by question id with the missing record ids."""
+    covered = fit_support(fit)
+    out: dict[str, list[str]] = {}
+    for q in evaluation:
+        qid = q.qid if hasattr(q, "qid") else q["qid"]
+        support = q.support if hasattr(q, "support") else q["support"]
+        missing = sorted(set(support) - covered)
+        if missing:
+            out[qid] = missing
+    return out
 
 
 def generate_world(

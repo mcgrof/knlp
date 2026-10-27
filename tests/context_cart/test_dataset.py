@@ -119,6 +119,18 @@ def test_diagnostic_fit_and_eval_questions(tok):
     fit_texts = {q["text"] for q in world.fit_questions}
     assert not any(q["text"] in fit_texts for q in world.questions)
     assert all(q["template"] == "C" for q in world.questions)
+    # every record an evaluation answer depends on is supervised by a fit
+    # question, so no unseen fact can move the evaluation
+    assert D.uncovered_support(world.fit_questions, world.questions) == {}
+    covered = D.fit_support(world.fit_questions)
+    for q in world.questions:
+        assert set(q["support"]) <= covered
+    # the counterexample the coverage rule exists for: a two-hop question on
+    # a record no fit question touches is reported, not accepted
+    linked = next(q for q in world.questions if q["family"] == "linked")
+    fit = [q for q in world.fit_questions if linked["support"][1] not in q["support"]]
+    missing = D.uncovered_support(fit, [linked])
+    assert missing == {linked["qid"]: [linked["support"][1]]}
 
 
 def test_derangement_and_questions_only(tok):

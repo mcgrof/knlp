@@ -12,6 +12,7 @@ enter the optimizer.
 from __future__ import annotations
 
 import dataclasses
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,24 @@ def fit_world(
     losses: list[float] = []
     grad_checks: list[dict[str, float]] = []
     sync = torch.cuda.synchronize if reader.device.type == "cuda" else (lambda: None)
+
+    @torch.no_grad()
+    def panel_loss() -> float:
+        """Mean answer-token loss over the complete fit panel."""
+        total, count = 0.0, 0
+        prefix = module.prefix(base, dtype)
+        for prompt, answer in examples:
+            ids, mask, labels = M.right_pad_with_labels(
+                [prompt], [answer], reader.pad_id, reader.device
+            )
+            loss_sum, n, _ = reader.answer_loss(
+                prefix, ids, mask, labels, first_position
+            )
+            total += float(loss_sum.item())
+            count += n
+        return total / max(count, 1)
+
+    panel_before = panel_loss()
     sync()
     t0 = time.perf_counter()
     for update in range(cfg.updates):
@@ -160,22 +179,31 @@ def fit_world(
         losses.append(float(loss.item()))
     sync()
     seconds = time.perf_counter() - t0
+    panel_after = panel_loss()
     with torch.no_grad():
         final = [
             (k.detach().clone(), v.detach().clone())
             for k, v in module.prefix(base, dtype)
         ]
-    qualified = grad_checks[0]["out_weight_grad_norm"] > 0 and any(
+    finite = all(math.isfinite(l) for l in losses) and all(
+        math.isfinite(v) for v in (panel_before, panel_after)
+    )
+    gradients = grad_checks[0]["out_weight_grad_norm"] > 0 and any(
         c["embed_grad_norm"] > 0 for c in grad_checks[1:]
     )
-    qualified = qualified and losses[-1] < losses[0] and all(l == l for l in losses)
+    # the pre/post comparison uses the same complete panel, not the loss of
+    # whichever question happened to come first and last
+    qualified = gradients and finite and panel_after < panel_before
     record = {
         "updates": cfg.updates,
         "losses": losses,
         "first_loss": losses[0],
         "last_loss": losses[-1],
         "mean_last_10": sum(losses[-10:]) / min(10, len(losses)),
+        "panel_loss_before": panel_before,
+        "panel_loss_after": panel_after,
         "grad_checks": grad_checks,
+        "finite": bool(finite),
         "qualified": bool(qualified),
         "seconds": seconds,
         "trainable_parameters": int(sum(p.numel() for p in module.parameters())),
@@ -205,6 +233,12 @@ def run(
     )
     for world in worlds:
         wid = world["world_id"]
+        uncovered = D.uncovered_support(world["fit_questions"], world["questions"])
+        if uncovered:
+            raise ValueError(
+                f"{wid}: evaluation depends on records the fit questions "
+                f"never supervise: {uncovered}"
+            )
         fit_items = E.items_from_worlds([world], key="fit_questions")
         eval_items = E.items_from_worlds([world], key="questions")
         sync = (
@@ -227,7 +261,25 @@ def run(
         refined, refined_record = fit_world(
             reader, tokenizer, generated, fit_items, first_position, cfg, seed, dtype
         )
-        results = {}
+        fit_panel = {}
+        for arm, prefix in (
+            ("generic", base_generic),
+            ("direct", direct),
+            ("generated", generated),
+            ("refined", refined),
+        ):
+            rows_fit, _, _ = E.answer_memory_arm(
+                reader,
+                tokenizer,
+                arm,
+                {wid: prefix},
+                fit_items,
+                first_position,
+                cfg.eval_batch,
+                cfg.max_new_tokens,
+            )
+            fit_panel[arm] = E.metrics(rows_fit)["em"]
+        results = {"fit_panel_em": fit_panel}
         for arm, prefix, build_seconds in (
             ("generated", generated, gen_seconds),
             ("direct", direct, direct_record["seconds"]),
