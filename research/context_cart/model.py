@@ -482,6 +482,8 @@ class Reader:
         self.pad_id = int(pad_id)
         self.traces: list[Trace] = []
         self.record_traces = False
+        # every token id this reader has ever processed, prefill and decode
+        self.tokens_seen = 0
 
     @property
     def device(self) -> torch.device:
@@ -528,6 +530,7 @@ class Reader:
             past_key_values=cache,
             use_cache=True,
         )
+        self.tokens_seen += int(input_ids.numel())
         if self.record_traces:
             self.traces.append(
                 Trace(
@@ -586,6 +589,30 @@ class Reader:
         Returns generated ids (padded with ``pad_id`` after the end token),
         FP32 first-token logits, optional FP32 per-step logits, and timings.
         """
+        return self.decode(
+            prefix,
+            prompt_ids,
+            prompt_mask,
+            first_position,
+            max_new_tokens,
+            keep_logits=keep_logits,
+            prefix_mask=prefix_mask,
+        )
+
+    @torch.no_grad()
+    def decode(
+        self,
+        prefix: list[tuple[torch.Tensor, torch.Tensor]] | None,
+        prompt_ids: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        first_position: int | torch.Tensor,
+        max_new_tokens: int,
+        keep_logits: bool = False,
+        prefix_mask: torch.Tensor | None = None,
+        sampler: Any = None,
+    ) -> dict[str, Any]:
+        """Batched decoding with left-padded prompts. ``sampler`` maps FP32
+        logits ``[B, V]`` to one token id per row; ``None`` is greedy."""
         device = prompt_ids.device
         batch = prompt_ids.shape[0]
         sync = torch.cuda.synchronize if device.type == "cuda" else (lambda: None)
@@ -613,7 +640,7 @@ class Reader:
         eos = torch.tensor(self.eos_ids, device=device)
         t1 = time.perf_counter()
         for step in range(max_new_tokens):
-            next_token = logits.argmax(-1)
+            next_token = logits.argmax(-1) if sampler is None else sampler(logits)
             next_token = torch.where(
                 finished, torch.full_like(next_token, self.pad_id), next_token
             )
@@ -633,6 +660,7 @@ class Reader:
                 past_key_values=cache,
                 use_cache=True,
             )
+            self.tokens_seen += int(batch)
             logits = self.model.lm_head(out.last_hidden_state[:, -1]).float()
             if keep_logits:
                 step_logits.append(logits.clone())
