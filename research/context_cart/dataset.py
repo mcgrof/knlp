@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 DATA_SEED = 20261025
+DATASET_VERSION = 2
 SOURCE_TOKENS = 1024
 LIVE_STAFF = 8
 ARCHIVED_STAFF = 4
@@ -51,174 +52,242 @@ POOLS = {
 POOL_ORDER = tuple(POOLS)
 POOL_TEMPLATE = {pool: ("B" if pool == "test_shifted" else "A") for pool in POOLS}
 
-FIRST_ONSETS = [
-    "Va",
-    "Ro",
-    "Mel",
-    "Dor",
-    "Kai",
-    "Sel",
-    "Tev",
-    "Lun",
-    "Bre",
-    "Nox",
-    "Fen",
-    "Ara",
-    "Osk",
-    "Ith",
-    "Ul",
-    "Jor",
-    "Pel",
-    "Quin",
-    "Sab",
-    "Tor",
-    "Wen",
-    "Yol",
-    "Zan",
-    "Hal",
-    "Gri",
-    "Cal",
-    "Dez",
-    "Elo",
-    "Fir",
-    "Gal",
-    "Hes",
+FIRST_NAMES = [
+    "Ansel",
+    "Brielle",
+    "Cato",
+    "Dahlia",
+    "Emeric",
+    "Faye",
+    "Garrick",
+    "Hollis",
+    "Imara",
+    "Jasper",
+    "Kiera",
+    "Lucan",
+    "Maren",
+    "Nico",
+    "Orla",
+    "Pascal",
+    "Quill",
+    "Rosalind",
+    "Soren",
+    "Talia",
+    "Ulric",
+    "Vesper",
+    "Wren",
+    "Xander",
+    "Yara",
+    "Zephyr",
+    "Alden",
+    "Bryony",
+    "Cassius",
+    "Delia",
+    "Elowen",
+    "Fenwick",
+    "Greta",
+    "Hugo",
+    "Isolde",
+    "Jorah",
+    "Kendra",
+    "Leopold",
+    "Mira",
+    "Nerys",
+    "Oberon",
+    "Perrin",
+    "Quenby",
+    "Rhett",
+    "Sable",
+    "Thea",
+    "Una",
+    "Viggo",
+    "Willa",
+    "Xenia",
+    "Yusuf",
+    "Zelda",
+    "Amos",
+    "Beatrix",
+    "Corvin",
+    "Dorian",
+    "Esme",
+    "Florian",
+    "Gwen",
+    "Hamish",
+    "Ines",
+    "Jules",
+    "Kasimir",
+    "Leda",
+    "Magnus",
+    "Nadia",
+    "Osric",
+    "Petra",
+    "Quincy",
+    "Rafferty",
+    "Sybil",
+    "Tobias",
+    "Ursula",
+    "Valen",
+    "Wilhelm",
+    "Ximena",
+    "Yvette",
+    "Zane",
+    "Aurelio",
+    "Bronwyn",
+    "Caspian",
+    "Dagny",
+    "Edric",
+    "Fiona",
+    "Gideon",
+    "Hester",
     "Ivo",
-    "Kel",
-    "Lor",
-    "Mir",
-    "Nel",
-    "Ori",
-    "Pru",
-    "Ren",
-    "Syl",
+    "Juniper",
+    "Kieran",
+    "Lorcan",
+    "Maud",
+    "Niall",
+    "Ottoline",
+    "Piers",
+    "Roderick",
+    "Saskia",
 ]
-FIRST_CODAS = [
-    "ro",
-    "rin",
-    "da",
-    "mo",
-    "tis",
-    "lan",
-    "ek",
-    "ya",
-    "ven",
-    "dor",
-    "li",
-    "mar",
-    "nis",
-    "ta",
-    "vel",
-    "wyn",
-    "zo",
-    "ram",
-    "bel",
-    "cus",
-    "din",
-    "fa",
-    "gon",
-    "hil",
-    "ix",
-    "jan",
-    "ko",
-    "lum",
-    "nor",
-    "pa",
-    "quo",
-    "ris",
-    "sa",
-    "tun",
-    "ur",
-    "vo",
-    "wi",
-    "xa",
-    "yl",
-    "zet",
+SURNAMES = [
+    "Ashford",
+    "Blackwood",
+    "Carraway",
+    "Dunmore",
+    "Ellery",
+    "Fairbanks",
+    "Greaves",
+    "Hawthorne",
+    "Ingram",
+    "Jessop",
+    "Kingsley",
+    "Lockhart",
+    "Marlowe",
+    "Northam",
+    "Oakes",
+    "Pemberton",
+    "Quintrell",
+    "Ravenscroft",
+    "Sinclair",
+    "Thornbury",
+    "Underhill",
+    "Vance",
+    "Whitlock",
+    "Yardley",
+    "Abernathy",
+    "Bellamy",
+    "Cromwell",
+    "Darrow",
+    "Everly",
+    "Fairweather",
+    "Galloway",
+    "Harrington",
+    "Ivers",
+    "Jennings",
+    "Kestrel",
+    "Langford",
+    "Montague",
+    "Netherby",
+    "Ormsby",
+    "Prescott",
+    "Radley",
+    "Stanhope",
+    "Tremont",
+    "Upton",
+    "Vickery",
+    "Wexford",
+    "Yates",
+    "Ashcombe",
+    "Brightwater",
+    "Castellan",
+    "Devereux",
+    "Eastwick",
+    "Fenwright",
+    "Gilmore",
+    "Holloway",
+    "Innsmouth",
+    "Jarrow",
+    "Kimberley",
+    "Lindqvist",
+    "Merriweather",
+    "Nightingale",
+    "Oakhurst",
+    "Pennington",
+    "Quarrie",
+    "Rutherford",
+    "Stirling",
+    "Tolliver",
+    "Umbridge",
+    "Valcourt",
+    "Winterbourne",
+    "Yeoman",
+    "Archibald",
+    "Blakely",
+    "Coldwater",
+    "Dalrymple",
+    "Ellsworth",
+    "Farrington",
+    "Grimshaw",
+    "Hartwell",
+    "Islington",
+    "Jordane",
+    "Kirkpatrick",
+    "Lowell",
+    "Mortlake",
+    "Norwood",
+    "Overton",
+    "Pickering",
+    "Quayle",
+    "Redgrave",
+    "Southwell",
+    "Thackeray",
+    "Ulverston",
+    "Vanterpool",
+    "Wycliffe",
+    "Youngblood",
+    "Amberley",
+    "Birchwood",
+    "Copperfield",
+    "Draycott",
+    "Edgecombe",
+    "Foxworth",
+    "Glendower",
+    "Hazelwood",
+    "Iverson",
+    "Jephson",
+    "Kettering",
+    "Ludlow",
+    "Maybrook",
+    "Nettleton",
+    "Oxley",
+    "Pinkerton",
+    "Quennell",
+    "Rosewood",
+    "Sandringham",
+    "Tillingham",
+    "Uxbridge",
+    "Verity",
+    "Wainwright",
+    "Yelverton",
+    "Aldersgate",
+    "Beaumont",
+    "Chadwick",
+    "Danvers",
+    "Elphinstone",
+    "Fitzroy",
+    "Gresham",
+    "Hathaway",
 ]
-SURNAME_HEADS = [
-    "Del",
-    "Har",
-    "Mor",
-    "Vask",
-    "Tren",
-    "Cor",
-    "Bel",
-    "Ash",
-    "Fal",
-    "Gren",
-    "Hol",
-    "Ist",
-    "Jul",
-    "Kar",
-    "Lind",
-    "Mat",
-    "Nar",
-    "Ost",
-    "Pen",
-    "Rav",
-    "Sal",
-    "Tal",
-    "Ung",
-    "Ver",
-    "Wes",
-    "Yar",
-    "Zel",
-    "Bran",
-    "Cress",
-    "Dun",
-    "Ess",
-    "Fol",
-    "Gart",
-    "Hend",
-    "Ilm",
-    "Jas",
-    "Kest",
-    "Lom",
-    "Mund",
-    "Norr",
-]
-SURNAME_TAILS = [
-    "min",
-    "wick",
-    "sten",
-    "by",
-    "ford",
-    "dale",
-    "mere",
-    "ton",
-    "holt",
-    "ley",
-    "ridge",
-    "well",
-    "shaw",
-    "croft",
-    "worth",
-    "field",
-    "stone",
-    "burn",
-    "gate",
-    "moor",
-    "wood",
-    "ham",
-    "cott",
-    "vale",
-    "brook",
-    "marsh",
-    "hurst",
-    "den",
-    "ness",
-    "wald",
-    "stead",
-    "low",
-    "sey",
-    "kin",
-    "bury",
-    "thorpe",
-    "ard",
-    "wyn",
-    "lan",
-    "ver",
-]
+SURNAME_SHARE = {
+    "calibration": 12,
+    "tiny": 12,
+    "train": 44,
+    "validation": 14,
+    "test_ordinary": 14,
+    "test_shifted": 14,
+    "diagnostic": 12,
+}
 TEAMS = [
     "Harbor",
     "Ridge",
@@ -278,9 +347,9 @@ QUESTION_TEMPLATES = {
         "badge": "What is {name}'s badge code?",
         "mentor": "Who mentors {name}?",
         "updated": "What is {name}'s current {label}?",
-        "linked_team": "What team is {name}'s mentor on?",
-        "linked_locker": "What is the locker number of {name}'s mentor?",
-        "linked_mentor": "Who mentors {name}'s mentor?",
+        "linked_team": "Who mentors {name}, and what team is that mentor on?",
+        "linked_locker": "Who mentors {name}, and what is that mentor's locker number?",
+        "linked_mentor": "Who mentors {name}, and who mentors that mentor?",
     },
     "B": {
         "team": "Which team has {name} been assigned to?",
@@ -288,9 +357,9 @@ QUESTION_TEMPLATES = {
         "badge": "Give the badge code held by {name}.",
         "mentor": "Name the mentor of {name}.",
         "updated": "After all corrections, what is {name}'s {label}?",
-        "linked_team": "Which team is the mentor of {name} on?",
-        "linked_locker": "Which locker does {name}'s mentor use?",
-        "linked_mentor": "Who is the mentor of the person who mentors {name}?",
+        "linked_team": "Name the mentor of {name} and the team that mentor is on.",
+        "linked_locker": "Name the mentor of {name} and the locker that mentor uses.",
+        "linked_mentor": "Name the mentor of {name} and that mentor's own mentor.",
     },
     "C": {
         "team": "According to the ledger, which team is {name} assigned to?",
@@ -300,10 +369,10 @@ QUESTION_TEMPLATES = {
         "updated": (
             "What does the ledger list as {name}'s {label} after the correction?"
         ),
-        "linked_team": "Which team does the mentor of {name} belong to?",
-        "linked_locker": "What locker number does the mentor of {name} have?",
-        "linked_mentor": "Who is the mentor of {name}'s mentor?",
-        "linked_badge": "What is the badge code of {name}'s mentor?",
+        "linked_team": "Give {name}'s mentor and the team of that mentor.",
+        "linked_locker": "Give {name}'s mentor and that mentor's locker number.",
+        "linked_mentor": "Give {name}'s mentor and the mentor of that mentor.",
+        "linked_badge": "Give {name}'s mentor and that mentor's badge code.",
     },
 }
 
@@ -415,21 +484,38 @@ class World:
 
 
 class NameRegistry:
-    """Unique full names and badge codes across every pool."""
+    """Names unique within a world and disjoint across pools.
+
+    Each pool owns a disjoint block of surnames, so no full name can appear in
+    two pools. Inside one world every first name starts with a different
+    letter and every surname is distinct. Badge codes are unique globally.
+    """
 
     def __init__(self) -> None:
-        self.names: set[str] = set()
         self.codes: set[str] = set()
+        self.surnames: dict[str, list[str]] = {}
+        cursor = 0
+        for pool in POOL_ORDER:
+            share = SURNAME_SHARE[pool]
+            self.surnames[pool] = SURNAMES[cursor : cursor + share]
+            cursor += share
+        if cursor > len(SURNAMES):
+            raise RuntimeError("not enough surnames for the pool shares")
+        self.names: set[str] = set()
 
-    def new_name(self, rng: random.Random) -> str:
-        for _ in range(10_000):
-            first = rng.choice(FIRST_ONSETS) + rng.choice(FIRST_CODAS)
-            last = rng.choice(SURNAME_HEADS) + rng.choice(SURNAME_TAILS)
-            name = f"{first} {last}"
-            if name not in self.names:
-                self.names.add(name)
-                return name
-        raise RuntimeError("name space exhausted")
+    def world_names(self, rng: random.Random, pool: str, count: int) -> list[str]:
+        firsts: list[str] = []
+        initials: set[str] = set()
+        for name in rng.sample(FIRST_NAMES, len(FIRST_NAMES)):
+            if name[0] not in initials:
+                firsts.append(name)
+                initials.add(name[0])
+            if len(firsts) == count:
+                break
+        lasts = rng.sample(self.surnames[pool], count)
+        names = [f"{a} {b}" for a, b in zip(firsts, lasts)]
+        self.names.update(names)
+        return names
 
     def new_code(self, rng: random.Random) -> str:
         for _ in range(10_000):
@@ -460,7 +546,24 @@ def normalize_answer(text: str, attribute: str) -> str:
     return value
 
 
+def _split_pair(text: str) -> list[str]:
+    parts = re.split(r"\s*[,;]\s*", text.strip(), maxsplit=1)
+    return parts
+
+
 def exact_match(prediction: str, gold: str, attribute: str) -> bool:
+    """Exact match after normalization. A linked gold answer has two parts,
+    "mentor, value"; both must match in order."""
+    if "," in gold:
+        gold_parts = _split_pair(gold)
+        pred_parts = _split_pair(prediction)
+        if len(pred_parts) != 2 or len(gold_parts) != 2:
+            return False
+        return normalize_answer(pred_parts[0], "mentor") == normalize_answer(
+            gold_parts[0], "mentor"
+        ) and normalize_answer(pred_parts[1], attribute) == normalize_answer(
+            gold_parts[1], attribute
+        )
     return normalize_answer(prediction, attribute) == normalize_answer(gold, attribute)
 
 
@@ -484,9 +587,9 @@ class Tokenizer:
 
 
 def _build_world_content(
-    rng: random.Random, registry: NameRegistry, template_set: str
+    rng: random.Random, registry: NameRegistry, pool: str
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    names = [registry.new_name(rng) for _ in range(LIVE_STAFF + ARCHIVED_STAFF)]
+    names = registry.world_names(rng, pool, LIVE_STAFF + ARCHIVED_STAFF)
     live_names, archived_names = names[:LIVE_STAFF], names[LIVE_STAFF:]
     lockers = rng.sample(
         range(100, 1000), LIVE_STAFF + ARCHIVED_STAFF + UPDATES_PER_WORLD
@@ -813,7 +916,7 @@ def _candidates(
                         "linked",
                         template_set,
                         key,
-                        live[mentor][attribute],
+                        f"{mentor}, {live[mentor][attribute]}",
                         rids,
                         attribute,
                         name,
@@ -924,7 +1027,7 @@ def _diagnostic_questions(
                 "linked",
                 "C",
                 "linked_badge",
-                live[mentor]["badge"],
+                f"{mentor}, {live[mentor]['badge']}",
                 rids,
                 "badge",
                 name,
@@ -952,7 +1055,7 @@ def generate_world(
 ) -> World:
     rng = random.Random(stable_seed(data_seed, pool, index))
     template_set = POOL_TEMPLATE[pool]
-    live, updates, archived = _build_world_content(rng, registry, template_set)
+    live, updates, archived = _build_world_content(rng, registry, pool)
     records = _render_records(rng, live, updates, archived, template_set)
     site = "".join(rng.choice(string.ascii_uppercase) for _ in range(2)) + str(
         rng.randint(10, 99)
@@ -998,7 +1101,7 @@ def _verify_answer(
     if q.family in ("direct", "identifier", "updated"):
         expected = facts[q.attribute]
     else:
-        expected = live[facts["mentor"]][q.attribute]
+        expected = f"{facts['mentor']}, {live[facts['mentor']][q.attribute]}"
     if expected != q.answer:
         raise RuntimeError(f"answer mismatch for {q.qid}: {expected} != {q.answer}")
     if q.family == "updated":

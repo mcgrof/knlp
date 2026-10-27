@@ -30,6 +30,10 @@ def test_normalize_and_exact_match():
     assert D.normalize_answer("badge code K4P-7Q2M", "badge") == "k4p-7q2m"
     assert D.exact_match("Varo Delmin.", "Varo Delmin", "mentor")
     assert not D.exact_match("K4P-7Q2N", "K4P-7Q2M", "badge")
+    assert D.exact_match("Mira Oakes, Team Ridge.", "Mira Oakes, Ridge", "team")
+    assert D.exact_match("Mira Oakes; 417", "Mira Oakes, 417", "locker")
+    assert not D.exact_match("Ridge", "Mira Oakes, Ridge", "team")
+    assert not D.exact_match("Thea Vance, Ridge", "Mira Oakes, Ridge", "team")
 
 
 def test_worlds_are_exact_length_verified_and_deterministic(tok):
@@ -43,8 +47,9 @@ def test_worlds_are_exact_length_verified_and_deterministic(tok):
         families = sorted(q["family"] for q in w.questions)
         assert families == sorted(D.FAMILIES * 2)
         for q in w.questions:
-            assert q["answer"] in w.source_text
-            assert len(tok(q["answer"], add_special_tokens=False)["input_ids"]) <= 12
+            for part in q["answer"].split(", "):
+                assert part in w.source_text
+            assert len(tok(q["answer"], add_special_tokens=False)["input_ids"]) <= 14
             n = len(P.prompt_ids(tok, P.user_message("learned", q["text"]))) + len(
                 P.answer_ids(tok, q["answer"])
             )
@@ -97,7 +102,9 @@ def test_updates_follow_originals_and_answers_are_latest(tok):
             )
             assert q["answer"] == update["new"] != update["old"]
         if q["family"] == "linked":
-            assert q["answer"] != q["entity"]
+            mentor, value = q["answer"].split(", ")
+            assert mentor == world.live[q["entity"]]["mentor"]
+            assert value == world.live[mentor][q["attribute"]]
             assert len(q["support"]) == 2
 
 

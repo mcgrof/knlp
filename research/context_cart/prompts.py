@@ -14,10 +14,11 @@ import hashlib
 from typing import Any
 
 INSTRUCTION = (
-    "You answer questions about a staff ledger. Reply with only the answer "
-    "value and nothing else: a team name, a locker number, a badge code, or "
-    "a person's full name. Do not repeat the ledger sentence and do not "
-    "explain."
+    "You answer questions about a staff ledger. Your entire reply must be the "
+    "answer value only: a team name, a locker number, a badge code, or a "
+    "person's full name. A question that asks for two things gets both values "
+    "separated by a comma. A correction later in the ledger replaces the "
+    "earlier value. Do not repeat the ledger sentence and do not explain."
 )
 ANSWER_SUFFIX = "Answer (value only):"
 
