@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="How to run the basic ReadPlan reproduction: CPU-only smoke tests and a verified whole-object read baseline on a filesystem you supply, including an NFS mount.">
+<title>LMCache ReadPlan L2: Reproduce the basic baseline</title>
+<link rel="canonical" href="https://knlp.io/lmcache-readplan-l2-reproduce.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="ReadPlan navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-reproduce.html" aria-current="page">reproduce</a>
+    <a href="lmcache-readplan-l2-analysis.html">open questions</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Reproduce</p>
+<span class="eyebrow">Basic reproduction</span>
+<h1>Run the basic read baseline</h1>
+<p class="lead">Two defconfigs give a starting point that anyone can run.
+The smoke profile tests the tools on any Linux machine. The mounted
+profile times whole-object reads on a filesystem you supply and checks
+every byte. Neither one needs root, and neither changes your system.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#smoke">Run the CPU-only smoke tests</a></li>
+<li><a href="#mounted">Measure reads on a mounted filesystem</a></li>
+<li><a href="#nfs">Use an NFS or pNFS mount</a></li>
+<li><a href="#output">Read the records and summary</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+</ol></div>
+
+<section id="prerequisites">
+<h2>1. Prerequisites</h2>
+<p>You need Linux, GNU make, Python 3.10 or newer and a checkout of
+<a href="https://github.com/mcgrof/knlp">knlp</a>. The tools use only the
+Python standard library. The defconfig step uses the
+<code>kconfiglib</code> package when it is installed; without it the
+defconfig is copied as it is, which is enough for these profiles. Git is
+optional: when present, each record names the source commit.</p>
+<p>The mounted profile also needs two directories that you create, both
+outside the source tree. The <strong>target</strong> directory holds the
+test objects; the <strong>output</strong> directory receives the records.
+The default object set is sixteen 8 MiB objects, 128 MiB in all.</p>
+</section>
+
+<section id="smoke">
+<h2>2. Run the CPU-only smoke tests</h2>
+<pre><code>make defconfig-rpl2-smoke
+make</code></pre>
+<p>Plain <code>make</code> runs <code>rpl2-doctor</code>, which checks the
+Python version, then <code>rpl2-smoke</code>, which runs the unit tests
+in <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2/tests">tools/reproduce/rpl2/tests</a>.
+They exercise the record schema, the immutable object set, corrupt and
+truncated objects, and the skip that replaces a direct-I/O run when the
+filesystem refuses <code>O_DIRECT</code>. They write only to temporary
+local directories and finish in well under a second. A passing run ends
+with <code>OK</code>; the direct-I/O test reports itself as skipped on a
+temporary filesystem without <code>O_DIRECT</code>.</p>
+</section>
+
+<section id="mounted">
+<h2>3. Measure reads on a mounted filesystem</h2>
+<pre><code>make defconfig-rpl2-mounted-fs
+make RPL2_TARGET=/mnt/share/rpl2 RPL2_OUTPUT=$HOME/rpl2-records</code></pre>
+<p>The two variables name the target and output directories. You can also
+store them in the configuration with <code>make menuconfig</code>, where
+the same menu chooses the I/O mode, object size, object count, request
+count and seed. Plain <code>make</code> runs three steps, which you can
+also run one at a time:</p>
+<pre><code>make rpl2-doctor RPL2_TARGET=/mnt/share/rpl2 RPL2_OUTPUT=$HOME/rpl2-records
+make rpl2-run    RPL2_TARGET=/mnt/share/rpl2 RPL2_OUTPUT=$HOME/rpl2-records
+make rpl2-report RPL2_OUTPUT=$HOME/rpl2-records</code></pre>
+<p><code>rpl2-doctor</code> prints one line per check: the filesystem type,
+whether the target is writable, whether it has room for the objects plus
+10%, whether the object size suits the chosen I/O mode, and whether an
+aligned <code>O_DIRECT</code> read works there. It stops with an error
+when a required check fails.</p>
+<p><code>rpl2-run</code> writes the objects once from the seed, syncs them,
+makes them read-only and lists their SHA-256 digests in a manifest. A
+later run with the same seed, size and count reuses them; a mismatched or
+unrecognized directory is refused, never overwritten. Each request then
+opens one object, reads all of it and closes it. Requests visit the
+objects in order and wrap around, and every request is recorded, including
+the first read of each object. The digest check runs after the timed
+region. <code>rpl2-report</code> validates the newest records and writes a
+summary; <code>RPL2_RECORDS=/path/records.jsonl</code> selects an older run.</p>
+<p>The default I/O mode is <code>O_DIRECT</code> into a page-aligned
+buffer, which bypasses the client page cache where the filesystem honors
+it. The buffered mode is useful as a contrast, but its reads may come from
+memory, particularly right after the objects are written. The tools never
+drop caches, so the records describe cache state as
+<em>uncontrolled</em>.</p>
+</section>
+
+<section id="nfs">
+<h2>4. Use an NFS or pNFS mount</h2>
+<p>The tools do not mount anything. Mount the export yourself, following
+the <a href="https://man7.org/linux/man-pages/man5/nfs.5.html">nfs(5)
+manual page</a> and your server's documentation, then point
+<code>RPL2_TARGET</code> at a directory you own on that mount. The doctor
+reports the filesystem type and the NFS protocol version; it deliberately
+omits the server name and address.</p>
+<p>A Linux client uses pNFS only with NFS version 4.1 or later and only
+when the server offers layouts for the file. The basic tools do not check
+whether a read used a layout or which server returned the bytes. Treat a
+result as an NFS result unless you have separate evidence of the path.
+Large differences between reruns usually mean the client, server or
+network is also doing other work, so note what else was running.</p>
+</section>
+
+<section id="output">
+<h2>5. Read the records and summary</h2>
+<p>Each run creates <code>rpl2-&lt;UTC time&gt;/records.jsonl</code> under the
+output directory. The first line is a header; each further line is one
+request. The example below is synthetic and shortened, not a measurement.</p>
+<pre><code>{"type": "header", "status": "ok", "schema": "knlp.rpl2.mounted-fs.v1",
+ "source": {"repository": "knlp", "commit": "&lt;sha&gt;", "modified": false},
+ "filesystem": {"type": "nfs4", "nfs_version": "4.2"},
+ "io_mode_requested": "direct", "io_mode_actual": "direct",
+ "object_bytes": 8388608, "objects": 16, "requests": 64, "seed": 1,
+ "cache_state": "uncontrolled", ...}
+{"type": "request", "request": 0, "key": "obj-000000", "generation": 1,
+ "bytes_read": 8388608, "io_mode": "direct", "start_ns": 1000,
+ "end_ns": 2001000, "latency_ns": 2000000, "validation": "match", ...}</code></pre>
+<div class="table-wrap"><table>
+<caption>Record fields</caption>
+<tr><th scope="col">Field</th><th scope="col">Meaning</th></tr>
+<tr><td class="hi">status</td><td><code>ok</code>, or <code>skipped</code> with a <code>reason</code> when direct I/O was requested but refused. A skipped run has no request records.</td></tr>
+<tr><td class="hi">io_mode_actual</td><td>The mode the reads used. A direct request never falls back to buffered reads silently.</td></tr>
+<tr><td class="hi">latency_ns</td><td>Monotonic time from just before the open to just after the close: one whole request.</td></tr>
+<tr><td class="hi">validation</td><td><code>match</code> when all bytes equal the manifest digest; <code>mismatch</code>, <code>short_read</code> or <code>error</code> otherwise.</td></tr>
+<tr><td class="hi">generation</td><td>The object's version in the manifest. Objects are written once, so it is always 1.</td></tr>
+</table></div>
+<p>The report writes <code>summary.json</code> next to the records. It counts
+each validation outcome and gives the median, 90th and 99th percentile and
+maximum latency of verified requests, plus the median request rate in MiB/s.
+Percentiles use the nearest-rank method on complete requests. A failed
+request is never counted as a fast one, and the report exits with an error
+when any request failed. With 64 requests the 99th percentile is close to
+the maximum, so raise the request count before reading much into it.</p>
+</section>
+
+<section id="troubleshooting">
+<h2>6. Troubleshooting</h2>
+<div class="table-wrap"><table>
+<caption>Common messages</caption>
+<tr><th scope="col">Message</th><th scope="col">Cause and fix</th></tr>
+<tr><td class="hi">no target directory given</td><td>Pass <code>RPL2_TARGET=/path</code> and <code>RPL2_OUTPUT=/path</code>, or set them with <code>make menuconfig</code>.</td></tr>
+<tr><td class="hi">is inside the source tree</td><td>Results and objects stay out of the repository. Choose directories elsewhere.</td></tr>
+<tr><td class="hi">FAIL free space</td><td>The target needs the object bytes plus 10%. Reduce the size or count, or choose another directory.</td></tr>
+<tr><td class="hi">SKIP direct I/O</td><td>The filesystem refused an aligned <code>O_DIRECT</code> read. Some FUSE filesystems do this. Choose the buffered mode in <code>make menuconfig</code> if a buffered measurement is what you want.</td></tr>
+<tr><td class="hi">refusing to reuse or overwrite it</td><td>An object directory exists with a different seed, size or count, or without a manifest. Remove it yourself, or change the seed.</td></tr>
+<tr><td class="hi">missing or wrong size</td><td>An object file was removed or truncated after it was written. Remove the object directory and run again.</td></tr>
+<tr><td class="hi">did not return the expected bytes</td><td>At least one request read a mismatched or short object. Look at its record, then check the storage before trusting any timing.</td></tr>
+<tr><td class="hi">Conflicting rpl2 workloads</td><td>The configuration also enables another reproduction. Load the rpl2 defconfig again.</td></tr>
+</table></div>
+<p>Very low buffered latencies usually mean the page cache served the
+reads. Very high first requests usually reflect the first open or read of
+each object. Both are kept in the records rather than filtered out.</p>
+</section>
+<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2.html">&larr; Overview</a><a href="lmcache-readplan-l2-analysis.html">Open questions &rarr;</a></nav>
+<footer>
+<a href="lmcache-readplan-l2.html">ReadPlan overview</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html">KMesh</a>
+</footer>
+</main>
+</body>
+</html>
