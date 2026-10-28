@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Large CPU-initiated I/O in AI workflows — knlp</title>
+<link rel="canonical" href="https://knlp.io/large-ios-cpu-initiated-ai.html">
+<meta name="description" content="A sourced tracker of large AI storage transfers through host DRAM: checkpoints, optimizer offload, object spilling, KV and encoder caches, Parquet scans and model loading.">
+<style>
+:root{--bg:#070b09;--card:#101914;--card2:#0c1410;--line:#203128;--text:#e2ece5;--muted:#93a59a;--green:#2ae6a3;--cyan:#62dce5;--amber:#f0b65c;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.7 var(--sans)}a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.96);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}nav{max-width:1320px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}nav a{font:12px var(--mono);color:var(--muted)}.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}
+main{max-width:1320px;margin:auto;padding:44px 24px 80px}.hero{padding-bottom:30px}.eyebrow,.meta{font:12px/1.7 var(--mono);color:var(--muted)}.eyebrow{letter-spacing:.08em}h1{font-size:clamp(36px,4.6vw,59px);line-height:1.08;letter-spacing:-.035em;max-width:1050px;margin:16px 0 20px}.lead{font-size:18px;max-width:1060px;color:var(--muted)}strong{color:var(--text)}
+.tool-context{border-left:2px solid var(--green);padding:1px 0 1px 18px;margin:23px 0;max-width:1060px}.tool-context p{color:var(--muted);font-size:14px;margin:8px 0}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:25px}.metric{border:1px solid var(--line);border-radius:8px;background:var(--card2);padding:18px 20px}.metric b{display:block;font:650 28px/1.3 var(--mono);color:var(--green)}.metric span{display:block;color:var(--text);margin:8px 0 5px}.metric small{color:var(--muted);font-size:12px}
+section{padding:35px 0;border-top:1px solid var(--line);scroll-margin-top:90px}h2{font-size:26px;letter-spacing:-.02em;margin:0 0 12px}h3{font-size:18px;margin:0 0 9px}.sub,.section-copy{max-width:1080px;color:var(--muted)}.sub{margin:0 0 19px}.fine{font-size:12px;color:var(--muted)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.filters button{padding:7px 12px;border:1px solid var(--line);border-radius:5px;background:var(--card2);color:var(--muted);font:12px var(--mono);cursor:pointer}.filters button[aria-pressed=true]{border-color:var(--green);color:var(--green)}.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}table{width:100%;border-collapse:collapse;background:var(--card);font-variant-numeric:tabular-nums}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:16px 14px}th{font:650 11px/1.6 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}td{font-size:13px;line-height:1.65;color:var(--muted)}td:first-child{color:var(--text);font-weight:550}td small{display:block;margin-top:6px;font-size:12px;color:var(--muted)}tr:last-child td{border-bottom:0}.workloads{min-width:1080px;table-layout:fixed}.workloads th:nth-child(1){width:19%}.workloads th:nth-child(2){width:19%}.workloads th:nth-child(3){width:22%}.workloads th:nth-child(4){width:19%}.workloads th:nth-child(5){width:21%}.workloads tbody tr:hover{background:rgba(98,220,229,.025)}.io{display:inline-block;border:1px solid var(--line);padding:3px 6px;border-radius:4px;font:11px/1.5 var(--mono);margin-bottom:5px}.direct{color:var(--amber);border-color:rgba(240,182,92,.35)}.buffered{color:var(--green);border-color:rgba(42,230,163,.35)}.dependent{color:var(--cyan);border-color:rgba(98,220,229,.35)}
+.notes,.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.notes article,.card{padding:20px;background:var(--card2);border:1px solid var(--line);border-radius:8px;scroll-margin-top:90px}.notes p,.card p{font-size:14px;color:var(--muted);margin:8px 0}.notes ul,.card ul{padding-left:20px;color:var(--muted);font-size:14px}.label{font:11px/1.6 var(--mono);color:var(--green);letter-spacing:.05em}.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted);font-size:14px}.sizes{min-width:620px}.sizes td:first-child{width:22%}.results{min-width:570px}.research{min-width:800px}.research td:first-child{width:22%}.research th:nth-child(2){width:42%}
+code{font: .92em var(--mono);color:#c8b6ff;overflow-wrap:anywhere}.recipe{padding:16px 18px;border:1px solid var(--line);border-radius:7px;background:var(--card2);overflow-x:auto;font:12px/1.8 var(--mono);color:var(--text)}details{border:1px solid var(--line);border-radius:8px;padding:13px 17px;margin:15px 0;background:var(--card2)}summary{cursor:pointer;font-weight:550}details p{color:var(--muted);font-size:14px}.refs{columns:2;column-gap:38px;padding-left:23px}.refs li{break-inside:avoid;padding:7px 0;color:var(--muted);font-size:13px}.refs small{display:block;margin-top:3px;font-size:12px}.refs li{scroll-margin-top:90px}
+.skip{position:absolute;left:-9999px}.skip:focus{left:15px;top:10px;background:var(--bg);padding:10px;z-index:50}a:focus-visible,button:focus-visible,summary:focus-visible,.scroll:focus-visible{outline:2px solid var(--green);outline-offset:3px}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--muted);font:11px/1.8 var(--mono)}footer p{max-width:1272px;margin:auto}
+@media(max-width:900px){.notes,.grid2{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}.refs{columns:1}.spacer{display:none}nav{gap:12px}main{padding-top:28px}.lead{font-size:17px}h1{font-size:40px}}
+@media(max-width:520px){main{padding:26px 18px 55px}nav{padding:12px 18px}nav a{font-size:11px}h1{font-size:36px}section{padding:28px 0}h2{font-size:23px}.notes article{padding:17px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{body{background:white;color:#17251e}header,.filters{display:none}main{max-width:none;padding:0}h1{font-size:32px}section{padding:20px 0}.lead,.sub,.section-copy,.fine,.meta,.eyebrow,td,.notes p,.card p,.refs li,.metric small{color:#354c40}strong,.metric span{color:#17251e}.scroll{overflow:visible}.workloads,.research,.sizes,.results{min-width:0;table-layout:auto}table,.notes article,.card,.metric,details{background:white;border-color:#b6c5bc}th,td{padding:8px;font-size:10px}a,.metric b,.label,.io{color:#006f76}tr[hidden]{display:table-row}.refs{columns:1}.note{background:white}.recipe{white-space:pre-wrap;background:white;color:#17251e}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><nav aria-label="Page sections"><a class="logo" href="index.html">KNLP</a><span class="spacer"></span><a href="#workloads">workloads</a><a href="#evidence">size evidence</a><a href="#host-memory">host memory</a><a href="#agentic">agentic workflows</a><a href="#reproduce">reproduce</a><a href="#sources">sources</a></nav></header>
+<main id="main">
+<div class="hero">
+<div class="eyebrow">Research tracker · storage workloads</div>
+<h1>Large CPU-initiated I/O<br>in AI workflows</h1>
+<p class="lead">Checkpoints, optimizer state, spilled objects, model weights and cached encodings already move substantial payloads through <strong>host DRAM</strong>. This page maps the implementations where that path is established and identifies the evidence for transfers larger than <strong>2 MiB</strong>.</p>
+<p class="lead">Here, CPU-initiated means host software submits the storage operation. The payload passes through host memory; NVMe DMA can move it without the CPU copying every byte. CPU-submitted GPU-direct I/O is a different path and is outside this page’s main workload set.</p>
+<p class="meta">Source review: 27 October 2026 · Companion: <a href="small-random-reads-ai.html">Small random reads in AI</a></p>
+<div class="metrics" aria-label="Examples of documented sizes">
+<div class="metric"><b>32–64 MB</b><span>Checkpoint staging buffers</span><small>Best configurations for FastPersist’s 512 MB transfer experiment; sizes use the paper’s units. <a href="#fastpersist">See evidence</a></small></div>
+<div class="metric"><b>1–128 MiB</b><span>Ray Data block-size target</span><small>Host-memory objects that can spill to disk. This range includes objects below 2 MiB. <a href="#ray">See evidence</a></small></div>
+<div class="metric"><b>34.3 / 130.8 MB</b><span>Video encoder-cache entries</span><small>Reported by LMCache’s in-process benchmark; entry sizes, not NVMe command sizes. <a href="#encoder">See evidence</a></small></div>
+</div>
+<div class="tool-context"><p><a href="https://github.com/mcgrof/knlp">knlp</a> connects workload research to reproducible experiments. <a href="https://ebpf.kvcache.io/">ebpf-syscall</a> and <a href="https://kvio.kvcache.io/">kvio</a> provide starting points for capture and replay. This is a source-backed workload inventory; it does not report new knlp benchmarks or a measured benefit from a host folio pool.</p></div>
+</div>
+
+<section id="workloads">
+<h2>Workloads and known I/O paths</h2>
+<p class="sub">All rows identify a host-memory storage path. Size evidence ranges from measured buffers and objects to configurable tensor sizes and read plans. None of these sources alone establishes a distribution of NVMe commands above 2 MiB.</p>
+<div class="filters" role="group" aria-label="Filter workloads by I/O path"><button type="button" data-filter="all" aria-pressed="true">All implementations</button><button type="button" data-filter="direct" aria-pressed="false">Direct I/O available</button><button type="button" data-filter="buffered" aria-pressed="false">Buffered / mmap path</button><button type="button" data-filter="cpu" aria-pressed="false">CPU consumes payload</button></div>
+<p class="fine">Filters describe the named path, not every deployment. A row may appear in more than one filter. Linux buffered I/O includes the page cache; a library’s “unbuffered” option does not establish <code>O_DIRECT</code>.</p>
+<p id="filter-status" class="fine" aria-live="polite">8 implementations</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Workload comparison, scroll horizontally on small screens"><table class="workloads">
+<thead><tr><th scope="col">Workload / implementation</th><th scope="col">Size evidence</th><th scope="col">Host-memory role</th><th scope="col">Known I/O path</th><th scope="col">What remains to measure</th></tr></thead>
+<tbody>
+<tr data-io="direct"><td><a href="#fastpersist">Training checkpoints</a><small>FastPersist / DeepNVMe AIO</small></td><td><strong>16–512 MB transfers</strong><small>Paper evaluates 2–128 MB CPU I/O buffers.</small></td><td>Pinned DRAM stages GPU tensors; double buffering overlaps device-to-host and storage transfers.</td><td><span class="io direct">Direct bulk I/O · AIO</span><br>Host-buffer path; GDS is a separate option.</td><td>Hold buffering fixed while varying submitted I/O size and memory backing.</td></tr>
+<tr data-io="buffered"><td><a href="#checkpoint">Distributed checkpoints</a><small>PyTorch DCP filesystem writer</small></td><td><strong>Model / optimizer state per rank</strong><small>Tensor-dependent; no universal request-size claim.</small></td><td>CPU staging creates a stable snapshot. Persistent pinned buffers can be reused across saves.</td><td><span class="io buffered">Buffered filesystem path</span><br>Other storage writers may differ.</td><td>Tensor sizes, serialization writes, durability cost and actual block requests.</td></tr>
+<tr data-io="direct cpu"><td><a href="#optimizer">Optimizer-state offload</a><small>DeepSpeed ZeRO-Infinity</small></td><td><strong>Configurable parameter tiles</strong><small>A 4096 × 4096 FP32 tensor is 64 MiB; illustrative arithmetic.</small></td><td>The CPU computes optimizer updates. Tiles are read from NVMe, processed in DRAM and written back.</td><td><span class="io direct">Direct I/O · AIO</span><br>Reads and writes can overlap CPU work.</td><td>Tile bytes, AIO splitting and CPU update time under the same training workload.</td></tr>
+<tr data-io="buffered cpu"><td><a href="#ray">Intermediate-object spilling</a><small>Ray Data / Plasma filesystem backend</small></td><td><strong>1–128 MiB block target</strong><small>Source writes a whole object buffer at the Python file API.</small></td><td>CPU-produced Arrow tables, dataframes and task results spill from shared memory and are restored for reuse.</td><td><span class="io buffered">Buffered file I/O</span><br>Ordinary file opens in the reviewed backend.</td><td>Object, library-call, syscall and device sizes; spill/restore latency.</td></tr>
+<tr data-io="direct buffered"><td><a href="#kv">KV-cache offload</a><small>LMCache host L1 + native filesystem L2; in-process disk backend</small></td><td><strong>Model-dependent chunks</strong><small>Example full-layer BF16 chunk: 32 MiB. Formula below.</small></td><td>DRAM serves as a retained cache or temporary staging area before NVMe access.</td><td><span class="io dependent">Buffered or O_DIRECT</span><br>Backend, flags and alignment matter.</td><td>Per-rank and per-layer chunk bytes, cache misses and physical disk traffic.</td></tr>
+<tr data-io="direct buffered"><td><a href="#encoder">Multimodal encoder cache</a><small>LMCache in-process implementation</small></td><td><strong>34.3 / 130.8 MB entries</strong><small>Documented video benchmark; one tensor per input hash.</small></td><td>Encoder outputs are staged into CPU buffers and can be persisted by the local-disk backend.</td><td><span class="io dependent">Backend-dependent</span><br>Local disk offers buffered / direct paths.</td><td>Disk-served reuse, actual writes and transfer latency independently of encoder savings.</td></tr>
+<tr data-io="buffered cpu"><td><a href="#parquet">Columnar scans / preprocessing</a><small>Arrow / Parquet on local files</small></td><td><strong>64 MiB coalescing limit</strong><small>Default combined-range limit in GetReadRanges(); planning only.</small></td><td>CPU readers decode, decompress and transform selected columns in host memory.</td><td><span class="io buffered">File reads / optional mmap</span><br>Remote object-store paths need separate accounting.</td><td>Selected compressed bytes and actual local read sizes after filtering and coalescing.</td></tr>
+<tr data-io="buffered"><td><a href="#weights">Model loading</a><small>vLLM safetensors eager / lazy / prefetch</small></td><td><strong>Weight tensors and file shards</strong><small>A 4096 × 4096 BF16 matrix is 32 MiB; illustrative.</small></td><td>Eager loading reads files into CPU memory; lazy and prefetch paths use memory mapping / page cache.</td><td><span class="io buffered">Buffered / mmap</span><br>This row excludes GPU-direct loaders.</td><td>Cold-start latency, resident cache hits, readahead and request splitting.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="evidence">
+<h2>Keep the size evidence at the right layer</h2>
+<p class="sub">The same 64 MiB object can generate one library call, many syscalls or many NVMe commands. It can also be served entirely from RAM. A large application buffer is useful evidence for host-memory management, but is not a trace of device I/O.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="I/O size definitions"><table class="sizes"><thead><tr><th scope="col">Quantity</th><th scope="col">What it tells us</th><th scope="col">How to establish it</th></tr></thead><tbody>
+<tr><td>Object / tensor bytes</td><td>Useful payload and capacity demand.</td><td>Shape, dtype, serialization and compression.</td></tr>
+<tr><td>Staging-buffer bytes</td><td>Working memory available to pipeline transfers.</td><td>Allocator configuration and measured buffer use.</td></tr>
+<tr><td>Submitted I/O bytes</td><td>Work handed to the OS, including each AIO or io_uring operation.</td><td>Application instrumentation and submission traces.</td></tr>
+<tr><td>Block / NVMe bytes</td><td>Requests after merging, splitting, mapping and cache effects.</td><td>Block and driver traces on the named target device.</td></tr>
+<tr><td>Backing folio size</td><td>Memory allocation and representation granularity.</td><td>Inspect the actual backing; alignment alone is insufficient.</td></tr>
+</tbody></table></div>
+<div class="note"><strong>A useful existing baseline:</strong> DeepNVMe documents an AIO default of <code>block_size=1048576</code> (1 MiB) and <code>queue_depth=128</code>. Large tensor transfers already work with smaller queued operations. A folio-pool evaluation must compare against that kind of reused-buffer implementation. <a href="#ref-deepnvme">[3]</a></div>
+</section>
+
+<section id="notes">
+<h2>Research notes and primary evidence</h2>
+<div class="notes">
+<article id="fastpersist"><div class="label">Published buffer-size experiment</div><h3>Checkpointing: the clearest measured example</h3>
+<p>FastPersist’s §5.3.1 tests GPU-tensor writes through pinned CPU buffers to SSD. The table records the best tested buffer sizes; the authors use MB. For 512 MB transfers, 2 MB performed worst and the best double-buffer configuration was 2.87× faster. This measures pipeline buffering, not a folio-size or NVMe-command-size improvement. <a href="#ref-fastpersist">[1]</a></p>
+<div class="scroll" tabindex="0" role="region" aria-label="FastPersist published buffer-size results"><table class="results"><thead><tr><th scope="col">Transfer</th><th scope="col">Single buffer</th><th scope="col">Double buffer</th></tr></thead><tbody><tr><td>16 MB</td><td>16 MB</td><td>8 MB</td></tr><tr><td>512 MB</td><td>64 MB</td><td>32 MB</td></tr></tbody></table></div>
+</article>
+<article id="checkpoint"><div class="label">Established host staging</div><h3>Distributed checkpoint save and restore</h3>
+<p>PyTorch DCP’s asynchronous save copies model and optimizer state into CPU buffers before persistence. Its pinned-buffer option retains staging allocations across checkpoints. The standard filesystem writer is a buffered file path; another storage writer can change that behavior. <a href="#ref-dcp">[2]</a></p>
+<p>Measure serialized writes and completion through the required durability boundary. A return from a buffered write is not evidence that the checkpoint is on stable storage. Compare identical checkpoint content and recovery semantics.</p></article>
+<article id="optimizer"><div class="label">CPU computes on the payload</div><h3>Optimizer state and repeated tensor offload</h3>
+<p>ZeRO-Infinity supports NVMe optimizer storage while keeping optimizer computation on the CPU. Its tiled pipeline can overlap the next read and the previous write with the current update. This makes host DRAM part of the computation itself. <a href="#ref-zero">[4]</a></p>
+<p>A GPU-owned allocation does not replace that CPU working set. The integration question is whether a reusable host pool can back the existing tensor buffers without inserting an extra copy. DeepNVMe’s AIO and GDS results should be treated as separate paths. <a href="#ref-deepnvme-blog">[5]</a></p></article>
+<article id="ray"><div class="label">Host object and library write verified</div><h3>Ray spilling: a CPU-only starting point</h3>
+<p>Ray Data targets 1–128 MiB blocks, commonly Arrow tables or pandas dataframes. Its filesystem spill writer calls <code>f.write(memoryview(buf))</code> for each object payload using ordinary file opens. That verifies a full-buffer library write, not one syscall. <a href="#ref-ray">[6]</a></p>
+<p>Ray restores spilled objects when needed. Preprocessing and large tool results give a natural test workload: force a controlled object-store budget, measure disk-backed spill and restore, and keep the task outputs identical. Object retention pins in Ray must not be confused with DMA page locking. <a href="#ref-ray-spill">[7]</a></p></article>
+<article id="kv"><div class="label">Cache retention and staging differ</div><h3>LMCache with host memory in the path</h3>
+<p>Use an explicit host-DRAM L1 with a filesystem L2 backend for the MP case. The native filesystem adapter offers <code>use_odirect</code> and alignment-aware slot transfers. The older in-process disk backend also allocates CPU read buffers; <code>local_cpu: false</code> disables retained CPU caching without proving that host staging disappears. <a href="#ref-lmcache">[8]</a></p>
+<p>Illustrative unsharded, all-layer BF16 KV: <code>2 × 32 layers × 256 tokens × 8 KV heads × 128 dimensions × 2 bytes = 32 MiB</code>. Layerwise transfer, tensor parallelism, architecture and quantization change the actual object and request sizes. Record them from the selected implementation.</p></article>
+<article id="encoder"><div class="label">Measured non-KV cache entries</div><h3>Video, image and audio encodings</h3>
+<p>LMCache’s in-process encoder cache stores a tensor per multimodal input hash, independently of attention KV. Its Qwen2.5-VL-7B BF16 video benchmark reports 34.3 MB entries for 32 sampled frames and 130.8 MB for 128 frames. CPU and disk backends are supported. <a href="#ref-encoder">[9]</a></p>
+<p>Those are cache-entry measurements. The reported warm-request speedups do not establish disk-hit latency, and may include CPU-cache hits. This documentation is labeled deprecated in-process mode; verify the selected connector and version before adapting it to MP.</p></article>
+<article id="parquet"><div class="label">Read coalescing is implemented</div><h3>Columnar data used by AI tools</h3>
+<p>Arrow’s <code>GetReadRanges()</code> plans selected Parquet column-chunk ranges, with a default 64 MiB combined-range limit. It performs no I/O itself. PyArrow’s prebuffering can coalesce reads before CPU deserialization; actual transfer sizes depend on columns, compression, filters and the filesystem. <a href="#ref-arrow">[10]</a></p>
+<p>Choose files resident on the target NVMe filesystem for a local block-layer experiment. A 64 MiB S3 request alone is network evidence, not evidence of a local 64 MiB disk request.</p></article>
+<article id="weights"><div class="label">Established model-loading paths</div><h3>Weights, cold starts and model changes</h3>
+<p>vLLM documents eager safetensors loading into CPU memory, lazy memory mapping and prefetching into the OS page cache. These establish host-memory paths with large tensor and shard payloads. <a href="#ref-vllm">[11]</a></p>
+<p>Cold model provisioning and repeatedly streaming nonresident weights are different workloads. DeepNVMe also evaluates ZeRO-Inference using host bounce buffers. Keep model-load frequency and actual cache misses explicit; a large model file does not imply continuing disk traffic during serving. <a href="#ref-deepnvme-blog">[5]</a></p></article>
+</div>
+</section>
+
+<section id="host-memory">
+<h2>Where host folios and a reusable pool fit</h2>
+<p class="section-copy">CPU producers and consumers need usable host memory: optimizer updates, dataframes and column decoding are examples. GPU checkpointing and cache offload instead use host memory as a staging or retention tier. GPU-direct paths can remove that tier in some deployments; they do not cover the CPU-native cases.</p>
+<div class="grid2">
+<article class="card"><h3>Three device properties, different meanings</h3><p><strong>MDTS</strong> describes the controller’s maximum transfer limit; <strong>NPWG</strong> describes recommended write granularity; <strong>NOWS</strong> describes optimal write size. Decode the fields and validity rules for the device. A value above <code>PAGE_SIZE</code> is not itself proof of a workload above 2 MiB or a requirement for an equally large folio. <a href="#ref-nvme">[12]</a></p><p>Also record <code>max_hw_sectors_kb</code>, <code>max_sectors_kb</code>, <code>max_segments</code> and <code>max_segment_size</code>, plus filesystem, DMA/IOMMU and stacked-device constraints. A large application request may be split before reaching the controller. <a href="#ref-linux">[13]</a></p></article>
+<article class="card"><h3>The hypothesis to test</h3><p>A device-associated, preallocated folio set could reduce allocation, page bookkeeping, scatter/gather or mapping costs for reusable host buffers. Benefits depend on the implementation and mapping lifetime; larger folios do not automatically produce larger DMA mappings.</p><p>A large I/O can span several folios. Compare ordinary reused registered buffers, available large-page backing and the proposed pool at equal useful work. Evaluate backing size, submission size and persistent mapping separately. No result on this page establishes that any one of them wins.</p></article>
+</div>
+<p class="section-copy">Related Linux work: <a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a>. Buffer ownership is the connection: an accelerator can supply buffers for its own payloads, while CPU-native workflows need a host-memory allocation path. The pool should become backing for the real working buffer where possible; copying into another pool changes the trade-off.</p>
+</section>
+
+<section id="agentic">
+<h2>Agentic workflows: follow the payload</h2>
+<p class="sub">An agent’s transcript can be small while its tools scan datasets, create large intermediates, load models or checkpoint execution environments. The storage workload comes from those operations and their frequency.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Agentic workflow follow-up candidates"><table class="research"><thead><tr><th scope="col">Activity</th><th scope="col">Established path / useful candidate</th><th scope="col">Evidence still needed</th></tr></thead><tbody>
+<tr><td>Data-analysis tools</td><td>Ray spilling and Arrow scans above provide concrete CPU-memory paths for table and tensor batches.</td><td>Capture a named agent task, its data scale and the local disk traffic per completed task.</td></tr>
+<tr><td>Multimodal investigation</td><td>Large media artifacts and reusable encoder outputs; LMCache supplies an existing encoder-cache implementation.</td><td>Separate original media reads, decoded data, encoding reuse and attention KV; measure disk hits.</td></tr>
+<tr><td>Sandbox pause / resume</td><td>E2B documents dirty-memory and rootfs snapshots plus a local template cache. Export and cache population are bulk-transfer candidates. <a href="#ref-e2b">[14]</a></td><td>Large-request hypothesis. Resume uses lazy page faults and optional prefetch; snapshot size does not establish large reads.</td></tr>
+<tr><td>Model experiments</td><td>Model loading, checkpoints and optimizer offload are established above.</td><td>Count jobs, saves, bytes and cache misses. Remote API use alone does not imply local weight I/O.</td></tr>
+<tr><td>RAG, packages and build artifacts</td><td>Ingestion, index construction, compaction and artifact staging deserve capture.</td><td>Name an implementation and measure requests. Online ANN lookups, metadata and small files need their own analysis.</td></tr>
+</tbody></table></div>
+<p class="section-copy">The <a href="https://kvcache.io/context-demand.html">context-demand observatory</a> and <a href="https://kvcache.io/agentic-cache-offloading.html">agentic-cache capacity model</a> motivate the inventory. They do not measure disk request sizes. OpenRouter’s <a href="https://openrouter.ai/data/newsletter/cache-is-crucial">cache-usage observations</a> describe token reuse, without identifying the storage tier serving each hit. <a href="#ref-demand">[15]</a></p>
+<p class="section-copy"><strong>Capacity, traffic and request size need separate measurements.</strong> Retained bytes describe footprint. Reads and writes per completed task describe turnover. Request-size distributions describe how that traffic reaches the storage stack. Deduplication, compression, RAM residency and remote storage can change all three.</p>
+</section>
+
+<section id="reproduce">
+<h2>Reproduce the storage question</h2>
+<p class="sub">Start with host-staged LMCache, a FastPersist-style checkpoint writer and Ray spill/restore. These cover inference, published large-buffer evidence and CPU-only processing. The integrations below are proposed experiments, not newly completed knlp benchmarks.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Proposed evaluation plan"><table class="research"><thead><tr><th scope="col">Comparison</th><th scope="col">Hold fixed</th><th scope="col">Measure</th></tr></thead><tbody>
+<tr><td>Buffer backing</td><td>Reuse and registration lifecycle, payload, NUMA placement, memory budget, submitted size and durability.</td><td>Allocation/pinning cost, CPU cycles per GiB, mapping work, faults and application latency.</td></tr>
+<tr><td>Submitted size</td><td>Backing, logical data, total bytes in flight and completion semantics. Sweep 1, 2, 4, 8, 16 and 32 MiB where supported.</td><td>Actual NVMe sizes, splitting, throughput and tail latency. Unsupported large commands are not large-command tests.</td></tr>
+<tr><td>Direct vs buffered</td><td>Useful work, total RAM budget, file layout, concurrency and durability.</td><td>Cold, mixed and resident-cache behavior; device bytes and CPU cost, including cache hits.</td></tr>
+<tr><td>Full application</td><td>Same checkpoint, recovered object, model output or data-analysis result.</td><td>Checkpoint pause, restore time, task completion or TTFT; report any extra memcpy introduced.</td></tr>
+</tbody></table></div>
+<details><summary>Read-only queue-limit inventory</summary><p>Set <code>dev</code> to the target block-device name. These sysfs reads do not change device settings. Inspect every relevant leaf device when testing RAID or device mapper; passthrough paths need their own limits.</p><pre class="recipe">dev=nvme0n1
+for field in logical_block_size physical_block_size minimum_io_size \
+             optimal_io_size max_hw_sectors_kb max_sectors_kb \
+             max_segments max_segment_size; do
+    printf '%s: ' "$field"
+    cat "/sys/class/block/$dev/queue/$field"
+done</pre></details>
+<p class="section-copy">Capture both sides of the filesystem boundary. Buffered reads that hit RAM never appear in a device trace; mmap requires fault/residency observations. For asynchronous I/O, record each submitted operation’s length, not just the syscall that submits a batch. Keep device requests separate from application calls when replaying traces.</p>
+<p class="section-copy">Publish source revisions, source data or a reproducible generator, hardware and queue limits, filesystem/mount options, I/O mode, folio backing, cache budget, bytes in flight, repeated-run variation and application correctness. A bandwidth gain without matching useful work and completion semantics is insufficient.</p>
+<p class="section-copy"><a href="https://ebpf.kvcache.io/">ebpf-syscall capture / replay</a> · <a href="https://kvio.kvcache.io/">kvio</a> · <a href="kvtide.html">KVTide</a> · <a href="kdevops.html">knlp through kdevops</a></p>
+</section>
+
+<section id="sources">
+<h2>Sources</h2>
+<p class="sub">Primary papers, implementation code and project documentation. Moving documentation and branches describe the reviewed paths; record immutable revisions for experiments. MB is retained where the source uses MB; MiB denotes 2²⁰ bytes.</p>
+<ol class="refs">
+<li id="ref-fastpersist"><a href="https://arxiv.org/pdf/2406.13768">FastPersist: Accelerating Model Checkpointing in Deep Learning</a><small>§4.1 host staging; §5.3.1 / Figure 7 buffer-size measurements.</small></li>
+<li id="ref-dcp"><a href="https://docs.pytorch.org/tutorials/recipes/distributed_async_checkpoint_recipe.html">PyTorch asynchronous distributed checkpointing</a> · <a href="https://github.com/pytorch/pytorch/blob/main/torch/distributed/checkpoint/filesystem.py">filesystem writer</a><small>CPU staging and persistent pinned-buffer options.</small></li>
+<li id="ref-deepnvme"><a href="https://www.deepspeed.ai/tutorials/deepnvme/">DeepNVMe tutorial</a> · <a href="https://github.com/deepspeedai/DeepSpeed/blob/322283b2509f8fbf6bbf2bc1306f749f9d7c6a41/csrc/aio/common/deepspeed_aio_common.cpp">AIO file-open flags</a> · <a href="https://github.com/deepspeedai/DeepSpeed/blob/322283b2509f8fbf6bbf2bc1306f749f9d7c6a41/csrc/aio/py_lib/deepspeed_py_io_handle.cpp">I/O handle</a><small>The reviewed Linux AIO path opens filenames with O_DIRECT; the CANN build removes that flag. Existing file descriptors retain caller-selected flags. Block size and queue depth are separate controls.</small></li>
+<li id="ref-zero"><a href="https://deepspeed.readthedocs.io/en/stable/zero3.html">DeepSpeed ZeRO configuration</a><small>NVMe optimizer offload, CPU computation and tile pipelining.</small></li>
+<li id="ref-deepnvme-blog"><a href="https://pytorch.org/blog/deepnvme-affordable-i-o-scaling-for-deep-learning-applications/">DeepNVMe: Affordable I/O scaling for Deep Learning Applications</a><small>FastPersist and ZeRO-Inference evaluated with host AIO and GDS paths.</small></li>
+<li id="ref-ray"><a href="https://docs.ray.io/en/latest/data/data-internals.html">Ray Data internals</a> · <a href="https://github.com/ray-project/ray/blob/master/python/ray/_private/external_storage.py">filesystem spill writer</a><small>Block-size targets and full-object Python writes.</small></li>
+<li id="ref-ray-spill"><a href="https://docs.ray.io/en/latest/ray-core/internals/object-spilling.html">Ray object-spilling architecture</a><small>Shared-memory pressure, spill workers and restoration.</small></li>
+<li id="ref-lmcache"><a href="https://docs.lmcache.ai/mp/l2_storage/fs_native.html">LMCache MP native filesystem L2</a> · <a href="https://docs.lmcache.ai/kv_cache/storage_backends/local_storage.html">in-process local storage</a> · <a href="https://github.com/LMCache/LMCache/blob/dev/lmcache/v1/storage_backend/local_disk_backend.py">disk backend code</a><small>Select host-memory L1 explicitly; distinguish it from GPU-direct backends.</small></li>
+<li id="ref-encoder"><a href="https://docs.lmcache.ai/non_kv_cache/encoder_cache.html">LMCache encoder caching</a> · <a href="https://github.com/LMCache/LMCache/blob/dev/docs/design/v1/encoder-cache.md">encoder-cache design</a><small>In-process implementation, tensor ownership and video-entry measurements.</small></li>
+<li id="ref-arrow"><a href="https://arrow.apache.org/docs/cpp/api/formats.html">Arrow C++ Parquet API</a> · <a href="https://arrow.apache.org/docs/python/generated/pyarrow.parquet.read_table.html">PyArrow read_table</a><small>GetReadRanges(), PreBuffer() and filesystem options.</small></li>
+<li id="ref-vllm"><a href="https://docs.vllm.ai/en/stable/configuration/engine_args/">vLLM engine arguments</a><small>Safetensors eager, lazy and prefetch loading strategies.</small></li>
+<li id="ref-nvme"><a href="https://github.com/linux-nvme/libnvme/blob/master/doc/rst/types.rst">libnvme NVMe field definitions</a><small>MDTS, NPWG and NOWS.</small></li>
+<li id="ref-linux"><a href="https://docs.kernel.org/6.18/admin-guide/abi-stable.html">Linux block-device sysfs ABI</a><small>Transfer-size and scatter/gather limits.</small></li>
+<li id="ref-e2b"><a href="https://github.com/e2b-dev/runtime/blob/main/docs/ARCHITECTURE.md">E2B runtime architecture</a><small>Snapshots, local template cache, dirty rootfs export and lazy UFFD restoration.</small></li>
+<li id="ref-demand"><a href="https://kvcache.io/context-demand.html">Context demand</a> · <a href="https://kvcache.io/agentic-cache-offloading.html">Agentic-cache capacity model</a> · <a href="https://openrouter.ai/data/newsletter/cache-is-crucial">OpenRouter: Cache is Crucial</a><small>Demand and capacity context, not device-I/O traces.</small></li>
+</ol>
+</section>
+</main>
+<footer><p>KNLP · Large host-memory I/O workload tracker · <a href="small-random-reads-ai.html">Small random reads</a> · <a href="index.html">All research</a></p></footer>
+<script>
+const filters = document.querySelectorAll('[data-filter]');
+const rows = document.querySelectorAll('.workloads tbody tr');
+filters.forEach(button => button.addEventListener('click', () => {
+  const choice = button.dataset.filter;
+  let count = 0;
+  filters.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+  rows.forEach(row => {
+    row.hidden = choice !== 'all' && !row.dataset.io.split(' ').includes(choice);
+    if (!row.hidden) count++;
+  });
+  document.querySelector('#filter-status').textContent = `${count} implementation${count === 1 ? '' : 's'}`;
+}));
+</script>
+</body>
+</html>
