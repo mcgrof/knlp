@@ -35,6 +35,7 @@ every byte. Neither one needs root, and neither changes your system.</p>
 <li><a href="#smoke">Run the CPU-only smoke tests</a></li>
 <li><a href="#mounted">Measure reads on a mounted filesystem</a></li>
 <li><a href="#nfs">Use an NFS or pNFS mount</a></li>
+<li><a href="#pnfs-lab">Build a pNFS lab and compare held descriptors</a></li>
 <li><a href="#output">Read the records and summary</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 </ol></div>
@@ -113,13 +114,80 @@ omits the server name and address.</p>
 <p>A Linux client uses pNFS only with NFS version 4.1 or later and only
 when the server offers layouts for the file. The basic tools do not check
 whether a read used a layout or which server returned the bytes. Treat a
-result as an NFS result unless you have separate evidence of the path.
+result as an NFS result unless you have separate evidence of the path; the
+<a href="#pnfs-lab">pNFS lab</a> below collects that evidence.
 Large differences between reruns usually mean the client, server or
 network is also doing other work, so note what else was running.</p>
 </section>
 
+<section id="pnfs-lab">
+<h2>5. Build a pNFS lab and compare held descriptors</h2>
+<p>Three further profiles build a complete pNFS system and use it to compare
+stock LMCache with one change: LMCache's native file connector can keep
+read-only file descriptors open across loads (<code>held_fd_capacity</code>).
+A repeated read through a held descriptor needs no open or close, and the
+existence check needs no attribute lookup. On pNFS those are calls to the
+metadata server. The kernel already keeps a file's layout across close,
+so they are the metadata work that remains on a repeated read.</p>
+<p>The lab runs on one Linux host. It consists of the
+<a href="https://github.com/PEAK-AIO/pnfs-lattice">Lattice</a> pNFS metadata
+server with its RonDB catalogue, one or more NFSv3 kernel data servers and a
+kernel NFSv4.2 client, each in its own network namespace on a private
+subnet. Setup fetches and builds Lattice, RonDB, ntirpc and LMCache at
+checked pins into a directory you name, without root and without system
+packages. The other steps need <code>sudo</code>, because they create
+namespaces, start a per-namespace NFS server, mount and trace. They do not
+touch the host's own NFS server, exports or rpcbind, and teardown compares
+those with the state recorded before the lab came up.</p>
+<pre><code>make defconfig-rpl2-pnfs-lab
+make RPL2P_ROOT=/disk/rpl2p RPL2_OUTPUT=$HOME/rpl2-pnfs-records</code></pre>
+<p>Plain <code>make</code> runs the following steps in order:</p>
+<ol>
+<li>Setup.</li>
+<li>A one-minute smoke test, whose receipt must say PASS.</li>
+<li>Lab bring-up with sealed, seeded test objects.</li>
+<li>An RPC fingerprint.</li>
+<li>A paired screen.</li>
+<li>Teardown.</li>
+</ol>
+<p>The fingerprint traces, from a fresh mount, which calls each arm sends
+to which server, for the first touch of each object and for 100 repeated
+requests. The screen alternates stock and held-descriptor runs in three
+blocks of 200 requests each. It uses one 8 MiB object per request and
+sixteen distinct 8 MiB objects per request, and verifies a digest on
+every 8th request. Its summary gives the mean of the paired block-median
+differences with a block-bootstrap interval.</p>
+<div class="table-wrap"><table>
+<caption>pNFS lab profiles</caption>
+<tr><th scope="col">Defconfig</th><th scope="col">What it runs</th></tr>
+<tr><td class="hi">rpl2-pnfs-lab</td><td>One host: smoke test, RPC fingerprint and paired screen.</td></tr>
+<tr><td class="hi">rpl2-pnfs-sweep</td><td>One host with up to 16 extra clients, each its own NFS client identity. All of them read the same 16 objects at once, with and without held descriptors. Each cell records metadata-server operations and CPU per object read, aggregate throughput and latency.</td></tr>
+<tr><td class="hi">rpl2-pnfs-remote</td><td>This host as the client of a lab on another host. On the lab host, list this host in <code>CONFIG_KNLP_RPL2_PNFS_REMOTE_CLIENTS</code> and run <code>make rpl2-pnfs-setup rpl2-pnfs-up</code>. Then set <code>CONFIG_KNLP_RPL2_PNFS_LAB_HOST</code> here and run <code>make</code>.</td></tr>
+</table></div>
+<p>A lab is named by a prefix (default <code>rpl2p</code>) and a private
+/24 subnet (default <code>10.247.0</code>). Its namespaces, units and
+interfaces carry the prefix, and bring-up refuses to start when a lab with
+that prefix exists or the subnet is already routed. Remote clients reach
+the lab through a host route. Because Docker sets the forwarding policy
+to drop, bring-up adds two accept rules for the lab subnet to the
+<code>DOCKER-USER</code> chain, and teardown removes them. Single targets
+such as <code>make rpl2-pnfs-up</code>, <code>rpl2-pnfs-screen</code> and
+<code>rpl2-pnfs-down</code> are listed by <code>make rpl2-help</code>.</p>
+<p>A one-host lab shares CPU, memory bandwidth and the page cache among the
+metadata server, the data servers and every client, and its links are
+virtual. It shows which operations each arm sends and what they cost this
+host. It does not predict throughput on a real fabric, where payload time
+and the metadata server's own hardware set the balance. For larger
+systems you can run more data servers
+(<code>CONFIG_KNLP_RPL2_PNFS_DATA_SERVERS</code>), clients on other hosts
+over the real network, or the same readers against your own pNFS
+deployment: <code>native_reader.py</code> in
+<a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2/pnfs">tools/reproduce/rpl2/pnfs</a>
+takes a mount path and an LMCache tree, and does not depend on the lab.</p>
+</section>
+
 <section id="output">
-<h2>5. Read the records and summary</h2>
+<h2>6. Read the records and summary</h2>
 <p>Each run creates <code>rpl2-&lt;UTC time&gt;/records.jsonl</code> under the
 output directory. The first line is a header; each further line is one
 request. The example below is synthetic and shortened, not a measurement.</p>
@@ -151,7 +219,7 @@ the maximum, so raise the request count before reading much into it.</p>
 </section>
 
 <section id="troubleshooting">
-<h2>6. Troubleshooting</h2>
+<h2>7. Troubleshooting</h2>
 <div class="table-wrap"><table>
 <caption>Common messages</caption>
 <tr><th scope="col">Message</th><th scope="col">Cause and fix</th></tr>

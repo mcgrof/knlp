@@ -73,6 +73,14 @@ you set up. It then times whole-object reads and checks every byte against
 a digest. It measures complete request time and correctness only. It does
 not separate metadata time from payload time, set up NFS or pNFS, or
 verify which servers carried the bytes.</p>
+<p>Three pNFS profiles go further. <code>rpl2-pnfs-lab</code> builds a
+pNFS metadata server, data servers and a client in network namespaces on
+one host. It then compares stock LMCache with its native connector's
+held-descriptor option, with an RPC fingerprint and a paired timing screen.
+<code>rpl2-pnfs-sweep</code> adds many clients reading shared objects.
+<code>rpl2-pnfs-remote</code> runs the client side on another host over a
+real network. See the <a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">reproduction
+page</a>.</p>
 </section>
 
 <section id="glossary">

@@ -127,6 +127,14 @@ request sent, does not check whether pNFS layouts were used and does not
 control the page cache. It is useful for checking a mount, its
 correctness and its ordinary whole-object read time before any
 deeper analysis.</p>
+<p>The <a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">pNFS lab
+profiles</a> address the first three questions for one server and client
+pair. They count the RPCs each arm sends to each server, hold every case to
+byte-exact digests, and compare stock LMCache with held descriptors in
+alternating blocks. The sweep also records metadata-server operations and
+CPU per object read as the number of clients grows. They still run on one
+host or a small number of hosts, with sealed objects and no serving
+engine, so the fourth question remains open.</p>
 </section>
 
 <section id="references">
