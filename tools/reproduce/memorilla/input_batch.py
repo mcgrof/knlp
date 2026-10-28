@@ -41,6 +41,9 @@ class LeasedMemoryCollator(MemoryCollator):
     a padded float16 intermediate. Prompt, mask and question processing
     otherwise follow the original collator.
 
+    An immutable mapped store can expose borrowed_documents(). Its returned
+    tensors own their mapping lifetime without a separate per-copy lease.
+
     Calls are serialized. Each copy worker holds at most one bank lease and
     releases it before accepting another task, so aggregate batch bytes may
     exceed the storage arena. A failed batch drains every accepted copy and
@@ -186,7 +189,14 @@ class LeasedMemoryCollator(MemoryCollator):
             for item in batch:
                 store = self.stores[(item["config"], item["split"])]
                 key = item["collection_id"]
-                if callable(getattr(store, "copy_documents", None)):
+                if callable(getattr(store, "borrowed_documents", None)):
+                    source = store.borrowed_documents(key)
+                    shape = tuple(source.shape)
+                    if len(shape) != 2 or any(
+                        type(n) is not int or n < 1 for n in shape
+                    ):
+                        raise ValueError("invalid document bank geometry")
+                elif callable(getattr(store, "copy_documents", None)):
                     shape = self._shape(store, key)
                     source = (store, key)
                 else:

@@ -122,6 +122,28 @@ def test_native_view_protocol_has_the_same_batch_values():
     observed.close()
 
 
+@pytest.mark.parametrize("clients", [1, 8])
+def test_self_owning_mapped_views_bypass_the_arena_copy_protocol(clients):
+    store = Store()
+    store.borrowed_documents = lambda key: store.values[key]
+
+    def forbidden(*args):
+        raise AssertionError("mapped tensors must use their own backing reference")
+
+    store.copy_documents = forbidden
+    observed = collator(
+        LeasedMemoryCollator, store, clients=clients, final_dtype=torch.bfloat16
+    )
+    expected = collator(author.MemoryCollator, store)(items())
+    actual = observed(items())
+    for key in expected:
+        assert torch.equal(
+            actual[key].view(torch.uint8), expected[key].view(torch.uint8)
+        )
+    assert not store.completed
+    observed.close()
+
+
 def test_invalid_geometry_refuses_before_copy():
     store = Store()
     store.collection_shape = lambda key: (2.5, 8)

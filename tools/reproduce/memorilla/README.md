@@ -424,6 +424,13 @@ mapped payload for validation. Exact artifact identity, consumer compatibility,
 extent and tensor layout admission remain enabled in both modes. Published
 files must stay unchanged while mapped.
 
+The collator reuses mapped tensor references directly. Those references keep
+their mapping alive, so ordinary repeated inputs do not acquire another lease
+or rebuild tensor views. Prepared readers retain at most the metadata-cache
+entry limit of mapped collections outside the backing lookup budget. Explicit
+eviction drops these reader references too; tensors already handed to a
+consumer remain valid. Arena-backed tensors continue to require leases.
+
 `CONFIG_KNLP_MEM_MAX_MAPPINGS` bounds retained lookup entries. It is not a RAM
 budget; Linux controls physical page-cache residency, and active/retained
 tensor views retain their backing lifetime. The arena byte setting does not

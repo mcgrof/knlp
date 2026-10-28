@@ -61,3 +61,47 @@ def test_parallel_prepared_borrows_and_owned_batch_survive_cache_close(tmp_path)
     assert registry.storage.map_count == 1
     registry.close()
     assert all(torch.all(row == 1) for row in rows)
+
+
+def test_self_owning_views_reuse_pointer_without_per_use_leases(tmp_path):
+    path, manifest = artifact_fixture(tmp_path)
+    registry = LMCacheArtifactRegistry(
+        Catalog(), backing="mmap", verification="published"
+    )
+    key = registry.register(manifest, path)
+    reader = registry.prepare_reader(key, CONSUMER)
+    views = reader.views()
+    pointer = views["embeddings"].data_ptr()
+    hits = registry.storage.cache_hits
+    with ThreadPoolExecutor(8) as pool:
+        addresses = list(
+            pool.map(lambda _: reader.views()["embeddings"].data_ptr(), range(1024))
+        )
+    assert set(addresses) == {pointer}
+    assert registry.storage.cache_hits == hits
+    assert not any(registry.storage.active.values())
+    with pytest.raises(TypeError):
+        views["embeddings"] = torch.zeros_like(views["embeddings"])
+    assert registry.evict(key)
+    assert reader.views()["embeddings"].data_ptr() == pointer
+    reader.release_views()
+    assert reader.views()["embeddings"].data_ptr() != pointer
+    assert torch.all(views["embeddings"] == 1)
+    registry.close()
+    assert torch.all(views["embeddings"] == 1)
+    with pytest.raises(RuntimeError, match="closed"):
+        reader.views()
+
+
+def test_allocator_memory_cannot_escape_its_lease(tmp_path):
+    from lmcache.v1.memory_allocators.host_memory_allocator import HostMemoryAllocator
+
+    path, manifest = artifact_fixture(tmp_path)
+    allocator = HostMemoryAllocator(65536)
+    registry = LMCacheArtifactRegistry(Catalog(), allocator)
+    key = registry.register(manifest, path)
+    reader = registry.prepare_reader(key, CONSUMER)
+    with pytest.raises(ValueError, match="mapped"):
+        reader.views()
+    registry.close()
+    assert allocator.memcheck()

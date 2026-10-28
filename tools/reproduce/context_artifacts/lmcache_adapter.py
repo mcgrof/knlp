@@ -9,6 +9,7 @@ from pathlib import Path
 import struct
 import threading
 from typing import Any
+from types import MappingProxyType
 from weakref import WeakKeyDictionary
 
 from .artifacts import ArtifactError, ContextArtifactManifest, inspect_payload
@@ -31,9 +32,41 @@ class _PreparedArtifact:
 class PreparedArtifactReader:
     """Bind a checked consumer once; each borrow still acquires backing ownership."""
 
-    def __init__(self, manifest, borrow):
+    def __init__(self, manifest, borrow, storage, backing):
         self.manifest = manifest
         self.lease = borrow
+        self.storage = storage
+        self.backing = backing
+        self._views = None
+        self._lock = threading.Lock()
+
+    def views(self):
+        """Return immutable mapped tensors whose references retain their memory.
+
+        An allocator-owned arena cannot supply this interface because it may
+        reuse a buffer after lease release. Mapped tensors retain their mmap
+        owner independently of cache eviction or registry close. Borrowing a
+        new reference after close fails; existing references remain valid.
+        The bounded prepared-reader cache can retain mappings outside the
+        backing's lookup-entry budget, without pinning physical pages.
+        """
+        if self.backing != "mmap":
+            raise ValueError("unleased views require immutable mapped backing")
+        if self.storage.closed:
+            raise RuntimeError("artifact store is closed")
+        views = self._views
+        if views is None:
+            with self._lock:
+                if self._views is None:
+                    with self.lease() as tensors:
+                        self._views = tensors
+                views = self._views
+        return views
+
+    def release_views(self):
+        """Drop this reader's cached references; consumer tensors stay valid."""
+        with self._lock:
+            self._views = None
 
 
 class LMCacheArtifactRegistry:
@@ -122,7 +155,10 @@ class LMCacheArtifactRegistry:
 
         prepared = self._admit(artifact_id, consumer)
         return PreparedArtifactReader(
-            prepared.manifest, partial(self._lease_prepared, prepared, timeout=timeout)
+            prepared.manifest,
+            partial(self._lease_prepared, prepared, timeout=timeout),
+            self.storage,
+            self.backing,
         )
 
     @contextmanager
@@ -168,6 +204,7 @@ class LMCacheArtifactRegistry:
                     buffer, dtype=dtype, count=count, offset=offset
                 ).reshape(shape)
             if self.backing == "mmap":
+                tensors = MappingProxyType(tensors)
                 with self._lock:
                     self._mapped_views[obj] = tensors
             yield tensors

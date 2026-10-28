@@ -283,6 +283,10 @@ class ArtifactEmbeddingStore:
                 if self.backing == "mmap"
                 else {}
             )
+            # Only immutable mappings can hand out self-owning tensor views.
+            self.borrowed_documents = (
+                self._mapped_documents if self.backing == "mmap" else None
+            )
             write(output / "artifacts.json", self.ids)
             write(
                 output / "artifact-set.json",
@@ -317,6 +321,15 @@ class ArtifactEmbeddingStore:
         if shape is None:
             shape = self.registry.resolve(artifact_id, self.consumer).tensors[0].shape
         return shape
+
+    def _mapped_documents(self, collection):
+        """Return a mapped tensor whose own reference owns the backing lifetime."""
+        reader = self._readers.get(int(collection))
+        if reader is None:
+            reader = self.registry.prepare_reader(
+                self.ids[int(collection)], self.consumer, timeout=120.0
+            )
+        return reader.views()["embeddings"]
 
     def copy_documents(self, collection, destination):
         """Finish a synchronous CPU copy before releasing the bank lease."""
@@ -363,6 +376,8 @@ class ArtifactEmbeddingStore:
         return self.native.question(row)
 
     def evict(self):
+        for reader in self._readers.values():
+            reader.release_views()
         for artifact in self.ids.values():
             self.registry.evict(artifact)
 
@@ -386,6 +401,8 @@ class ArtifactEmbeddingStore:
 
     def close(self):
         self.registry.close()
+        for reader in self._readers.values():
+            reader.release_views()
         self._readers.clear()
         self.catalog.close()
 
