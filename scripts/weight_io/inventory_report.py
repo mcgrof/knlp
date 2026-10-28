@@ -33,7 +33,7 @@ def main():
     ap.add_argument(
         "--stage-a",
         required=True,
-        help="directory with classes.json, selection.jsonl, projections.json, pins_compact/",
+        help="directory with classes.json, selection.jsonl, projections.json and pins/ (or pins_compact/)",
     )
     ap.add_argument(
         "--fetch-manifest",
@@ -47,7 +47,8 @@ def main():
     proj = json.loads((d / "projections.json").read_text())
     receipts = json.loads((d / "inventory.receipts.json").read_text())
     pins = {}
-    for p in sorted((d / "pins_compact").glob("*.pin.json")):
+    pin_dir = d / "pins_compact" if (d / "pins_compact").is_dir() else d / "pins"
+    for p in sorted(pin_dir.glob("*.pin.json")):
         j = json.loads(p.read_text())
         pins[j["repo"]] = j
     fetched = {}

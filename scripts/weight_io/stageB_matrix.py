@@ -48,17 +48,53 @@ def main():
     ap.add_argument("--groups", nargs="*", default=["layers", "rows", "chunks", "awq"])
     ap.add_argument("--seed", type=int, default=20261027)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--models-dir", default=None, help="root of <org>__<name>/full checkouts"
+    )
+    ap.add_argument(
+        "--pins-dir", default=None, help="hub pins with each repository's config"
+    )
+    ap.add_argument(
+        "--intent-tracer", default=None, help="syscall_monitor, passed to the wrapper"
+    )
+    ap.add_argument(
+        "--fault-tracer", default=None, help="mmap_readamp, passed to the wrapper"
+    )
     args = ap.parse_args()
     root = Path(args.root)
     sel = load_jsonl(root / "stageA/selection.jsonl")
     py = sys.executable
+    models_dir = Path(args.models_dir) if args.models_dir else root / "models"
+    pins_dir = Path(args.pins_dir) if args.pins_dir else root / "stageA/pins"
 
-    local = {
-        "Qwen/Qwen2.5-7B-Instruct": root / "models/Qwen__Qwen2.5-7B-Instruct/full",
-        "Qwen/Qwen2.5-7B-Instruct-AWQ": root
-        / "models/Qwen__Qwen2.5-7B-Instruct-AWQ/full",
-        "Qwen/Qwen3-0.6B": root / "models/Qwen__Qwen3-0.6B/full",
-    }
+    # the repositories present as whole checkpoints are the ones replayed
+    local = {}
+    for repo in sorted({s["repo"] for s in sel}):
+        d = models_dir / repo.replace("/", "__") / "full"
+        if d.is_dir():
+            local[repo] = d
+    if not local:
+        sys.exit(f"no <org>__<name>/full checkpoint under {models_dir}")
+
+    def quant_method(repo):
+        p = pins_dir / (repo.replace("/", "__") + ".pin.json")
+        if not p.exists():
+            return None
+        cfg = json.loads(p.read_text()).get("config.json") or {}
+        return (cfg.get("quantization_config") or {}).get("quant_method")
+
+    def layer_bytes(repo):
+        return max(
+            (
+                s["nbytes"]
+                for s in sel
+                if s["repo"] == repo and s["unit"].startswith("layer")
+            ),
+            default=0,
+        )
+
+    dense = [r for r in local if quant_method(r) is None]
+    awq_repos = [r for r in local if quant_method(r) == "awq"]
 
     def unit_file(repo, unit):
         files = sorted(
@@ -70,7 +106,7 @@ def main():
 
     runs = []
     if "layers" in args.groups:
-        for repo in ("Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen2.5-7B-Instruct-AWQ"):
+        for repo in sorted(local):
             units = sorted(
                 {
                     s["unit"]
@@ -111,12 +147,25 @@ def main():
                             )
                         )
     if "rows" in args.groups:
-        repo = "Qwen/Qwen3-0.6B"
+        # the checkpoint with the smallest embedding row
+        row_bytes = {
+            r: min(
+                (
+                    s["nbytes"]
+                    for s in sel
+                    if s["repo"] == r and s["unit"].startswith("embedding_row")
+                ),
+                default=None,
+            )
+            for r in local
+        }
+        row_bytes = {r: b for r, b in row_bytes.items() if b}
+        repo = min(row_bytes, key=row_bytes.get) if row_bytes else None
         for unit in sorted(
             {
                 s["unit"]
                 for s in sel
-                if s["repo"] == repo and s["unit"].startswith("embedding_row")
+                if repo and s["repo"] == repo and s["unit"].startswith("embedding_row")
             }
         ):
             f = unit_file(repo, unit)
@@ -146,8 +195,9 @@ def main():
                             ],
                         )
                     )
-    if "chunks" in args.groups:
-        repo = "Qwen/Qwen2.5-7B-Instruct"
+    if "chunks" in args.groups and dense:
+        # the largest unquantized layer is the bandwidth target
+        repo = max(dense, key=layer_bytes)
         units = sorted(
             {
                 s["unit"]
@@ -188,14 +238,14 @@ def main():
                         ],
                     )
                 )
-    if "awq" in args.groups:
-        mdir = local["Qwen/Qwen2.5-7B-Instruct-AWQ"]
+    if "awq" in args.groups and awq_repos:
+        awq_repo = awq_repos[0]
+        mdir = local[awq_repo]
         units = sorted(
             {
                 s["unit"]
                 for s in sel
-                if s["repo"] == "Qwen/Qwen2.5-7B-Instruct-AWQ"
-                and s["unit"].startswith("layer")
+                if s["repo"] == awq_repo and s["unit"].startswith("layer")
             },
             key=lambda u: int(u[5:]),
         )
@@ -274,6 +324,8 @@ def main():
             args.disk,
             "--run-dir",
             str(rd),
+            *(["--intent-tracer", args.intent_tracer] if args.intent_tracer else []),
+            *(["--fault-tracer", args.fault_tracer] if args.fault_tracer else []),
             "--",
             *rargs,
             "--part-start-sectors",
