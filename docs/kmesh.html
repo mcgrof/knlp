@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh coordinates shared inference state: singleflight shares one engine ancestor, external retention avoids repeated SSD reads, and advance preparation reduces waiting.">
+<meta name="description" content="KMesh studies family-aware caching and offloading of shared agent artifacts. KV-cache results establish the first measured path; broader artifact reuse remains an integration goal.">
 <title>KMesh: Shared inference state, read-once storage and early preparation</title>
 <link rel="canonical" href="https://knlp.io/kmesh.html">
 <link rel="stylesheet" href="kmesh.css">
@@ -26,11 +26,12 @@
 <div class="hero">
 <span class="eyebrow">Inference systems · Application-informed reuse</span>
 <h1>KMesh</h1>
-<div class="sub">Share one engine copy. Read it once. Prepare it early.</div>
-<p class="lead">Related requests often need the same computed context.
-KMesh explores how an application can tell vLLM and LMCache which requests
-will reuse that state, when they will arrive and how long it should remain
-available.</p>
+<div class="sub">Share useful state. Read it once. Prepare it early.</div>
+<p class="lead">Related agents often need the same context, tool results or
+saved model state. KMesh investigates how an application can identify that
+shared work, keep useful artifacts available and prepare them before the
+next requests arrive. The measured work so far focuses on KV cache in vLLM
+and LMCache; the broader goal includes other reusable agent artifacts.</p>
 <p><a href="#conclusions">Read the conclusions</a> &nbsp;&middot;&nbsp;
 <a href="#questions">Explore the research</a></p>
 </div>
@@ -38,8 +39,9 @@ available.</p>
 <section id="grounding">
 <h2>The idea: coordinate reuse around existing engine sharing</h2>
 <p>Imagine an agent reads a document and then launches four follow-up
-requests. Their common context is the <strong>ancestor</strong>; each
-follow-up adds private input and output. The model saves attention state for
+requests. These related requests form a <strong>family</strong>. Their
+common context is the <strong>ancestor</strong>; each follow-up adds
+private input and output. The model saves attention state for
 text it has processed; this is its <strong>key/value (KV) cache</strong>.
 vLLM runs the model, and its existing prefix cache can share that saved state
 when requests begin with the same tokens. LMCache stores state outside the
@@ -52,24 +54,58 @@ cache serve later lookups without reading the SSD again?
 in host RAM or an external GPU arena. Application notice can then move
 preparation before the follow-ups arrive. KMesh investigates this
 coordination and the lifetime of shared inference state.</p>
-<h3 id="cascade-offload">Extending FlashInfer's cascade ideas to caching and offloading</h3>
-<p><strong>KMesh applies the shared-prefix ideas behind
-<a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's
-cascade attention</a> to caching, offloading and restoration.</strong> Both
-organize work around a shared ancestor and its private branches. Cascade
-attention reuses shared-prefix KV reads across queries during decoding.
-It computes attention for their private suffixes separately, then merges
-the prefix and suffix results for each query.</p>
-<p>The offload work carries that structure through the memory hierarchy:
-singleflight coordinates one restoration and shared engine copy; external
-retention keeps the external copy available for later lookups; advance
-preparation makes that shared state ready before the branches arrive.
-The common goal is to avoid repeating work for each branch at every layer.
-The attention and storage experiments measure these layers separately;
-their combined performance benefit remains unmeasured. See the
-<a href="kmesh-storage.html#cascade">cascade controls</a> and
+<h3 id="cascade-offload">Cascade attention and family-aware offloading</h3>
+<p><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's
+Cascade attention</a> shares access to a common KV prefix while computing
+attention for several queries. It computes their private suffixes separately
+and merges the attention results. This reduces repeated GPU memory access
+inside the attention computation.</p>
+<p>KMesh investigates the lifetime and movement of reusable state: which
+copy to retain, which requests can share a restoration, and when to prepare
+it. Cascade can consume shared KV after it becomes available; family-aware
+offloading can also coordinate artifacts with no attention computation at
+all. Family membership supplies reuse hints, while compatible object
+identity determines whether sharing is valid. The shared-ancestor structure
+connects these efforts, but their mechanisms have separate costs and
+correctness conditions. Their combined performance benefit remains
+unmeasured.</p>
+<p>See the <a href="kmesh-storage.html#cascade">Cascade controls</a> and
 <a href="kmesh-retention.html#prefetch-demand">retained early-loading
 comparison</a> for the measured results.</p>
+</section>
+
+
+<section id="artifact-reuse">
+<h2>Shared artifacts beyond KV cache</h2>
+<p>An agent family can share more than attention state. Several children may
+need the same retrieved documents, document embeddings, tool response,
+saved memory or execution record. The shared part can remain immutable while
+each child owns its changes. KMesh's broader goal is to coordinate the
+loading, retention and release of those artifacts through their existing
+storage and restoration interfaces.</p>
+<div class="table-wrap"><table>
+<caption>Reuse depends on the artifact</caption>
+<tr><th scope="col">Artifact</th><th scope="col">Possible shared work</th><th scope="col">Required boundary</th></tr>
+<tr><td class="hi">KV cache</td><td>Load compatible state once and reuse a shared prefix or repair a moved segment.</td><td>Match model and layout; preserve ownership and completion. Changed preceding context can require model recomputation.</td></tr>
+<tr><td class="hi">Document representations and saved model memory</td><td>Reuse a document encoding, embedding or compatible saved context artifact.</td><td>The producing model, version, format and consuming interface must agree. Each format needs its own restore validation.</td></tr>
+<tr><td class="hi">Tool results, playbooks and execution records</td><td>Share a valid result or immutable record instead of fetching or rebuilding it for every child.</td><td>Respect input identity, version, freshness and access permissions. Reusing the record does not automatically reuse the model's work to read it.</td></tr>
+</table></div>
+<p>The <a href="https://kvcache.io/agentic-cache-offloading.html">agentic
+cache-offloading model</a> explores how richer artifacts, indexes and copies
+can grow the working set beyond RAM. It is a capacity projection, not a
+measurement of KMesh performance. Small plan templates can fit in memory;
+large shared artifacts create a different storage problem. KMesh should
+reuse the existing artifact loaders and coordinate with their development.
+CPU-consumed artifacts need an appropriate host-storage path; DMA-BUF is
+relevant where a qualified device-buffer path helps their actual consumer.</p>
+<p><strong>The objective is to establish whether family information makes
+offloading more useful.</strong> A fair comparison keeps ordinary caching,
+the storage path, memory budget and output requirements fixed, then measures
+what changes when the cache knows which requests are related. Fewer reads
+are useful evidence, but completed agent work, waiting time, retained memory
+and displaced cache hits determine the tradeoff. The KV results below
+establish bounded benefits from retention and early preparation. They do
+not yet establish a general family-policy benefit or non-KV artifact support.</p>
 </section>
 
 <section id="conclusions">
@@ -151,8 +187,8 @@ improves serving speed.</p>
 on the GPU. It returns 128 digest bytes per child instead of downloading the
 12 MiB source payload for checking. Our tested CUDA kernel is much slower than
 CPU hashing, and complete restoration is slower in all seven matched pairs.
-Model outputs still match exactly. We keep CPU hashing as the default; this
-result concerns one kernel and the existing whole-object format. The
+Model outputs still match exactly. That experiment retains CPU hashing as
+its default; this result concerns one kernel and the existing whole-object format. The
 <a href="kmesh-recovery.html#gpu-integrity">GPU checksum results and reproduction
 instructions</a> give the measurements and the next optimization targets.</p>
 </section>
