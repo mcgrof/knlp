@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="A common Linux storage interface for GPU memory, with separate driver, allocation and platform requirements.">
+<meta name="description" content="Tested NVIDIA CUDA, Vulkan/RM and AMD ROCm paths for GPU storage through io_uring DMA-BUF, with validation scope and October 2026 LMCache workshop slides.">
 <title>GPU memory to storage — io_uring + DMA-BUF — knlp</title>
 <link rel="canonical" href="https://knlp.io/io-uring-dmabuf.html">
 <link rel="stylesheet" href="io-uring-dmabuf.css">
@@ -21,11 +21,99 @@
 </nav></header>
 <main id="content">
 <div class="hero">
-<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 27 October 2026</span>
 <h1>GPU memory to storage</h1>
-<p class="lead"><strong>A common Linux interface for GPU ↔ NVMe transfers.</strong> Understand the driver, memory exporter and application integration separately, then qualify the complete route.</p>
-<nav class="toc" aria-label="On this page"><a href="#idea">One storage interface, several GPU exporters</a><a href="#layers">Who does what?</a><a href="#guide">Choose a question</a><a href="#conclusions">What to take away</a><a href="#previous-links">Previous section links</a></nav>
+<p class="lead"><strong>NVIDIA and AMD GPU memory can reach NVMe through the same experimental Linux storage interface.</strong> Native CUDA export, the Vulkan/RM workaround and ROCm export have each passed storage tests on specific configurations. The application validation differs by path.</p>
+<nav class="toc" aria-label="On this page"><a href="#tested-paths">Tested paths</a><a href="#pending-paths">What still needs validation</a><a href="#vendor-paths">Existing vendor routes</a><a href="#idea">Linux interface</a><a href="#layers">Who does what?</a><a href="#guide">Detailed guides</a><a href="#workshop">Workshop &amp; slides</a></nav>
 </div>
+<section id="tested-paths">
+<h2>The paths tested today</h2>
+<p>These are working experimental paths, rather than a promise of support
+on every GPU or motherboard. All use the patched Linux io_uring DMA-BUF
+importer and a qualified GPU ↔ NVMe route. The cards distinguish verified
+storage bytes from validation inside a serving application.</p>
+<div class="grid3">
+<article class="card">
+<span class="badge green">VERIFIED STORAGE I/O</span>
+<h3>NVIDIA: native CUDA export</h3>
+<p><strong>OpenRM + CUDA DMA-BUF + io_uring</strong></p>
+<p>CUDA allocates the GPU memory and exports its DMA-BUF directly.
+The storage backend registers that buffer with io_uring.</p>
+<p>LMCache provider:</p>
+<pre><code>rust_raw_block.gpu_buffer_provider: native</code></pre>
+<p><code>native</code> is the default. Select this path when CUDA DMA-BUF
+export works; Vulkan is unnecessary.</p>
+<p>The native CUDA/NIXL comparison passed verified GPU storage transfers.
+That does not give it the separate Vulkan/RM LMCache serving result.</p>
+<a href="io-uring-dmabuf-memory.html#native">Native provider details →</a>
+</article>
+<article class="card">
+<span class="badge green">VERIFIED STORAGE + LMCACHE SERVING</span>
+<h3>NVIDIA: Vulkan/RM workaround</h3>
+<p><strong>OpenRM + Vulkan allocation + RM DMA-BUF + io_uring</strong></p>
+<p>When native CUDA export is unavailable, LMCache can allocate through
+Vulkan, import the same allocation into CUDA, and export a separate
+DMA-BUF through NVIDIA RM.</p>
+<p>Explicit LMCache provider:</p>
+<pre><code>rust_raw_block.gpu_buffer_provider: vulkan_rm</code></pre>
+<p>This path passed verified XFS/ext4 storage transfers and the recorded
+LMCache model-continuation checks. CUDA still runs the GPU work.</p>
+<a href="io-uring-dmabuf-results.html#tests">Serving evidence and limits →</a>
+</article>
+<article class="card">
+<span class="badge green">VERIFIED STORAGE I/O</span>
+<h3>AMD: native ROCm export</h3>
+<p><strong>amdgpu/KFD + ROCm DMA-BUF + io_uring</strong></p>
+<p>ROCm exports GPU memory through
+<code>hsa_amd_portable_export_dmabuf</code>. The storage backend uses the
+returned DMA-BUF and byte offset.</p>
+<p>LMCache provider:</p>
+<pre><code>rust_raw_block.gpu_buffer_provider: native</code></pre>
+<p>Direct GPU storage transfers were verified in the low-level AMD comparison.
+The later HIP serving cohort used host staging; it does not validate
+AMD GPU-direct serving.</p>
+<a href="io-uring-dmabuf-results.html#driver-tests">Exporter and transfer evidence →</a>
+</article>
+</div>
+<p><strong>OpenRM is the main NVIDIA kernel-driver route tested here:</strong>
+open-source, but outside mainline Linux. Both NVIDIA cards use it. The
+provider choice changes allocation and export, not the kernel-driver
+license. LMCache's setting belongs under <code>extra_config</code>; it
+selects the staging allocator, not vLLM's KV-cache allocator.</p>
+<p>The native CUDA and AMD storage comparisons were recorded in September
+2026, the NVIDIA helper storage checks on 7 October, and the LMCache
+serving cohorts on 15 October. See the
+<a href="io-uring-dmabuf-results.html">full results and failed platform routes</a>
+before extending a result to another configuration. These paths submit
+io_uring directly; they do not call cuFile or hipFile.</p>
+</section>
+<section id="pending-paths">
+<h2>What still needs validation?</h2>
+<div class="scroll"><table>
+<caption>Export success and future driver work are not full storage qualification</caption>
+<thead><tr><th scope="col">Candidate</th><th scope="col">Recorded status</th><th scope="col">Next requirement</th></tr></thead>
+<tbody>
+<tr><td>Nouveau + NVK</td><td>A 2 MiB Vulkan allocation exported as DMA-BUF.</td><td>Validate NVMe attachment, VRAM placement and correct transfers in both directions.</td></tr>
+<tr><td>Nova</td><td>No completed storage validation in this evaluation.</td><td>Enable and validate the required DMA-BUF export/import path, then test GPU ↔ NVMe.</td></tr>
+<tr><td>One standard Vulkan provider for both vendors</td><td>A possible common allocation/export interface. The current <code>vulkan_rm</code> helper is NVIDIA-specific.</td><td>Implement and qualify standard Vulkan DMA-BUF export, NVMe peer mapping and CUDA/HIP interop where the application needs it.</td></tr>
+</tbody></table></div>
+<p><a href="io-uring-dmabuf-drivers.html#nova">Nouveau and Nova explained</a>
+· <a href="io-uring-dmabuf-memory.html#portable-vulkan">Could Vulkan serve both vendors?</a></p>
+</section>
+<section id="vendor-paths">
+<h2>How the existing vendor routes differ</h2>
+<p>These library paths coexist with the experimental io_uring interface.</p>
+<div class="scroll"><table>
+<caption>Vendor storage libraries and their kernel dependencies</caption>
+<thead><tr><th scope="col">Route</th><th scope="col">Kernel integration</th><th scope="col">Evidence here</th></tr></thead>
+<tbody>
+<tr><td>Traditional NVIDIA GDS</td><td>cuFile + nvidia-fs + compatible NVMe callback hooks. Older releases supported the proprietary GPU module; current nvidia-fs requires open modules.</td><td>Historical architecture. The hooks are absent from stock mainline NVMe; compatibility depends on the supported stack, not simply whether a kernel is “new.”</td></tr>
+<tr><td>NVIDIA GDS with P2PDMA</td><td>OpenRM + cuFile + Linux P2PDMA. Supported configurations need neither nvidia-fs nor its custom NVMe hooks.</td><td>Verified cuFile P2PDMA comparison. It is a separate storage path from io_uring DMA-BUF.</td></tr>
+<tr><td>AMD Infinity Storage</td><td>hipFile + AMD AIS integration + Linux P2PDMA. The inspected AIS additions are out of tree; base amdgpu/KFD and P2PDMA have upstream implementations.</td><td>The comparison called the ROCr AIS APIs directly. It did not benchmark the hipFile wrapper.</td></tr>
+</tbody></table></div>
+<p><a href="io-uring-dmabuf-drivers.html#routes">Driver dependencies and primary sources</a>
+· <a href="io-uring-dmabuf-results.html#performance">Comparison results and overhead limits</a></p>
+</section>
 <section id="idea">
 <h2>One storage interface, several GPU exporters</h2>
 
@@ -66,6 +154,16 @@ There are cuFile P2PDMA comparisons, AMD AIS runtime comparisons and
 application correctness tests. Their scopes differ. Export-only Nouveau
 tests and future Nova enablement are not full storage qualification.</p>
 
+</section>
+<section id="workshop">
+<h2>October 2026 LMCache workshop</h2>
+<p>Luis Chamberlain presented this work in the technical session at the
+<a href="https://luma.com/cm7eip1b">LMCache Meetup + Hands-on Workshop</a>
+on 22 October 2026 in San Jose.</p>
+<p><a href="https://docs.google.com/presentation/d/e/2PACX-1vTrhOWPxDMdSGGKHVw7EYOC-jyFN2K2UCEhRGXRJPakP1_1ib0MRI2xtCRllCK-WaWUSyge8Jfzq1Mo/pub?start=false&amp;loop=false&amp;delayms=3000">Open the talk slides →</a></p>
+<p>The guide above spells out the validation scope behind the talk's path
+summary, including native CUDA export, the LMCache Vulkan/RM workaround,
+ROCm export and the remaining Nouveau/Nova work.</p>
 </section>
 <section id="previous-links"><h2>Previous section links</h2><p>The detailed sections now live on the pages above.</p><div class="toc"><a class="fragment-alias" id="path" href="io-uring-dmabuf-memory.html#path">What changes in the I/O path?</a><a class="fragment-alias" id="implementations" href="io-uring-dmabuf-memory.html#implementations">Two independent ways to adopt it</a><a class="fragment-alias" id="nixl" href="io-uring-dmabuf-memory.html#nixl">A transition plan for existing NIXL users</a><a class="fragment-alias" id="platform" href="io-uring-dmabuf-results.html#platform">A common interface still needs a working platform route</a><a class="fragment-alias" id="tests" href="io-uring-dmabuf-results.html#tests">What has been tested?</a><a class="fragment-alias" id="validation-fixes" href="io-uring-dmabuf-results.html#validation-fixes">Corrections found during validation</a><a class="fragment-alias" id="process" href="io-uring-dmabuf-results.html#process">A test ladder that avoids false positives</a><a class="fragment-alias" id="kernel" href="io-uring-dmabuf-linux.html#kernel">A common Linux storage interface</a><a class="fragment-alias" id="history" href="io-uring-dmabuf-linux.html#history">Why Linux keeps a P2PDMA allowlist</a><a class="fragment-alias" id="reproduce" href="io-uring-dmabuf-linux.html#reproduce">Build and test the pinned enablement stack</a><a class="fragment-alias" id="source" href="io-uring-dmabuf-linux.html#source">Source and interfaces</a></div></section>
 <div class="pager" aria-label="Continue reading"><a href="https://knlp.io/">← knlp</a><a href="io-uring-dmabuf-drivers.html">Drivers →</a></div>

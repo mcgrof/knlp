@@ -21,10 +21,10 @@
 </nav></header>
 <main id="content">
 <div class="hero">
-<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 22 October 2026</span>
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 27 October 2026</span>
 <h1>Allocation, export and userspace</h1>
 <p class="lead">Allocation chooses the memory. Export shares it. The storage backend submits I/O. The connector coordinates application data and completion. Keeping these roles separate explains what Vulkan does—and what cuFile and hipFile do not do here.</p>
-<nav class="toc" aria-label="On this page"><a href="#userspace">What changed in userspace?</a><a href="#path">What changes in the I/O path?</a><a href="#providers">The allocation and export choices</a><a href="#vulkan">What does vulkan_rm change?</a><a href="#portable-vulkan">Could Vulkan support both AMD and NVIDIA?</a><a href="#ordering">What work remains on the CPU and GPU?</a><a href="#implementations">Two independent ways to adopt it</a><a href="#nixl">A transition plan for existing NIXL users</a></nav>
+<nav class="toc" aria-label="On this page"><a href="#userspace">What changed in userspace?</a><a href="#path">What changes in the I/O path?</a><a href="#providers">The allocation and export choices</a><a href="#native">Native CUDA or ROCm export</a><a href="#vulkan">What does vulkan_rm change?</a><a href="#portable-vulkan">Could Vulkan support both AMD and NVIDIA?</a><a href="#ordering">What work remains on the CPU and GPU?</a><a href="#implementations">Two independent ways to adopt it</a><a href="#nixl">A transition plan for existing NIXL users</a></nav>
 </div>
 <section id="userspace">
 <h2>What changed in userspace?</h2>
@@ -110,10 +110,29 @@ transfers through NIXL. LMCache direct storage does not require NIXL.</p>
 application correctness. The <a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/kv_cache/storage_backends/raw_block_dmabuf.rst">LMCache DMA-BUF guide</a>
 describes the allocation ownership, export offsets and ordering contract.</p>
 </section>
+<section id="native">
+<h2>When native CUDA or ROCm export works</h2>
+<pre><code>extra_config:
+  rust_raw_block.gpu_buffer_provider: native</code></pre>
+<p><code>native</code> is the default, so the provider setting can be omitted.
+On NVIDIA, LMCache uses CUDA memory and native CUDA DMA-BUF export through
+<code>cuMemGetHandleForAddressRange</code>. On AMD, the native provider uses
+ROCm export through <code>hsa_amd_portable_export_dmabuf</code>.</p>
+<p>NVIDIA's native path still uses the open GPU kernel modules (OpenRM).
+Both <code>native</code> and <code>vulkan_rm</code> use that kernel-driver
+stack in the configurations discussed here. The choice is how to allocate
+and export LMCache's GPU staging memory. Native export requires neither
+Vulkan allocation nor the custom RM export helper.</p>
+<p>These snippets select a provider within a configured raw-block backend;
+they are not complete launch configurations. See the
+<a href="https://github.com/mcgrof/LMCache/blob/2026-10-15-io-uring-dmabuf-full/docs/source/kv_cache/storage_backends/raw_block_dmabuf.rst">LMCache configuration guide</a>
+and the <a href="io-uring-dmabuf.html#tested-paths">tested-path summary</a>.</p>
+</section>
 <section id="vulkan">
 <h2>What does vulkan_rm change?</h2>
 
-<pre><code>rust_raw_block.gpu_buffer_provider: vulkan_rm</code></pre>
+<pre><code>extra_config:
+  rust_raw_block.gpu_buffer_provider: vulkan_rm</code></pre>
 <p>This selects <strong>LMCache's external GPU staging allocator</strong>.
 It does not replace vLLM's KV-cache allocator or convert arbitrary existing
 Torch allocations into exportable buffers. The engine keeps its own KV
