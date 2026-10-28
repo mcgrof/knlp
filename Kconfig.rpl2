@@ -1,0 +1,240 @@
+# SPDX-License-Identifier: MIT
+# Configuration for the basic KV-offload read-path reproduction.
+#
+# Selecting rpl2-smoke or rpl2-mounted-fs sets these values.  Plain `make`
+# then runs the selected profile through Makefile.rpl2.  All symbols are
+# namespaced CONFIG_KNLP_RPL2_* so this profile never collides with
+# another reproduce profile.
+
+menuconfig KNLP_REPRODUCE_RPL2
+	bool "KV-offload read path on a mounted filesystem"
+	default n
+	help
+	  A basic reproduction for the question of how much work a KV-cache
+	  offload read does before and while its bytes move.  The smoke
+	  profile runs CPU-only unit tests.  The mounted-filesystem profile
+	  writes a few immutable objects to a directory you name, reads
+	  each one back as a whole request, verifies every byte against its
+	  digest and records the request latency.
+
+	  Neither profile needs root, a GPU or a network service of its
+	  own, and neither drops caches or changes kernel settings.
+
+if KNLP_REPRODUCE_RPL2
+
+choice
+	prompt "Profile"
+	default KNLP_RPL2_SMOKE
+
+config KNLP_RPL2_SMOKE
+	bool "CPU-only record, parser and verification tests"
+	help
+	  Runs the unit tests in tools/reproduce/rpl2/tests on temporary
+	  local directories.  Safe to run anywhere, including CI.
+
+config KNLP_RPL2_MOUNTED_FS
+	bool "Immutable-object read baseline on an existing mount"
+	help
+	  Uses an existing directory on any POSIX filesystem, including an
+	  NFS mount that you set up.  Nothing is mounted or configured for
+	  you.
+
+config KNLP_RPL2_PNFS_LAB
+	bool "pNFS lab on one host: stock LMCache against held descriptors"
+	help
+	  Builds a pNFS metadata server (Lattice with its RonDB catalogue),
+	  NFSv3 data servers and a kernel NFSv4.2 client, each in its own
+	  network namespace on this host.  It then compares stock LMCache's
+	  native file connector with its held_fd_capacity option: a
+	  per-phase RPC fingerprint and a paired, alternating-block timing
+	  screen.  Needs root (sudo) for namespaces, the per-namespace NFS
+	  server, mounts and a private trace instance.  The host's own NFS
+	  server, exports and rpcbind are not touched, and teardown checks
+	  that they match their baseline.
+
+config KNLP_RPL2_PNFS_SWEEP
+	bool "pNFS lab on one host: many clients reading shared hot objects"
+	help
+	  The same lab, plus N extra clients, each its own NFS client
+	  identity, that read the same hot objects at once with and without
+	  held descriptors.  Records metadata-server operations and CPU per
+	  object read, throughput and latency for each N.
+
+config KNLP_RPL2_PNFS_REMOTE
+	bool "Client on this host for a pNFS lab on another host"
+	help
+	  Mounts a lab that runs on another host (KNLP_RPL2_PNFS_LAB_HOST)
+	  through a route to its lab subnet, then runs the fingerprint and
+	  the paired screen from here over the real network.  On the lab
+	  host, list this host's address in KNLP_RPL2_PNFS_REMOTE_CLIENTS
+	  before bringing the lab up.
+
+endchoice
+
+config KNLP_RPL2_TARGET_DIR
+	string "Existing directory for the test objects"
+	default ""
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Must exist, be writable and lie outside the source tree.  The
+	  objects go into a subdirectory named after the seed, size and
+	  count, and a later run reuses them only when its manifest
+	  matches.  Override with RPL2_TARGET=/path on the make command.
+
+config KNLP_RPL2_OUTPUT_DIR
+	string "Directory for request records"
+	default ""
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Each run writes rpl2-<UTC time>/records.jsonl here; the report
+	  writes summary.json next to it.  Must lie outside the source
+	  tree.  Override with RPL2_OUTPUT=/path on the make command.
+
+choice
+	prompt "I/O mode"
+	default KNLP_RPL2_IO_DIRECT
+	depends on KNLP_RPL2_MOUNTED_FS
+
+config KNLP_RPL2_IO_DIRECT
+	bool "O_DIRECT reads into a page-aligned buffer"
+	help
+	  Bypasses the client page cache where the filesystem honors
+	  O_DIRECT, so reads reach the storage or server.  When the
+	  filesystem refuses O_DIRECT the run records a skip with its
+	  reason instead of silently reading buffered.
+
+config KNLP_RPL2_IO_BUFFERED
+	bool "Ordinary buffered reads"
+	help
+	  Reads may be served from the client page cache, especially right
+	  after the objects are written.  The records say so.
+
+endchoice
+
+config KNLP_RPL2_OBJECT_BYTES
+	int "Bytes per object"
+	default 8388608
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Direct I/O needs a multiple of 4096.
+
+config KNLP_RPL2_OBJECTS
+	int "Number of objects"
+	range 1 100000
+	default 16
+	depends on KNLP_RPL2_MOUNTED_FS
+
+config KNLP_RPL2_REQUESTS
+	int "Requests to time"
+	range 1 10000000
+	default 64
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Requests visit the objects in order and wrap around.  Every
+	  request is recorded, including the first touch of each object.
+
+config KNLP_RPL2_SEED
+	int "Seed for the object contents"
+	default 1
+	depends on KNLP_RPL2_MOUNTED_FS
+
+if KNLP_RPL2_PNFS_LAB || KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_PNFS_REMOTE
+
+config KNLP_RPL2_PNFS_ROOT
+	string "Task root directory for sources, builds and lab state"
+	default ""
+	help
+	  An owned directory on a disk filesystem (not tmpfs), outside the
+	  source tree.  setup.sh builds everything into it; lab runtime
+	  state, some of it root-owned, also lives here.  Override with
+	  RPL2P_ROOT=/path on the make command.
+
+config KNLP_RPL2_PNFS_OUTPUT_DIR
+	string "Directory for run records"
+	default ""
+	help
+	  Each run writes a timestamped subdirectory here.  Must lie outside
+	  the source tree.  Override with RPL2_OUTPUT=/path.
+
+config KNLP_RPL2_PNFS_PYTHON
+	string "Python with torch for building LMCache (empty: create one with uv)"
+	default ""
+
+config KNLP_RPL2_PNFS_LMCACHE_REPO
+	string "LMCache repository"
+	default "https://github.com/mcgrof/LMCache.git"
+
+config KNLP_RPL2_PNFS_LMCACHE_REF
+	string "LMCache branch"
+	default "2026-10-28-feature-fs-native-held-fd"
+
+config KNLP_RPL2_PNFS_LMCACHE_COMMIT
+	string "LMCache commit, checked after checkout"
+	default "3e4b3839ce47655e2d0d33cad3f66d4bf920d767"
+
+config KNLP_RPL2_PNFS_PREFIX
+	string "Lab name prefix for namespaces, units and interfaces"
+	default "rpl2p"
+	help
+	  At most 6 characters.  Two labs on one host need different
+	  prefixes and subnets.
+
+config KNLP_RPL2_PNFS_NET
+	string "Private /24 subnet of the lab, first three octets"
+	default "10.247.0"
+	help
+	  Must not be routed on the host already; the lab refuses to start
+	  otherwise.
+
+config KNLP_RPL2_PNFS_DATA_SERVERS
+	int "Data servers"
+	range 1 8
+	default 1
+	depends on !KNLP_RPL2_PNFS_REMOTE
+
+config KNLP_RPL2_PNFS_HELD_CAPACITY
+	int "held_fd_capacity for the held-descriptor arm"
+	default 64
+
+config KNLP_RPL2_PNFS_BLOCKS
+	int "Paired blocks in the screen"
+	default 3
+	depends on !KNLP_RPL2_PNFS_SWEEP
+
+config KNLP_RPL2_PNFS_REQUESTS
+	int "Requests per arm per block"
+	default 200
+	depends on !KNLP_RPL2_PNFS_SWEEP
+
+config KNLP_RPL2_PNFS_CLIENTS
+	string "Client counts for the sweep"
+	default "1 2 4 8 16"
+	depends on KNLP_RPL2_PNFS_SWEEP
+
+config KNLP_RPL2_PNFS_SECONDS
+	int "Seconds per sweep cell"
+	default 20
+	depends on KNLP_RPL2_PNFS_SWEEP
+
+config KNLP_RPL2_PNFS_SWEEP_FIXTURE
+	string "Sweep fixture: rpl2-256k (metadata-bound) or rpl2-8m"
+	default "rpl2-256k"
+	depends on KNLP_RPL2_PNFS_SWEEP
+
+config KNLP_RPL2_PNFS_REMOTE_CLIENTS
+	string "Addresses of client hosts allowed to mount this lab"
+	default ""
+	depends on !KNLP_RPL2_PNFS_REMOTE
+	help
+	  Space-separated.  When set, bringing the lab up also adds the
+	  route back to those hosts and two accept rules for the lab subnet
+	  in the DOCKER-USER chain, which teardown removes.
+
+config KNLP_RPL2_PNFS_LAB_HOST
+	string "LAN address of the host running the lab"
+	default ""
+	depends on KNLP_RPL2_PNFS_REMOTE
+
+endif
+
+endif # KNLP_REPRODUCE_RPL2

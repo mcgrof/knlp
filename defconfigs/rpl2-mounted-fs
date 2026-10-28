@@ -1,0 +1,19 @@
+# KV-offload read path: immutable-object read baseline on a mount.
+#
+# Writes sixteen 8 MiB objects to an existing directory you name, then
+# times 64 whole-object O_DIRECT reads and verifies every byte against
+# the object digest.  Give both directories on the command line:
+#
+#   make RPL2_TARGET=/mnt/share/rpl2 RPL2_OUTPUT=$HOME/rpl2-records
+#
+# Both must lie outside the source tree.  Nothing is mounted, no cache
+# is dropped and no kernel or service setting is changed.
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_MOUNTED_FS=y
+CONFIG_KNLP_RPL2_TARGET_DIR=""
+CONFIG_KNLP_RPL2_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_IO_DIRECT=y
+CONFIG_KNLP_RPL2_OBJECT_BYTES=8388608
+CONFIG_KNLP_RPL2_OBJECTS=16
+CONFIG_KNLP_RPL2_REQUESTS=64
+CONFIG_KNLP_RPL2_SEED=1

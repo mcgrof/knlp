@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Open questions for metadata-aware KV-cache offload reads: what work survives client caching, how to separate metadata from payload time, how reuse stays valid, and whether storage changes reach serving.">
+<title>LMCache ReadPlan L2: Open questions</title>
+<link rel="canonical" href="https://knlp.io/lmcache-readplan-l2-analysis.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="ReadPlan navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
+    <a href="lmcache-readplan-l2-analysis.html" aria-current="page">open questions</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Open questions</p>
+<span class="eyebrow">Analysis still to do</span>
+<h1>What would a metadata adapter have to show?</h1>
+<p class="lead">Caching where a KV object lives only helps if real work
+remains after the storage client's own caching, if that work is on the
+request's critical path, and if reuse never returns the wrong bytes.
+These four questions are open. This page states them and the evidence
+an answer would need; it reports no result.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol>
+<li><a href="#remaining-work">What metadata work remains after normal client caching?</a></li>
+<li><a href="#separating-time">How can metadata, scheduling and payload time be told apart?</a></li>
+<li><a href="#location-changes">How can reuse stay valid when a location changes?</a></li>
+<li><a href="#serving-effect">Does a storage-level change affect a serving request?</a></li>
+<li><a href="#evidence">What evidence would support a claim?</a></li>
+<li><a href="#limitations">Limits of the basic tools</a></li>
+<li><a href="#references">References</a></li>
+</ol></div>
+
+<section id="remaining-work">
+<h2>1. What metadata work remains after normal client caching?</h2>
+<p>A network filesystem client already caches a great deal. The Linux NFS
+client keeps file handles, attributes and directory entries, and it can
+hold delegations that let it skip some server checks. A pNFS client also
+keeps the layouts the metadata server hands out and reuses them until the
+server recalls them or they are returned. Whatever an application-level
+cache could save is what survives all of that.</p>
+<p>The answer depends on the client, the server, the mount options and
+the access pattern. The first read of an object, a repeated read of the
+same object and a read after a long idle period can each send different
+operations. An answer therefore has to name the software versions and
+default settings it used, count the operations actually sent for each
+case and leave the normal caches enabled. Disabling a cache to create
+work for an adapter to remove would answer a different question.</p>
+</section>
+
+<section id="separating-time">
+<h2>2. How can metadata, scheduling and payload time be told apart?</h2>
+<p>A read request spends time waiting to be scheduled, resolving the
+object, moving bytes and completing. Network round trips for metadata may
+overlap with data transfer or with each other, so the sum of individual
+operation times is not the time a request could save. Per-operation
+statistics are useful for finding where time goes, not for subtracting.</p>
+<p>The safer unit is the whole request, timed from submission to
+completion and checked for correct bytes. Percentiles should come from
+complete requests. When two configurations are compared, they should
+differ in one thing and run alternately on the same system, because a
+comparison between different filesystems or adapters changes more than
+metadata. Tracing and verification also cost time, so it helps to know
+how much the measurement itself adds.</p>
+</section>
+
+<section id="location-changes">
+<h2>3. How can reuse stay valid when a location changes?</h2>
+<p>Two different events can make a remembered answer wrong. The storage
+system can move or re-replicate data while the object stays the same; in
+pNFS the server recalls a layout and the client must stop using it. The
+application can also replace an object under the same name with a new
+version. The first changes where to read, the second changes what to
+read, and reuse has to handle both.</p>
+<p>Handling them means following the storage system's own recall and
+lease rules. It also means knowing which object version a request
+expects, and refusing or refreshing rather than returning old bytes
+under a new name. A timeout
+or a checksum alone cannot show that an object is current. Tests need the
+replacement, deletion, recall, server restart and partial-failure cases,
+each with a defined correct outcome.</p>
+</section>
+
+<section id="serving-effect">
+<h2>4. Does a storage-level change affect a serving request?</h2>
+<p>A faster storage read matters only if the serving engine was waiting
+for it. An engine can overlap loading with computation, load some state
+ahead of time or recompute instead. The relevant measures are serving
+measures: time to first token, throughput and memory, on a real model,
+with the output checked against a run that does not use the offloaded
+state. A storage improvement that does not change those measures may
+still matter elsewhere, but it is not a serving result.</p>
+</section>
+
+<section id="evidence">
+<h2>5. What evidence would support a claim?</h2>
+<p>A claim that metadata caching helps a workload would need several
+pieces of evidence together. It would need the actual data path, for
+example which servers carried the bytes, rather than the configured one.
+It would need byte-exact correctness for every counted request and a
+named object version. It would need a matched comparison that changes
+one mechanism, repeated in alternating blocks with an interval rather
+than a single number. It would need the strongest existing alternative
+as the baseline, such as the client's own caching or an existing
+adapter, and a scope statement naming the software, hardware, cache
+state and workload. A negative result is useful in the same form: it
+applies to what was tested and redirects effort to the data path.</p>
+</section>
+
+<section id="limitations">
+<h2>6. Limits of the basic tools</h2>
+<p>The <a href="lmcache-readplan-l2-reproduce.html">basic reproduction</a>
+is a baseline, not an answer to these questions. It reads one object per
+request with one request outstanding, from one client. It times whole
+requests and verifies bytes, but it does not count the NFS operations a
+request sent, does not check whether pNFS layouts were used and does not
+control the page cache. It is useful for checking a mount, its
+correctness and its ordinary whole-object read time before any
+deeper analysis.</p>
+<p>The <a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">pNFS lab
+profiles</a> address the first three questions for one server and client
+pair. They count the RPCs each arm sends to each server, hold every case to
+byte-exact digests, and compare stock LMCache with held descriptors in
+alternating blocks. The sweep also records metadata-server operations and
+CPU per object read as the number of clients grows. They still run on one
+host or a small number of hosts, with sealed objects and no serving
+engine, so the fourth question remains open.</p>
+</section>
+
+<section id="references">
+<h2>7. References</h2>
+<ul class="papers">
+<li><span class="t"><a href="https://engineering.fb.com/2026/07/01/data-infrastructure/metas-ai-storage-blueprint-at-scale/">Meta's AI storage blueprint at scale</a></span><br>
+Sidharth Bajaj and Venkatraghavan Srinivasan, Engineering at Meta, July 1, 2026. Separates object-location metadata from data transfer and caches read plans in Meta's AI storage stack.</li>
+<li><span class="t"><a href="https://docs.lmcache.ai/mp/l2_storage/index.html">LMCache secondary (L2) KV storage</a></span><br>
+The multiprocess L2 architecture and plugin adapter interface.</li>
+<li><span class="t"><a href="https://www.rfc-editor.org/rfc/rfc8881">RFC 8881: NFS version 4 minor version 1</a></span><br>
+Defines pNFS, layouts, recalls and the operations a client uses to obtain them.</li>
+<li><span class="t"><a href="https://www.rfc-editor.org/rfc/rfc8435">RFC 8435: pNFS Flexible File Layout</a></span><br>
+A layout type that describes file data on separate NFS data servers.</li>
+<li><span class="t"><a href="https://datatracker.ietf.org/doc/draft-haynes-nfsv4-flexfiles-v2/">Flexible File Layout version 2 (Internet-Draft)</a></span><br>
+Work in progress on the next version of the Flexible File layout.</li>
+<li><span class="t"><a href="https://man7.org/linux/man-pages/man5/nfs.5.html">nfs(5)</a></span><br>
+Linux NFS client mount options, including protocol version and caching.</li>
+</ul>
+</section>
+<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2-reproduce.html">&larr; Reproduce</a><a href="lmcache-readplan-l2.html">Overview &rarr;</a></nav>
+<footer>
+<a href="lmcache-readplan-l2.html">ReadPlan overview</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html">KMesh</a>
+</footer>
+</main>
+</body>
+</html>

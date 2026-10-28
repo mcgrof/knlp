@@ -1,0 +1,25 @@
+# Client on this host for a pNFS lab running on another host.
+#
+# On the lab host first: select rpl2-pnfs-lab, set
+# CONFIG_KNLP_RPL2_PNFS_REMOTE_CLIENTS to this host's address, and run
+# `make rpl2-pnfs-setup rpl2-pnfs-up`.  Here, set the lab host's LAN
+# address and run plain make: it builds LMCache, routes the lab subnet
+# through the lab host, mounts the lab, runs the RPC fingerprint and the
+# paired screen over the real network and unmounts.  Use the same prefix
+# and subnet as the lab.
+#
+#   make RPL2P_ROOT=/disk/rpl2p RPL2_OUTPUT=$HOME/rpl2-pnfs-records
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_PNFS_REMOTE=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_PYTHON=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-28-feature-fs-native-held-fd"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="3e4b3839ce47655e2d0d33cad3f66d4bf920d767"
+CONFIG_KNLP_RPL2_PNFS_PREFIX="rpl2p"
+CONFIG_KNLP_RPL2_PNFS_NET="10.247.0"
+CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY=64
+CONFIG_KNLP_RPL2_PNFS_BLOCKS=3
+CONFIG_KNLP_RPL2_PNFS_REQUESTS=200
+CONFIG_KNLP_RPL2_PNFS_LAB_HOST=""
