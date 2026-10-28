@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: MIT
+# Weight-loading I/O characterization: what reaching the weights of an
+# open checkpoint costs at the storage device, measured with eBPF
+# tracers on real safetensors shards.
+#
+# Selecting one of the weight-io-* defconfigs sets these values. After
+# that, plain `make` runs the configured stages through
+# Makefile.weight_io. All symbols are namespaced CONFIG_KNLP_WEIGHT_IO_*.
+
+menu "Weight-loading I/O characterization"
+
+config KNLP_WEIGHT_IO
+	bool "Enable the weight-loading I/O characterization"
+	default n
+	help
+	  Set by defconfig-weight-io-inventory, defconfig-weight-io-controls
+	  and defconfig-weight-io-full. When set, plain `make` reads the
+	  shard headers of the configured checkpoints, downloads the
+	  control checkpoints, replays selected byte ranges of them on the
+	  local NVMe under the NVMe, syscall and page-fault tracers, and
+	  renders the result tables.
+
+if KNLP_WEIGHT_IO
+
+config KNLP_WEIGHT_IO_ROOT
+	string "Data root (models, inventory, runs)"
+	default "./results/weight-io"
+	help
+	  Bulk data lives here, outside Git: models/<org>__<name>/full and
+	  compact, stageA/ (pins, inventory, selection, projections), runs/
+	  (one directory per traced run) and the rendered tables. The
+	  device holding this directory is the one that is traced.
+
+config KNLP_WEIGHT_IO_REPOS
+	string "Checkpoints to inventory (org/name[@revision], space separated)"
+	default "Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ Qwen/Qwen3-Next-80B-A3B-Instruct deepseek-ai/DeepSeek-V3 moonshotai/Kimi-K2-Instruct meta-llama/Llama-3.1-405B"
+	help
+	  Every shard header of every repository is read by HTTP range
+	  request; no payload is downloaded for the inventory. A gated
+	  repository needs a Hugging Face token (HF_TOKEN or the token file
+	  in HF_HOME).
+
+config KNLP_WEIGHT_IO_CONTROL_REPOS
+	string "Checkpoints downloaded in full and replayed locally"
+	default "Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ"
+	help
+	  Whole shards of these repositories are downloaded and verified
+	  against the hub's LFS hashes (about 21 GB for the default three).
+	  They supply the dense BF16 layer, the smallest embedding rows and
+	  the INT4 AWQ layer of the replay matrix.
+
+config KNLP_WEIGHT_IO_FETCH_COMPACT
+	bool "Fetch the selected byte ranges of the other checkpoints"
+	default n
+	help
+	  Downloads only the selected units (layers, experts, rows) of the
+	  non-control repositories, hashed per range, so their projections
+	  rest on real bytes. About 50 GB for the default list.
+
+config KNLP_WEIGHT_IO_TRACER_REPO
+	string "Tracer repository (ebpf-syscall)"
+	default "https://github.com/SamsungDS/ebpf-syscall.git"
+
+config KNLP_WEIGHT_IO_TRACER_REF
+	string "Tracer git ref"
+	default "main"
+	help
+	  The NVMe tracepoint monitor, the syscall capture and the page
+	  fault tracer are built from this ref with clang, bpftool and
+	  libbpf. The syscall capture needs the joined-record version
+	  (schema syscall-capture-v2).
+
+config KNLP_WEIGHT_IO_TRACER_DIR
+	string "Existing tracer checkout with built binaries"
+	default ""
+	help
+	  When set, no clone or build happens; the directory must contain
+	  nvme_tp_monitor, syscall_monitor and mmap_readamp.
+
+config KNLP_WEIGHT_IO_DISK
+	string "Block device to trace (empty: derived from the data root)"
+	default ""
+	help
+	  The whole-disk name, for example nvme0n1. Left empty, the device
+	  and partition start are derived from the mount that holds the
+	  data root.
+
+config KNLP_WEIGHT_IO_GROUPS
+	string "Replay groups"
+	default "layers rows chunks awq"
+	help
+	  layers: first, middle and last decoder layer of every control
+	  under pread, mmap and O_DIRECT, cold and warm page cache.
+	  rows: single embedding rows of the smallest control.
+	  chunks: one dense layer as contiguous O_DIRECT chunks of 4 KiB to
+	  1 MiB at queue depths 1 to 32.
+	  awq: selected INT4 neuron slices, clustered and scattered.
+
+config KNLP_WEIGHT_IO_TRIALS
+	int "Trials per run"
+	default 5
+
+config KNLP_WEIGHT_IO_INTENT
+	bool "Record the reader's own file calls and page faults"
+	default y
+	help
+	  Runs syscall_monitor and mmap_readamp on every reader beside the
+	  NVMe tracer, so each run reports the bytes the reader asked for
+	  (observed intent) next to the bytes the device moved.
+
+config KNLP_WEIGHT_IO_IDLE_PROBE
+	bool "Probe the device's idle-exit latency"
+	default y
+	help
+	  One aligned 4 KiB O_DIRECT read after idle gaps from 0 to 2 s,
+	  which separates a power-state exit from the loaded read latency.
+
+config KNLP_WEIGHT_IO_GPU
+	bool "Consume real layers on the GPU"
+	default n
+	help
+	  Needs torch with a GPU and transformers. Loads the smallest
+	  control natively and decodes under the tracers, and streams one
+	  BF16 and one AWQ layer from the device through the GPU.
+
+config KNLP_WEIGHT_IO_GPU_LAYER
+	int "Decoder layer streamed through the GPU"
+	default 13
+
+config KNLP_WEIGHT_IO_PYTHON
+	string "Python interpreter for the GPU stage"
+	default "python3"
+	help
+	  An interpreter with torch, transformers and safetensors. The
+	  inventory, fetch and replay stages use the invoking python3.
+
+config KNLP_WEIGHT_IO_OWNER
+	string "Owner recorded in the artifact manifest"
+	default ""
+
+endif
+
+endmenu

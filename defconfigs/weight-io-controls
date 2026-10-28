@@ -1,0 +1,31 @@
+# Weight-loading I/O: the three control checkpoints replayed on the
+# local NVMe under the NVMe, syscall and page-fault tracers.
+#
+# Downloads Qwen3-0.6B, Qwen2.5-7B-Instruct and its official AWQ
+# checkpoint in full (about 21 GB, verified against the hub's LFS
+# hashes), builds the tracers, probes the device's idle-exit latency
+# and runs the replay matrix: dense layers under pread, mmap and
+# O_DIRECT, single embedding rows, the chunk and queue-depth sweep and
+# the INT4 neuron slices. Needs root for the tracers (sudo), a BTF
+# kernel, clang, bpftool and libbpf, and a data root on the NVMe to
+# characterize:
+#
+#   make defconfig-weight-io-controls
+#   make
+#
+# Results: CONFIG_KNLP_WEIGHT_IO_ROOT/{metrics.csv,RESULTS_TABLES.md}
+# and one directory per run under runs/.
+CONFIG_KNLP_WEIGHT_IO=y
+CONFIG_KNLP_WEIGHT_IO_ROOT="./results/weight-io"
+CONFIG_KNLP_WEIGHT_IO_REPOS="Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ"
+CONFIG_KNLP_WEIGHT_IO_CONTROL_REPOS="Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ"
+CONFIG_KNLP_WEIGHT_IO_FETCH_COMPACT=n
+CONFIG_KNLP_WEIGHT_IO_TRACER_REPO="https://github.com/SamsungDS/ebpf-syscall.git"
+CONFIG_KNLP_WEIGHT_IO_TRACER_REF="main"
+CONFIG_KNLP_WEIGHT_IO_TRACER_DIR=""
+CONFIG_KNLP_WEIGHT_IO_DISK=""
+CONFIG_KNLP_WEIGHT_IO_GROUPS="layers rows chunks awq"
+CONFIG_KNLP_WEIGHT_IO_TRIALS=5
+CONFIG_KNLP_WEIGHT_IO_INTENT=y
+CONFIG_KNLP_WEIGHT_IO_IDLE_PROBE=y
+CONFIG_KNLP_WEIGHT_IO_GPU=n

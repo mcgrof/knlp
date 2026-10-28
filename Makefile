@@ -44,6 +44,11 @@ include Makefile.mot
 # this overrides .DEFAULT_GOAL.
 include Makefile.kvio
 
+# Weight-loading I/O characterization (weight-io-inventory, -fetch,
+# -tracers, -matrix, -gpu, -report).  When CONFIG_KNLP_WEIGHT_IO=y this
+# overrides .DEFAULT_GOAL.
+include Makefile.weight_io
+
 # Storage-mediated prefill/decode ladder (pd-doctor, pd-run).  When
 # CONFIG_KNLP_REPRODUCE_PD=y this overrides .DEFAULT_GOAL.
 include Makefile.pd
@@ -78,7 +83,7 @@ MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
 	RESIDUAL_REPRODUCTION KNLP_CONTEXT_ARTIFACTS KNLP_REPRODUCE_DECODE \
 	KNLP_REPRODUCE_CARTRIDGES \
 	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
-	KNLP_REPRODUCE_KVIO \
+	KNLP_REPRODUCE_KVIO KNLP_WEIGHT_IO \
 	KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
 	KNLP_REPRODUCE_KMESH_TRACE KNLP_REPRODUCE_KMESH_RESIDENCY \
 	KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \

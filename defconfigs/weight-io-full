@@ -1,0 +1,28 @@
+# Weight-loading I/O: the complete characterization.
+#
+# Everything in weight-io-controls, plus the selected byte ranges of
+# the large checkpoints (about 50 GB, hashed per range, so the
+# projections rest on real bytes) and the GPU stage: the native loader
+# of the smallest control under the tracers, decode as the no-read
+# control, and one BF16 and one AWQ layer streamed from the device
+# through the GPU. The GPU stage needs an interpreter with torch,
+# transformers and safetensors; set CONFIG_KNLP_WEIGHT_IO_PYTHON to it.
+#
+#   make defconfig-weight-io-full
+#   make
+CONFIG_KNLP_WEIGHT_IO=y
+CONFIG_KNLP_WEIGHT_IO_ROOT="./results/weight-io"
+CONFIG_KNLP_WEIGHT_IO_REPOS="Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ Qwen/Qwen3-Next-80B-A3B-Instruct deepseek-ai/DeepSeek-V3 moonshotai/Kimi-K2-Instruct meta-llama/Llama-3.1-405B"
+CONFIG_KNLP_WEIGHT_IO_CONTROL_REPOS="Qwen/Qwen3-0.6B Qwen/Qwen2.5-7B-Instruct Qwen/Qwen2.5-7B-Instruct-AWQ"
+CONFIG_KNLP_WEIGHT_IO_FETCH_COMPACT=y
+CONFIG_KNLP_WEIGHT_IO_TRACER_REPO="https://github.com/SamsungDS/ebpf-syscall.git"
+CONFIG_KNLP_WEIGHT_IO_TRACER_REF="main"
+CONFIG_KNLP_WEIGHT_IO_TRACER_DIR=""
+CONFIG_KNLP_WEIGHT_IO_DISK=""
+CONFIG_KNLP_WEIGHT_IO_GROUPS="layers rows chunks awq"
+CONFIG_KNLP_WEIGHT_IO_TRIALS=5
+CONFIG_KNLP_WEIGHT_IO_INTENT=y
+CONFIG_KNLP_WEIGHT_IO_IDLE_PROBE=y
+CONFIG_KNLP_WEIGHT_IO_GPU=y
+CONFIG_KNLP_WEIGHT_IO_GPU_LAYER=13
+CONFIG_KNLP_WEIGHT_IO_PYTHON="python3"

@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the weight-loading I/O characterization.
+#
+#   make defconfig-weight-io-inventory   shard headers and projections only
+#   make defconfig-weight-io-controls    three controls replayed on the NVMe
+#   make defconfig-weight-io-full        plus compact ranges and the GPU stage
+#
+# writes .config and enables CONFIG_KNLP_WEIGHT_IO. Plain `make` then runs
+# weight-io-doctor -> weight-io-inventory -> weight-io-fetch ->
+# weight-io-tracers -> weight-io-matrix -> weight-io-gpu -> weight-io-report;
+# stages that the configuration leaves out print what they skip. Every
+# stage is resumable: a run with a summary is not repeated.
+
+WEIGHT_IO_ORCH := python3 -m tools.reproduce.weight_io.run
+
+.PHONY: weight-io weight-io-doctor weight-io-plan weight-io-inventory \
+        weight-io-fetch weight-io-tracers weight-io-matrix weight-io-gpu \
+        weight-io-report weight-io-clean
+
+ifeq ($(CONFIG_KNLP_WEIGHT_IO),y)
+.DEFAULT_GOAL := weight-io
+endif
+
+weight-io: weight-io-doctor weight-io-inventory weight-io-fetch \
+           weight-io-tracers weight-io-matrix weight-io-gpu weight-io-report
+
+weight-io-doctor:
+	@$(WEIGHT_IO_ORCH) doctor --config .config
+
+weight-io-plan:
+	@$(WEIGHT_IO_ORCH) plan --config .config
+
+weight-io-inventory:
+	@$(WEIGHT_IO_ORCH) inventory --config .config
+
+weight-io-fetch:
+	@$(WEIGHT_IO_ORCH) fetch --config .config
+
+weight-io-tracers:
+	@$(WEIGHT_IO_ORCH) tracers --config .config
+
+weight-io-matrix:
+	@$(WEIGHT_IO_ORCH) matrix --config .config
+
+weight-io-gpu:
+	@$(WEIGHT_IO_ORCH) gpu --config .config
+
+weight-io-report:
+	@$(WEIGHT_IO_ORCH) report --config .config
+
+weight-io-clean:
+	@$(WEIGHT_IO_ORCH) clean --config .config
