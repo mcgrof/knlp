@@ -156,23 +156,51 @@ def main():
             f"| {proj} | {n[1:]} | {pattern} | {f(r['W_required']):,.0f} | {pu} | {r['arm']} | {f(r['F_bytes_med']):,.0f} | {f(r['D_target_bytes_med']):,.0f} | {f(r['D_target_cmds_med']):,.0f} | {f(r['D_over_W_med']):,.1f} | {f(r['elapsed_ms_med']):,.1f} | {f(r['lat_p50_us_med']):,.0f} | {r['n_trials']} |"
         )
 
-    intent = [
-        r
-        for r in med
-        if r["group"] == "intent" and r["F_syscall_read_bytes_med"] not in ("", None)
-    ]
+    intent = [r for r in med if r["F_syscall_read_calls_med"] not in ("", None)]
     if intent:
         print(
-            "\n### Observed intent (syscall and fault tracers on the reader, per trial window; faults per run)\n"
+            "\n### Observed intent (syscall and fault tracers on the reader; calls and bytes per trial window, faults per run)\n"
         )
         print(
-            "| Run | Cache | W (MiB) | F declared (MiB) | Read calls | Read bytes (MiB) | Mapped (MiB) | Demand faults (MiB, run) | Page-cache fill (MiB, run) | D (MiB) | Commands | n |"
+            "| Run | Window | W (MiB) | F declared (MiB) | Read calls | Read bytes (MiB) | Mapped (MiB) | Demand faults (MiB, run) | Page-cache fill (MiB, run) | D (MiB) | Commands | n |"
         )
         print("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for r in sorted(intent, key=lambda r: r["run"]):
+            summ = json.loads((root / "runs" / r["run"] / "summary.json").read_text())
+            load = [t for t in summ["trials"] if t["trial"] == -2]
+            if load:
+                # a native run: the load window is the measurement, the
+                # decode windows are the no-read control
+                t = load[0]
+                vals = dict(
+                    window="load",
+                    F=t["F_bytes"],
+                    calls=t.get("F_syscall_read_calls", 0),
+                    rb=t.get("F_syscall_read_bytes", 0),
+                    mm=t.get("F_mmap_bytes", 0),
+                    D=t["D_target_bytes"],
+                    cmds=t["D_target_cmds"],
+                    n=1,
+                )
+            else:
+                vals = dict(
+                    window=r["cache"],
+                    F=f(r["F_bytes_med"]) or 0,
+                    calls=f(r["F_syscall_read_calls_med"]) or 0,
+                    rb=f(r["F_syscall_read_bytes_med"]) or 0,
+                    mm=f(r["F_mmap_bytes_med"]) or 0,
+                    D=f(r["D_target_bytes_med"]) or 0,
+                    cmds=f(r["D_target_cmds_med"]) or 0,
+                    n=r["n_trials"],
+                )
             print(
-                f"| {r['run'][7:]} | {r['cache']} | {mib(f(r['W_required']) or 0)} | {mib(f(r['F_bytes_med']) or 0)} | {f(r['F_syscall_read_calls_med']) or 0:,.0f} | {mib(f(r['F_syscall_read_bytes_med']) or 0)} | {mib(f(r['F_mmap_bytes_med']) or 0)} | {mib(f(r['fault_bytes_run']) or 0)} | {mib(f(r['pgcache_fill_bytes_run']) or 0)} | {mib(f(r['D_target_bytes_med']) or 0)} | {f(r['D_target_cmds_med']) or 0:,.0f} | {r['n_trials']} |"
+                f"| {r['run']} | {vals['window']} | {mib(f(r['W_required']) or 0)} | {mib(vals['F'])} | {vals['calls']:,.0f} | {mib(vals['rb'])} | {mib(vals['mm'])} | {mib(f(r['fault_bytes_run']) or 0)} | {mib(f(r['pgcache_fill_bytes_run']) or 0)} | {mib(vals['D'])} | {vals['cmds']:,.0f} | {vals['n']} |"
             )
+            if load:
+                dec = [t for t in summ["trials"] if t["trial"] >= 0]
+                print(
+                    f"| {r['run']} | decode x{len(dec)} | - | 0.0 | {sum(t.get('F_syscall_read_calls', 0) for t in dec):,.0f} | {mib(sum(t.get('F_syscall_read_bytes', 0) for t in dec))} | {mib(sum(t.get('F_mmap_bytes', 0) for t in dec))} | - | - | {mib(sum(t['D_target_bytes'] for t in dec))} | {sum(t['D_target_cmds'] for t in dec):,.0f} | {len(dec)} |"
+                )
 
     gpu = [r for r in med if r["group"] == "gpu"]
     if gpu:
