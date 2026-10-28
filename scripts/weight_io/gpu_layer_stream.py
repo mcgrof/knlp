@@ -112,10 +112,12 @@ def awq_dequant(
 ) -> torch.Tensor:
     """Reference AutoAWQ GEMM unpack: qweight [K, N/8] int32 -> [K, N] fp16.
 
-    Nibble order inside each int32 is [0,2,4,6,1,3,5,7]; groups span K.
+    AutoAWQ packs column 8w+j of a word into nibble position
+    [0,2,4,6,1,3,5,7][j]; unpacking therefore reads column j from nibble
+    [0,4,1,5,2,6,3,7][j] (the inverse permutation). Groups span K.
     """
-    order = torch.tensor([0, 2, 4, 6, 1, 3, 5, 7], device=qweight.device)
-    shifts = (order * 4).to(torch.int32)
+    nibble_of_column = torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], device=qweight.device)
+    shifts = (nibble_of_column * 4).to(torch.int32)
     K, N8 = qweight.shape
     q = (qweight.unsqueeze(-1) >> shifts) & 0xF  # [K, N/8, 8]
     q = q.reshape(K, N8 * 8)
