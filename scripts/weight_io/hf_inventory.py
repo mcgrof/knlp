@@ -545,7 +545,11 @@ def cmd_select(args):
                 continue
             if r["kind"] in ("embedding", "lm_head") and len(r["shape"]) == 2:
                 rowsz = r["nbytes"] // r["shape"][0]
-                for tid in args.token_ids:
+                n_rows = r["shape"][0]
+                for want in args.token_ids:
+                    # a token id past this vocabulary is clamped to the last
+                    # row; the unit name carries the row actually selected
+                    tid = min(want, n_rows - 1)
                     sel.append(
                         {
                             **r,
@@ -556,7 +560,7 @@ def cmd_select(args):
                             "start_mod_2m": (r["abs_start"] + tid * rowsz) % (2 << 20),
                             "unit": f"{r['kind']}_row{tid}",
                             "class": "rows",
-                            "position": "row",
+                            "position": "row" if tid == want else "row(clamped)",
                             "sub_range": True,
                         }
                     )
