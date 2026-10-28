@@ -138,14 +138,14 @@ def main():
             o = stack.pop()
             if not isinstance(o, dict):
                 continue
-            for key in (
+            for ck in (
                 "num_experts_per_tok",
                 "num_experts_per_token",
                 "n_experts_per_tok",
                 "moe_topk",
             ):
-                if key in o:
-                    topk = o[key]
+                if ck in o:
+                    topk = o[ck]
                     break
             stack.extend(v for v in o.values() if isinstance(v, dict))
         names = sorted(
