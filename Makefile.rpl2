@@ -3,6 +3,9 @@
 #
 #   make defconfig-rpl2-smoke       CPU-only unit tests
 #   make defconfig-rpl2-mounted-fs  read baseline on an existing mount
+#   make defconfig-rpl2-pnfs-lab    pNFS lab on one host: stock vs held
+#   make defconfig-rpl2-pnfs-sweep  pNFS lab: many clients, shared objects
+#   make defconfig-rpl2-pnfs-remote client for a lab on another host
 #
 # Plain `make` then runs the selected profile.  The mounted-filesystem
 # profile needs two directories outside the source tree, given in the
@@ -18,7 +21,26 @@ RPL2_RECORDS ?=
 RPL2_ARGS = --config $(CONFIG_FILE) --target "$(RPL2_TARGET)" \
 	--output "$(RPL2_OUTPUT)"
 
+# pNFS lab.  Root-only steps run through sudo -E with the lab
+# parameters passed explicitly.
+unq = $(subst ",,$(1))
+RPL2P_ROOT ?= $(call unq,$(CONFIG_KNLP_RPL2_PNFS_ROOT))
+RPL2_PNFS_OUT ?= $(or $(RPL2_OUTPUT),$(call unq,$(CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR)))
+RPL2_PNFS_DIR := $(CURDIR)/tools/reproduce/rpl2/pnfs
+RPL2_PNFS_STAMP := $(shell date -u +%Y%m%dT%H%M%SZ)
+RPL2_PNFS_ENV = RPL2P_ROOT="$(RPL2P_ROOT)" RPL2P_OWNER="$$(id -un)" \
+	RPL2P_PREFIX="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_PREFIX))" \
+	RPL2P_NET="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_NET))" \
+	RPL2P_REMOTE_CLIENTS="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_REMOTE_CLIENTS))"
+RPL2_PNFS_SUDO = sudo -E env $(RPL2_PNFS_ENV)
+RPL2_PNFS_BIN = $(RPL2P_ROOT)/bin
+RPL2_PNFS_CAP = $(CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY)
+
 .PHONY: rpl2 rpl2-help rpl2-doctor rpl2-smoke rpl2-run rpl2-report
+.PHONY: rpl2-pnfs-check rpl2-pnfs-setup rpl2-pnfs-smoke rpl2-pnfs-up \
+	rpl2-pnfs-down rpl2-pnfs-status rpl2-pnfs-fingerprint rpl2-pnfs-screen \
+	rpl2-pnfs-sweep rpl2-pnfs-remote-up rpl2-pnfs-remote-down \
+	rpl2-pnfs-remote-fingerprint rpl2-pnfs-remote-screen rpl2-pnfs-test
 
 rpl2-help:
 	@echo "KV-offload read path (tools/reproduce/rpl2):"
@@ -29,6 +51,19 @@ rpl2-help:
 	@echo "  make rpl2-run      write or reuse objects, time verified reads"
 	@echo "  make rpl2-report   validate the latest records and summarize them"
 	@echo "Variables: RPL2_TARGET=<dir> RPL2_OUTPUT=<dir> RPL2_RECORDS=<file>"
+	@echo "pNFS lab (tools/reproduce/rpl2/pnfs, root via sudo):"
+	@echo "  make defconfig-rpl2-pnfs-lab     one host: fingerprint and paired screen"
+	@echo "  make defconfig-rpl2-pnfs-sweep   one host: many clients on shared objects"
+	@echo "  make defconfig-rpl2-pnfs-remote  this host as client of a lab elsewhere"
+	@echo "  make rpl2-pnfs-setup         build Lattice, RonDB, ntirpc and LMCache (no root)"
+	@echo "  make rpl2-pnfs-smoke         one-minute functional receipt, PASS or FAIL"
+	@echo "  make rpl2-pnfs-up / -down    lab up with sealed fixtures / teardown with checks"
+	@echo "  make rpl2-pnfs-fingerprint   RPCs per request for stock and held"
+	@echo "  make rpl2-pnfs-screen        paired blocks, stock against held"
+	@echo "  make rpl2-pnfs-sweep         many-client cells"
+	@echo "  make rpl2-pnfs-remote-up / -fingerprint / -screen / -down"
+	@echo "  make rpl2-pnfs-test          unit tests of the summaries (no root)"
+	@echo "Variables: RPL2P_ROOT=<dir> RPL2_OUTPUT=<dir>"
 
 rpl2-doctor:
 	@$(RPL2_RUN) doctor $(RPL2_ARGS)
@@ -42,7 +77,92 @@ rpl2-run:
 rpl2-report:
 	@$(RPL2_RUN) report $(RPL2_ARGS) $(if $(RPL2_RECORDS),--records "$(RPL2_RECORDS)")
 
-ifeq ($(CONFIG_KNLP_RPL2_MOUNTED_FS),y)
+rpl2-pnfs-check:
+	@test -n "$(RPL2P_ROOT)" || { echo "set RPL2P_ROOT or CONFIG_KNLP_RPL2_PNFS_ROOT" >&2; exit 1; }
+	@test -n "$(RPL2_PNFS_OUT)" || { echo "set RPL2_OUTPUT or CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR" >&2; exit 1; }
+	@case "$$(realpath -m $(RPL2P_ROOT))/" in "$(CURDIR)"/*) echo "RPL2P_ROOT must lie outside the source tree" >&2; exit 1;; esac
+	@case "$$(realpath -m $(RPL2_PNFS_OUT))/" in "$(CURDIR)"/*) echo "RPL2_OUTPUT must lie outside the source tree" >&2; exit 1;; esac
+	@mkdir -p "$(RPL2P_ROOT)" "$(RPL2_PNFS_OUT)"
+
+rpl2-pnfs-setup: rpl2-pnfs-check
+	@env RPL2P_ROOT="$(RPL2P_ROOT)" RPL2P_PYTHON="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_PYTHON))" \
+		RPL2P_CLIENT_ONLY=$(if $(filter y,$(CONFIG_KNLP_RPL2_PNFS_REMOTE)),1,0) \
+		RPL2P_LMCACHE_REPO="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO))" \
+		RPL2P_LMCACHE_REF="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF))" \
+		RPL2P_LMCACHE_COMMIT="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT))" \
+		$(RPL2_PNFS_DIR)/setup.sh
+
+rpl2-pnfs-smoke: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/smoke.sh $(RPL2_PNFS_OUT)/smoke-$(RPL2_PNFS_STAMP)
+
+rpl2-pnfs-up: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) sh -c 'mkdir -p "$$RPL2P_ROOT/run" && echo "admin_allowed_hosts = $${RPL2P_NET}.10,127.0.0.1" >"$$RPL2P_ROOT/run/mds-extra.conf"'
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh up $(CONFIG_KNLP_RPL2_PNFS_DATA_SERVERS) $(RPL2P_ROOT)/run/mds-extra.conf
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/fixture.sh
+	@if [ -n "$(call unq,$(CONFIG_KNLP_RPL2_PNFS_REMOTE_CLIENTS))" ]; then $(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh remote-up; fi
+
+rpl2-pnfs-down: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh down
+
+rpl2-pnfs-status: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh status
+
+rpl2-pnfs-fingerprint: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/fingerprint.sh $(RPL2_PNFS_OUT)/fingerprint-$(RPL2_PNFS_STAMP) cli $(RPL2_PNFS_CAP)
+
+rpl2-pnfs-screen: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/screen.sh $(RPL2_PNFS_OUT)/screen-$(RPL2_PNFS_STAMP) cli \
+		$(CONFIG_KNLP_RPL2_PNFS_BLOCKS) $(CONFIG_KNLP_RPL2_PNFS_REQUESTS) $(RPL2_PNFS_CAP)
+	@python3 $(RPL2_PNFS_DIR)/summarize.py screen $(RPL2_PNFS_OUT)/screen-$(RPL2_PNFS_STAMP)
+
+rpl2-pnfs-sweep: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh clients-up \
+		$$(echo $(call unq,$(CONFIG_KNLP_RPL2_PNFS_CLIENTS)) | tr ' ' '\n' | sort -n | tail -1)
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/sweep.sh $(RPL2_PNFS_OUT)/sweep-$(RPL2_PNFS_STAMP) \
+		$(call unq,$(CONFIG_KNLP_RPL2_PNFS_SWEEP_FIXTURE)) "$(call unq,$(CONFIG_KNLP_RPL2_PNFS_CLIENTS))" \
+		$(CONFIG_KNLP_RPL2_PNFS_SECONDS) $(RPL2_PNFS_CAP)
+
+rpl2-pnfs-remote-up: rpl2-pnfs-check
+	@test -n "$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LAB_HOST))" || { echo "set CONFIG_KNLP_RPL2_PNFS_LAB_HOST" >&2; exit 1; }
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/remote-client.sh up $(call unq,$(CONFIG_KNLP_RPL2_PNFS_LAB_HOST))
+
+rpl2-pnfs-remote-down: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/remote-client.sh down
+
+rpl2-pnfs-remote-fingerprint: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/fingerprint.sh $(RPL2_PNFS_OUT)/fingerprint-$(RPL2_PNFS_STAMP) remote $(RPL2_PNFS_CAP)
+
+rpl2-pnfs-remote-screen: rpl2-pnfs-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/screen.sh $(RPL2_PNFS_OUT)/screen-$(RPL2_PNFS_STAMP) remote \
+		$(CONFIG_KNLP_RPL2_PNFS_BLOCKS) $(CONFIG_KNLP_RPL2_PNFS_REQUESTS) $(RPL2_PNFS_CAP)
+	@python3 $(RPL2_PNFS_DIR)/summarize.py screen $(RPL2_PNFS_OUT)/screen-$(RPL2_PNFS_STAMP)
+
+rpl2-pnfs-test:
+	@$(RPL2_PY) -m unittest discover -s tools/reproduce/rpl2/pnfs/tests -t . -v
+
+ifeq ($(CONFIG_KNLP_RPL2_PNFS_LAB),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-pnfs-setup
+	@$(MAKE) --no-print-directory rpl2-pnfs-smoke
+	@$(MAKE) --no-print-directory rpl2-pnfs-up
+	@$(MAKE) --no-print-directory rpl2-pnfs-fingerprint || { $(MAKE) --no-print-directory rpl2-pnfs-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-screen || { $(MAKE) --no-print-directory rpl2-pnfs-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-down
+else ifeq ($(CONFIG_KNLP_RPL2_PNFS_SWEEP),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-pnfs-setup
+	@$(MAKE) --no-print-directory rpl2-pnfs-smoke
+	@$(MAKE) --no-print-directory rpl2-pnfs-up
+	@$(MAKE) --no-print-directory rpl2-pnfs-sweep || { $(MAKE) --no-print-directory rpl2-pnfs-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-down
+else ifeq ($(CONFIG_KNLP_RPL2_PNFS_REMOTE),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-pnfs-setup
+	@$(MAKE) --no-print-directory rpl2-pnfs-remote-up
+	@$(MAKE) --no-print-directory rpl2-pnfs-remote-fingerprint || { $(MAKE) --no-print-directory rpl2-pnfs-remote-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-remote-screen || { $(MAKE) --no-print-directory rpl2-pnfs-remote-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-remote-down
+else ifeq ($(CONFIG_KNLP_RPL2_MOUNTED_FS),y)
 rpl2:
 	@$(MAKE) --no-print-directory rpl2-doctor
 	@$(MAKE) --no-print-directory rpl2-run

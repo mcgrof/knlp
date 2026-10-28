@@ -1,0 +1,28 @@
+# pNFS lab on one host: stock LMCache against held descriptors.
+#
+# Builds the Lattice pNFS metadata server with its RonDB catalogue, an
+# NFSv3 data server and a kernel NFSv4.2 client in private network
+# namespaces, and LMCache with the native file connector's
+# held_fd_capacity option.  Then it runs a one-minute functional smoke
+# test, an RPC fingerprint of both arms and a paired screen of three
+# alternating blocks, and tears the lab down.  Root steps use sudo.
+#
+#   make RPL2P_ROOT=/disk/rpl2p RPL2_OUTPUT=$HOME/rpl2-pnfs-records
+#
+# Both directories must lie outside the source tree, and RPL2P_ROOT on a
+# disk filesystem.
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_PNFS_LAB=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_PYTHON=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-28-feature-fs-native-held-fd"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="3e4b3839ce47655e2d0d33cad3f66d4bf920d767"
+CONFIG_KNLP_RPL2_PNFS_PREFIX="rpl2p"
+CONFIG_KNLP_RPL2_PNFS_NET="10.247.0"
+CONFIG_KNLP_RPL2_PNFS_DATA_SERVERS=1
+CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY=64
+CONFIG_KNLP_RPL2_PNFS_BLOCKS=3
+CONFIG_KNLP_RPL2_PNFS_REQUESTS=200
+CONFIG_KNLP_RPL2_PNFS_REMOTE_CLIENTS=""
