@@ -61,6 +61,8 @@ Env:
                 The eval at a step precedes that step's save, so a run
                 that ends at STEPS gets its final eval only when
                 VAL_EVERY divides STEPS.
+  LOAD_BF16     1 loads the model weights directly in bf16 instead of the
+                library's fp32-then-cast (same weights; fits a 24 GiB GPU)
   OUT_DIR       where to write the cartridge (default /root/cart_out)
 
 The paper-regime baseline (patient_02 = 0.65 accuracy, RUNS=3) was trained
@@ -197,6 +199,14 @@ def _make_loss_evals():
 
 _loss_evals, _loss_eval_every = _make_loss_evals()
 
+# The library loads the checkpoint in fp32 on the GPU and casts to bf16
+# afterwards, which needs 32 GiB for Qwen3-8B before the cast and fails
+# on a 24 GiB card. LOAD_BF16=1 loads the stored bf16 weights directly;
+# the weights after the library's cast are identical either way.
+_load_kwargs = (
+    {"torch_dtype": torch.bfloat16} if os.environ.get("LOAD_BF16") == "1" else {}
+)
+
 
 def _make_scheduler():
     # "none" (or a non-positive warmup, which would divide by zero in the
@@ -323,6 +333,7 @@ config = TrainConfig(
     model=HFModelConfig(
         pretrained_model_name_or_path=MODEL_NAME,
         model_cls=FlexQwen3ForCausalLM,
+        load_kwargs=_load_kwargs,
     ),
     kv_cache_initializer=_initializer,
     lr=LR,

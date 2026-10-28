@@ -173,7 +173,11 @@ def main():
         f"{len(dataset)} packed sequences of {SEQ_LEN}",
         flush=True,
     )
-    model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
+    model = (
+        FlexQwen3ForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16)
+        .to(DEVICE)
+        .to(torch.bfloat16)
+    )
     model.eval()
     attn = AttnConfig(
         n_layers=model.config.num_hidden_layers,
