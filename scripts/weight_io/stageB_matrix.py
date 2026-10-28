@@ -265,7 +265,7 @@ def main():
                 "--file",
                 doc["file"],
                 "--ranges",
-                json.dumps(doc["ranges"]),
+                rargs[3],
             ] + rargs[4:]
         cmd = [
             py,

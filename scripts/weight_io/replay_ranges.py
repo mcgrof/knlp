@@ -209,7 +209,12 @@ def arm_direct(fd: int, ranges, align: int, qd: int):
 
 def load_ranges(args) -> list[tuple[int, int]]:
     if args.ranges:
-        return [tuple(x) for x in json.loads(args.ranges)]
+        if args.ranges.startswith("@"):
+            doc = json.loads(Path(args.ranges[1:]).read_text())
+            doc = doc["ranges"] if isinstance(doc, dict) else doc
+        else:
+            doc = json.loads(args.ranges)
+        return [tuple(x) for x in doc]
     rows = []
     with open(args.selection) as f:
         for line in f:
