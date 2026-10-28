@@ -209,6 +209,11 @@ def main():
         help="background interval measured before the replay",
     )
     ap.add_argument(
+        "--child",
+        default="replay_ranges.py",
+        help="script in this directory to run under the tracer; it must write the window JSON to --out",
+    )
+    ap.add_argument(
         "replay_args",
         nargs=argparse.REMAINDER,
         help="-- then replay_ranges.py arguments (without --out)",
@@ -228,7 +233,7 @@ def main():
     rc = subprocess.run(
         [
             sys.executable,
-            str(here / "replay_ranges.py"),
+            str(here / args.child),
             *rargs,
             "--out",
             str(replay_out),

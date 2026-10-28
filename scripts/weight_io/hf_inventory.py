@@ -455,6 +455,21 @@ def cmd_classify(args):
 # ----------------------------------------------------------------------
 
 
+def _fused_expert_count(r: dict) -> int:
+    """Return the expert count when a tensor stacks all routed experts.
+
+    Some checkpoints store `mlp.experts.gate_up_proj` as one 3-D tensor
+    whose leading axis is the expert index, instead of one tensor per
+    expert. Treat any 3-D tensor whose role names experts without an
+    index as fused; the leading dimension is the expert count.
+    """
+    if r.get("expert") is not None:
+        return 0
+    if "experts" in r["role"] and len(r["shape"]) == 3:
+        return int(r["shape"][0])
+    return 0
+
+
 def cmd_select(args):
     rows = load_inventory(args.inventory)
     sigs = layer_signatures(rows)
@@ -469,15 +484,59 @@ def cmd_select(args):
             h = hashlib.sha256(json.dumps(sigs[k][0]).encode()).hexdigest()[:10]
             classes.setdefault(h, []).append(k[1])
         for h, layers in classes.items():
-            picks = sorted({layers[0], layers[len(layers) // 2], layers[-1]})
-            for li in picks:
-                pos = (
-                    "first"
-                    if li == layers[0]
-                    else ("last" if li == layers[-1] else "middle")
-                )
+
+            def single_shard(li):
+                return len({r["file"] for r in by_layer[(repo, li)]}) == 1
+
+            def nearest_single(li):
+                # a layer that spans two shards cannot be replayed from one
+                # file; step outward within the class to the nearest one
+                if single_shard(li):
+                    return li, False
+                for d in range(1, len(layers)):
+                    for cand in (li - d, li + d):
+                        if cand in layers and single_shard(cand):
+                            return cand, True
+                return li, False
+
+            picks = {}
+            for li, pos in (
+                (layers[0], "first"),
+                (layers[len(layers) // 2], "middle"),
+                (layers[-1], "last"),
+            ):
+                adj, moved = nearest_single(li)
+                picks.setdefault(adj, pos + ("(adjusted)" if moved else ""))
+            for li, pos in sorted(picks.items()):
                 for r in by_layer[(repo, li)]:
                     if r["expert"] is not None and r["expert"] not in args.experts:
+                        continue
+                    fused = _fused_expert_count(r)
+                    if fused:
+                        # one 3-D tensor holds every expert; select contiguous
+                        # per-expert slabs along the leading axis
+                        slab = r["nbytes"] // fused
+                        for e in args.experts:
+                            if e >= fused:
+                                continue
+                            a0 = r["abs_start"] + e * slab
+                            sel.append(
+                                {
+                                    **r,
+                                    "abs_start": a0,
+                                    "abs_end": a0 + slab,
+                                    "nbytes": slab,
+                                    "start_mod_4k": a0 % 4096,
+                                    "start_mod_2m": a0 % (2 << 20),
+                                    "expert": e,
+                                    "kind": "routed_expert",
+                                    "fused_experts": fused,
+                                    "sub_range": True,
+                                    "unit": f"layer{li}",
+                                    "class": h,
+                                    "position": pos,
+                                }
+                            )
                         continue
                     sel.append({**r, "unit": f"layer{li}", "class": h, "position": pos})
         # embedding and head: whole tensors are large; select a few rows instead
