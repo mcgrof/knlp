@@ -132,14 +132,22 @@ def main():
         cls = classes[s["repo"]]["classes"][s["class"]]
         ne = cls["n_experts"] or fused_by.get(key, 0)
         cfg = pins.get(s["repo"], {}).get("config.json", {})
-        topk = (
-            cfg.get("num_experts_per_tok")
-            or cfg.get("n_experts_per_tok")
-            or cfg.get("moe_topk")
-            or (cfg.get("text_config") or {}).get("num_experts_per_tok")
-            or (cfg.get("text_config") or {}).get("moe_topk")
-            or ""
-        )
+        topk = ""
+        stack = [cfg]
+        while stack and topk == "":
+            o = stack.pop()
+            if not isinstance(o, dict):
+                continue
+            for key in (
+                "num_experts_per_tok",
+                "num_experts_per_token",
+                "n_experts_per_tok",
+                "moe_topk",
+            ):
+                if key in o:
+                    topk = o[key]
+                    break
+            stack.extend(v for v in o.values() if isinstance(v, dict))
         names = sorted(
             {
                 (
