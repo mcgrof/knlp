@@ -927,7 +927,7 @@ def cmd_cas_panel(args: argparse.Namespace) -> None:
         seconds = time.perf_counter() - t0
         E_rows = Path(out / f"{arm}_rows.jsonl")
         D.write_jsonl(E_rows, rows)
-        summary = LH.summarize(rows)
+        summary = LH.summarize(rows, args.max_completion)
         summary.update(extra)
         summary["seconds"] = seconds
         summary["batch"] = batch

@@ -271,7 +271,11 @@ def answer_panel(
     return rows
 
 
-def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(
+    rows: list[dict[str, Any]], max_completion: int = DECODER["max_completion"]
+) -> dict[str, Any]:
+    """Per-run accuracy, tag and cap counts, and the decoder settings the
+    rows were produced with; ``max_completion`` is the cap actually used."""
     import statistics
 
     runs = sorted({r["run"] for r in rows})
@@ -294,5 +298,5 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "per_run_acc": accs,
         "per_run_counts": per_run,
         "questions": len({r["question_id"] for r in rows}),
-        "decoder": dict(DECODER),
+        "decoder": {**DECODER, "max_completion": max_completion},
     }
