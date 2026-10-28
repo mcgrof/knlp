@@ -226,7 +226,7 @@ make memorilla-import MEMORILLA_PYTHON=/path/to/python
 # Select artifact mode "attach" in menuconfig after import.
 make menuconfig
 make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
-<p>Use the mapped environment lock and a fresh configured work root, or prepare the exact dependency revisions in an existing root. Import verifies and publishes the collection set once; attach uses its pinned receipt. Select <code>CONFIG_KNLP_MEM_ARTIFACT_VERIFICATION="on-map"</code> for strict mapping validation. The original-author preset and the earlier arena controls remain available. The model, data, scoring and full-collection reader semantics remain unchanged.</p>
+<p>These commands run released-checkpoint inference and stress, not a CPU-only replay of the preparation table. That comparison times complete collator inputs separately from the reader and decoder. Use the mapped environment lock and a fresh configured work root, or prepare the exact dependency revisions in an existing root. Import verifies and publishes the collection set once; attach uses its pinned receipt. Select <code>CONFIG_KNLP_MEM_ARTIFACT_VERIFICATION="on-map"</code> for strict mapping validation. The original-author preset and the earlier arena controls remain available. The model, data, scoring and full-collection reader semantics remain unchanged.</p>
 </section>
 <section id="sources">
 <div class="eyebrow">13 / Primary sources</div><h2>Read the methods and the implementation.</h2>
