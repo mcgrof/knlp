@@ -226,27 +226,25 @@ def main():
                             ],
                             check=True,
                         )
-                    for arm in ("pread", "direct"):
+                    for arm in ("pread", "direct", "direct-merged"):
                         rid = f"awq/{proj}-n{n}-{pattern}/{arm}-cold"
-                        runs.append(
-                            (
-                                rid,
-                                [
-                                    "--file",
-                                    "@" + str(rj),
-                                    "--ranges",
-                                    "@" + str(rj),
-                                    "--arm",
-                                    arm,
-                                    "--cache",
-                                    "cold",
-                                    "--trials",
-                                    str(max(3, args.trials - 2)),
-                                    "--label",
-                                    rid,
-                                ],
-                            )
-                        )
+                        rargs = [
+                            "--file",
+                            "@" + str(rj),
+                            "--ranges",
+                            "@" + str(rj),
+                            "--arm",
+                            arm.split("-")[0],
+                            "--cache",
+                            "cold",
+                            "--trials",
+                            str(max(3, args.trials - 2)),
+                            "--label",
+                            rid,
+                        ]
+                        if arm == "direct-merged":
+                            rargs.append("--merge")
+                        runs.append((rid, rargs))
 
     rng = random.Random(args.seed)
     rng.shuffle(runs)

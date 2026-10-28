@@ -76,7 +76,7 @@ def rows_for(summary_path: Path, root: Path):
                 "group": group,
                 "repo": r.get("repo"),
                 "unit": r.get("unit"),
-                "arm": r.get("arm"),
+                "arm": r.get("arm") + ("-merged" if replay.get("merge") else ""),
                 "cache": r.get("cache"),
                 "qd": r.get("qd"),
                 "chunk": r.get("chunk"),

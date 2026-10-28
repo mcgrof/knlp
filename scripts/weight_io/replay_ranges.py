@@ -11,7 +11,12 @@ Arms:
   pread    buffered pread of each range (POSIX read path, page cache)
   mmap     map the file and touch one byte per 4 KiB page of each range
   direct   O_DIRECT pread with ranges rounded out to the alignment unit;
-           padded bytes are counted in F separately from useful bytes
+           padded bytes are counted in F separately from useful bytes.
+           By default each range is its own read, so two ranges inside one
+           aligned page read that page twice. With --merge the aligned
+           ranges are first sorted and coalesced, so the device sees the
+           page union once (the best case for an application that plans
+           its reads).
 
 Cache states:
   cold     posix_fadvise(DONTNEED) on the file, then verify with mincore
@@ -179,7 +184,24 @@ def arm_mmap(fd: int, ranges, file_size: int, qd: int):
     return touched * PAGE
 
 
-def arm_direct(fd: int, ranges, align: int, qd: int):
+def merge_aligned(ranges, align: int):
+    """Round ranges out to `align` and coalesce overlapping or adjacent ones."""
+    out = []
+    for start, length in sorted(ranges):
+        s = start - (start % align)
+        e = start + length
+        e = e + (-e % align)
+        if out and s <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], e)
+        else:
+            out.append([s, e])
+    return [(s, e - s) for s, e in out]
+
+
+def arm_direct(fd: int, ranges, align: int, qd: int, merge: bool = False):
+    if merge:
+        ranges = merge_aligned(ranges, align)
+
     def one(r):
         start, length = r
         s = start - (start % align)
@@ -231,15 +253,25 @@ def load_ranges(args) -> list[tuple[int, int]]:
     return rows
 
 
-def chunk_ranges(ranges, chunk: int):
-    """Split ranges into contiguous chunks of at most `chunk` bytes."""
+def chunk_ranges(ranges, chunk: int, chunk_align: str = "file"):
+    """Split ranges into contiguous chunks of at most `chunk` bytes.
+
+    chunk_align "file" cuts at file offsets that are multiples of `chunk`,
+    so every interior chunk is page aligned and the direct arm reads it
+    with no padding. "range" cuts at multiples of `chunk` from each range
+    start; a tensor that does not start on a page boundary then pays one
+    extra padded page per chunk under O_DIRECT.
+    """
     if not chunk:
         return ranges
     out = []
     for s, n in ranges:
         off = 0
         while off < n:
-            k = min(chunk, n - off)
+            if chunk_align == "file":
+                k = min(chunk - ((s + off) % chunk), n - off)
+            else:
+                k = min(chunk, n - off)
             out.append((s + off, k))
             off += k
     return out
@@ -264,6 +296,17 @@ def main():
         help="split ranges into chunks of this many bytes",
     )
     ap.add_argument(
+        "--chunk-align",
+        choices=["file", "range"],
+        default="file",
+        help="cut chunks at file-offset multiples (default) or range-relative",
+    )
+    ap.add_argument(
+        "--merge",
+        action="store_true",
+        help="direct arm: coalesce aligned ranges before reading",
+    )
+    ap.add_argument(
         "--qd", type=int, default=1, help="concurrent range reads (threads)"
     )
     ap.add_argument("--align", type=int, default=4096)
@@ -279,7 +322,7 @@ def main():
     args = ap.parse_args()
 
     ranges = sorted(load_ranges(args))
-    ranges = chunk_ranges(ranges, args.chunk)
+    ranges = chunk_ranges(ranges, args.chunk, args.chunk_align)
     useful = sum(n for _, n in ranges)
     st = os.stat(args.file)
     fd0 = os.open(args.file, os.O_RDONLY)
@@ -308,7 +351,7 @@ def main():
         elif args.arm == "mmap":
             got = arm_mmap(fd, ranges, st.st_size, args.qd)
         else:
-            got = arm_direct(fd, ranges, args.align, args.qd)
+            got = arm_direct(fd, ranges, args.align, args.qd, args.merge)
         t1 = time.monotonic_ns()
         time.sleep(args.settle)
         t2 = time.monotonic_ns()
@@ -349,6 +392,8 @@ def main():
         "cache": args.cache,
         "qd": args.qd,
         "chunk": args.chunk,
+        "chunk_align": args.chunk_align,
+        "merge": bool(args.merge),
         "align": args.align,
         "n_ranges": len(ranges),
         "W_required_bytes": useful,
