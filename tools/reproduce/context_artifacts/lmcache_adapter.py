@@ -41,7 +41,7 @@ class PreparedArtifactReader:
         self._lock = threading.Lock()
 
     def views(self):
-        """Return immutable mapped tensors whose references retain their memory.
+        """Borrow mapped tensors whose references retain their backing memory.
 
         An allocator-owned arena cannot supply this interface because it may
         reuse a buffer after lease release. Mapped tensors retain their mmap
@@ -49,6 +49,7 @@ class PreparedArtifactReader:
         new reference after close fails; existing references remain valid.
         The bounded prepared-reader cache can retain mappings outside the
         backing's lookup-entry budget, without pinning physical pages.
+        Consumers must not modify borrowed tensor values.
         """
         if self.backing != "mmap":
             raise ValueError("unleased views require immutable mapped backing")
@@ -163,7 +164,7 @@ class LMCacheArtifactRegistry:
 
     @contextmanager
     def lease(self, artifact_id, consumer, *, timeout=0.0):
-        """Borrow tensor views without copying the complete file into bytes."""
+        """Borrow typed views with backing-specific loading and verification."""
         prepared = self._admit(artifact_id, consumer)
         with self._lease_prepared(prepared, timeout=timeout) as tensors:
             yield tensors
@@ -194,8 +195,8 @@ class LMCacheArtifactRegistry:
                 if prepared.layout is None:
                     prepared.layout = self._layout(buffer, prepared.manifest, torch)
                 layout = prepared.layout
-            # Cache the parsing and geometry, not successful verification of
-            # future bytes. Misses still hash the complete newly loaded range.
+            # Cache parsing and geometry. The backing's policy controls full
+            # payload verification; a fresh buffer still checks this header.
             if buffer[: layout.start] != layout.header:
                 raise ArtifactError("safetensors header differs from admitted layout")
             tensors = {}

@@ -100,9 +100,9 @@ def catalog_class(root):
 class ArtifactEmbeddingStore:
     """Author collator API backed by leased LMCache collections.
 
-    The collator expects owned tensors after documents() returns. Copy while
-    leased, then let its unchanged padding code consume that owned tensor.
-    Document conversion/publication precedes measured generation.
+    Original collators receive owned tensors through documents(). Optimized
+    collators can copy under an arena lease or borrow self-owning mapped
+    tensors. Document conversion/publication precedes measured generation.
     """
 
     def __init__(self, native, cfg, checkpoint, output, *, mode=None):
@@ -270,7 +270,7 @@ class ArtifactEmbeddingStore:
             self._shapes = MappingProxyType(self._shapes)
             # Mapped readers bind immutable typed metadata once. Their views
             # are created lazily and reused while the backing mapping lives.
-            # The arena path retains the previous per-call contract unchanged.
+            # Arena readers check their consumer binding on each lease.
             self._readers = (
                 {
                     collection: self.registry.prepare_reader(
