@@ -417,6 +417,33 @@ file-backed pages and casts directly into the final padded BF16 reader batch.
 It does not allocate an intermediate document-payload arena. The normal author
 profile and the existing arena profile retain their previous behavior.
 
+Use `requirements-mapped.lock` instead of `requirements-port.lock` in the
+qualified Python 3.13 environment setup above. It preserves every other
+package pin and selects the mapped SDK at LMCache commit
+`9c047df12135ab99beb6802c3fed2a88093741a5`, published on
+[`2026-10-28-feature-mapped-artifacts`](https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-mapped-artifacts).
+`requirements-mapped.in` records its direct requirements. Build with
+`NO_GPU_EXT=1`; this host-artifact profile does not qualify GPU KV kernels.
+
+```sh
+NO_GPU_EXT=1 uv pip sync --python /path/to/env/bin/python \
+  --no-build-isolation tools/reproduce/memorilla/requirements-mapped.lock
+uv pip check --python /path/to/env/bin/python
+make defconfig DEFCONFIG=memorilla-lmcache-mapped
+make menuconfig
+make memorilla-fetch MEMORILLA_PYTHON=/path/to/env/bin/python
+make memorilla-import MEMORILLA_PYTHON=/path/to/env/bin/python
+```
+
+Choose a fresh work root in menuconfig when using the new SDK. The fetch
+command does not replace an existing dependency checkout. An existing root
+must already contain the exact selected LMCache revision and matching
+installed Python implementation. Import writes the pinned artifact-set
+receipt. Then select `KNLP_MEM_ARTIFACT_MODE="attach"` in menuconfig and run
+`make memorilla-stress` with the same interpreter. All model/data source
+checks remain active; no training is required.
+
+
 `CONFIG_KNLP_MEM_ARTIFACT_VERIFICATION="published"` trusts the complete checksum
 verified at import/publication. It avoids rehashing during serving and does
 not detect later payload corruption. Select `"on-map"` to verify every newly
