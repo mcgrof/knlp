@@ -30,6 +30,11 @@ COLS = [
     "W_required",
     "F_bytes",
     "F_kind",
+    "F_syscall_read_bytes",
+    "F_syscall_read_calls",
+    "F_mmap_bytes",
+    "fault_bytes_run",
+    "pgcache_fill_bytes_run",
     "D_target_bytes",
     "D_target_cmds",
     "D_file_other_bytes",
@@ -65,6 +70,7 @@ def rows_for(summary_path: Path, root: Path):
     group = run.split("/")[0]
     replay = json.loads((summary_path.parent / "replay.json").read_text())
     tr_by = {t["trial"]: t for t in replay["trials"]}
+    faults = (s.get("intent") or {}).get("run_faults") or {}
     out = []
     for t in s["trials"]:
         rt = tr_by.get(t["trial"], {})
@@ -85,6 +91,11 @@ def rows_for(summary_path: Path, root: Path):
                 "W_required": W,
                 "F_bytes": t["F_bytes"],
                 "F_kind": t["F_kind"],
+                "F_syscall_read_bytes": t.get("F_syscall_read_bytes", ""),
+                "F_syscall_read_calls": t.get("F_syscall_read_calls", ""),
+                "F_mmap_bytes": t.get("F_mmap_bytes", ""),
+                "fault_bytes_run": faults.get("fault_bytes", ""),
+                "pgcache_fill_bytes_run": faults.get("pgcache_fill_bytes", ""),
                 "D_target_bytes": t["D_target_bytes"],
                 "D_target_cmds": t["D_target_cmds"],
                 "D_file_other_bytes": t["D_file_other_bytes"],
@@ -156,6 +167,11 @@ def main():
         "n_trials",
         "W_required",
         "F_bytes_med",
+        "F_syscall_read_bytes_med",
+        "F_syscall_read_calls_med",
+        "F_mmap_bytes_med",
+        "fault_bytes_run",
+        "pgcache_fill_bytes_run",
         "D_target_bytes_med",
         "D_target_cmds_med",
         "D_file_other_bytes_med",
@@ -199,6 +215,11 @@ def main():
                     "n_trials": len(rs),
                     "W_required": r0["W_required"],
                     "F_bytes_med": med("F_bytes", rs),
+                    "F_syscall_read_bytes_med": med("F_syscall_read_bytes", rs),
+                    "F_syscall_read_calls_med": med("F_syscall_read_calls", rs),
+                    "F_mmap_bytes_med": med("F_mmap_bytes", rs),
+                    "fault_bytes_run": r0["fault_bytes_run"],
+                    "pgcache_fill_bytes_run": r0["pgcache_fill_bytes_run"],
                     "D_target_bytes_med": med("D_target_bytes", rs),
                     "D_target_cmds_med": med("D_target_cmds", rs),
                     "D_file_other_bytes_med": med("D_file_other_bytes", rs),

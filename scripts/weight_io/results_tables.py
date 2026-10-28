@@ -156,6 +156,24 @@ def main():
             f"| {proj} | {n[1:]} | {pattern} | {f(r['W_required']):,.0f} | {pu} | {r['arm']} | {f(r['F_bytes_med']):,.0f} | {f(r['D_target_bytes_med']):,.0f} | {f(r['D_target_cmds_med']):,.0f} | {f(r['D_over_W_med']):,.1f} | {f(r['elapsed_ms_med']):,.1f} | {f(r['lat_p50_us_med']):,.0f} | {r['n_trials']} |"
         )
 
+    intent = [
+        r
+        for r in med
+        if r["group"] == "intent" and r["F_syscall_read_bytes_med"] not in ("", None)
+    ]
+    if intent:
+        print(
+            "\n### Observed intent (syscall and fault tracers on the reader, per trial window; faults per run)\n"
+        )
+        print(
+            "| Run | Cache | W (MiB) | F declared (MiB) | Read calls | Read bytes (MiB) | Mapped (MiB) | Demand faults (MiB, run) | Page-cache fill (MiB, run) | D (MiB) | Commands | n |"
+        )
+        print("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        for r in sorted(intent, key=lambda r: r["run"]):
+            print(
+                f"| {r['run'][7:]} | {r['cache']} | {mib(f(r['W_required']) or 0)} | {mib(f(r['F_bytes_med']) or 0)} | {f(r['F_syscall_read_calls_med']) or 0:,.0f} | {mib(f(r['F_syscall_read_bytes_med']) or 0)} | {mib(f(r['F_mmap_bytes_med']) or 0)} | {mib(f(r['fault_bytes_run']) or 0)} | {mib(f(r['pgcache_fill_bytes_run']) or 0)} | {mib(f(r['D_target_bytes_med']) or 0)} | {f(r['D_target_cmds_med']) or 0:,.0f} | {r['n_trials']} |"
+            )
+
     gpu = [r for r in med if r["group"] == "gpu"]
     if gpu:
         print("\n### GPU consumption (W7900, synthetic activations unless native)\n")
