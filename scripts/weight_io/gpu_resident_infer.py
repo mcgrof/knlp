@@ -80,9 +80,10 @@ def main():
     dev = torch.device("cuda")
     time.sleep(args.settle)
     t_load0 = time.monotonic_ns()
-    model = AutoModelForCausalLM.from_pretrained(
-        mdir, dtype=torch.bfloat16, device_map={"": 0}
-    )
+    # load on the host, then move: a device_map would need accelerate, and
+    # the window must contain the file reads either way
+    model = AutoModelForCausalLM.from_pretrained(mdir, dtype=torch.bfloat16)
+    model = model.to(dev)
     model.eval()
     torch.cuda.synchronize()
     t_load1 = time.monotonic_ns()

@@ -194,6 +194,14 @@ def classify(cmds, target_lbas, file_lbas, windows):
     return out
 
 
+def readable_trace(trace: Path):
+    """The tracer runs under sudo; under a restrictive umask (for example
+    inside a systemd user service) its output is root-only. Reopen it for
+    the owner of the run directory."""
+    if trace.exists() and not os.access(trace, os.R_OK):
+        subprocess.run(["sudo", "chmod", "644", str(trace)], check=True)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -214,6 +222,12 @@ def main():
         help="script in this directory to run under the tracer; it must write the window JSON to --out",
     )
     ap.add_argument(
+        "--summarize-only",
+        action="store_true",
+        help="do not trace or run a child; rebuild summary.json from the "
+        "run directory's replay.json and device.jsonl",
+    )
+    ap.add_argument(
         "replay_args",
         nargs=argparse.REMAINDER,
         help="-- then replay_ranges.py arguments (without --out)",
@@ -223,28 +237,48 @@ def main():
     rd.mkdir(parents=True, exist_ok=True)
     trace = rd / "device.jsonl"
     replay_out = rd / "replay.json"
+    window_path = rd / "window.json"
     rargs = [a for a in args.replay_args if a != "--"]
 
-    p, t_attach = start_tracer(args.tracer, args.disk, str(trace), args.max_seconds)
-    t_idle0 = time.monotonic_ns()
-    time.sleep(args.idle_seconds)
-    t_idle1 = time.monotonic_ns()
-    here = Path(__file__).resolve().parent
-    rc = subprocess.run(
-        [
-            sys.executable,
-            str(here / args.child),
-            *rargs,
-            "--out",
-            str(replay_out),
-        ]
-    )
-    time.sleep(1.0)
-    tail = stop_tracer(p)
-    (rd / "tracer.out").write_text(tail or "")
-    if rc.returncode != 0:
-        sys.exit(f"replay failed rc={rc.returncode}")
+    if args.summarize_only:
+        if not (replay_out.exists() and trace.exists()):
+            sys.exit("summarize-only needs replay.json and device.jsonl")
+        win = json.loads(window_path.read_text()) if window_path.exists() else {}
+        t_attach = win.get("python_monotonic_at_attach_ns")
+        t_idle0 = win.get("idle_start_ns")
+        t_idle1 = win.get("idle_end_ns")
+    else:
+        p, t_attach = start_tracer(args.tracer, args.disk, str(trace), args.max_seconds)
+        t_idle0 = time.monotonic_ns()
+        time.sleep(args.idle_seconds)
+        t_idle1 = time.monotonic_ns()
+        window_path.write_text(
+            json.dumps(
+                {
+                    "python_monotonic_at_attach_ns": t_attach,
+                    "idle_start_ns": t_idle0,
+                    "idle_end_ns": t_idle1,
+                }
+            )
+        )
+        here = Path(__file__).resolve().parent
+        rc = subprocess.run(
+            [
+                sys.executable,
+                str(here / args.child),
+                *rargs,
+                "--out",
+                str(replay_out),
+            ]
+        )
+        time.sleep(1.0)
+        tail = stop_tracer(p)
+        (rd / "tracer.out").write_text(tail or "")
+        readable_trace(trace)
+        if rc.returncode != 0:
+            sys.exit(f"replay failed rc={rc.returncode}")
 
+    readable_trace(trace)
     replay = json.loads(replay_out.read_text())
     cmds, meta = load_events(str(trace))
     anchor = meta.get("clock_anchor", {})
@@ -261,23 +295,25 @@ def main():
     attributed = classify(
         cmds, [tuple(x) for x in replay["device_lbas"]], file_lbas, windows
     )
-    idle = classify(
-        cmds,
-        [tuple(x) for x in replay["device_lbas"]],
-        file_lbas,
-        [
-            {
-                "trial": -1,
-                "t_start_ns": t_idle0,
-                "t_drain_end_ns": t_idle1,
-                "elapsed_ns": t_idle1 - t_idle0,
-                "F_bytes": 0,
-                "F_kind": "idle",
-                "resident_pages_before": None,
-                "target_pages": None,
-            }
-        ],
-    )[0]
+    idle = None
+    if t_idle0 is not None and t_idle1 is not None:
+        idle = classify(
+            cmds,
+            [tuple(x) for x in replay["device_lbas"]],
+            file_lbas,
+            [
+                {
+                    "trial": -1,
+                    "t_start_ns": t_idle0,
+                    "t_drain_end_ns": t_idle1,
+                    "elapsed_ns": t_idle1 - t_idle0,
+                    "F_bytes": 0,
+                    "F_kind": "idle",
+                    "resident_pages_before": None,
+                    "target_pages": None,
+                }
+            ],
+        )[0]
     n_cmp = meta["_match"]["n_cmp"]
     summary = {
         "replay": {
