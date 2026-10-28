@@ -63,6 +63,12 @@ Env:
                 VAL_EVERY divides STEPS.
   LOAD_BF16     1 loads the model weights directly in bf16 instead of the
                 library's fp32-then-cast (same weights; fits a 24 GiB GPU)
+  POS_WEIGHTS   .npz from cas_position_weights.py built on DATA_PARQUET
+                with this SEED: weight the per-entry loss by position
+                (POS_MODE informative | rest | uniform, POS_FLOOR for the
+                rest weight in informative mode, default 0.1). Needs the
+                position_weights.py library patch. The held-out eval
+                stays unweighted. Unset = the library's plain mean
   OUT_DIR       where to write the cartridge (default /root/cart_out)
 
 The paper-regime baseline (patient_02 = 0.65 accuracy, RUNS=3) was trained
@@ -302,6 +308,30 @@ class _ClippedAdam(torch.optim.Adam):
 
 # train.py uses its ``optim`` import for optim.Adam only
 _ct.optim = types.SimpleNamespace(Adam=_ClippedAdam)
+
+# Per-position loss weights. The library patch routes the loop's
+# ``ce_by_token.mean()`` through ``_cr_entry_loss``; install the weighted
+# version only when asked, so an unweighted run is the unpatched arithmetic.
+POS_WEIGHTS = os.environ.get("POS_WEIGHTS", "")
+if POS_WEIGHTS:
+    assert hasattr(
+        _ct, "_cr_entry_loss"
+    ), "POS_WEIGHTS needs the position_weights.py patch"
+    from cas_position_weights import load_weights
+
+    _pos = load_weights(
+        POS_WEIGHTS,
+        os.environ.get("POS_MODE", "informative"),
+        float(os.environ.get("POS_FLOOR", "0.1")),
+    )
+    _ct._cr_entry_loss = _pos.entry_loss
+    print(
+        f"[iso] position weights {POS_WEIGHTS}: mode={_pos.meta['mode']} "
+        f"w_info={_pos.w_info:.4f} w_rest={_pos.w_rest:.4f} "
+        f"info_entries={_pos.meta['n_info_entries']}/{_pos.meta['n_entries']} "
+        f"batches={len(_pos.masks)}",
+        flush=True,
+    )
 
 # Print the held-out loss as a parseable line. The library only logs
 # "Eval loss - <x>" through its logger, without the step.
