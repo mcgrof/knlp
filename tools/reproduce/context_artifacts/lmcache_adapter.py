@@ -9,6 +9,7 @@ from pathlib import Path
 import struct
 import threading
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from .artifacts import ArtifactError, ContextArtifactManifest, inspect_payload
 
@@ -27,6 +28,14 @@ class _PreparedArtifact:
     layout: _TensorLayout | None = None
 
 
+class PreparedArtifactReader:
+    """Bind a checked consumer once; each borrow still acquires backing ownership."""
+
+    def __init__(self, manifest, borrow):
+        self.manifest = manifest
+        self.lease = borrow
+
+
 class LMCacheArtifactRegistry:
     """Use an existing cartridge registry for metadata and LMCache for bytes.
 
@@ -36,13 +45,49 @@ class LMCacheArtifactRegistry:
     an independently mutable source safe to share.
     """
 
-    def __init__(self, catalog, allocator, max_prepared=1024):
+    def __init__(
+        self,
+        catalog,
+        allocator=None,
+        max_prepared=1024,
+        *,
+        backing="arena",
+        verification="on-map",
+        max_mappings=512,
+    ):
         from lmcache.v1.context_artifacts import ArtifactStore
 
         self.catalog = catalog
-        self.storage = ArtifactStore(catalog, allocator, max_read_plans=max_prepared)
+        if backing == "mmap":
+            from lmcache.v1.mapped_artifacts import (
+                ArtifactVerification,
+                MappedArtifactStore,
+            )
+
+            self.storage = MappedArtifactStore(
+                catalog,
+                max_mappings=max_mappings,
+                max_read_plans=max_prepared,
+                verification=ArtifactVerification(verification),
+            )
+        elif backing == "arena":
+            if allocator is None or verification != "on-map":
+                raise ValueError(
+                    "arena backing requires an allocator and load verification"
+                )
+            self.storage = ArtifactStore(
+                catalog, allocator, max_read_plans=max_prepared
+            )
+        else:
+            raise ValueError("unknown artifact backing")
+        self.backing = backing
+        self.verification = verification
         self._max_prepared = max_prepared
         self._prepared = OrderedDict()
+        # Values retain mmap buffers, not their weak-key backing wrappers.
+        # Eviction therefore drops cached views; escaped tensors retain only
+        # their own mapping lifetime, never an allocator-reusable arena slot.
+        self._mapped_views = WeakKeyDictionary()
         self._lock = threading.RLock()
 
     def register(self, manifest, source, offset=0, length=None):
@@ -66,15 +111,46 @@ class LMCacheArtifactRegistry:
         """Return an admitted immutable manifest after exact consumer checking."""
         return self._admit(artifact_id, consumer).manifest
 
+    def prepare_reader(self, artifact_id, consumer, *, timeout=0.0):
+        """Check identity/consumer once and return a reusable borrowed-view reader.
+
+        The reader remains bound to this registry. Borrowing after close fails.
+        Mapped tensors must not be modified, and async consumers must retain
+        the lease until their transfer finishes.
+        """
+        from functools import partial
+
+        prepared = self._admit(artifact_id, consumer)
+        return PreparedArtifactReader(
+            prepared.manifest, partial(self._lease_prepared, prepared, timeout=timeout)
+        )
+
     @contextmanager
     def lease(self, artifact_id, consumer, *, timeout=0.0):
         """Borrow tensor views without copying the complete file into bytes."""
+        prepared = self._admit(artifact_id, consumer)
+        with self._lease_prepared(prepared, timeout=timeout) as tensors:
+            yield tensors
+
+    @contextmanager
+    def _lease_prepared(self, prepared, *, timeout):
         import torch
 
-        prepared = self._admit(artifact_id, consumer)
         with self.storage.lease(
-            artifact_id, plan=prepared.read_plan, timeout=timeout
+            prepared.manifest.artifact_id, plan=prepared.read_plan, timeout=timeout
         ) as obj:
+            if self.backing == "mmap":
+                with self._lock:
+                    cached = self._mapped_views.get(obj)
+                if cached is not None:
+                    if self.verification == "on-map":
+                        buffer = obj.byte_array
+                        if buffer[: prepared.layout.start] != prepared.layout.header:
+                            raise ArtifactError(
+                                "safetensors header differs from admitted layout"
+                            )
+                    yield cached
+                    return
             buffer = memoryview(obj.byte_array).cast("B")
             if len(buffer) != prepared.read_plan.length:
                 raise ArtifactError("payload length differs from admitted read plan")
@@ -91,6 +167,9 @@ class LMCacheArtifactRegistry:
                 tensors[name] = torch.frombuffer(
                     buffer, dtype=dtype, count=count, offset=offset
                 ).reshape(shape)
+            if self.backing == "mmap":
+                with self._lock:
+                    self._mapped_views[obj] = tensors
             yield tensors
 
     def evict(self, artifact_id):
@@ -100,6 +179,7 @@ class LMCacheArtifactRegistry:
         self.storage.close()
         with self._lock:
             self._prepared.clear()
+            self._mapped_views.clear()
 
     def _admit(self, artifact_id, consumer):
         with self._lock:

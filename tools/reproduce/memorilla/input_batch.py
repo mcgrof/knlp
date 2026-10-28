@@ -239,6 +239,7 @@ class LeasedMemoryCollator(MemoryCollator):
                 and all(
                     isinstance(source, tuple)
                     and callable(getattr(source[0], "lease_documents", None))
+                    and getattr(source[0], "prefetch_useful", True)
                     for source, _ in sources
                 )
                 and any(shape[0] * shape[1] > DIRECT_ELEMENTS for _, shape in sources)

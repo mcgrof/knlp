@@ -409,3 +409,28 @@ inputs are cached. Our per-benchmark process isolation adds startup overhead;
 that figure is not a prediction for another GPU. The eight-benchmark suite
 excludes retraining, ablations that require new weights, other methods' full
 baseline sweeps, TextWorld RL evaluation, and the separate accelerator latency curve.
+## Mapped document artifacts
+
+The `memorilla-lmcache-mapped` defconfig uses the same checkpoint and complete
+collection vectors through LMCache-managed file mappings. It borrows existing
+file-backed pages and casts directly into the final padded BF16 reader batch.
+It does not allocate an intermediate document-payload arena. The normal author
+profile and the existing arena profile retain their previous behavior.
+
+`CONFIG_KNLP_MEM_ARTIFACT_VERIFICATION="published"` trusts the complete checksum
+verified at import/publication. It avoids rehashing during serving and does
+not detect later payload corruption. Select `"on-map"` to verify every newly
+mapped payload for validation. Exact artifact identity, consumer compatibility,
+extent and tensor layout admission remain enabled in both modes. Published
+files must stay unchanged while mapped.
+
+`CONFIG_KNLP_MEM_MAX_MAPPINGS` bounds retained lookup entries. It is not a RAM
+budget; Linux controls physical page-cache residency, and active/retained
+tensor views retain their backing lifetime. The arena byte setting does not
+apply to mapped backing. Mapping counters distinguish logical ranges and
+checksum bytes from buffered copy bytes; none measures physical NVMe I/O.
+
+Import and attach commands remain the same. Import verifies and publishes the
+payload; attach opens its explicitly pinned imported set. Mapped views keep
+their owner through batch consumption, including failure cleanup. The BF16
+batch and bounded conversion scratch remain separate necessary allocations.

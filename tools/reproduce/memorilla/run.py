@@ -25,6 +25,7 @@ DECODER = "b968826d9c46dd6066d109eabc6255188de91218"
 ENCODER = "5cf2132abc99cad020ac570b19d031efec650f2b"
 VLLM = "198199bc44da513a6eceee206cec9c62d55d190a"
 LMCACHE = "e438be9d81ce8b76b135b813a107d9b189abdd33"
+LMCACHE_MAPPED = "9c047df12135ab99beb6802c3fed2a88093741a5"
 BENCHMARKS = {
     "pubmedqa": (100, "accuracy", 59.00),
     "factkg": (9041, "accuracy", 84.33),
@@ -99,6 +100,19 @@ def configuration(path, *, resolve_artifact_sets=True):
     if cfg["document_prefetch"] == "y" and cfg["input_pipeline"] != "leased-bf16":
         raise ValueError("document prefetch requires leased-bf16 inputs")
     cfg.setdefault("artifact_mode", "import")
+    cfg.setdefault("artifact_backing", "arena")
+    cfg.setdefault("artifact_verification", "on-map")
+    cfg["max_mappings"] = int(cfg.get("max_mappings", 512))
+    if cfg["artifact_backing"] not in {"arena", "mmap"}:
+        raise ValueError("unknown artifact backing")
+    if cfg["artifact_verification"] not in {"on-map", "published"}:
+        raise ValueError("unknown artifact verification")
+    if cfg["max_mappings"] < 1:
+        raise ValueError("max mappings must be positive")
+    if cfg["artifact_backing"] == "arena" and cfg["artifact_verification"] != "on-map":
+        raise ValueError("arena backing requires load verification")
+    if cfg["artifact_backing"] == "mmap" and cfg["profile"] != "lmcache":
+        raise ValueError("mapped artifact backing requires the LMCache profile")
     if cfg["artifact_mode"] not in {"import", "attach"}:
         raise ValueError("unknown artifact preparation mode")
     if cfg["artifact_mode"] == "attach":
@@ -199,7 +213,10 @@ def fetch(cfg):
         )
     source_check(source)
     if cfg["profile"] != "author":
-        for name, revision in [("vllm", VLLM), ("LMCache", LMCACHE)]:
+        lmcache_revision = (
+            LMCACHE_MAPPED if cfg.get("artifact_backing") == "mmap" else LMCACHE
+        )
+        for name, revision in [("vllm", VLLM), ("LMCache", lmcache_revision)]:
             target = root / "source" / name.lower()
             if not target.exists():
                 subprocess.run(
@@ -208,7 +225,12 @@ def fetch(cfg):
                         "clone",
                         "--single-branch",
                         "--branch",
-                        "2026-10-26-feature-context-artifacts",
+                        (
+                            "2026-10-28-feature-mapped-artifacts"
+                            if name == "LMCache"
+                            and cfg.get("artifact_backing") == "mmap"
+                            else "2026-10-26-feature-context-artifacts"
+                        ),
                         f"https://github.com/mcgrof/{name}.git",
                         str(target),
                     ],

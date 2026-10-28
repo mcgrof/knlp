@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import importlib.util
+from itertools import islice
 import json
 import os
 import resource
@@ -21,6 +22,7 @@ from .run import (
     DATA,
     ENCODER,
     LMCACHE,
+    LMCACHE_MAPPED,
     READER,
     VLLM,
     digest,
@@ -132,8 +134,15 @@ class ArtifactEmbeddingStore:
         directory = Path(cfg["root"]) / "artifacts" / native.config
         directory.mkdir(parents=True, exist_ok=True)
         self.catalog = catalog_class(cfg["root"])(directory / "cartridges.sqlite3")
+        self.backing = cfg.get("artifact_backing", "arena")
+        self.verification = cfg.get("artifact_verification", "on-map")
+        self.prefetch_useful = self.backing == "arena"
         self.registry = LMCacheArtifactRegistry(
-            self.catalog, HostMemoryAllocator(cfg["pool_bytes"])
+            self.catalog,
+            HostMemoryAllocator(cfg["pool_bytes"]) if self.backing == "arena" else None,
+            backing=self.backing,
+            verification=self.verification,
+            max_mappings=cfg.get("max_mappings", 512),
         )
         self.ids = {}
         self._shapes = {}
@@ -259,10 +268,31 @@ class ArtifactEmbeddingStore:
                         self._shapes[manifest.artifact_id] = manifest.tensors[0].shape
                 self.set_id = artifact_set.publish(directory, source_identity, self.ids)
             self._shapes = MappingProxyType(self._shapes)
+            # Mapped readers bind immutable typed metadata once. Their views
+            # are created lazily and reused while the backing mapping lives.
+            # The arena path retains the previous per-call contract unchanged.
+            self._readers = (
+                {
+                    collection: self.registry.prepare_reader(
+                        key, self.consumer, timeout=120.0
+                    )
+                    for collection, key in islice(
+                        self.ids.items(), self.registry.storage.max_read_plans
+                    )
+                }
+                if self.backing == "mmap"
+                else {}
+            )
             write(output / "artifacts.json", self.ids)
             write(
                 output / "artifact-set.json",
-                {"set_id": self.set_id, "mode": mode, "identity": source_identity},
+                {
+                    "set_id": self.set_id,
+                    "mode": mode,
+                    "identity": source_identity,
+                    "backing": self.backing,
+                    "verification": self.verification,
+                },
             )
         except BaseException:
             self.registry.close()
@@ -271,7 +301,7 @@ class ArtifactEmbeddingStore:
 
     @classmethod
     def attach(cls, native, cfg, checkpoint, output):
-        """Open a pinned imported set; retain verification on each payload miss."""
+        """Open a pinned imported set with the selected backing and verification."""
         return cls(native, cfg, checkpoint, output, mode="attach")
 
     def documents(self, collection):
@@ -299,10 +329,7 @@ class ArtifactEmbeddingStore:
             torch.bfloat16,
         ):
             raise ValueError("document destination must be CPU float16 or bfloat16")
-        with self.registry.lease(
-            self.ids[int(collection)], self.consumer, timeout=120.0
-        ) as tensors:
-            source = tensors["embeddings"]
+        with self.lease_documents(collection) as source:
             if source.dtype != torch.float16 or source.shape != destination.shape:
                 raise ValueError("document destination differs from bank geometry")
             if destination.dtype == torch.float16 or source.numel() <= DIRECT_ELEMENTS:
@@ -312,12 +339,21 @@ class ArtifactEmbeddingStore:
 
     @contextmanager
     def lease_documents(self, collection):
-        """Borrow verified CPU values; this pinned store permits thread handoff.
+        """Borrow admitted CPU values; this pinned store permits thread handoff.
 
         No thread-owned lock or thread-local mode spans the yield in the
         underlying typed/store leases. The consumer must close this context
         only after synchronous consumption, and must not retain its views.
         """
+        if self.backing == "mmap":
+            reader = self._readers.get(int(collection))
+            if reader is None:
+                reader = self.registry.prepare_reader(
+                    self.ids[int(collection)], self.consumer, timeout=120.0
+                )
+            with reader.lease() as tensors:
+                yield tensors["embeddings"]
+            return
         with self.registry.lease(
             self.ids[int(collection)], self.consumer, timeout=120.0
         ) as tensors:
@@ -341,10 +377,16 @@ class ArtifactEmbeddingStore:
             "capacity_wait_seconds": store.capacity_wait_seconds,
             "artifact_set_id": self.set_id,
             "artifact_mode": self.mode,
+            "artifact_backing": self.backing,
+            "artifact_verification": self.verification,
+            "map_count": getattr(store, "map_count", 0),
+            "mapped_logical_bytes": getattr(store, "map_bytes", 0),
+            "checksum_bytes": getattr(store, "checksum_bytes", None),
         }
 
     def close(self):
         self.registry.close()
+        self._readers.clear()
         self.catalog.close()
 
 
@@ -441,7 +483,9 @@ def main():
         from .environment import verify_package
 
         lmcache_installation = verify_package(
-            lmcache, Path(cfg["root"]) / "source/lmcache", LMCACHE
+            lmcache,
+            Path(cfg["root"]) / "source/lmcache",
+            LMCACHE_MAPPED if cfg.get("artifact_backing") == "mmap" else LMCACHE,
         )
 
     if cfg["profile"] == "author" and (
@@ -507,6 +551,8 @@ def main():
         "input_pipeline": input_pipeline,
         "document_prefetch": cfg.get("document_prefetch") == "y",
         "artifact_mode": cfg.get("artifact_mode", "import"),
+        "artifact_backing": cfg.get("artifact_backing", "arena"),
+        "artifact_verification": cfg.get("artifact_verification", "on-map"),
         "singleton_reference": cfg.get("singleton_reference") == "y",
         "torch": torch.__version__,
         "hip": torch.version.hip,

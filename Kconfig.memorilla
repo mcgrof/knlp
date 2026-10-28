@@ -71,7 +71,26 @@ config KNLP_MEM_ARTIFACT_MODE
 	help
 	  Import validates and publishes document collections. Attach opens
 	  an explicitly pinned imported set without reconstructing collections.
-	  Payload misses still verify complete bytes and catalog identity.
+	  Verification on reload depends on the selected backing policy.
+config KNLP_MEM_ARTIFACT_BACKING
+	string "LMCache artifact backing: arena or mmap"
+	default "arena"
+	help
+	  mmap borrows file-backed pages without a private payload arena.
+	  Linux controls page residency; the arena byte limit does not apply.
+	  Published files must remain unchanged for the mapping lifetime.
+config KNLP_MEM_ARTIFACT_VERIFICATION
+	string "Mapped verification: on-map or published"
+	default "on-map"
+	help
+	  on-map checks each newly mapped payload. published trusts the bytes
+	  checked during import/publication and avoids repeated full scans.
+	  It does not detect later payload corruption. Arena always verifies
+	  full bytes on each load. Identity and typed admission stay enabled.
+config KNLP_MEM_MAX_MAPPINGS
+	int "Maximum retained artifact mappings"
+	range 1 65536
+	default 512
 config KNLP_MEM_DOCUMENT_PREFETCH
 	bool "Overlap one bank reader with BF16 batch copies"
 	default n
