@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the basic KV-offload read-path reproduction.
+#
+#   make defconfig-rpl2-smoke       CPU-only unit tests
+#   make defconfig-rpl2-mounted-fs  read baseline on an existing mount
+#
+# Plain `make` then runs the selected profile.  The mounted-filesystem
+# profile needs two directories outside the source tree, given in the
+# configuration or on the command line:
+#
+#   make RPL2_TARGET=/mnt/share/rpl2 RPL2_OUTPUT=$HOME/rpl2-records
+
+RPL2_PY ?= $(PYTHON)
+RPL2_RUN = $(RPL2_PY) -m tools.reproduce.rpl2.run
+RPL2_TARGET ?= $(patsubst "%",%,$(CONFIG_KNLP_RPL2_TARGET_DIR))
+RPL2_OUTPUT ?= $(patsubst "%",%,$(CONFIG_KNLP_RPL2_OUTPUT_DIR))
+RPL2_RECORDS ?=
+RPL2_ARGS = --config $(CONFIG_FILE) --target "$(RPL2_TARGET)" \
+	--output "$(RPL2_OUTPUT)"
+
+.PHONY: rpl2 rpl2-help rpl2-doctor rpl2-smoke rpl2-run rpl2-report
+
+rpl2-help:
+	@echo "KV-offload read path (tools/reproduce/rpl2):"
+	@echo "  make defconfig-rpl2-smoke       CPU-only unit tests"
+	@echo "  make defconfig-rpl2-mounted-fs  read baseline on an existing mount"
+	@echo "  make rpl2-doctor   check Python, target, space and direct I/O"
+	@echo "  make rpl2-smoke    run the unit tests"
+	@echo "  make rpl2-run      write or reuse objects, time verified reads"
+	@echo "  make rpl2-report   validate the latest records and summarize them"
+	@echo "Variables: RPL2_TARGET=<dir> RPL2_OUTPUT=<dir> RPL2_RECORDS=<file>"
+
+rpl2-doctor:
+	@$(RPL2_RUN) doctor $(RPL2_ARGS)
+
+rpl2-smoke:
+	@$(RPL2_RUN) smoke
+
+rpl2-run:
+	@$(RPL2_RUN) run $(RPL2_ARGS)
+
+rpl2-report:
+	@$(RPL2_RUN) report $(RPL2_ARGS) $(if $(RPL2_RECORDS),--records "$(RPL2_RECORDS)")
+
+ifeq ($(CONFIG_KNLP_RPL2_MOUNTED_FS),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-doctor
+	@$(MAKE) --no-print-directory rpl2-run
+	@$(MAKE) --no-print-directory rpl2-report
+else
+rpl2: rpl2-doctor rpl2-smoke
+endif
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_RPL2),y)
+RPL2_CONFLICTS := $(foreach v,KNLP_CONTEXT_ARTIFACTS MODEL_GNN \
+ GOOGLE_MUVERA_SMALL MUVERA_SMALL SUBLIMINAL_LEARNING \
+ RESIDUAL_REPRODUCTION KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES \
+ KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
+ KNLP_REPRODUCE_KVIO KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
+ KNLP_REPRODUCE_KMESH_TRACE KNLP_REPRODUCE_KMESH_RESIDENCY \
+ KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \
+ KNLP_REPRODUCE_KMESH_RESTORE KNLP_REPRODUCE_KMESH_CASCADE \
+ KNLP_DMABUF KVTIDE KNLP_QUANT_FP8 KNLP_TF_REPRO KNLP_MODULAR_REPRO \
+ KNLP_REPRODUCE_MEMORILLA MATCHED_MICRO,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
+ifneq ($(strip $(RPL2_CONFLICTS)),)
+$(error Conflicting rpl2 workloads: $(strip $(RPL2_CONFLICTS)))
+endif
+.DEFAULT_GOAL := rpl2
+endif

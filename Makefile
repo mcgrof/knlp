@@ -70,6 +70,11 @@ include Makefile.residual_reproduction
 include Makefile.context_artifacts
 include Makefile.memorilla
 
+# Basic KV-offload read path on a mounted filesystem (rpl2-doctor,
+# rpl2-smoke, rpl2-run, rpl2-report).  When CONFIG_KNLP_REPRODUCE_RPL2=y
+# this overrides .DEFAULT_GOAL.
+include Makefile.rpl2
+
 # MUVERA presets use their own runners rather than the model training path.
 MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
 	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
@@ -815,6 +820,9 @@ help:
 	@echo "  train-ra-mla-ablation - Quick: Ablation template (manual parameter sweep)"
 	@echo "  Example: make train-ra-mla MAX_ITERS=1000"
 	@echo "  Example: make train-ra-mla EXTRA_ARGS='--latent-dim 32 --ra-alpha 0.5'"
+	@echo ""
+	@echo "Reproduction profiles:"
+	@echo "  rpl2-help         - KV-offload read path on a mounted filesystem"
 	@echo ""
 	@echo "Setup targets:"
 	@echo "  deps              - Install Python dependencies from requirements.txt"

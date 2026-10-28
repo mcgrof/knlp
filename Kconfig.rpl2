@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: MIT
+# Configuration for the basic KV-offload read-path reproduction.
+#
+# Selecting rpl2-smoke or rpl2-mounted-fs sets these values.  Plain `make`
+# then runs the selected profile through Makefile.rpl2.  All symbols are
+# namespaced CONFIG_KNLP_RPL2_* so this profile never collides with
+# another reproduce profile.
+
+menuconfig KNLP_REPRODUCE_RPL2
+	bool "KV-offload read path on a mounted filesystem"
+	default n
+	help
+	  A basic reproduction for the question of how much work a KV-cache
+	  offload read does before and while its bytes move.  The smoke
+	  profile runs CPU-only unit tests.  The mounted-filesystem profile
+	  writes a few immutable objects to a directory you name, reads
+	  each one back as a whole request, verifies every byte against its
+	  digest and records the request latency.
+
+	  Neither profile needs root, a GPU or a network service of its
+	  own, and neither drops caches or changes kernel settings.
+
+if KNLP_REPRODUCE_RPL2
+
+choice
+	prompt "Profile"
+	default KNLP_RPL2_SMOKE
+
+config KNLP_RPL2_SMOKE
+	bool "CPU-only record, parser and verification tests"
+	help
+	  Runs the unit tests in tools/reproduce/rpl2/tests on temporary
+	  local directories.  Safe to run anywhere, including CI.
+
+config KNLP_RPL2_MOUNTED_FS
+	bool "Immutable-object read baseline on an existing mount"
+	help
+	  Uses an existing directory on any POSIX filesystem, including an
+	  NFS mount that you set up.  Nothing is mounted or configured for
+	  you.
+
+endchoice
+
+config KNLP_RPL2_TARGET_DIR
+	string "Existing directory for the test objects"
+	default ""
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Must exist, be writable and lie outside the source tree.  The
+	  objects go into a subdirectory named after the seed, size and
+	  count, and a later run reuses them only when its manifest
+	  matches.  Override with RPL2_TARGET=/path on the make command.
+
+config KNLP_RPL2_OUTPUT_DIR
+	string "Directory for request records"
+	default ""
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Each run writes rpl2-<UTC time>/records.jsonl here; the report
+	  writes summary.json next to it.  Must lie outside the source
+	  tree.  Override with RPL2_OUTPUT=/path on the make command.
+
+choice
+	prompt "I/O mode"
+	default KNLP_RPL2_IO_DIRECT
+	depends on KNLP_RPL2_MOUNTED_FS
+
+config KNLP_RPL2_IO_DIRECT
+	bool "O_DIRECT reads into a page-aligned buffer"
+	help
+	  Bypasses the client page cache where the filesystem honors
+	  O_DIRECT, so reads reach the storage or server.  When the
+	  filesystem refuses O_DIRECT the run records a skip with its
+	  reason instead of silently reading buffered.
+
+config KNLP_RPL2_IO_BUFFERED
+	bool "Ordinary buffered reads"
+	help
+	  Reads may be served from the client page cache, especially right
+	  after the objects are written.  The records say so.
+
+endchoice
+
+config KNLP_RPL2_OBJECT_BYTES
+	int "Bytes per object"
+	default 8388608
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Direct I/O needs a multiple of 4096.
+
+config KNLP_RPL2_OBJECTS
+	int "Number of objects"
+	range 1 100000
+	default 16
+	depends on KNLP_RPL2_MOUNTED_FS
+
+config KNLP_RPL2_REQUESTS
+	int "Requests to time"
+	range 1 10000000
+	default 64
+	depends on KNLP_RPL2_MOUNTED_FS
+	help
+	  Requests visit the objects in order and wrap around.  Every
+	  request is recorded, including the first touch of each object.
+
+config KNLP_RPL2_SEED
+	int "Seed for the object contents"
+	default 1
+	depends on KNLP_RPL2_MOUNTED_FS
+
+endif # KNLP_REPRODUCE_RPL2
