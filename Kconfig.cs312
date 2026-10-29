@@ -1,0 +1,188 @@
+# SPDX-License-Identifier: MIT
+menu "CS312 tutorial: empirical machine learning on a small decoder"
+
+config KNLP_CS312
+	bool "Enable the CS312 deep-learning-alchemy tutorial lane"
+	default n
+	help
+	  Run the Stanford CS312 "Deep Learning Alchemy" assignment sweeps
+	  on the course's small Llama-style decoder (the d8 model organism:
+	  8 layers, hidden 512, about 35M parameters, 614M training tokens).
+	  The course code is an external checkout pinned by revision; knlp
+	  ships only the sweep planner, launcher glue and report.
+
+if KNLP_CS312
+
+config KNLP_CS312_ASSIGNMENTS_DIR
+	string "Checkout directory for the course repository"
+	default "~/.cache/knlp/cs312/assignments"
+	help
+	  Where the course repository is cloned and its uv environment is
+	  built. A leading ~ expands to the home directory. The directory is
+	  created by make cs312-fetch when missing.
+
+config KNLP_CS312_ASSIGNMENTS_URL
+	string "Course repository URL"
+	default "https://github.com/deep-learning-alchemy/assignments.git"
+
+config KNLP_CS312_ASSIGNMENTS_REV
+	string "Pinned course repository commit"
+	default "4350166ac1cedba0222a3124a2a2a54b65fb635d"
+	help
+	  The exact commit that the plan was written against. The runner
+	  checks the checkout out at this commit and refuses to launch when
+	  the head differs.
+
+choice
+	prompt "Assignment problem"
+	default KNLP_CS312_PROBLEM_P1A
+
+config KNLP_CS312_PROBLEM_P1A
+	bool "Problem 1(a): one hyperparameter at a time on a log grid"
+	help
+	  Vary warmup, learning rate, batch size and weight decay one at a
+	  time around the d8 defaults. Each axis is a log-spaced grid with
+	  the configured base and number of steps. The training horizon
+	  stays fixed, so every run is compute matched.
+
+endchoice
+
+config KNLP_CS312_P1A_BASE
+	string "Log-grid multiplier for learning rate, weight decay and warmup"
+	default "3"
+	depends on KNLP_CS312_PROBLEM_P1A
+	help
+	  Successive grid points differ by this factor. The handout
+	  suggests 3.
+
+config KNLP_CS312_P1A_BATCH_BASE
+	string "Log-grid multiplier for batch size"
+	default "2"
+	depends on KNLP_CS312_PROBLEM_P1A
+	help
+	  Batch sizes must be integers, and the course launcher expects
+	  gradient accumulation above 256 sequences. The default of 2 gives
+	  16, 32, 64, 128 and 256 with five steps. Set 3 for 7, 21, 64,
+	  192 and 576.
+
+config KNLP_CS312_P1A_STEPS
+	int "Grid points per axis, including the default"
+	default 5
+	range 2 9
+	depends on KNLP_CS312_PROBLEM_P1A
+	help
+	  An odd count centres the grid on the default. The default point
+	  is shared by every axis, so five steps on four axes give 17 runs.
+
+config KNLP_CS312_P1A_AXES
+	string "Axes to sweep, comma separated"
+	default "warmup_percent,learning_rate,batch_size,weight_decay"
+	depends on KNLP_CS312_PROBLEM_P1A
+
+config KNLP_CS312_DEPTH
+	int "Model depth from the built-in d4 to d18 ladder"
+	default 8
+	range 4 18
+	help
+	  Depth sets every other dimension: hidden size is 64 times depth,
+	  one head per 64 hidden units, MLP width 3.5 times hidden.
+
+config KNLP_CS312_NUM_TRAIN_SEQUENCES
+	int "Training sequences of 1024 tokens per run"
+	default 600000
+	help
+	  600,000 sequences is the course default, 614.4M tokens. Smaller
+	  values give a quick rehearsal; they are not the course recipe.
+
+choice
+	prompt "Execution backend"
+	default KNLP_CS312_BACKEND_MODAL
+
+config KNLP_CS312_BACKEND_MODAL
+	bool "Modal serverless GPUs through the course launcher"
+	help
+	  Runs every configuration as its own detached Modal function, as
+	  the course does. Needs a Modal account, the course data on a
+	  Modal Volume (make cs312-data) and a W&B secret named
+	  dl-alchemy-wandb in the selected environment.
+
+config KNLP_CS312_BACKEND_LOCAL
+	bool "One local GPU, runs executed in sequence"
+	help
+	  Runs each configuration in a fresh process on the visible GPU.
+	  Needs the course data downloaded locally (make cs312-data). Each
+	  finished run leaves a receipt, so an interrupted sweep resumes.
+
+endchoice
+
+config KNLP_CS312_MODAL_GPU
+	string "Modal GPU type"
+	default "H100"
+	depends on KNLP_CS312_BACKEND_MODAL
+
+config KNLP_CS312_MODAL_ENVIRONMENT
+	string "Modal environment holding the data volume and secrets"
+	default "main"
+	depends on KNLP_CS312_BACKEND_MODAL
+
+config KNLP_CS312_MODAL_MAX_PARALLEL
+	int "Maximum concurrent Modal containers (0 means one per run)"
+	default 0
+	depends on KNLP_CS312_BACKEND_MODAL
+
+config KNLP_CS312_LOCAL_PARALLEL
+	int "Concurrent training processes on the local GPU"
+	default 1
+	range 1 8
+	depends on KNLP_CS312_BACKEND_LOCAL
+
+config KNLP_CS312_PYTHON
+	string "Interpreter for the course code (empty uses uv run)"
+	default ""
+	help
+	  Leave empty to let uv build and use the course's pinned
+	  environment. Set an explicit interpreter when the pinned CUDA
+	  wheels do not fit the machine, for example a ROCm PyTorch venv.
+
+config KNLP_CS312_SCRATCH_ROOT
+	string "Local scratch root for data and checkpoints (empty uses ~/dl_alchemy)"
+	default ""
+
+config KNLP_CS312_TORCH_COMPILE_MODE
+	string "torch.compile mode override (empty keeps the course default)"
+	default ""
+
+config KNLP_CS312_NUM_EVALS
+	int "Validation evaluations per run (0 keeps the course default of 100)"
+	default 0
+	range 0 1000
+	help
+	  The course evaluates 100 times per run, which on a short rehearsal
+	  means every step. Set a small count for throughput probes. It does
+	  not change the training trajectory or the plan digest.
+
+config KNLP_CS312_WANDB_ONLINE
+	bool "Log runs to Weights & Biases"
+	default y
+
+config KNLP_CS312_WANDB_ENTITY
+	string "W&B entity (empty uses the account default)"
+	default ""
+
+config KNLP_CS312_WANDB_PROJECT
+	string "W&B project"
+	default "cs312"
+
+config KNLP_CS312_RUN_SUFFIX
+	string "Run-name suffix (empty uses the backend name)"
+	default ""
+	help
+	  Appended to every run name and added as a W&B tag, so the same
+	  plan executed on two backends stays distinguishable.
+
+config KNLP_CS312_OUTPUT
+	string "Output directory for the plan, receipts and report"
+	default "results/cs312-problem-1"
+
+endif
+endmenu

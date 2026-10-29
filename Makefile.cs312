@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+CS312_PY ?= $(PYTHON)
+CS312_CONFIG ?= .config
+CS312_DIR := tools/reproduce/cs312
+
+.PHONY: cs312 cs312-plan cs312-fetch cs312-data cs312-launch \
+	cs312-collect cs312-report cs312-test
+.NOTPARALLEL: cs312 cs312-fetch cs312-data cs312-launch cs312-collect
+
+cs312:
+	@"$(CS312_PY)" $(CS312_DIR)/run.py --config "$(CS312_CONFIG)" run
+
+cs312-plan cs312-fetch cs312-data cs312-launch cs312-collect cs312-report:
+	@"$(CS312_PY)" $(CS312_DIR)/run.py --config "$(CS312_CONFIG)" $(patsubst cs312-%,%,$@)
+
+cs312-test:
+	@"$(CS312_PY)" -m unittest discover -s tests/cs312 -v
+
+ifeq ($(CONFIG_KNLP_CS312),y)
+.DEFAULT_GOAL := cs312
+endif

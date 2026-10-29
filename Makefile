@@ -80,6 +80,11 @@ include Makefile.memorilla
 # this overrides .DEFAULT_GOAL.
 include Makefile.rpl2
 
+# CS312 tutorial sweeps on the course's small decoder (cs312-fetch,
+# cs312-data, cs312-plan, cs312-launch, cs312-collect, cs312-report).
+# When CONFIG_KNLP_CS312=y this overrides .DEFAULT_GOAL.
+include Makefile.cs312
+
 # MUVERA presets use their own runners rather than the model training path.
 MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
 	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
