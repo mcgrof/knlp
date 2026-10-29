@@ -619,11 +619,17 @@ def run(args):
     elif args.init == "other_doc":
         kv = kv_of_text(model, tok, other_doc, args.slots, device)
     elif args.init == "random":
+        # Random vectors at the per-layer scale of the first-tokens
+        # prefix, with the real first-token (sink) key and value kept
+        # at slot 0 so the arm tests random content, not a missing sink.
         kv0 = kv_of_text(model, tok, doc, args.slots, device)
-        kv = [
-            (torch.randn_like(k) * k.std(), torch.randn_like(v) * v.std())
-            for k, v in kv0
-        ]
+        kv = []
+        for k, v in kv0:
+            rk = torch.randn_like(k) * k[:, :, 1:].std()
+            rv = torch.randn_like(v) * v[:, :, 1:].std()
+            rk[:, :, :1] = k[:, :, :1]
+            rv[:, :, :1] = v[:, :, :1]
+            kv.append((rk, rv))
     elif args.init.startswith("file:"):
         st = torch.load(args.init[5:], map_location=device)
         kv = [
