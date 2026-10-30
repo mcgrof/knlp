@@ -68,7 +68,13 @@ def observe_tensors(model):
 
 
 def catalog_class(root):
-    """Load the fork's CPU-only catalog without replacing a built engine."""
+    """Load the fork's engine-independent artifact catalog.
+
+    Its ArtifactRegistry owns the context-artifact table in the same SQLite
+    file that the cartridge registry extends. The cartridge subclass imports
+    the serving engine's logger, and with it the whole vLLM package; typed
+    document artifacts need only this standard-library module.
+    """
     source = Path(root) / "source/vllm"
     revision = subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
@@ -78,23 +84,20 @@ def catalog_class(root):
     subprocess.run(
         ["git", "-C", str(source), "diff", "--exit-code", "HEAD", "--"], check=True
     )
-    # Load exactly three independent modules. Do not change the engine's
+    # Load exactly one independent module. Do not change the engine's
     # package search path or resolve its implementation from another tree.
-    for name in ["artifact_registry", "cartridge_manifest", "cartridge_registry"]:
-        filename = source / "vllm" / f"{name}.py"
-        key = f"vllm.{name}"
-        module = sys.modules.get(key)
-        if module is not None:
-            if Path(module.__file__).resolve() != filename.resolve():
-                raise ValueError(
-                    "an existing catalog shadows the pinned implementation"
-                )
-        else:
-            spec = importlib.util.spec_from_file_location(key, filename)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[key] = module
-            spec.loader.exec_module(module)
-    return module.CartridgeRegistry
+    filename = source / "vllm" / "artifact_registry.py"
+    key = "vllm.artifact_registry"
+    module = sys.modules.get(key)
+    if module is not None:
+        if Path(module.__file__).resolve() != filename.resolve():
+            raise ValueError("an existing catalog shadows the pinned implementation")
+    else:
+        spec = importlib.util.spec_from_file_location(key, filename)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[key] = module
+        spec.loader.exec_module(module)
+    return module.ArtifactRegistry
 
 
 class ArtifactEmbeddingStore:
@@ -112,9 +115,6 @@ class ArtifactEmbeddingStore:
         self.mode = mode
         import torch
 
-        from lmcache.v1.memory_allocators.host_memory_allocator import (
-            HostMemoryAllocator,
-        )
         from types import MappingProxyType
 
         from . import artifact_set
@@ -137,9 +137,17 @@ class ArtifactEmbeddingStore:
         self.backing = cfg.get("artifact_backing", "arena")
         self.verification = cfg.get("artifact_verification", "on-map")
         self.prefetch_useful = self.backing == "arena"
+        allocator = None
+        if self.backing == "arena":
+            # Mapped backing never allocates payload memory.
+            from lmcache.v1.memory_allocators.host_memory_allocator import (
+                HostMemoryAllocator,
+            )
+
+            allocator = HostMemoryAllocator(cfg["pool_bytes"])
         self.registry = LMCacheArtifactRegistry(
             self.catalog,
-            HostMemoryAllocator(cfg["pool_bytes"]) if self.backing == "arena" else None,
+            allocator,
             backing=self.backing,
             verification=self.verification,
             max_mappings=cfg.get("max_mappings", 512),
