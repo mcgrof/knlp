@@ -885,6 +885,20 @@ def run(args):
         if args.clip > 0:
             torch.nn.utils.clip_grad_norm_(list(prefix.k) + list(prefix.v), args.clip)
         opt.step()
+        if args.decay_tau > 0:
+            # Decoupled decay, as in AdamW, scaled by the scheduled rate so
+            # that at the peak rate the pull has a timescale of decay_tau
+            # steps (lambda = 1 / (lr_peak * tau)). The target is the
+            # starting prefix or zero; the frozen sink is never touched.
+            f = lr_at(step) / (args.lr * args.decay_tau)
+            with torch.no_grad():
+                for cur, ini in zip(
+                    list(prefix.k) + list(prefix.v), prefix.init_k + prefix.init_v
+                ):
+                    if args.decay_to == "init":
+                        cur.sub_(f * (cur - ini))
+                    else:
+                        cur.mul_(1.0 - f)
         step_times.append(time.time() - ts)
         if step % args.log_every == 0:
             print(
@@ -1097,6 +1111,18 @@ def main():
     r.add_argument("--warmup-min-lr", type=float, default=1e-4)
     r.add_argument("--alpha-f", type=float, default=0.02)
     r.add_argument("--clip", type=float, default=0.0)
+    r.add_argument(
+        "--decay-tau",
+        type=float,
+        default=0.0,
+        help="weight-decay timescale in steps at the peak rate (0 = off)",
+    )
+    r.add_argument(
+        "--decay-to",
+        choices=("init", "zero"),
+        default="init",
+        help="decay toward the starting prefix or toward zero",
+    )
     r.add_argument(
         "--generic-frac", type=float, default=0.0, help="Cartridges++ data mix fraction"
     )
