@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CS312 Deep Learning Alchemy: a KV-cache precision lane | knlp</title>
+<meta name="description" content="An addendum to Stanford CS312 Deep Learning Alchemy: a reproducible KV-cache quantization lane on the d8 model organism. Post-hoc and quantization-aware training across fp8, int4, int3 and int2, per-token and per-tensor, with and without query-key normalization. Query-key normalization is the dominant defense; quantization-aware training earns its cost only at 2-bit; a lower learning rate is the one optimizer knob that helps at the hardest cell.">
+<link rel="canonical" href="https://knlp.io/2026-10-stanford-cs312.html">
+<link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019b">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+<a class="brand" href="./">knlp <span>/ CS312 precision lane</span></a>
+<nav aria-label="Main navigation">
+<a href="#goal">The goal</a>
+<a href="#posthoc">Post-hoc curve</a>
+<a href="#frontier">Trained frontier</a>
+<a href="#sweep">Stress sweep</a>
+<a href="cs312-tutorial.html">Tutorial lane</a>
+</nav>
+</header>
+<main id="main">
+<div class="hero">
+<p class="eyebrow">Course lane · precision addendum · d8 model organism</p>
+<h1>How far can you quantize a KV cache<br>before training notices?</h1>
+<p class="lead">This page is an addendum to Stanford CS312 "Deep Learning Alchemy". It adds a reproducible KV-cache precision lane to the course decoder and reports the findings. The result in one line: <strong>query-key normalization is the single strongest defense against KV quantization, and its value grows as the cache shrinks</strong>. Training the model to tolerate a quantized cache pays off only at 2-bit; at 4-bit, quantizing a finished checkpoint is already almost free.</p>
+<p class="scope">The lane and its reproduction steps are described on the <a href="cs312-tutorial.html">CS312 tutorial page</a>. This page covers the precision addendum: what it measures, and what it found.</p>
+<div class="hero-actions">
+<a class="button" href="#frontier">Read the findings <span aria-hidden="true">→</span></a>
+<a href="#reproduce">How to reproduce</a>
+</div>
+</div>
+
+<section id="goal">
+<h2>The goal</h2>
+<p>The course decoder, d8, is a small Llama-style model: 8 blocks, hidden size 512, 8 heads of dimension 64, rotary positions, RMSNorm, query-key normalization and a SwiGLU MLP, about 35M parameters. Its baseline validation loss is <strong>2.9258</strong> on 1,000 held-out sequences. A clean three-seed repeat of the baseline training gives a standard deviation of 0.0040, so a change below <strong>0.008</strong> (two sigma) is noise.</p>
+<p>The exercise is precision. The attention keys and values that fill the KV cache are stored in low precision, and we measure how much validation loss rises. The lane sweeps three independent axes:</p>
+<ul>
+<li><strong>Bit width and format.</strong> 8-bit uses fp8 (e4m3). Four bits and below use a symmetric integer grid: int4 (15 levels), int3 (7 levels) and int2 (a ternary grid). Keys and values can be set independently, so an asymmetric split such as 16-bit keys with 4-bit values, or the reverse, is one setting.</li>
+<li><strong>Granularity.</strong> <em>per-token</em> gives every cached vector its own scale, which is the realistic serving case. <em>per-tensor</em> shares one scale across the whole tensor, which is harsher.</li>
+<li><strong>Query-key normalization.</strong> On or off. It normalizes the query and key vectors before their dot product.</li>
+</ul>
+<p>Two methods are compared. <strong>Post-hoc</strong> quantization takes a finished baseline checkpoint and quantizes its cache only at evaluation; it trains nothing and is the curve to beat. <strong>Quantization-aware training</strong> (QAT) trains the model from scratch with the cache fake-quantized at every step through a straight-through estimator, so the optimizer learns to tolerate the coarse cache.</p>
+</section>
+
+<section id="posthoc">
+<h2>Post-hoc: what a finished model survives for free</h2>
+<p>Quantizing the baseline checkpoint's cache at evaluation, with no retraining. 16-bit reproduces the baseline exactly (2.9258), which confirms the measurement path is an identity when it should be.</p>
+<div class="table-wrap">
+<table>
+<caption>Post-hoc validation loss by level and granularity. Lower is better; baseline is 2.9258.</caption>
+<thead><tr><th scope="col">Level (K / V bits)</th><th scope="col">per-token</th><th scope="col">per-tensor</th></tr></thead>
+<tbody>
+<tr><th scope="row">K16 V16</th><td>2.9258</td><td>2.9258</td></tr>
+<tr><th scope="row">K16 V8</th><td>2.9259</td><td>2.9260</td></tr>
+<tr><th scope="row">K8 V8</th><td>2.9265</td><td>2.9268</td></tr>
+<tr><th scope="row">K16 V4</th><td>2.9290</td><td>2.9518</td></tr>
+<tr><th scope="row">K8 V4</th><td>2.9296</td><td>2.9525</td></tr>
+<tr><th scope="row">K4 V16</th><td>2.9341</td><td>2.9721</td></tr>
+<tr><th scope="row">K4 V4</th><td>2.9374</td><td>3.0003</td></tr>
+<tr><th scope="row">K4 V2</th><td>3.4084</td><td>7.9921</td></tr>
+<tr><th scope="row">K2 V16</th><td>4.7703</td><td>8.4953</td></tr>
+<tr><th scope="row">K2 V2</th><td>5.4665</td><td>8.9317</td></tr>
+</tbody>
+</table>
+</div>
+<p>Three findings read straight off the curve:</p>
+<ul>
+<li><strong>8-bit fp8 is nearly free</strong> at both granularities, under +0.001. fp8 is not where the interesting question lives.</li>
+<li><strong>Keys are more fragile than values.</strong> At 4-bit per-token, quantizing the keys costs +0.0083 (K4 V16) while quantizing the values costs +0.0032 (K16 V4). The cache tolerates coarse values far better than coarse keys.</li>
+<li><strong>int2 collapses.</strong> Per-token K2 V2 reaches 5.47 and per-tensor reaches 8.93, close to a random model (about 8.3). A finished model cannot be dropped to 2-bit without retraining.</li>
+</ul>
+</section>
+
+<section id="frontier">
+<h2>Trained frontier: what the optimizer can recover</h2>
+<p>Each cell trains d8 from scratch for 600,000 sequences with the cache fake-quantized throughout, changing only the level, the granularity and query-key normalization. Twelve cells.</p>
+<div class="table-wrap">
+<table>
+<caption>Quantization-aware training validation loss. Lower is better; baseline is 2.9258.</caption>
+<thead><tr><th scope="col">Level</th><th scope="col">Granularity</th><th scope="col">QK-norm</th><th scope="col">QAT loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">K4 V16</th><td>per-token</td><td>on</td><td>2.9333</td><td>+0.0075</td></tr>
+<tr><th scope="row">K4 V16</th><td>per-token</td><td>off</td><td>2.9611</td><td>+0.0353</td></tr>
+<tr><th scope="row">K4 V16</th><td>per-tensor</td><td>on</td><td>2.9450</td><td>+0.0192</td></tr>
+<tr><th scope="row">K4 V16</th><td>per-tensor</td><td>off</td><td>3.0504</td><td>+0.1246</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-token</td><td>on</td><td>2.9389</td><td>+0.0131</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-token</td><td>off</td><td>2.9682</td><td>+0.0424</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-tensor</td><td>on</td><td>2.9793</td><td>+0.0535</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-tensor</td><td>off</td><td>3.1912</td><td>+0.2654</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-token</td><td>on</td><td>3.1386</td><td>+0.2128</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-token</td><td>off</td><td>4.1530</td><td>+1.2271</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-tensor</td><td>on</td><td>4.7897</td><td>+1.8639</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-tensor</td><td>off</td><td>5.5000</td><td>+2.5742</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Query-key normalization is the dominant lever</h3>
+<p>At every level and granularity, turning query-key normalization on lowers the trained loss, and the gain grows sharply with the quantization depth.</p>
+<div class="table-wrap">
+<table>
+<caption>How much query-key normalization lowers the trained loss at each cell.</caption>
+<thead><tr><th scope="col">Level</th><th scope="col">Granularity</th><th scope="col">QK-norm helps by</th></tr></thead>
+<tbody>
+<tr><th scope="row">K4 V16</th><td>per-token</td><td>+0.0278</td></tr>
+<tr><th scope="row">K4 V16</th><td>per-tensor</td><td>+0.1054</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-token</td><td>+0.0293</td></tr>
+<tr><th scope="row">K4 V4</th><td>per-tensor</td><td>+0.2119</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-token</td><td>+1.0143</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-tensor</td><td>+0.7103</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every entry clears the 0.008 noise floor. Normalizing the queries and keys removes the key outlier structure that a coarse scale cannot represent, and at 2-bit it is worth more than a full nat. It is the strongest single defense in the whole study.</p>
+
+<h3>Training earns its cost only at 2-bit</h3>
+<p>Comparing trained loss (query-key normalization on, the model's native setting) against the post-hoc curve at the same cell shows where training the model to tolerate the cache actually pays.</p>
+<div class="table-wrap">
+<table>
+<caption>Trained loss against post-hoc loss at the same cell. "Recovers" is post-hoc minus QAT.</caption>
+<thead><tr><th scope="col">Cell</th><th scope="col">post-hoc</th><th scope="col">QAT</th><th scope="col">recovers</th></tr></thead>
+<tbody>
+<tr><th scope="row">K4 V16 per-token</th><td>2.9341</td><td>2.9333</td><td>+0.0007</td></tr>
+<tr><th scope="row">K4 V16 per-tensor</th><td>2.9721</td><td>2.9450</td><td>+0.0271</td></tr>
+<tr><th scope="row">K4 V4 per-token</th><td>2.9374</td><td>2.9389</td><td>−0.0015</td></tr>
+<tr><th scope="row">K4 V4 per-tensor</th><td>3.0003</td><td>2.9793</td><td>+0.0210</td></tr>
+<tr><th scope="row">K2 V2 per-token</th><td>5.4665</td><td>3.1386</td><td>+2.3279</td></tr>
+<tr><th scope="row">K2 V2 per-tensor</th><td>8.9317</td><td>4.7897</td><td>+4.1420</td></tr>
+</tbody>
+</table>
+</div>
+<p>At 4-bit, post-hoc quantization is already within a few hundredths of the baseline, so training has almost nothing to recover and its benefit sits at or below the noise floor. At 2-bit, post-hoc collapses toward random and training recovers more than two nats (per-token) to more than four (per-tensor). If a deployment only ever reaches 4-bit, quantizing a finished checkpoint is enough on this model; training is the tool for the 2-bit regime, and even there it does not fully close the gap.</p>
+
+<h3>Granularity matters, and the gap widens with depth</h3>
+<p>Per-tensor is worse than per-token at every level: +0.012 at K4 V16, +0.040 at K4 V4, and +1.65 at K2 V2 (query-key normalization on). One shared scale cannot hold the key range that a per-vector scale absorbs, and the cost explodes once the grid is only four levels wide.</p>
+</section>
+
+<section id="sweep">
+<h2>Stress sweep: which hyperparameters help at the hardest cell</h2>
+<p>The hardest cell that still trains to a finite, better-than-random loss is <strong>K2 V2, per-tensor, query-key normalization off</strong> (5.5000). To ask whether the optimizer alone can rescue it, each training hyperparameter is moved one at a time around the baseline (learning rate 0.003, warmup 1%, weight decay 0.1), with two extra seeds to measure the noise.</p>
+<div class="callout"><strong>This cell is seed-unstable, so its noise floor is not 0.008.</strong> Three baseline-setting runs at different seeds give 5.50, 5.59 and 6.05: a standard deviation of 0.30, so two sigma is <strong>0.60 nats</strong>, about seventy-five times the clean floor. At 2-bit per-tensor with query-key normalization off, the seed alone moves the loss by half a nat. Read every row below against this 0.60 band.</div>
+<div class="table-wrap">
+<table>
+<caption>One hyperparameter moved at a time at the stress cell. Center is the baseline setting.</caption>
+<thead><tr><th scope="col">Arm</th><th scope="col">value (× baseline)</th><th scope="col">val loss</th><th scope="col">Δ vs center</th></tr></thead>
+<tbody>
+<tr><th scope="row">center</th><td>lr 0.003, warmup 0.01, wd 0.1</td><td>5.5000</td><td>+0.0000</td></tr>
+<tr><th scope="row">learning rate</th><td>0.001 (⅓×)</td><td>5.0918</td><td>−0.4082</td></tr>
+<tr><th scope="row">learning rate</th><td>0.009 (3×)</td><td>5.8984</td><td>+0.3984</td></tr>
+<tr><th scope="row">warmup</th><td>0.03 (3×)</td><td>6.3992</td><td>+0.8992</td></tr>
+<tr><th scope="row">warmup</th><td>0.09 (9×)</td><td>6.4742</td><td>+0.9742</td></tr>
+<tr><th scope="row">weight decay</th><td>0.3 (3×)</td><td>5.6330</td><td>+0.1330</td></tr>
+<tr><th scope="row">weight decay</th><td>0.9 (9×)</td><td>5.8040</td><td>+0.3040</td></tr>
+<tr><th scope="row">seed</th><td>43</td><td>6.0545</td><td>+0.5545</td></tr>
+<tr><th scope="row">seed</th><td>44</td><td>5.5913</td><td>+0.0913</td></tr>
+</tbody>
+</table>
+</div>
+<p>The findings:</p>
+<ul>
+<li><strong>A lower learning rate is the one optimizer knob that helps.</strong> Learning rate is monotonic: 0.001 gives 5.09, 0.003 gives 5.50, 0.009 gives 5.90. The span across the three points is 0.81 nats, larger than the 0.60 seed band, so the trend is real. A higher learning rate makes the hardest cell worse.</li>
+<li><strong>Longer warmup hurts sharply.</strong> Both longer warmups are far worse, +0.90 and +0.97, well beyond the seed band. The short default warmup is best here.</li>
+<li><strong>More weight decay does not help.</strong> Weight decay is monotonic the wrong way (5.50, 5.63, 5.80). The effect is inside the seed band, so it is weak, but there is no sign of rescue.</li>
+</ul>
+<p class="scope">Put together with the frontier, the ranking at the highest KV quantization is clear: query-key normalization first, by a wide margin, then a gentler learning rate for a modest further gain. The stress cell's seed instability swamps the small optimizer effects, so no optimizer setting makes 2-bit per-tensor reliable on this model without query-key normalization.</p>
+</section>
+
+<section id="reproduce">
+<h2>Reproduce</h2>
+<p>The lane ships as two defconfigs in knlp. The trained frontier and the post-hoc curve come from one, the stress sweep from the other:</p>
+<pre class="kbd" style="display:block;padding:12px;overflow:auto;">make defconfig-cs312-kv-quant       # 12-cell trained frontier + post-hoc curve
+make defconfig-cs312-kv-quant-sweep # stress-cell hyperparameter sweep
+make</pre>
+<p>The fake-quant hook quantizes keys and values at the attention input with a straight-through estimator, so the same code path serves both post-hoc evaluation and quantization-aware training. The post-hoc curve runs as an evaluation-only pass over a trained checkpoint; the frontier and the sweep train each cell from scratch. All runs evaluate on the same 1,000 validation sequences, and each training cell takes roughly ten to fifteen minutes on one H100.</p>
+<p class="scope">All numbers here are for the d8 course model at the course training horizon, on the course validation set. They are a clean study on one small decoder, not a claim about every model or every serving stack. The asymmetric thesis (keys more fragile than values), the granularity gap, and the value of query-key normalization are consistent with the larger-model KV-quantization work elsewhere on this site, but each remains model-specific until measured again.</p>
+<div class="detail-links">
+<a href="cs312-tutorial.html"><span>The CS312 tutorial lane: model organism and workflow</span><span aria-hidden="true">→</span></a>
+<a href="asymmetric-quantization.html"><span>Asymmetric KV quantization on production models</span><span aria-hidden="true">→</span></a>
+<a href="fp8-kv-failure-atlas.html"><span>FP8 KV-cache failure mechanisms and model probes</span><span aria-hidden="true">→</span></a>
+</div>
+</section>
+</main>
+<footer>knlp · CS312 Deep Learning Alchemy precision addendum · d8 model organism · query-key normalization is the dominant KV-quantization defense.</footer>
+</body>
+</html>

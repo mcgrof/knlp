@@ -156,6 +156,11 @@ The entry script already accepts any `TrainConfig` field in a run's
 from the overrides, depth and horizon, so results from different backends
 and dates remain comparable.
 
+The first extension of this kind is a KV-cache precision lane: post-hoc and
+quantization-aware training across fp8, int4, int3 and int2, per-token and
+per-tensor, with and without query-key normalization. Its findings are on
+the [CS312 precision lane page](2026-10-stanford-cs312.html).
+
 ## Limits
 
 The lane reproduces the course's recipe; it does not change it. Numbers
