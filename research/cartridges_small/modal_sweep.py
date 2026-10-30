@@ -62,7 +62,7 @@ if modal.is_local():
 hf_vol = modal.Volume.from_name("knlp-hf", create_if_missing=True)
 runs_vol = modal.Volume.from_name("knlp-runs", create_if_missing=True)
 
-# The fixed part of every arm: the calibration recipe of the CPU rung
+# The fixed part of every arm: the calibration recipe of the CPU-scale harness
 # (reader, synthetic record, 64 slots, 200 steps, warmup 20, schedule
 # horizon 1,000, top-20 distillation, held-out evaluation). The learning
 # rate and weight decay come from the sweep.

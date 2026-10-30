@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""KV-quant hook checks. Skipped where torch is unavailable (e.g. monster)."""
+"""KV-quant hook checks. Skipped on hosts where torch is unavailable."""
 
 import sys
 import unittest
