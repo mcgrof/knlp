@@ -3,7 +3,7 @@
 A Cartridge is a pre-trained KV cache. Train it once per document offline,
 inject it into the model's KV cache at serving time, skip prefill entirely.
 
-The paper: [CARTRIDGE: Compact Document Representation for LLM Inference](https://arxiv.org/abs/2508.17032).
+The paper: [Cartridges: Lightweight and General-Purpose Long Context Representations via Self-Study](https://arxiv.org/abs/2506.06266) (Eyuboglu et al., 2025).
 
 ## Why this matters
 
@@ -304,8 +304,11 @@ Evaluate multi-cartridge serving (one server, many documents) using vLLM's
 
 ## Related work
 
-- [CARTRIDGE paper](https://arxiv.org/abs/2508.17032): the original
-  pre-trained KV cache technique
+- [Cartridges paper](https://arxiv.org/abs/2506.06266): the original
+  pre-trained KV cache technique (self-study distillation)
+- [Learned Structure in Cartridges](https://arxiv.org/abs/2508.17032)
+  (Diaz, 2025): the later structure paper that introduces sampled-chunk
+  initialization; not the original method
 - [Prefix Tuning](https://arxiv.org/abs/2101.00190) (Li and Liang, 2021):
   the foundation -- trainable continuous prefix vectors prepended to attention
 - [MoBA: Mixture of Block Attention](https://arxiv.org/abs/2511.11571):
