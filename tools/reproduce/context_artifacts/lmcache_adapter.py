@@ -28,6 +28,12 @@ class _PreparedArtifact:
     read_plan: Any
     layout: _TensorLayout | None = None
 
+    @property
+    def artifact_id(self):
+        # The admitted plan carries the checked identity. The manifest
+        # property would rehash its canonical encoding on every lease.
+        return self.read_plan.artifact_id
+
 
 class PreparedArtifactReader:
     """Bind a checked consumer once; each borrow still acquires backing ownership."""
@@ -174,7 +180,7 @@ class LMCacheArtifactRegistry:
         import torch
 
         with self.storage.lease(
-            prepared.manifest.artifact_id, plan=prepared.read_plan, timeout=timeout
+            prepared.artifact_id, plan=prepared.read_plan, timeout=timeout
         ) as obj:
             if self.backing == "mmap":
                 with self._lock:
