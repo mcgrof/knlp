@@ -226,7 +226,7 @@ def fetch(cfg):
                         "--single-branch",
                         "--branch",
                         (
-                            "2026-10-28-feature-mapped-artifacts"
+                            "2026-10-30-feature-mapped-published-reads"
                             if name == "LMCache"
                             and cfg.get("artifact_backing") == "mmap"
                             else "2026-10-26-feature-context-artifacts"
