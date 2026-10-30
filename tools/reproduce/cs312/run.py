@@ -501,9 +501,11 @@ def render_report(results, against=None):
     if device:
         lines.append(f"Device: {device}.")
     start, end, span = sweep_window(results)
-    done = sum(1 for e in results["runs"] if e.get("val_loss") is not None)
+    done = sum(1 for e in results["runs"] if e.get("state") == "finished")
+    scored = sum(1 for e in results["runs"] if e.get("val_loss") is not None)
     lines.append(
-        f"Finished runs: {done}/{len(results['runs'])}. "
+        f"Finished runs: {done}/{len(results['runs'])} "
+        f"({scored} with a validation loss; unfinished rows show their latest evaluation). "
         f"Sweep window: {start or '-'} to {end or '-'}"
         + (f" ({span:.1f} min)." if span is not None else ".")
     )

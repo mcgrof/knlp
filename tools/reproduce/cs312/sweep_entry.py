@@ -254,6 +254,7 @@ def wandb_runs(plan, entity, project):
                 "training_seconds": summary.get("timing/training_seconds"),
                 "startup_seconds": summary.get("timing/startup_seconds"),
                 "completed_steps": summary.get("timing/completed_steps"),
+                "optimizer_step": summary.get("optimizer_step"),
                 "runtime_seconds": runtime,
                 "created_utc": str(created),
                 "finished_utc": finished,
@@ -319,10 +320,19 @@ def mode_collect(args, plan):
             entry["finished_utc"] = receipt.get("finished_utc")
         candidates = online.get(name, [])
         if candidates:
+            # A restarted container leaves a dead earlier attempt under the
+            # same run name; prefer the attempt that got furthest and has
+            # a final validation loss, then the most recent one.
             best = sorted(
                 candidates,
-                key=lambda c: (c["state"] != "finished", c["created_utc"]),
+                key=lambda c: (
+                    c.get("val_loss") is None,
+                    -(c.get("optimizer_step") or 0),
+                    c["state"] != "finished",
+                    c["created_utc"],
+                ),
             )[0]
+            entry["wandb_attempts"] = len(candidates)
             entry["wandb"] = best
             if best.get("val_loss") is not None:
                 entry["val_loss"] = best["val_loss"]
