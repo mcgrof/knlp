@@ -42,6 +42,17 @@ Env:
                 every Adam step (default 0 = off, the library's behaviour).
                 The library has no clipping knob; the clip is applied
                 in the optimizer's step() so nothing else in the loop moves
+  DECAY_LAMBDA  decoupled weight decay on the trainable cartridge tokens,
+                applied after every Adam step as
+                p -= lr_t * DECAY_LAMBDA * (p - target), where lr_t is
+                that step's scheduled rate (default 0 = off, the
+                library's behaviour). The frozen tokens never move. Hold
+                DECAY_LAMBDA, not the timescale 1 / (LR * DECAY_LAMBDA),
+                fixed when LR changes: with an anchor the equilibrium
+                drift is set by DECAY_LAMBDA alone
+  DECAY_TO      init | zero (default init): the decay target is the
+                run's starting cartridge (the document's first tokens or
+                CART_INIT), or zero as in ordinary AdamW decay
   LOG_GRADNORM  print GRADNORM_CSV,<step>,<norm>,<clipped> once per
                 optimizer step (default on whenever CLIP_NORM is set):
                 <norm> is the pre-clip global L2 norm of the cartridge
@@ -129,6 +140,9 @@ ALPHA_F = float(os.environ.get("ALPHA_F", "0.02"))
 SEED = int(os.environ.get("SEED", "42"))
 CLIP_NORM = float(os.environ.get("CLIP_NORM", "0"))
 LOG_GRADNORM = os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 else "0") == "1"
+DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
+DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
+assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
 CART_INIT = os.environ.get("CART_INIT", "")
 SAVE_INIT = os.environ.get("SAVE_INIT", "1") not in ("0", "", "n", "no")
@@ -283,10 +297,17 @@ _ct.save_cache = _save_cache_once
 # the optimizer's step() itself, so the training loop is untouched and
 # a run with CLIP_NORM unset is bit-identical to one from before this
 # knob existed (the norm is only measured, never applied).
+#
+# The decay toward the starting cartridge goes in the same place, after
+# the Adam update. Its target is a copy of each trainable tensor taken
+# just before the first update, so it is the run's own start whatever
+# the initializer was. Parameters with requires_grad off (the frozen
+# sink) are left out, so a decay toward zero cannot shrink them either.
 
 
 class _ClippedAdam(torch.optim.Adam):
     _n_steps = 0
+    _decay_pairs = None
 
     def step(self, closure=None):
         if CLIP_NORM > 0 or LOG_GRADNORM:
@@ -302,8 +323,26 @@ class _ClippedAdam(torch.optim.Adam):
                     f"GRADNORM_CSV,{_ClippedAdam._n_steps},{float(norm):.6g},{clipped}",
                     flush=True,
                 )
+        if DECAY_LAMBDA > 0 and self._decay_pairs is None:
+            self._decay_pairs = [
+                (p, p.detach().clone() if DECAY_TO == "init" else None)
+                for g in self.param_groups
+                for p in g["params"]
+                if p.requires_grad
+            ]
         _ClippedAdam._n_steps += 1
-        return super().step(closure)
+        out = super().step(closure)
+        if DECAY_LAMBDA > 0:
+            # the library builds one parameter group, so one rate
+            f = self.param_groups[0]["lr"] * DECAY_LAMBDA
+            assert 0 < f < 1, f"decay pull {f} per step is outside (0, 1)"
+            with torch.no_grad():
+                for p, start in self._decay_pairs:
+                    if start is None:
+                        p.mul_(1.0 - f)
+                    else:
+                        p.lerp_(start, f)
+        return out
 
 
 # train.py uses its ``optim`` import for optim.Adam only
@@ -405,7 +444,8 @@ if __name__ == "__main__":
         f"[iso] {PATIENT} steps={STEPS} sched_steps={SCHED_STEPS} epochs={EPOCHS} "
         f"lr={LR} global_bs={GLOBAL_BS} seed={SEED} save_every={SAVE_EVERY} "
         f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None} "
-        f"clip_norm={CLIP_NORM or None}",
+        f"clip_norm={CLIP_NORM or None} "
+        f"decay={f'{DECAY_LAMBDA} to {DECAY_TO}' if DECAY_LAMBDA > 0 else None}",
         flush=True,
     )
     try:
