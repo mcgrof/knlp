@@ -23,7 +23,8 @@ either the decay coefficient or the decay timescale held fixed
     modal run ... --sweep nearby --lr 3e-2 --tau 100 --to init
 
 ``--smoke`` runs only the first arm, to measure time and cost per arm
-before fanning out. Results land in the ``knlp-runs`` volume under
+before fanning out. ``--gpu`` picks the card (default L4); keep one card
+type within a sweep, since arithmetic differs between cards. Results land in the ``knlp-runs`` volume under
 ``cartsmall/<sweep>/<arm>/`` (``result.json`` and ``run.log``).
 """
 
@@ -208,12 +209,14 @@ def main(
     lr: str = "3e-2",
     tau: float = 100.0,
     to: str = "init",
+    gpu: str = "L4",
 ):
     arms = SWEEPS[sweep](lr=lr, tau=tau, to=to)
     print(fetch_weights.remote())
     if smoke:
         arms = arms[:1]
-    print(f"{sweep}: {len(arms)} arms on L4")
-    for r in run_arm.starmap([(sweep, n, e) for n, e in arms]):
+    print(f"{sweep}: {len(arms)} arms on {gpu}")
+    fn = run_arm.with_options(gpu=gpu)
+    for r in fn.starmap([(sweep, n, e) for n, e in arms], order_outputs=False):
         print(f"ARM {r['arm']} rc={r['rc']} wall={r['wall_s']}s {r['done']}")
     print("SWEEP END")
