@@ -135,7 +135,7 @@ def main():
     ).instantiate(tokenizer=tok, seed=SEED)
     n = len(dataset)
     t0 = time.time()
-    model = FlexQwen3ForCausalLM.from_pretrained(MODEL, dtype=torch.bfloat16)
+    model = FlexQwen3ForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16)
     model = model.to(DEV).eval()
     for p in model.parameters():
         p.requires_grad_(False)

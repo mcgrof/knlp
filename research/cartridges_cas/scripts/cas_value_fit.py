@@ -24,7 +24,15 @@ prompt only, and its log-normalizer. Conversations are split into fit
 and validation sets by whole prompt group (the first user message), so
 duplicate prompts never straddle the split.
 
-``solve`` (CPU or GPU) loads a cartridge and the captured queries. For
+``solve`` (CPU or GPU) loads a cartridge and the captured queries. With
+METHOD=values (default) it fits the values in closed form as below.
+With METHOD=kv it is the distinct local attention fit: Adam on the
+trainable keys and values together, per layer, minimizing the relative
+error of the attention output over the cartridge plus KV_WLSE times
+the squared gap between the cartridge's and the teacher's
+log-normalizers, so the cartridge also draws the attention mass of the
+context it replaces (no biases are added, so the artifact keeps the
+bias-free layout). The best step on the validation queries is kept. For
 layer l and key-value head h, with the cartridge's keys K (frozen sink
 first) and each captured query rotated to the position it has when the
 cartridge stands in for the context (cartridge length plus its offset in
@@ -62,6 +70,10 @@ Env (solve):
     OUT_JSON    summary (default OUT_CART with .json)
     LAMS        comma list of ridge scales (default 1e-4,1e-3,1e-2,1e-1,1)
     ROPE_THETA  rotary base (default from the capture's model config)
+    METHOD      values (closed-form values) or kv (local key-value fit)
+    KV_STEPS    Adam steps per layer for METHOD=kv (default 1000)
+    KV_LR       Adam rate for METHOD=kv (default 1e-2)
+    KV_WLSE     weight of the log-normalizer term (default 0.1)
     DEVICE      cpu (default) or cuda
 
 Usage:
@@ -89,7 +101,10 @@ def rope(x, pos, theta):
     """Rotate x [..., N, d] at integer positions pos [N] with the
     half-split convention Qwen3 uses (rotate_half)."""
     d = x.shape[-1]
-    inv = 1.0 / (theta ** (torch.arange(0, d, 2, dtype=torch.float64) / d))
+    inv = 1.0 / (
+        theta ** (torch.arange(0, d, 2, dtype=torch.float64, device=x.device) / d)
+    )
+    pos = pos.to(x.device)
     ang = pos.to(torch.float64)[:, None] * inv[None, :]
     emb = torch.cat([ang, ang], dim=-1)
     cos, sin = emb.cos().to(x.dtype), emb.sin().to(x.dtype)
@@ -365,6 +380,78 @@ def fit_layer(Kc, V0, cap, cart_len, theta, lams, dev):
     )
 
 
+def fit_kv_layer(Kc, V0, cap, cart_len, theta, steps, lr, w_lse, dev):
+    """Local attention fit of keys and values for one layer. Kc, V0:
+    [KV, S, D] with the sink first (kept fixed). Adam on the trainable
+    keys and values minimizes, over the fit queries, the relative
+    squared error of the attention output over the cartridge plus
+    w_lse times the squared log-normalizer gap to the teacher, so the
+    cartridge draws the same attention mass as the context it stands
+    for. Returns the best keys and values on the validation queries."""
+    KV, S, D = Kc.shape
+    H = cap["fit"]["q"].shape[1]
+    rep = H // KV
+
+    def prep(split):
+        q = cap[split]["q"].float().to(dev)
+        t = cap[split]["t"].to(dev)
+        return (
+            rope(q.transpose(0, 1), t + cart_len, theta) / math.sqrt(D),
+            cap[split]["y"].float().to(dev).transpose(0, 1),
+            cap[split]["lse"].float().to(dev).transpose(0, 1),
+        )
+
+    qf, yf, lf = prep("fit")
+    qv, yv, lv = prep("val")
+    yf_den, yv_den = yf.square().mean(), yv.square().mean()
+    ks = Kc[:, :1].float().to(dev)
+    vs = V0[:, :1].float().to(dev)
+    k0 = Kc[:, 1:].float().to(dev)
+    v0 = V0[:, 1:].float().to(dev)
+    kt = torch.nn.Parameter(k0.clone())
+    vt = torch.nn.Parameter(v0.clone())
+
+    def terms(q, y, l, den):
+        k = torch.cat([ks, kt], 1).repeat_interleave(rep, dim=0)
+        v = torch.cat([vs, vt], 1).repeat_interleave(rep, dim=0)
+        sc = q @ k.transpose(1, 2)
+        lse = torch.logsumexp(sc, dim=-1)
+        out = torch.softmax(sc, dim=-1) @ v
+        return (out - y).square().mean() / den, (lse - l).square().mean()
+
+    with torch.no_grad():
+        e0, g0 = terms(qv, yv, lv, yv_den)
+    opt = torch.optim.Adam([kt, vt], lr=lr)
+    best = (float(e0 + w_lse * g0), 0, k0.clone(), v0.clone(), e0, g0)
+    for step in range(1, steps + 1):
+        opt.zero_grad(set_to_none=True)
+        e, g = terms(qf, yf, lf, yf_den)
+        (e + w_lse * g).backward()
+        opt.step()
+        if step % 25 == 0 or step == steps:
+            with torch.no_grad():
+                ev, gv = terms(qv, yv, lv, yv_den)
+                tot = float(ev + w_lse * gv)
+                if not math.isfinite(tot):
+                    raise FloatingPointError(f"non-finite loss at step {step}")
+                if tot < best[0]:
+                    best = (tot, step, kt.detach().clone(), vt.detach().clone(), ev, gv)
+    _, bstep, kb, vb, eb, gb = best
+    return (
+        kb,
+        vb,
+        dict(
+            val_rel_err_before=math.sqrt(float(e0)),
+            val_rel_err_after=math.sqrt(float(eb)),
+            val_lse_rmse_before=math.sqrt(float(g0)),
+            val_lse_rmse_after=math.sqrt(float(gb)),
+            best_step=bstep,
+            key_drift=float((kb - k0).norm() / k0.norm()),
+            value_drift=float((vb - v0).norm() / v0.norm()),
+        ),
+    )
+
+
 def solve():
     cap_dir = Path(os.environ["CAPTURE"])
     cart = os.environ["CART"]
@@ -374,6 +461,12 @@ def solve():
         float(x) for x in os.environ.get("LAMS", "1e-4,1e-3,1e-2,1e-1,1").split(",")
     ]
     dev = os.environ.get("DEVICE", "cpu")
+    global METHOD, KV_STEPS, KV_LR, KV_WLSE
+    METHOD = os.environ.get("METHOD", "values")
+    assert METHOD in ("values", "kv"), METHOD
+    KV_STEPS = int(os.environ.get("KV_STEPS", "1000"))
+    KV_LR = float(os.environ.get("KV_LR", "1e-2"))
+    KV_WLSE = float(os.environ.get("KV_WLSE", "0.1"))
     meta = json.loads((cap_dir / "meta.json").read_text())
     theta = float(os.environ.get("ROPE_THETA", meta["rope_theta"]))
     t0 = time.time()
@@ -388,15 +481,27 @@ def solve():
         Kc = torch.cat([fk[l].data, ck["trainable_keys"][l].data], dim=2)[0]
         V0 = torch.cat([fv[l].data, ck["trainable_values"][l].data], dim=2)[0]
         cap = torch.load(cap_dir / f"layer{l:02d}.pt", weights_only=False)
-        Vt, info = fit_layer(Kc, V0, cap, cart_len, theta, lams, dev)
-        p = ck["trainable_values"][l]
-        p.data.copy_(Vt[None].to(p.dtype).cpu())
+        if METHOD == "values":
+            Vt, info = fit_layer(Kc, V0, cap, cart_len, theta, lams, dev)
+            p = ck["trainable_values"][l]
+            p.data.copy_(Vt[None].to(p.dtype).cpu())
+            tail = f"{info['value_drift']:.3f},{info['lse_gap_mean']:.3f}"
+        else:
+            Kt, Vt, info = fit_kv_layer(
+                Kc, V0, cap, cart_len, theta, KV_STEPS, KV_LR, KV_WLSE, dev
+            )
+            for name, val in (("trainable_keys", Kt), ("trainable_values", Vt)):
+                p = ck[name][l]
+                p.data.copy_(val[None].to(p.dtype).cpu())
+            tail = (
+                f"{info['key_drift']:.3f},{info['value_drift']:.3f},"
+                f"{info['val_lse_rmse_before']:.3f},{info['val_lse_rmse_after']:.3f}"
+            )
         info["layer"] = l
         layers.append(info)
         print(
-            f"VFIT,{l},{info['val_rel_err_before']:.4f},"
-            f"{info['val_rel_err_after']:.4f},{info['value_drift']:.3f},"
-            f"{info['lse_gap_mean']:.3f}",
+            f"VFIT,{METHOD},{l},{info['val_rel_err_before']:.4f},"
+            f"{info['val_rel_err_after']:.4f},{tail}",
             flush=True,
         )
     torch.save(ck, out_cart)
@@ -404,7 +509,9 @@ def solve():
         cart=os.path.abspath(cart),
         out_cart=os.path.abspath(out_cart),
         capture=meta,
-        lams=lams,
+        method=METHOD,
+        lams=lams if METHOD == "values" else None,
+        kv=dict(steps=KV_STEPS, lr=KV_LR, w_lse=KV_WLSE) if METHOD == "kv" else None,
         cart_len=cart_len,
         layers=layers,
         seconds=time.time() - t0,
@@ -450,6 +557,14 @@ def selftest():
     Vt, info = fit_layer(Kc, V0, cap, S, theta, [1e-8, 1e-6], "cpu")
     print("selftest", info["val_rel_err_before"], info["val_rel_err_after"])
     assert info["val_rel_err_after"] < 0.05 * info["val_rel_err_before"]
+    # the key-value fit from wrong keys and values lowers both the output
+    # error and the normalizer gap
+    Kw = Kc.clone()
+    Kw[:, 1:] += 0.3 * torch.randn(KV, S - 1, D)
+    _, _, kinfo = fit_kv_layer(Kw, V0, cap, S, theta, 300, 2e-2, 0.1, "cpu")
+    print("selftest kv", kinfo)
+    assert kinfo["val_rel_err_after"] < 0.5 * kinfo["val_rel_err_before"]
+    assert kinfo["val_lse_rmse_after"] < kinfo["val_lse_rmse_before"]
     print("VFIT_SELFTEST PASS")
 
 
