@@ -54,6 +54,17 @@ config KNLP_CS312_PROBLEM_P1B
 	  (KNLP_CS312_REFERENCE_OUTPUT) instead of being rerun. Two baseline
 	  repeats at new paired seeds give the noise floor.
 
+config KNLP_CS312_PROBLEM_KVQ
+	bool "KV-cache quantization-aware training (precision lane)"
+	help
+	  Fake-quantize the K and V attention activations (the cache
+	  contents) on every step with a straight-through gradient, so the
+	  model trains to tolerate a quantized cache. The frontier crosses a
+	  K/V bit-width ladder with granularity (per-token, per-tensor) and
+	  qk_norm (on, off) to find where quantization breaks d8; the sweep
+	  then varies warmup, learning rate and weight decay at that stress
+	  cell. This is original knlp R&D, not the handout's 1(c).
+
 endchoice
 
 config KNLP_CS312_P1B_PAIRS
@@ -85,6 +96,55 @@ config KNLP_CS312_REFERENCE_OUTPUT
 	  For problem 1(b), the problem 1(a) output directory. Its
 	  results.json supplies the baseline and single-axis cells to the
 	  pair tables; run make cs312-collect there first.
+
+if KNLP_CS312_PROBLEM_KVQ
+
+config KNLP_CS312_KVQ_FRONTIER_LEVELS
+	string "K/V bit-width ladder for the frontier, comma separated"
+	default "K4V16,K4V4,K2V2"
+	help
+	  Each label is K<bits>V<bits>. 16 is no quant, 8 is fp8 e4m3, and 4,
+	  3 or 2 are symmetric integer grids. K4V16 isolates key fragility,
+	  K2V2 is the aggressive floor.
+
+config KNLP_CS312_KVQ_GRANS
+	string "Quantization granularities to cross, comma separated"
+	default "per_token,per_tensor"
+
+config KNLP_CS312_KVQ_QKNORM
+	string "qk_norm settings to cross (on, off)"
+	default "on,off"
+
+config KNLP_CS312_KVQ_PHASE
+	string "Phase: frontier, sweep, or both"
+	default "frontier"
+
+config KNLP_CS312_KVQ_STRESS
+	string "Stress cell for the sweep as level:gran:qk, e.g. K4V4:per_tensor:off"
+	default ""
+
+config KNLP_CS312_KVQ_HP_WARMUP
+	string "Warmup fractions for the sweep, comma separated"
+	default "0.03,0.09"
+
+config KNLP_CS312_KVQ_HP_LR
+	string "Peak learning rates for the sweep, comma separated"
+	default "0.001,0.009"
+
+config KNLP_CS312_KVQ_HP_WD
+	string "Weight decays for the sweep, comma separated"
+	default "0.3,0.9"
+
+config KNLP_CS312_KVQ_SEED_REPEATS
+	int "Baseline-recipe seed repeats at the stress cell"
+	default 2
+	range 0 8
+
+config KNLP_CS312_KVQ_POSTHOC
+	string "Path to a step-0 eval-only JSON for the post-hoc comparison"
+	default ""
+
+endif
 
 config KNLP_CS312_P1A_BASE
 	string "Log-grid multiplier for learning rate, weight decay and warmup"

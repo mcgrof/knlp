@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,6 +63,16 @@ DEFAULTS = {
     "OUTPUT": "results/cs312-problem-1",
     "ONLY": "",
     "PURGE": "n",
+    "KVQ_FRONTIER_LEVELS": "K4V16,K4V4,K2V2",
+    "KVQ_GRANS": "per_token,per_tensor",
+    "KVQ_QKNORM": "on,off",
+    "KVQ_STRESS": "",
+    "KVQ_PHASE": "frontier",
+    "KVQ_HP_WARMUP": "0.03,0.09",
+    "KVQ_HP_LR": "0.001,0.009",
+    "KVQ_HP_WD": "0.3,0.9",
+    "KVQ_SEED_REPEATS": "2",
+    "KVQ_POSTHOC": "",
 }
 
 # Course defaults for the swept axes at the pinned revision. The entry
@@ -262,6 +273,105 @@ def plan_p1b(cfg):
     }
 
 
+QUANT_BUILDER = "cs312_quant:build_quant_model"
+_GRAN_SHORT = {"per_token": "pt", "per_tensor": "ptns"}
+_QK = {"on": True, "off": False}
+
+
+def _parse_level(label):
+    m = re.fullmatch(r"K(\d+)V(\d+)", label.strip())
+    if not m:
+        raise SystemExit(f"bad quant level {label!r}; expected like K4V8")
+    return int(m.group(1)), int(m.group(2))
+
+
+def _kvq_overrides(level, gran, qk_norm, hp=None):
+    k, v = _parse_level(level)
+    ov = {
+        "model_builder": QUANT_BUILDER,
+        "model_builder_kwargs": {
+            "k_bits": k,
+            "v_bits": v,
+            "k_format": "e4m3",
+            "v_format": "e4m3",
+            "granularity": gran,
+        },
+        "qk_norm": qk_norm,
+    }
+    if hp:
+        ov.update(hp)
+    return ov
+
+
+def plan_kvq(cfg):
+    """KV-cache quantization-aware training.
+
+    Frontier: a K/V ladder crossed with granularity (per_token, per_tensor)
+    and qk_norm (on, off), to find where quantization genuinely breaks d8.
+    Sweep: at a chosen stress cell (KVQ_STRESS = level:gran:qk), vary
+    warmup, learning rate and weight decay one at a time, plus baseline
+    seed repeats for the noise floor.
+    """
+    grans = [g.strip() for g in cfg["KVQ_GRANS"].split(",") if g.strip()]
+    qks = [q.strip() for q in cfg["KVQ_QKNORM"].split(",") if q.strip()]
+    phase = cfg["KVQ_PHASE"]
+    runs, seen = [], set()
+
+    def add(axis, level, gran, qk_norm, hp=None):
+        ov = _kvq_overrides(level, gran, qk_norm, hp)
+        key = json.dumps(ov, sort_keys=True)
+        if key in seen:
+            return
+        seen.add(key)
+        runs.append(
+            {
+                "index": len(runs),
+                "axis": axis,
+                "level": level,
+                "granularity": gran,
+                "qk_norm": qk_norm,
+                "exponent": 0,
+                "overrides": ov,
+                "suffix": f"{level}-{_GRAN_SHORT[gran]}-{cfg['RUN_SUFFIX']}",
+            }
+        )
+
+    levels = [l.strip() for l in cfg["KVQ_FRONTIER_LEVELS"].split(",") if l.strip()]
+    if phase in ("frontier", "both"):
+        for level in levels:
+            for gran in grans:
+                for qk in qks:
+                    add("frontier", level, gran, _QK[qk])
+
+    stress = cfg["KVQ_STRESS"].strip()
+    if phase in ("sweep", "both"):
+        if not stress:
+            raise SystemExit(
+                "KVQ_STRESS must be set for the sweep phase (level:gran:qk)"
+            )
+        slevel, sgran, sqk = (part.strip() for part in stress.split(":"))
+        sqk_b = _QK[sqk]
+        add("stress-center", slevel, sgran, sqk_b)
+        for w in cfg["KVQ_HP_WARMUP"].split(","):
+            add("warmup", slevel, sgran, sqk_b, {"warmup_percent": float(w)})
+        for lr in cfg["KVQ_HP_LR"].split(","):
+            add("learning_rate", slevel, sgran, sqk_b, {"learning_rate": float(lr)})
+        for wd in cfg["KVQ_HP_WD"].split(","):
+            add("weight_decay", slevel, sgran, sqk_b, {"weight_decay": float(wd)})
+        for i in range(int(cfg["KVQ_SEED_REPEATS"])):
+            seed = 43 + i
+            add("seed", slevel, sgran, sqk_b, {"model_seed": seed, "data_seed": seed})
+
+    return {
+        "grans": grans,
+        "qknorms": [q.strip() for q in qks],
+        "levels": levels,
+        "stress": stress,
+        "phase": phase,
+        "runs": runs,
+    }
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -275,7 +385,7 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
-    planners = {"p1a": plan_p1a, "p1b": plan_p1b}
+    planners = {"p1a": plan_p1a, "p1b": plan_p1b, "kvq": plan_kvq}
     if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
@@ -302,6 +412,8 @@ def build_plan(cfg):
         if int(cfg["NUM_EVALS"]) > 0:
             train_config["num_evals"] = int(cfg["NUM_EVALS"])
         train_config.update(run["overrides"])
+        if run.get("suffix"):
+            train_config["run_name_suffix"] = run["suffix"]
         run["train_config"] = train_config
     public = {key: cfg[key] for key in cfg if key not in ("WANDB_ENTITY",)}
     return {
@@ -400,6 +512,23 @@ def git(directory, *args, capture=False):
     return None
 
 
+def stage_quant_hook(cfg):
+    """Drop the KV-quant hook into the course checkout as an untracked file.
+
+    model_builder resolves cs312_quant inside the container and the local
+    env; staging it this way keeps the pinned commit unchanged (untracked
+    files do not move HEAD).
+    """
+    src = HERE / "cs312_quant.py"
+    if not src.exists():
+        return
+    dst = assignments_dir(cfg) / "cs312_quant.py"
+    import shutil as _sh
+
+    _sh.copyfile(src, dst)
+    print(f"staged KV-quant hook at {dst} (untracked)")
+
+
 def cmd_fetch(cfg, _args):
     directory = assignments_dir(cfg)
     if not (directory / ".git").is_dir():
@@ -413,6 +542,7 @@ def cmd_fetch(cfg, _args):
     if head != cfg["ASSIGNMENTS_REV"]:
         raise SystemExit(f"checkout is at {head}, expected {cfg['ASSIGNMENTS_REV']}")
     print(f"course checkout {directory} at {head}")
+    stage_quant_hook(cfg)
     if not cfg["PYTHON"]:
         subprocess.run([uv_binary(), "sync", "--project", str(directory)], check=True)
     run_command(
@@ -463,7 +593,7 @@ def print_plan(plan):
         f"{plan['num_train_sequences']} sequences, {len(plan['runs'])} runs, "
         f"backend {plan['backend']}, suffix {plan['run_suffix']}"
     )
-    for axis in plan["axes"]:
+    for axis in plan.get("axes", []):
         print(f"  {axis}: {plan['axis_values'][axis]}")
     for run in plan["runs"]:
         print(f"  [{run['index']:2d}] {run['axis']:>28s} {run['overrides']}")
@@ -831,13 +961,154 @@ def render_report_p1b(results):
     return "\n".join(lines) + "\n"
 
 
+def render_report_kvq(results, posthoc=None, baseline=2.9258):
+    plan = results["plan"]
+    posthoc = posthoc or {}
+    cells = {r["index"]: r for r in results["runs"]}
+
+    def loss(run):
+        return run.get("val_loss")
+
+    lines = [f"# CS312 KV-cache quantization report", ""]
+    lines.append(
+        f"Plan `{plan['digest']}`: d{plan['depth']}, "
+        f"{plan['num_train_sequences']:,} sequences per run, "
+        f"{len(plan['runs'])} runs, backend `{results['backend']}`, "
+        f"phase `{plan.get('phase', '?')}`, collected {results['collected_utc']}."
+    )
+    done = sum(1 for r in results["runs"] if r.get("state") == "finished")
+    start, end, span = sweep_window(results)
+    lines.append(
+        f"Quantization-aware training; straight-through fake-quant of the KV "
+        f"cache. Anchor (no quant, default recipe) = {baseline:.4f}. "
+        f"Finished {done}/{len(results['runs'])}. Window {start or '-'} to "
+        f"{end or '-'}" + (f" ({span:.1f} min)." if span is not None else ".")
+    )
+    lines.append("")
+
+    frontier = [r for r in results["runs"] if r["axis"] == "frontier"]
+    if frontier:
+        grans = sorted({r["granularity"] for r in frontier})
+        qks = sorted({r["qk_norm"] for r in frontier}, reverse=True)
+        levels = [lvl for lvl in plan["levels"]]
+        have_posthoc = bool(posthoc)
+        lines.append("## Frontier: where QAT holds under quantization")
+        lines.append("")
+        for gran in grans:
+            for qk in qks:
+                group = {
+                    r["level"]: r
+                    for r in frontier
+                    if r["granularity"] == gran and r["qk_norm"] == qk
+                }
+                if not group:
+                    continue
+                qk_lbl = "qk_norm on" if qk else "qk_norm OFF"
+                lines.append(f"### {gran}, {qk_lbl}")
+                lines.append("")
+                head = "| level | QAT val loss | d vs anchor |"
+                sep = "|---|---|---|"
+                if have_posthoc:
+                    head += " post-hoc | QAT gain |"
+                    sep += "---|---|"
+                lines.append(head)
+                lines.append(sep)
+                for lvl in levels:
+                    r = group.get(lvl)
+                    if r is None:
+                        continue
+                    ql = loss(r)
+                    qd = None if ql is None else ql - baseline
+                    row = f"| {lvl} | {fmt(ql)} | {'' if qd is None or qd < 0 else '+'}{fmt(qd)} |"
+                    if have_posthoc:
+                        ph = posthoc.get(f"{lvl}-{gran}")
+                        gain = None if (ph is None or ql is None) else ph - ql
+                        row += f" {fmt(ph)} | {'' if gain is None or gain < 0 else '+'}{fmt(gain)} |"
+                    lines.append(row)
+                lines.append("")
+        if have_posthoc:
+            lines.append(
+                "QAT gain = post-hoc loss minus QAT loss; positive means "
+                "training-to-tolerate recovered that much. post-hoc is the "
+                "eval-only curve (qk_norm on), so compare it only to the "
+                "qk_norm-on rows."
+            )
+            lines.append("")
+
+    sweep = [
+        r
+        for r in results["runs"]
+        if r["axis"] in ("stress-center", "warmup", "learning_rate", "weight_decay")
+    ]
+    if sweep:
+        center = next(
+            (r for r in results["runs"] if r["axis"] == "stress-center"), None
+        )
+        c = center and loss(center)
+        lines.append(f"## HP sweep at the stress cell `{plan.get('stress', '?')}`")
+        lines.append("")
+        lines.append("| axis | setting | val loss | d vs center |")
+        lines.append("|---|---|---|---|")
+        if center:
+            lines.append(f"| center | default recipe | {fmt(c)} | 0 |")
+        for r in sweep:
+            if r["axis"] == "stress-center":
+                continue
+            ov = r["overrides"]
+            setting = (
+                ov.get("warmup_percent")
+                or ov.get("learning_rate")
+                or ov.get("weight_decay")
+            )
+            l = loss(r)
+            d = None if (l is None or c is None) else l - c
+            lines.append(
+                f"| {r['axis']} | {setting} | {fmt(l)} | {'' if d is None or d < 0 else '+'}{fmt(d)} |"
+            )
+        lines.append("")
+
+    seeds = [r for r in results["runs"] if r["axis"] == "seed" and loss(r) is not None]
+    if seeds or any(r["axis"] == "stress-center" for r in results["runs"]):
+        lines.append("## Noise floor at the stress cell")
+        lines.append("")
+        vals = []
+        center = next(
+            (r for r in results["runs"] if r["axis"] == "stress-center"), None
+        )
+        if center and loss(center) is not None:
+            vals.append(loss(center))
+        for r in seeds:
+            vals.append(loss(r))
+        if len(vals) >= 2:
+            mean = sum(vals) / len(vals)
+            sd = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+            lines.append(
+                f"{len(vals)} seeds at the stress cell: mean {mean:.4f}, "
+                f"sample SD {sd:.4f}. Sweep effects inside about two SDs are "
+                f"not distinguishable from seed noise."
+            )
+        else:
+            lines.append("Seed repeats pending.")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def cmd_report(cfg, args):
     out = output_dir(cfg)
     results = read_json(out / "results.json")
     against = None
     if args.against:
         against = read_json(Path(args.against) / "results.json")
-    if results["plan"].get("problem") == "p1b":
+    problem = results["plan"].get("problem")
+    if problem == "kvq":
+        posthoc = {}
+        if cfg["KVQ_POSTHOC"]:
+            ph_path = Path(os.path.expanduser(cfg["KVQ_POSTHOC"]))
+            ph_path = ph_path if ph_path.is_absolute() else ROOT / ph_path
+            if ph_path.exists():
+                posthoc = read_json(ph_path).get("results", {})
+        text = render_report_kvq(results, posthoc)
+    elif problem == "p1b":
         text = render_report_p1b(results)
     else:
         text = render_report(results, against)

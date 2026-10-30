@@ -110,3 +110,51 @@ class PlanP1bTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KvqPlanTest(unittest.TestCase):
+    def test_frontier_crosses_levels_grans_qknorm(self):
+        plan = cs312.build_plan(defaults(PROBLEM="kvq"))
+        runs = plan["runs"]
+        # 3 levels x 2 grans x 2 qknorm
+        self.assertEqual(len(runs), 12)
+        self.assertTrue(all(r["axis"] == "frontier" for r in runs))
+        for r in runs:
+            ov = r["overrides"]
+            self.assertEqual(ov["model_builder"], "cs312_quant:build_quant_model")
+            self.assertIn("granularity", ov["model_builder_kwargs"])
+            self.assertIn(ov["qk_norm"], (True, False))
+        # K4V16 -> k_bits 4, v_bits 16
+        k4 = next(r for r in runs if r["level"] == "K4V16")
+        self.assertEqual(k4["overrides"]["model_builder_kwargs"]["k_bits"], 4)
+        self.assertEqual(k4["overrides"]["model_builder_kwargs"]["v_bits"], 16)
+
+    def test_suffix_is_unique_per_cell_under_build_plan(self):
+        plan = cs312.build_plan(defaults(PROBLEM="kvq", RUN_SUFFIX="kvq"))
+        names = []
+        for r in plan["runs"]:
+            tc = r["train_config"]
+            # run_name_suffix encodes level+gran; qk_norm off adds -noqknorm
+            # in the course run_name, so suffix need not encode qk
+            key = (
+                tc["run_name_suffix"],
+                tc["qk_norm"],
+                tuple(sorted(tc["model_builder_kwargs"].items())),
+            )
+            names.append(key)
+        self.assertEqual(len(set(names)), len(names))
+
+    def test_sweep_requires_stress_and_builds_hp_cells(self):
+        with self.assertRaises(SystemExit):
+            cs312.build_plan(defaults(PROBLEM="kvq", KVQ_PHASE="sweep"))
+        plan = cs312.build_plan(
+            defaults(PROBLEM="kvq", KVQ_PHASE="sweep", KVQ_STRESS="K4V4:per_tensor:off")
+        )
+        axes = sorted({r["axis"] for r in plan["runs"]})
+        self.assertEqual(
+            axes, ["learning_rate", "seed", "stress-center", "warmup", "weight_decay"]
+        )
+        center = next(r for r in plan["runs"] if r["axis"] == "stress-center")
+        self.assertFalse(center["qk_norm"])
+        self.assertEqual(center["granularity"], "per_tensor")
+        self.assertEqual(center["overrides"]["model_builder_kwargs"]["k_bits"], 4)

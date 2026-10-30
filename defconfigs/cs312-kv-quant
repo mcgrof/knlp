@@ -1,0 +1,23 @@
+# CS312 precision lane: KV-cache quantization-aware training frontier.
+# Fake-quantizes K and V during training with a straight-through gradient
+# and scans a K/V ladder x granularity x qk_norm on Modal H100s to find
+# where quantization breaks d8. The sweep at the stress cell is a separate
+# run (set CONFIG_KNLP_CS312_KVQ_PHASE=both and _KVQ_STRESS).
+CONFIG_KNLP_CS312=y
+CONFIG_KNLP_CS312_PROBLEM_KVQ=y
+CONFIG_KNLP_CS312_KVQ_FRONTIER_LEVELS="K4V16,K4V4,K2V2"
+CONFIG_KNLP_CS312_KVQ_GRANS="per_token,per_tensor"
+CONFIG_KNLP_CS312_KVQ_QKNORM="on,off"
+CONFIG_KNLP_CS312_KVQ_PHASE="frontier"
+CONFIG_KNLP_CS312_KVQ_SEED_REPEATS=2
+CONFIG_KNLP_CS312_KVQ_POSTHOC="results/cs312-kv-quant/step0-eval.json"
+CONFIG_KNLP_CS312_DEPTH=8
+CONFIG_KNLP_CS312_NUM_TRAIN_SEQUENCES=600000
+CONFIG_KNLP_CS312_BACKEND_MODAL=y
+CONFIG_KNLP_CS312_MODAL_GPU="H100"
+CONFIG_KNLP_CS312_MODAL_ENVIRONMENT="main"
+CONFIG_KNLP_CS312_MODAL_MAX_PARALLEL=0
+CONFIG_KNLP_CS312_MODAL_EXTRA_SECRETS="cs312-torch-alloc"
+CONFIG_KNLP_CS312_WANDB_ONLINE=y
+CONFIG_KNLP_CS312_WANDB_PROJECT="cs312"
+CONFIG_KNLP_CS312_OUTPUT="results/cs312-kv-quant"

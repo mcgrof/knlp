@@ -42,7 +42,7 @@ def write_json(path, payload):
 def check_defaults(plan):
     from train import TrainConfig
 
-    for axis, default in plan["axis_defaults"].items():
+    for axis, default in plan.get("axis_defaults", {}).items():
         actual = getattr(TrainConfig, axis)
         if actual != default:
             raise SystemExit(
@@ -323,8 +323,8 @@ def mode_collect(args, plan):
     for run, name in zip(plan["runs"], names):
         entry = {
             "index": run["index"],
-            "axis": run["axis"],
-            "exponent": run["exponent"],
+            "axis": run.get("axis"),
+            "exponent": run.get("exponent"),
             "overrides": run["overrides"],
             "run_name": name,
             "val_loss": None,
@@ -333,6 +333,9 @@ def mode_collect(args, plan):
             "started_utc": None,
             "finished_utc": None,
         }
+        for _k in ("level", "granularity", "qk_norm", "suffix"):
+            if _k in run:
+                entry[_k] = run[_k]
         receipt_path = args.output / "runs" / name / "receipt.json"
         if receipt_path.exists():
             receipt = read_json(receipt_path)

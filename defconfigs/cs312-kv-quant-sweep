@@ -1,0 +1,26 @@
+# CS312 precision lane: hyperparameter sweep at the stress cell.
+# Stress cell chosen by the pre-registered rule from the frontier
+# (results/cs312-kv-quant): K2V2, per_tensor, qk_norm off (hardest cell
+# that trained to a finite, better-than-random loss). Vary warmup,
+# learning rate and weight decay one at a time around the baseline, plus
+# two baseline-HP seed repeats for the noise floor. The stress-center
+# cell reuses the frontier checkpoint on the volume and is skipped.
+CONFIG_KNLP_CS312=y
+CONFIG_KNLP_CS312_PROBLEM_KVQ=y
+CONFIG_KNLP_CS312_KVQ_PHASE="sweep"
+CONFIG_KNLP_CS312_KVQ_STRESS="K2V2:per_tensor:off"
+CONFIG_KNLP_CS312_KVQ_HP_WARMUP="0.03,0.09"
+CONFIG_KNLP_CS312_KVQ_HP_LR="0.001,0.009"
+CONFIG_KNLP_CS312_KVQ_HP_WD="0.3,0.9"
+CONFIG_KNLP_CS312_KVQ_SEED_REPEATS=2
+CONFIG_KNLP_CS312_DEPTH=8
+CONFIG_KNLP_CS312_NUM_TRAIN_SEQUENCES=600000
+CONFIG_KNLP_CS312_BACKEND_MODAL=y
+CONFIG_KNLP_CS312_MODAL_GPU="H100"
+CONFIG_KNLP_CS312_MODAL_ENVIRONMENT="main"
+CONFIG_KNLP_CS312_MODAL_MAX_PARALLEL=0
+CONFIG_KNLP_CS312_MODAL_EXTRA_SECRETS="cs312-torch-alloc"
+CONFIG_KNLP_CS312_WANDB_ONLINE=y
+CONFIG_KNLP_CS312_WANDB_PROJECT="cs312"
+CONFIG_KNLP_CS312_OUTPUT="results/cs312-kv-quant-sweep"
+CONFIG_KNLP_CS312_KVQ_POSTHOC="results/cs312-kv-quant/step0-eval.json"
