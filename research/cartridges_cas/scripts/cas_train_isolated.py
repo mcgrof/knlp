@@ -58,6 +58,16 @@ Env:
                 <norm> is the pre-clip global L2 norm of the cartridge
                 gradient in fp32, <step> the number of updates already
                 applied, <clipped> 1 when the clip scaled the gradient
+  MICRO_SEQS    packed sequences per forward pass (default 1, the
+                library's behaviour). Values above 1 concatenate that
+                many packed sequences into one pass with separate
+                element ids and positions, accumulate GLOBAL_BS /
+                MICRO_SEQS passes per optimizer step, and weight each
+                target entry so the loss is still the sum of
+                per-sequence means over GLOBAL_BS (cas_microbatch.py).
+                The groups of sequences are fixed by the packing seed,
+                so the epoch shuffle permutes groups. Needs the
+                position_weights.py library patch; excludes POS_WEIGHTS
   NAME          run name under OUT_DIR/runs (default cas_iso_<PATIENT>)
   CART_INIT     initialize from a cartridge FILE instead of the document's
                 first p tokens (a saved checkpoint, or a meta-learned init);
@@ -142,6 +152,8 @@ CLIP_NORM = float(os.environ.get("CLIP_NORM", "0"))
 LOG_GRADNORM = os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 else "0") == "1"
 DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
 DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
+MICRO_SEQS = int(os.environ.get("MICRO_SEQS", "1"))
+assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
 CART_INIT = os.environ.get("CART_INIT", "")
@@ -372,6 +384,13 @@ if POS_WEIGHTS:
         flush=True,
     )
 
+if MICRO_SEQS > 1:
+    assert not POS_WEIGHTS, "MICRO_SEQS and POS_WEIGHTS both use the loss hook"
+    from cas_microbatch import install as _install_micro
+
+    _install_micro(TrainDataset, _ct, MICRO_SEQS)
+    print(f"[iso] {MICRO_SEQS} packed sequences per forward pass", flush=True)
+
 # Print the held-out loss as a parseable line. The library only logs
 # "Eval loss - <x>" through its logger, without the step.
 _orig_eval_ppl = _ct.evaluate_perplexity
@@ -408,7 +427,8 @@ config = TrainConfig(
     lr=LR,
     lr_scheduler=_make_scheduler(),
     epochs=EPOCHS,
-    global_batch_size=GLOBAL_BS,
+    # the library counts accumulated passes; each pass holds MICRO_SEQS
+    global_batch_size=GLOBAL_BS // MICRO_SEQS,
     max_optimizer_steps=STEPS,
     dataset=TrainDataset.Config(
         data_sources=[DataSource(path=DATA_PARQUET, type="local")],
@@ -444,7 +464,7 @@ if __name__ == "__main__":
         f"[iso] {PATIENT} steps={STEPS} sched_steps={SCHED_STEPS} epochs={EPOCHS} "
         f"lr={LR} global_bs={GLOBAL_BS} seed={SEED} save_every={SAVE_EVERY} "
         f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None} "
-        f"clip_norm={CLIP_NORM or None} "
+        f"clip_norm={CLIP_NORM or None} micro_seqs={MICRO_SEQS} "
         f"decay={f'{DECAY_LAMBDA} to {DECAY_TO}' if DECAY_LAMBDA > 0 else None}",
         flush=True,
     )
