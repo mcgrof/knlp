@@ -445,11 +445,17 @@ checks remain active; no training is required.
 
 
 `CONFIG_KNLP_MEM_ARTIFACT_VERIFICATION="published"` trusts the complete checksum
-verified at import/publication. It avoids rehashing during serving and does
-not detect later payload corruption. Select `"on-map"` to verify every newly
-mapped payload for validation. Exact artifact identity, consumer compatibility,
+verified at import/publication and the catalog record admitted when the set is
+attached. It avoids rehashing and catalog queries during serving and does not
+detect later payload corruption or catalog edits made outside the catalog API.
+Select `"on-map"` to recheck the catalog record and verify every newly mapped
+payload for validation. Exact artifact identity, consumer compatibility,
 extent and tensor layout admission remain enabled in both modes. Published
 files must stay unchanged while mapped.
+
+Attach loads only the engine-independent artifact catalog, so a CPU-only
+process does not import the serving engine. Setup still hashes the reader
+checkpoint once to bind the imported set to its exact weights.
 
 The collator reuses mapped tensor references directly. Those references keep
 their mapping alive, so ordinary repeated inputs do not acquire another lease
