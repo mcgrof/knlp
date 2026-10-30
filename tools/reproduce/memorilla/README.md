@@ -420,8 +420,8 @@ profile and the existing arena profile retain their previous behavior.
 Use `requirements-mapped.lock` instead of `requirements-port.lock` in the
 qualified Python 3.13 environment setup above. It preserves every other
 package pin and selects the mapped SDK at LMCache commit
-`9c047df12135ab99beb6802c3fed2a88093741a5`, published on
-[`2026-10-28-feature-mapped-artifacts`](https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-mapped-artifacts).
+`b520066121268be0d8354e02977a490862f17984`, published on
+[`2026-10-30-feature-mapped-published-reads`](https://github.com/mcgrof/LMCache/tree/2026-10-30-feature-mapped-published-reads).
 `requirements-mapped.in` records its direct requirements. Build with
 `NO_GPU_EXT=1`; this host-artifact profile does not qualify GPU KV kernels.
 

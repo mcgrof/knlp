@@ -89,7 +89,7 @@ lightning-utilities==0.15.3
 llguidance==1.7.6
 llvmlite==0.47.0
 lm-format-enforcer==0.11.3
-lmcache @ git+https://github.com/mcgrof/LMCache.git@9c047df12135ab99beb6802c3fed2a88093741a5
+lmcache @ git+https://github.com/mcgrof/LMCache.git@b520066121268be0d8354e02977a490862f17984
 loguru==0.7.3
 markdown-it-py==4.2.0
 markupsafe==3.0.4
