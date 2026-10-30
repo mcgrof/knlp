@@ -61,6 +61,7 @@ DEFAULTS = {
     "RUN_SUFFIX": "",
     "OUTPUT": "results/cs312-problem-1",
     "ONLY": "",
+    "PURGE": "n",
 }
 
 # Course defaults for the swept axes at the pinned revision. The entry
@@ -534,6 +535,8 @@ def cmd_launch(cfg, _args):
         if cfg["ONLY"]:
             # Relaunch only these plan indices, for cells that failed.
             extra += ["--only", cfg["ONLY"]]
+            if cfg["PURGE"] == "y":
+                extra.append("--purge")
         run_command(
             entry_command(cfg, "modal", plan_path, extra),
             cfg,

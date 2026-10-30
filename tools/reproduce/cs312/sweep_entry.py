@@ -89,6 +89,23 @@ def mode_modal(args, plan):
         configs = [configs[k] for k in keep]
         names = [names[k] for k in keep]
         print(f"launching only plan indices {sorted(wanted)}")
+    if args.purge:
+        # Remove the selected cells' volume directories so a relaunch
+        # starts clean: the course checkpointer persists its W&B run id
+        # there, and a run that failed inside a poisoned container would
+        # otherwise resume into the dead W&B run and be skipped as saved.
+        from modal_train import _model_volume_path
+        from modal_utils import user_volume
+
+        if not args.only:
+            raise SystemExit("--purge requires --only; refusing to purge every cell")
+        for name in names:
+            path = _model_volume_path(name)
+            try:
+                user_volume.remove_file(path, recursive=True)
+                print(f"purged {path}")
+            except Exception as exc:
+                print(f"nothing to purge at {path}: {type(exc).__name__}")
     launched = utc_now()
     started = time.perf_counter()
     jobs = launch_training_jobs(
@@ -330,13 +347,15 @@ def mode_collect(args, plan):
             # A restarted container leaves a dead earlier attempt under the
             # same run name; prefer the attempt that got furthest and has
             # a final validation loss, then the most recent one.
+            # Among otherwise equal attempts prefer the most recent one: a
+            # purged and relaunched cell must beat its older entry.
+            candidates.sort(key=lambda c: c["created_utc"], reverse=True)
             best = sorted(
                 candidates,
                 key=lambda c: (
                     c.get("val_loss") is None,
                     -(c.get("optimizer_step") or 0),
                     c["state"] != "finished",
-                    c["created_utc"],
                 ),
             )[0]
             entry["wandb_attempts"] = len(candidates)
@@ -386,6 +405,11 @@ def main():
     parser.add_argument("--index", type=int)
     parser.add_argument(
         "--only", default="", help="comma-separated plan indices to launch"
+    )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="with --only, delete those cells' volume directories first",
     )
     args = parser.parse_args()
     plan = read_json(args.plan)
