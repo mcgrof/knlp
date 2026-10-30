@@ -45,7 +45,46 @@ config KNLP_CS312_PROBLEM_P1A
 	  the configured base and number of steps. The training horizon
 	  stays fixed, so every run is compute matched.
 
+config KNLP_CS312_PROBLEM_P1B
+	bool "Problem 1(b): pairs of hyperparameters that co-vary"
+	help
+	  Move two hyperparameters at once on the same grid as problem
+	  1(a) and read whether they compensate. The single-axis cells and
+	  the baseline are taken from a finished 1(a) output directory
+	  (KNLP_CS312_REFERENCE_OUTPUT) instead of being rerun. Two baseline
+	  repeats at new paired seeds give the noise floor.
+
 endchoice
+
+config KNLP_CS312_P1B_PAIRS
+	string "Pairs to test, comma separated as first:second"
+	default "learning_rate:batch_size,learning_rate:weight_decay,learning_rate:warmup_percent,batch_size:warmup_percent,batch_size:weight_decay,weight_decay:warmup_percent"
+	depends on KNLP_CS312_PROBLEM_P1B
+
+config KNLP_CS312_P1B_FULL_CORNERS
+	bool "Run the plain 2x2 corners for every pair"
+	default n
+	depends on KNLP_CS312_PROBLEM_P1B
+	help
+	  Off, the planner uses a trimmed design: more cells on the pairs
+	  where theory predicts compensation, including two outer-ring
+	  cells for batch 256 and learning rate 0.027, and two control
+	  cells on the expected weak pairs. On, every pair gets the four
+	  corners one step from the baseline.
+
+config KNLP_CS312_P1B_SEED_REPEATS
+	int "Baseline repeats at new paired model and data seeds"
+	default 2
+	range 0 8
+	depends on KNLP_CS312_PROBLEM_P1B
+
+config KNLP_CS312_REFERENCE_OUTPUT
+	string "Output directory of a finished plan whose cells this plan reuses"
+	default ""
+	help
+	  For problem 1(b), the problem 1(a) output directory. Its
+	  results.json supplies the baseline and single-axis cells to the
+	  pair tables; run make cs312-collect there first.
 
 config KNLP_CS312_P1A_BASE
 	string "Log-grid multiplier for learning rate, weight decay and warmup"

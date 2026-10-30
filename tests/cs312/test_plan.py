@@ -77,5 +77,36 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(cfg["DEPTH"], "6")
 
 
+class PlanP1bTest(unittest.TestCase):
+    def test_trimmed_design_adds_23_new_runs_off_the_1a_grid(self):
+        p1a = cs312.build_plan(defaults())
+        p1b = cs312.build_plan(defaults(PROBLEM="p1b"))
+        self.assertEqual(len(p1b["runs"]), 23)
+        self.assertNotEqual(p1a["digest"], p1b["digest"])
+        old = {cs312.json.dumps(r["overrides"], sort_keys=True) for r in p1a["runs"]}
+        new = [cs312.json.dumps(r["overrides"], sort_keys=True) for r in p1b["runs"]]
+        self.assertFalse(old & set(new))
+        self.assertEqual(len(set(new)), len(new))
+        # pair cells use exactly the 1(a) grid values
+        grid = {axis: set(v) for axis, v in p1a["axis_values"].items()}
+        for run in p1b["runs"]:
+            if run["axis"] == "seed":
+                continue
+            for axis, value in run["overrides"].items():
+                self.assertIn(value, grid[axis])
+        seeds = [r for r in p1b["runs"] if r["axis"] == "seed"]
+        self.assertEqual(
+            [r["overrides"] for r in seeds],
+            [{"model_seed": 43, "data_seed": 43}, {"model_seed": 44, "data_seed": 44}],
+        )
+
+    def test_full_corners_gives_four_cells_per_pair(self):
+        p1b = cs312.build_plan(
+            defaults(PROBLEM="p1b", P1B_FULL_CORNERS="y", P1B_SEED_REPEATS="0")
+        )
+        self.assertEqual(len(p1b["runs"]), 24)
+        self.assertEqual(set(p1b["runs"][0]["exponents"].values()), {1})
+
+
 if __name__ == "__main__":
     unittest.main()

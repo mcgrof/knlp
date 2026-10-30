@@ -1,0 +1,20 @@
+# CS312 Assignment 1, Problem 1(b): pairs of hyperparameters that co-vary.
+# Twenty-one pair cells plus two baseline seed repeats on Modal H100s;
+# the baseline and single-axis cells come from the finished
+# cs312-problem-1 output directory instead of being rerun.
+CONFIG_KNLP_CS312=y
+CONFIG_KNLP_CS312_PROBLEM_P1B=y
+CONFIG_KNLP_CS312_P1A_BASE="3"
+CONFIG_KNLP_CS312_P1A_BATCH_BASE="2"
+CONFIG_KNLP_CS312_P1B_PAIRS="learning_rate:batch_size,learning_rate:weight_decay,learning_rate:warmup_percent,batch_size:warmup_percent,batch_size:weight_decay,weight_decay:warmup_percent"
+CONFIG_KNLP_CS312_P1B_SEED_REPEATS=2
+CONFIG_KNLP_CS312_DEPTH=8
+CONFIG_KNLP_CS312_NUM_TRAIN_SEQUENCES=600000
+CONFIG_KNLP_CS312_BACKEND_MODAL=y
+CONFIG_KNLP_CS312_MODAL_GPU="H100"
+CONFIG_KNLP_CS312_MODAL_ENVIRONMENT="main"
+CONFIG_KNLP_CS312_MODAL_MAX_PARALLEL=0
+CONFIG_KNLP_CS312_WANDB_ONLINE=y
+CONFIG_KNLP_CS312_WANDB_PROJECT="cs312"
+CONFIG_KNLP_CS312_REFERENCE_OUTPUT="results/cs312-problem-1"
+CONFIG_KNLP_CS312_OUTPUT="results/cs312-problem-1b"

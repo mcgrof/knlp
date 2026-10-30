@@ -66,6 +66,25 @@ The planner orders them inner ring first: the baseline, then the eight
 runs one step away, then the eight runs two steps away, so a sequential
 sweep gives a complete coarse picture early.
 
+## Problem 1(b): pairs that co-vary
+
+The second part asks which of the four knobs must be tuned together. One
+run per pair cannot answer that, but the 1(a) sweep already paid for three
+cells of every 2x2 around the baseline, so the planner adds only the
+corners. `make defconfig-cs312-problem-1b` selects a trimmed design of 21
+pair cells: more cells on the pairs where theory predicts compensation
+(learning rate with batch size, with weight decay, whose product sets the
+decoupled-decay strength under AdamW, and with warmup), two outer-ring
+cells that test whether a larger learning rate or longer warmup rescues
+batch 256 and learning rate 0.027, and two control cells on each of the
+pairs expected to be weak. Two more runs repeat the baseline at new paired
+model and data seeds, because the pair tables can only be read against a
+noise floor. `CONFIG_KNLP_CS312_REFERENCE_OUTPUT` names the finished 1(a)
+output directory, and `make cs312-collect` copies its baseline and
+single-axis cells into the 1(b) results so the report can print one table
+per pair with every cell filled. `CONFIG_KNLP_CS312_P1B_FULL_CORNERS`
+switches to the plain four corners per pair.
+
 ## Run it on Modal
 
 You need a Modal account, a W&B account, and `uv`. Create a W&B secret

@@ -34,6 +34,14 @@ DEFAULTS = {
     "P1A_STEPS": "5",
     "P1A_BATCH_BASE": "2",
     "P1A_AXES": "warmup_percent,learning_rate,batch_size,weight_decay",
+    "P1B_PAIRS": (
+        "learning_rate:batch_size,learning_rate:weight_decay,"
+        "learning_rate:warmup_percent,batch_size:warmup_percent,"
+        "batch_size:weight_decay,weight_decay:warmup_percent"
+    ),
+    "P1B_FULL_CORNERS": "n",
+    "P1B_SEED_REPEATS": "2",
+    "REFERENCE_OUTPUT": "",
     "DEPTH": "8",
     "NUM_TRAIN_SEQUENCES": "600000",
     "BACKEND": "modal",
@@ -157,6 +165,100 @@ def plan_p1a(cfg):
     }
 
 
+# Problem 1(b): which pairs co-vary. Cells are offsets on the 1(a) grid
+# (base 3 for the continuous axes, base 2 for batch size); the shared
+# single-axis cells come from the 1(a) plan through REFERENCE_OUTPUT.
+# The trimmed design puts the budget where theory predicts compensation
+# and keeps two anti-corners per pair as controls; the expected weak
+# pairs get two cells. Full corners is the plain 2x2 around the baseline.
+FULL_CORNERS = [(1, 1), (-1, -1), (1, -1), (-1, 1)]
+PAIR_DESIGN = {
+    ("learning_rate", "batch_size"): [
+        (1, 1),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 2),
+        (2, 2),
+    ],
+    ("learning_rate", "weight_decay"): [(1, -1), (-1, 1), (1, 1), (-1, -1)],
+    ("learning_rate", "warmup_percent"): [(1, 1), (1, 2), (2, 2), (-1, -1)],
+    ("batch_size", "warmup_percent"): [(2, 1), (2, 2), (-2, -1)],
+    ("batch_size", "weight_decay"): [(1, 1), (-1, -1)],
+    ("weight_decay", "warmup_percent"): [(1, 1), (-1, -1)],
+}
+SEED_REPEAT_START = 43  # the course default seed is 42
+
+
+def grid_value(cfg, axis, exponent):
+    base = float(cfg["P1A_BATCH_BASE"] if axis == "batch_size" else cfg["P1A_BASE"])
+    return log_grid(
+        AXIS_DEFAULTS[axis], base, 1 + 2 * abs(exponent), integer=axis in INTEGER_AXES
+    )[exponent + abs(exponent)][1]
+
+
+def plan_p1b(cfg):
+    pairs = []
+    for item in cfg["P1B_PAIRS"].split(","):
+        item = item.strip()
+        if not item:
+            continue
+        first, second = item.split(":")
+        pair = (first.strip(), second.strip())
+        if pair not in PAIR_DESIGN and pair[::-1] in PAIR_DESIGN:
+            pair = pair[::-1]
+        if pair not in PAIR_DESIGN:
+            raise SystemExit(f"unknown pair {item!r}")
+        pairs.append(pair)
+    full = cfg["P1B_FULL_CORNERS"] == "y"
+    runs, seen = [], set()
+    for pair in pairs:
+        first, second = pair
+        for ea, eb in FULL_CORNERS if full else PAIR_DESIGN[pair]:
+            overrides = {
+                first: grid_value(cfg, first, ea),
+                second: grid_value(cfg, second, eb),
+            }
+            key = json.dumps(overrides, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            runs.append(
+                {
+                    "index": len(runs),
+                    "axis": f"{first}x{second}",
+                    "pair": [first, second],
+                    "exponents": {first: ea, second: eb},
+                    "exponent": 0,
+                    "overrides": overrides,
+                }
+            )
+    for i in range(int(cfg["P1B_SEED_REPEATS"])):
+        seed = SEED_REPEAT_START + i
+        runs.append(
+            {
+                "index": len(runs),
+                "axis": "seed",
+                "pair": None,
+                "exponents": {},
+                "exponent": 0,
+                "overrides": {"model_seed": seed, "data_seed": seed},
+            }
+        )
+    axes = sorted(
+        {axis for pair in pairs for axis in pair}, key=list(AXIS_DEFAULTS).index
+    )
+    return {
+        "axes": axes,
+        "axis_defaults": {axis: AXIS_DEFAULTS[axis] for axis in axes},
+        "axis_values": {
+            axis: [grid_value(cfg, axis, e) for e in range(-2, 3)] for axis in axes
+        },
+        "pairs": [list(pair) for pair in pairs],
+        "runs": runs,
+    }
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -170,11 +272,12 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
-    if problem != "p1a":
+    planners = {"p1a": plan_p1a, "p1b": plan_p1b}
+    if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
     num_train_sequences = int(cfg["NUM_TRAIN_SEQUENCES"])
-    body = plan_p1a(cfg)
+    body = planners[problem](cfg)
     digest = plan_digest(problem, depth, num_train_sequences, body["runs"])
     tags = [
         "cs312",
@@ -206,6 +309,7 @@ def build_plan(cfg):
         "num_train_sequences": num_train_sequences,
         "backend": cfg["BACKEND"],
         "run_suffix": cfg["RUN_SUFFIX"],
+        "reference_output": cfg["REFERENCE_OUTPUT"],
         "settings": public,
         **body,
     }
@@ -357,7 +461,9 @@ def print_plan(plan):
     for axis in plan["axes"]:
         print(f"  {axis}: {plan['axis_values'][axis]}")
     for run in plan["runs"]:
-        print(f"  [{run['index']:2d}] {run['axis']:>15s} {run['overrides']}")
+        print(f"  [{run['index']:2d}] {run['axis']:>28s} {run['overrides']}")
+    if plan.get("reference_output"):
+        print(f"  shared single-axis cells come from {plan['reference_output']}")
 
 
 def ensure_plan(cfg):
@@ -443,7 +549,40 @@ def cmd_collect(cfg, _args):
     if not plan_path.exists():
         raise SystemExit(f"{plan_path} is missing; nothing to collect")
     run_command(entry_command(cfg, "collect", plan_path), cfg)
-    print(f"results written to {output_dir(cfg) / 'results.json'}")
+    results_path = output_dir(cfg) / "results.json"
+    results = read_json(results_path)
+    if cfg["REFERENCE_OUTPUT"]:
+        ref_path = Path(os.path.expanduser(cfg["REFERENCE_OUTPUT"]))
+        ref_path = (
+            ref_path if ref_path.is_absolute() else ROOT / ref_path
+        ) / "results.json"
+        if not ref_path.exists():
+            raise SystemExit(
+                f"reference results {ref_path} are missing; run collect for that plan first"
+            )
+        reference = read_json(ref_path)
+        results["reference_plan_digest"] = reference["plan"]["digest"]
+        results["reference_runs"] = [
+            {
+                k: r.get(k)
+                for k in (
+                    "index",
+                    "axis",
+                    "overrides",
+                    "run_name",
+                    "val_loss",
+                    "state",
+                    "total_seconds",
+                    "wandb",
+                )
+            }
+            for r in reference["runs"]
+        ]
+        write_json(results_path, results, overwrite=True)
+        print(
+            f"merged {len(results['reference_runs'])} reference cells from {ref_path}"
+        )
+    print(f"results written to {results_path}")
 
 
 def fmt(value, places=4):
@@ -576,13 +715,116 @@ def render_report(results, against=None):
     return "\n".join(lines) + "\n"
 
 
+def _cell_key(overrides):
+    return json.dumps(overrides, sort_keys=True)
+
+
+def render_report_p1b(results):
+    plan = results["plan"]
+    defaults = plan["axis_defaults"]
+    cells = {}
+    for r in results.get("reference_runs", []):
+        if r.get("val_loss") is not None:
+            cells[_cell_key(r["overrides"])] = (r["val_loss"], "1a")
+    for r in results["runs"]:
+        if r.get("val_loss") is not None:
+            cells[_cell_key(r["overrides"])] = (r["val_loss"], "1b")
+    baseline = cells.get(_cell_key({}))
+    base_loss = baseline[0] if baseline else None
+    lines = [f"# CS312 problem {plan['problem']} report", ""]
+    lines.append(
+        f"Plan `{plan['digest']}`: d{plan['depth']}, {plan['num_train_sequences']:,} sequences per run, "
+        f"{len(plan['runs'])} new runs, backend `{results['backend']}`, suffix `{plan['run_suffix']}`, "
+        f"collected {results['collected_utc']}."
+    )
+    if results.get("reference_plan_digest"):
+        lines.append(
+            f"Single-axis cells and the baseline come from plan `{results['reference_plan_digest']}` (problem 1(a))."
+        )
+    done = sum(1 for e in results["runs"] if e.get("state") == "finished")
+    start, end, span = sweep_window(results)
+    lines.append(
+        f"Finished runs: {done}/{len(results['runs'])}. Sweep window: {start or '-'} to {end or '-'}"
+        + (f" ({span:.1f} min)." if span is not None else ".")
+    )
+    lines.append("")
+    seeds = [
+        r
+        for r in results["runs"]
+        if r["axis"] == "seed" and r.get("val_loss") is not None
+    ]
+    lines.append("## Noise floor: the baseline recipe at paired model and data seeds")
+    lines.append("")
+    lines.append("| seed | val loss | vs seed 42 |")
+    lines.append("|---|---|---|")
+    values = []
+    if base_loss is not None:
+        lines.append(f"| 42 | {base_loss:.4f} | 0 |")
+        values.append(base_loss)
+    for r in seeds:
+        d = None if base_loss is None else r["val_loss"] - base_loss
+        lines.append(
+            f"| {r['overrides']['model_seed']} | {r['val_loss']:.4f} | {fmt(d)} |"
+        )
+        values.append(r["val_loss"])
+    if len(values) >= 2:
+        mean = sum(values) / len(values)
+        sd = (sum((v - mean) ** 2 for v in values) / (len(values) - 1)) ** 0.5
+        lines.append("")
+        lines.append(
+            f"{len(values)} seeds: mean {mean:.4f}, sample SD {sd:.4f}, range {max(values) - min(values):.4f}. "
+            "Pair differences inside about two SDs are not distinguishable from seed noise."
+        )
+    lines.append("")
+    for first, second in plan["pairs"]:
+        lines.append(f"## {first} x {second}")
+        lines.append("")
+        a_vals = plan["axis_values"][first]
+        b_vals = plan["axis_values"][second]
+        header = (
+            "| "
+            + f"{first} \\ {second}"
+            + " | "
+            + " | ".join(f"{b:g}" for b in b_vals)
+            + " |"
+        )
+        lines.append(header)
+        lines.append("|---|" + "---|" * len(b_vals))
+        for a in a_vals:
+            row = [f"**{a:g}**" if a == defaults[first] else f"{a:g}"]
+            for b in b_vals:
+                ov = {}
+                if a != defaults[first]:
+                    ov[first] = a
+                if b != defaults[second]:
+                    ov[second] = b
+                hit = cells.get(_cell_key(ov))
+                if hit is None:
+                    row.append("-")
+                else:
+                    loss, src = hit
+                    d = "" if base_loss is None else f" ({loss - base_loss:+.3f})"
+                    mark = "" if src == "1b" else "*"
+                    row.append(f"{loss:.4f}{d}{mark}")
+            lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+        lines.append(
+            "Cells marked * are problem 1(a) runs; others are new. Parentheses give the difference from the baseline."
+        )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def cmd_report(cfg, args):
     out = output_dir(cfg)
     results = read_json(out / "results.json")
     against = None
     if args.against:
         against = read_json(Path(args.against) / "results.json")
-    text = render_report(results, against)
+    if results["plan"].get("problem") == "p1b":
+        text = render_report_p1b(results)
+    else:
+        text = render_report(results, against)
     (out / "report.md").write_text(text)
     print(text)
     print(f"report written to {out / 'report.md'}")
