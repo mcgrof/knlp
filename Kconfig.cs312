@@ -169,6 +169,22 @@ config KNLP_CS312_MODAL_MAX_PARALLEL
 	default 0
 	depends on KNLP_CS312_BACKEND_MODAL
 
+config KNLP_CS312_MODAL_EXTRA_SECRETS
+	string "Extra Modal secrets to mount, comma separated"
+	default "cs312-torch-alloc"
+	depends on KNLP_CS312_BACKEND_MODAL
+	help
+	  Names of Modal secrets whose variables the training container
+	  receives, through the course launcher's own secrets hook. The
+	  default expects a secret carrying
+	  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True: batch 256 at
+	  d8 sits within a few GiB of an 80 GiB card and can fail its first
+	  backward pass with the default allocator, and a failed input then
+	  poisons the compiled state of the container that Modal reuses for
+	  the next inputs. Create it once with
+	  modal secret create cs312-torch-alloc
+	  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True. Empty disables.
+
 config KNLP_CS312_LOCAL_PARALLEL
 	int "Concurrent training processes on the local GPU"
 	default 1

@@ -83,6 +83,12 @@ def mode_modal(args, plan):
     check_defaults(plan)
     configs = train_configs(plan)
     names = run_names(configs)
+    if args.only:
+        wanted = {int(x) for x in args.only.split(",") if x.strip()}
+        keep = [k for k in range(len(configs)) if k in wanted]
+        configs = [configs[k] for k in keep]
+        names = [names[k] for k in keep]
+        print(f"launching only plan indices {sorted(wanted)}")
     launched = utc_now()
     started = time.perf_counter()
     jobs = launch_training_jobs(
@@ -99,6 +105,7 @@ def mode_modal(args, plan):
         "launched_utc": launched,
         "launch_seconds": time.perf_counter() - started,
         "plan_digest": plan["digest"],
+        "only": args.only or None,
         "jobs": [{**job, "run_name": names[job["job_index"]]} for job in jobs],
     }
     write_json(args.output / "launch.json", receipt)
@@ -377,6 +384,9 @@ def main():
     parser.add_argument("--max-parallel", type=int, default=0)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--index", type=int)
+    parser.add_argument(
+        "--only", default="", help="comma-separated plan indices to launch"
+    )
     args = parser.parse_args()
     plan = read_json(args.plan)
     if args.mode == "modal":

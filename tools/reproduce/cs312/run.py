@@ -49,6 +49,7 @@ DEFAULTS = {
     "MODAL_ENVIRONMENT": "main",
     "MODAL_MAX_PARALLEL": "0",
     "MODAL_DATA_VOLUME": "hard-dl-dclm-v1",
+    "MODAL_EXTRA_SECRETS": "",
     "LOCAL_PARALLEL": "1",
     "PYTHON": "",
     "SCRATCH_ROOT": "",
@@ -59,6 +60,7 @@ DEFAULTS = {
     "WANDB_PROJECT": "cs312",
     "RUN_SUFFIX": "",
     "OUTPUT": "results/cs312-problem-1",
+    "ONLY": "",
 }
 
 # Course defaults for the swept axes at the pinned revision. The entry
@@ -358,6 +360,8 @@ def course_env(cfg):
     env["DL_ALCHEMY_MODAL_SHARED_DATA_ENVIRONMENT"] = cfg["MODAL_ENVIRONMENT"]
     env["DL_ALCHEMY_MODAL_SHARED_DATA_VOLUME_NAME"] = cfg["MODAL_DATA_VOLUME"]
     env["DL_ALCHEMY_MODAL_APP_NAME"] = "cs312"
+    if cfg["MODAL_EXTRA_SECRETS"]:
+        env["DL_ALCHEMY_MODAL_SECRETS"] = cfg["MODAL_EXTRA_SECRETS"]
     env["WANDB_PROJECT"] = cfg["WANDB_PROJECT"]
     if cfg["WANDB_ENTITY"]:
         env["WANDB_ENTITY"] = cfg["WANDB_ENTITY"]
@@ -527,12 +531,21 @@ def cmd_launch(cfg, _args):
             "--max-parallel",
             cfg["MODAL_MAX_PARALLEL"],
         ]
+        if cfg["ONLY"]:
+            # Relaunch only these plan indices, for cells that failed.
+            extra += ["--only", cfg["ONLY"]]
         run_command(
             entry_command(cfg, "modal", plan_path, extra),
             cfg,
             log=out / "launch-modal.log",
         )
-        print(f"launched {len(plan['runs'])} Modal runs; see {out / 'launch.json'}")
+        receipt = read_json(out / "launch.json")
+        launched = sum(1 for j in receipt["jobs"] if j.get("modal_call_id"))
+        skipped = len(receipt["jobs"]) - launched
+        print(
+            f"launched {launched} Modal runs, skipped {skipped} with a saved "
+            f"model; see {out / 'launch.json'}"
+        )
     else:
         extra = ["--parallel", cfg["LOCAL_PARALLEL"]]
         run_command(
