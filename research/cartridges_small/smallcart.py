@@ -265,6 +265,76 @@ def kv_of_chunks(model, tok, text, n_tokens, rng, device, chunk=8):
     return [(k.clone(), v.clone()) for k, v in cache_layers(out.past_key_values)]
 
 
+@torch.no_grad()
+def kvzip_scores(model, tok, text, device, plus=True):
+    """Reconstruction score of every document token (KVzip, and the
+    KVzip+ variant with the projected-value norm). The document is fed
+    twice with a repeat instruction between the copies; a token's score
+    is the largest attention any query in the second copy pays to it
+    over all layers and query heads. With plus=True each attention
+    weight is scaled by the norm of that token's value projected
+    through the head's output weights, over the norm of the query
+    position's residual-stream input to the layer (KVzap, section 2.2).
+    Needs eager attention. Returns a float tensor over document
+    positions."""
+    ids = tok(text, return_tensors="pt").input_ids[0]
+    sep = tok(
+        "\n\nRepeat the record above exactly:\n\n",
+        add_special_tokens=False,
+        return_tensors="pt",
+    ).input_ids[0]
+    full = torch.cat([ids, sep, ids])[None].to(device)
+    n = ids.shape[0]
+    q0 = n + sep.shape[0]
+    out = model(
+        input_ids=full,
+        output_attentions=True,
+        output_hidden_states=True,
+        use_cache=True,
+    )
+    layers = cache_layers(out.past_key_values)
+    score = torch.zeros(n)
+    for li, att in enumerate(out.attentions):
+        a = att[0, :, q0:, :n].float()  # [Hq, Tq, n]
+        if plus:
+            v = layers[li][1][0, :, :n].float()  # [Hkv, n, d]
+            w = model.model.layers[li].self_attn.o_proj.weight.float()
+            hq, hkv, d = a.shape[0], v.shape[0], v.shape[-1]
+            w = w.view(w.shape[0], hq, d)
+            vq = v.repeat_interleave(hq // hkv, dim=0)  # [Hq, n, d]
+            vn = torch.einsum("ohd,hnd->hno", w, vq).norm(dim=-1)  # [Hq, n]
+            hn = out.hidden_states[li][0, q0:].float().norm(dim=-1)  # [Tq]
+            a = a * vn[:, None, :] / hn[None, :, None].clamp_min(1e-6)
+        score = torch.maximum(score, a.amax(dim=(0, 1)).cpu())
+    return score
+
+
+@torch.no_grad()
+def kv_of_selected(model, tok, text, n_tokens, score, device, window=1):
+    """Selected-token initialization: the document tokens with the
+    highest score, position 0 always kept as the sink, re-encoded in
+    document order as one sequence (the same rectangular form as the
+    chunk initialization). With window > 1 the document is cut into
+    aligned non-overlapping windows of that many tokens, each window is
+    scored by its best token, and the top windows are kept whole (the
+    window holding position 0 always), so the re-encoded text stays
+    contiguous like the chunk initialization. Returns (kv, indices)."""
+    ids = tok(text, return_tensors="pt").input_ids[0]
+    keep = score.clone()
+    keep[0] = float("inf")
+    if window > 1:
+        n_win = keep.shape[0] // window
+        wscore = keep[: n_win * window].view(n_win, window).amax(-1)
+        top = wscore.topk(n_tokens // window).indices.sort().values
+        idx = (top[:, None] * window + torch.arange(window)[None]).flatten()
+    else:
+        idx = keep.topk(n_tokens).indices.sort().values
+    sel = ids[idx][None].to(device)
+    out = model(input_ids=sel, use_cache=True)
+    kv = [(k.clone(), v.clone()) for k, v in cache_layers(out.past_key_values)]
+    return kv, idx.tolist()
+
+
 class Prefix(torch.nn.Module):
     """Trainable KV prefix. Slot 0 is frozen when freeze_first is set
     (the Cartridges attention sink)."""
@@ -612,12 +682,20 @@ def run(args):
     )
 
     # initialization
+    init_idx = None
     if args.init == "first_tokens":
         kv = kv_of_text(model, tok, doc, args.slots, device)
     elif args.init == "chunks":
         kv = kv_of_chunks(model, tok, doc, args.slots, rng, device)
     elif args.init == "other_doc":
         kv = kv_of_text(model, tok, other_doc, args.slots, device)
+    elif args.init in ("kvzip", "kvzip_plain", "kvzip_chunks"):
+        score = kvzip_scores(model, tok, doc, device, plus=args.init != "kvzip_plain")
+        win = 8 if args.init == "kvzip_chunks" else 1
+        kv, init_idx = kv_of_selected(
+            model, tok, doc, args.slots, score, device, window=win
+        )
+        print(f"[init] {args.init} selected positions: {init_idx}", flush=True)
     elif args.init == "random":
         # Random vectors at the per-layer scale of the first-tokens
         # prefix, with the real first-token (sink) key and value kept
@@ -823,6 +901,7 @@ def run(args):
         "model": args.model,
         "args": vars(args),
         "doc_tokens": n_doc,
+        "init_selected": init_idx,
         "slots": prefix.n_slots,
         "refs": refs,
         "curve": curve,
@@ -1006,7 +1085,8 @@ def main():
     r.add_argument(
         "--init",
         default="first_tokens",
-        help="first_tokens | chunks | other_doc | random | file:<prefix.pt>",
+        help="first_tokens | chunks | other_doc | random | kvzip | kvzip_plain"
+        " | kvzip_chunks | file:<prefix.pt>",
     )
     r.add_argument("--steps", type=int, default=200)
     r.add_argument(
