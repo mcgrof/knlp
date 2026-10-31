@@ -42,6 +42,11 @@ Env:
                 every Adam step (default 0 = off, the library's behaviour).
                 The library has no clipping knob; the clip is applied
                 in the optimizer's step() so nothing else in the loop moves
+  ADAM_BETA2    Adam's second-moment decay (default unset = the library's
+                torch default 0.999). A smaller value such as 0.95 lets
+                the per-coordinate scale follow a sudden large gradient
+                within tens of steps instead of hundreds, so one large
+                gradient after a quiet stretch makes a smaller step
   DECAY_LAMBDA  decoupled weight decay on the trainable cartridge tokens,
                 applied after every Adam step as
                 p -= lr_t * DECAY_LAMBDA * (p - target), where lr_t is
@@ -150,6 +155,9 @@ ALPHA_F = float(os.environ.get("ALPHA_F", "0.02"))
 SEED = int(os.environ.get("SEED", "42"))
 CLIP_NORM = float(os.environ.get("CLIP_NORM", "0"))
 LOG_GRADNORM = os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 else "0") == "1"
+ADAM_BETA2 = os.environ.get("ADAM_BETA2", "")
+ADAM_BETA2 = float(ADAM_BETA2) if ADAM_BETA2 else None
+assert ADAM_BETA2 is None or 0 < ADAM_BETA2 < 1, "ADAM_BETA2 must be in (0, 1)"
 DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
 DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
 MICRO_SEQS = int(os.environ.get("MICRO_SEQS", "1"))
@@ -321,6 +329,13 @@ class _ClippedAdam(torch.optim.Adam):
     _n_steps = 0
     _decay_pairs = None
 
+    def __init__(self, params, **kw):
+        # the library passes lr and weight_decay only, so betas are
+        # torch's default unless ADAM_BETA2 is set
+        if ADAM_BETA2 is not None:
+            kw["betas"] = (kw.get("betas", (0.9, 0.999))[0], ADAM_BETA2)
+        super().__init__(params, **kw)
+
     def step(self, closure=None):
         if CLIP_NORM > 0 or LOG_GRADNORM:
             params = [p for g in self.param_groups for p in g["params"]]
@@ -464,7 +479,8 @@ if __name__ == "__main__":
         f"[iso] {PATIENT} steps={STEPS} sched_steps={SCHED_STEPS} epochs={EPOCHS} "
         f"lr={LR} global_bs={GLOBAL_BS} seed={SEED} save_every={SAVE_EVERY} "
         f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None} "
-        f"clip_norm={CLIP_NORM or None} micro_seqs={MICRO_SEQS} "
+        f"clip_norm={CLIP_NORM or None} adam_beta2={ADAM_BETA2} "
+        f"micro_seqs={MICRO_SEQS} "
         f"decay={f'{DECAY_LAMBDA} to {DECAY_TO}' if DECAY_LAMBDA > 0 else None}",
         flush=True,
     )
