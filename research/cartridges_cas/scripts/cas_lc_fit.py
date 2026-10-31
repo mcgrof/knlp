@@ -115,6 +115,7 @@ def stage_one(memory, queries, full_keys, full_values, *, steps, batch_size, lr,
     log_scale = target_log_z.std(-1, keepdim=True).clamp_min(1e-4)
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=0)
     gen = torch.Generator(device=device).manual_seed(seed)
+    loss = torch.tensor(float("nan"))  # stays NaN when steps is 0
     for _ in range(steps):
         idx = torch.randint(
             queries.shape[-2],
