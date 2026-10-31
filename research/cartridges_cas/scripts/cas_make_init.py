@@ -133,7 +133,9 @@ def main():
     # the trainer counts document tokens with the bare tokenizer
     doc_ids = tok(text)["input_ids"]
     p = resolve_p(tok, doc_ids)
-    model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
+    model = FlexQwen3ForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(
+        DEVICE
+    )
     model.eval()
     attn = AttnConfig(
         n_layers=model.config.num_hidden_layers,
