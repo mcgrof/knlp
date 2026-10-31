@@ -42,6 +42,15 @@ Env:
                 every Adam step (default 0 = off, the library's behaviour).
                 The library has no clipping knob; the clip is applied
                 in the optimizer's step() so nothing else in the loop moves
+  CLIP_REL      clip relative to recent history instead of a fixed norm:
+                once CLIP_WINDOW norms are recorded, the gradient is
+                scaled down to CLIP_REL times the median of the last
+                CLIP_WINDOW norms whenever it is larger (default 0 =
+                off). The history stores each norm after clipping, so
+                one spike cannot raise the bar for the next. Adam is
+                nearly scale-invariant, so a fixed bar that clips every
+                step changes little; a relative bar clips only outliers
+  CLIP_WINDOW   steps of history for CLIP_REL (default 50)
   ADAM_BETA2    Adam's second-moment decay (default unset = the library's
                 torch default 0.999). A smaller value such as 0.95 lets
                 the per-coordinate scale follow a sudden large gradient
@@ -154,7 +163,12 @@ WARMUP_MIN_LR = float(os.environ.get("WARMUP_MIN_LR", "2e-3"))
 ALPHA_F = float(os.environ.get("ALPHA_F", "0.02"))
 SEED = int(os.environ.get("SEED", "42"))
 CLIP_NORM = float(os.environ.get("CLIP_NORM", "0"))
-LOG_GRADNORM = os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 else "0") == "1"
+CLIP_REL = float(os.environ.get("CLIP_REL", "0"))
+CLIP_WINDOW = int(os.environ.get("CLIP_WINDOW", "50"))
+assert not (CLIP_NORM > 0 and CLIP_REL > 0), "set CLIP_NORM or CLIP_REL, not both"
+LOG_GRADNORM = (
+    os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 or CLIP_REL > 0 else "0") == "1"
+)
 ADAM_BETA2 = os.environ.get("ADAM_BETA2", "")
 ADAM_BETA2 = float(ADAM_BETA2) if ADAM_BETA2 else None
 assert ADAM_BETA2 is None or 0 < ADAM_BETA2 < 1, "ADAM_BETA2 must be in (0, 1)"
@@ -327,6 +341,7 @@ _ct.save_cache = _save_cache_once
 
 class _ClippedAdam(torch.optim.Adam):
     _n_steps = 0
+    _history = []
     _decay_pairs = None
 
     def __init__(self, params, **kw):
@@ -337,14 +352,19 @@ class _ClippedAdam(torch.optim.Adam):
         super().__init__(params, **kw)
 
     def step(self, closure=None):
-        if CLIP_NORM > 0 or LOG_GRADNORM:
+        if CLIP_NORM > 0 or CLIP_REL > 0 or LOG_GRADNORM:
             params = [p for g in self.param_groups for p in g["params"]]
             grads = [p.grad for p in params if p.grad is not None]
             norm = torch.norm(torch.stack([g.float().norm() for g in grads]))
             clipped = 0
-            if CLIP_NORM > 0 and float(norm) > CLIP_NORM:
-                torch.nn.utils.clip_grad_norm_(params, CLIP_NORM)
+            bar = CLIP_NORM
+            if CLIP_REL > 0 and len(_ClippedAdam._history) >= CLIP_WINDOW:
+                recent = sorted(_ClippedAdam._history[-CLIP_WINDOW:])
+                bar = CLIP_REL * recent[len(recent) // 2]
+            if bar > 0 and float(norm) > bar:
+                torch.nn.utils.clip_grad_norm_(params, bar)
                 clipped = 1
+            _ClippedAdam._history.append(min(float(norm), bar) if bar else float(norm))
             if LOG_GRADNORM:
                 print(
                     f"GRADNORM_CSV,{_ClippedAdam._n_steps},{float(norm):.6g},{clipped}",
@@ -479,7 +499,8 @@ if __name__ == "__main__":
         f"[iso] {PATIENT} steps={STEPS} sched_steps={SCHED_STEPS} epochs={EPOCHS} "
         f"lr={LR} global_bs={GLOBAL_BS} seed={SEED} save_every={SAVE_EVERY} "
         f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None} "
-        f"clip_norm={CLIP_NORM or None} adam_beta2={ADAM_BETA2} "
+        f"clip_norm={CLIP_NORM or None} clip_rel={CLIP_REL or None}/"
+        f"{CLIP_WINDOW} adam_beta2={ADAM_BETA2} "
         f"micro_seqs={MICRO_SEQS} "
         f"decay={f'{DECAY_LAMBDA} to {DECAY_TO}' if DECAY_LAMBDA > 0 else None}",
         flush=True,
