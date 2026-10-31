@@ -74,6 +74,7 @@ def train(root, job, checkpoints, max_seconds):
         32,
         job["seed"],
         beta=job["beta"] if job["beta"] is not None else -0.5,
+        alpha_out=job.get("alpha_out") or 0.0,
     ).cuda()
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=job["lr"], betas=(0.9, 0.95), eps=1e-8, weight_decay=0
@@ -110,8 +111,11 @@ def train(root, job, checkpoints, max_seconds):
         model.train()
 
     completed = 0
+    # A screen keeps final checkpoints but defers the quantization grid.
+    full = job["stage"] in ("final", "screen")
+    measure = job["stage"] == "final"
     try:
-        if job["stage"] == "final":
+        if measure:
             result["checkpoints"].append(save(model, optimizer, 0, job, checkpoint_dir))
             write(
                 destination / "statistics-step0.json",
@@ -146,23 +150,29 @@ def train(root, job, checkpoints, max_seconds):
             if step % 100 == 0:
                 validation(step)
                 write(destination / "RESULT.json", result)
-            if job["stage"] == "final" and step in (1000, 2000):
+            if full and step in (1000, 2000):
                 result["checkpoints"].append(
                     save(model, optimizer, step, job, checkpoint_dir)
                 )
-                write(
-                    destination / f"statistics-step{step}.json",
-                    distributions(model, arrays["final"], "cuda"),
-                )
+                if measure:
+                    write(
+                        destination / f"statistics-step{step}.json",
+                        distributions(model, arrays["final"], "cuda"),
+                    )
         if job["stage"] == "pilot":
             result["checkpoints"].append(
                 save(model, optimizer, completed, job, checkpoint_dir)
             )
-        else:
+        elif measure:
             model.eval()
             write(
                 destination / "QUANTIZATION.json",
                 quantization(model, arrays["final"], "cuda"),
+            )
+        else:
+            model.eval()
+            result["final_clean"] = evaluate(
+                model, arrays["final"], curve_case, "cuda", batch_size=32
             )
         if not all(c["model_finite"] for c in result["checkpoints"]):
             raise FloatingPointError("Nonfinite saved model state")

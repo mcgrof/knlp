@@ -8,19 +8,25 @@ from research.tinystories_depth.float_quant import scaled_float
 
 
 class Model(Backbone):
-    def __init__(self, arm, depth, seed, beta=-0.5, vocab=50257, qknorm=False):
+    def __init__(
+        self, arm, depth, seed, beta=-0.5, vocab=50257, qknorm=False, alpha_out=0.0
+    ):
         if arm not in ("R", "L", "M", "ML"):
             raise ValueError(
                 "This study supports residual, full LayerRoPE, mHC and their combination"
             )
         super().__init__(arm, depth, seed, vocab=vocab)
         self.beta_initialization = beta
+        self.alpha_out_initialization = alpha_out
         rope = self.lm.model.layerrope
         if rope is not None:
             with torch.no_grad():
                 for site in rope.sites:
                     getattr(rope, site + "_beta").fill_(beta)
                     getattr(rope, site + "_beta_rot").fill_(beta)
+                    # Tied log-magnitude intercepts: inputs start at -a, outputs at a.
+                    sign = 1.0 if site.startswith("out_") else -1.0
+                    getattr(rope, site + "_alpha").fill_(sign * alpha_out)
         self.qknorm = bool(qknorm)
         if self.qknorm:
             from research.tinystories_depth.attention import enable
