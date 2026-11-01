@@ -72,6 +72,12 @@ Env:
                 <norm> is the pre-clip global L2 norm of the cartridge
                 gradient in fp32, <step> the number of updates already
                 applied, <clipped> 1 when the clip scaled the gradient
+  VALUE_CAP     after every update, shrink each trainable slot's value
+                vector (per layer and head) to at most VALUE_CAP times
+                that layer's median value norm in the starting cartridge
+                (default 0, off). A loss spike multiplies the value norms
+                of the first layers about eightfold in one step; keys
+                stay near the reader's scale (cas_cart_norms.py)
   MICRO_SEQS    packed sequences per forward pass (default 1, the
                 library's behaviour). Values above 1 concatenate that
                 many packed sequences into one pass with separate
@@ -186,6 +192,7 @@ assert ADAM_BETA2 is None or 0 < ADAM_BETA2 < 1, "ADAM_BETA2 must be in (0, 1)"
 DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
 DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
 MICRO_SEQS = int(os.environ.get("MICRO_SEQS", "1"))
+VALUE_CAP = float(os.environ.get("VALUE_CAP", "0"))
 assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
@@ -370,6 +377,7 @@ class _ClippedAdam(torch.optim.Adam):
     _n_steps = 0
     _history = []
     _decay_pairs = None
+    _value_refs = None
 
     def __init__(self, params, **kw):
         # the library passes lr and weight_decay only, so betas are
@@ -404,8 +412,38 @@ class _ClippedAdam(torch.optim.Adam):
                 for p in g["params"]
                 if p.requires_grad
             ]
+        if VALUE_CAP > 0 and self._value_refs is None:
+            # reference: the starting cartridge's median slot value norm,
+            # per layer, taken before the first update
+            with torch.no_grad():
+                self._value_refs = {
+                    id(p): float(p.float().norm(dim=-1).median())
+                    for g in self.param_groups
+                    for p in g["params"]
+                    if hasattr(p, "_cr_value_layer")
+                }
         _ClippedAdam._n_steps += 1
         out = super().step(closure)
+        if VALUE_CAP > 0:
+            with torch.no_grad():
+                vals = [
+                    p
+                    for g in self.param_groups
+                    for p in g["params"]
+                    if hasattr(p, "_cr_value_layer")
+                ]
+                assert vals, "VALUE_CAP set but no tagged value parameters"
+                n_capped = 0
+                for p in vals:
+                    n = p.float().norm(dim=-1, keepdim=True)
+                    bound = VALUE_CAP * self._value_refs[id(p)]
+                    scale = (bound / n.clamp_min(1e-12)).clamp(max=1.0)
+                    n_capped += int((scale < 1).sum())
+                    p.mul_(scale.to(p.dtype))
+                if LOG_GRADNORM:
+                    print(
+                        f"VALUECAP_CSV,{_ClippedAdam._n_steps},{n_capped}", flush=True
+                    )
         if DECAY_LAMBDA > 0:
             # the library builds one parameter group, so one rate
             f = self.param_groups[0]["lr"] * DECAY_LAMBDA
@@ -418,6 +456,18 @@ class _ClippedAdam(torch.optim.Adam):
                         p.lerp_(start, f)
         return out
 
+
+if VALUE_CAP > 0:
+    from cartridges.cache import TrainableCache as _VTC
+
+    _orig_vtc_init = _VTC.__init__
+
+    def _vtc_init(self, *a, **kw):
+        _orig_vtc_init(self, *a, **kw)
+        for i, p in enumerate(self.trainable_values or []):
+            p._cr_value_layer = i
+
+    _VTC.__init__ = _vtc_init
 
 # train.py uses its ``optim`` import for optim.Adam only
 _ct.optim = types.SimpleNamespace(Adam=_ClippedAdam)
