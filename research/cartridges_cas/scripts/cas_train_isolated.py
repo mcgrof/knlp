@@ -82,6 +82,17 @@ Env:
                 The groups of sequences are fixed by the packing seed,
                 so the epoch shuffle permutes groups. Needs the
                 position_weights.py library patch; excludes POS_WEIGHTS
+  PIECE_CARTS   comma list of piece cartridges of one split document
+                (cas_split.py), in piece order: train all pieces in one
+                run (cas_pieces.py). Their combined cartridge replaces
+                CART_INIT; needs PIECE_PARQUETS, one Self-Study parquet
+                per piece, which replace DATA_PARQUET
+  PIECE_MODE    isolated (default): each conversation sees only its own
+                piece at its standalone positions; joint: the pieces sit
+                at their bundle positions and a conversation sees its own
+                piece plus, with probability 1 - P_ISO, others
+  P_ISO         joint mode: probability a conversation sees only its own
+                piece (default 0, the whole bundle every time)
   NAME          run name under OUT_DIR/runs (default cas_iso_<PATIENT>)
   CART_INIT     initialize from a cartridge FILE instead of the document's
                 first p tokens (a saved checkpoint, or a meta-learned init);
@@ -179,6 +190,22 @@ assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
 CART_INIT = os.environ.get("CART_INIT", "")
+PIECE_CARTS = [x for x in os.environ.get("PIECE_CARTS", "").split(",") if x]
+PIECE_PARQUETS = [x for x in os.environ.get("PIECE_PARQUETS", "").split(",") if x]
+PIECE_MODE = os.environ.get("PIECE_MODE", "isolated")
+P_ISO = float(os.environ.get("P_ISO", "0"))
+PIECE_LENGTHS = []
+if PIECE_CARTS:
+    # all pieces of one split document in one cache (cas_pieces.py)
+    assert len(PIECE_PARQUETS) == len(PIECE_CARTS), "one parquet per piece"
+    from cas_cart_init import load_cart, save_cart
+    from cas_pieces import concat
+
+    _parts = [load_cart(p) for p in PIECE_CARTS]
+    PIECE_LENGTHS = [p[0][0].shape[2] for p in _parts]
+    CART_INIT = os.path.join(OUT_DIR, f"pieces_{PIECE_MODE}_init.pt")
+    save_cart(*concat(_parts, shift=PIECE_MODE == "joint"), CART_INIT)
+    del _parts
 SAVE_INIT = os.environ.get("SAVE_INIT", "1") not in ("0", "", "n", "no")
 VAL_PARQUET = os.environ.get("VAL_PARQUET", "")
 VAL_EVERY = int(os.environ.get("VAL_EVERY", "60"))
@@ -426,6 +453,13 @@ if MICRO_SEQS > 1:
     _install_micro(TrainDataset, _ct, MICRO_SEQS)
     print(f"[iso] {MICRO_SEQS} packed sequences per forward pass", flush=True)
 
+if PIECE_CARTS:
+    import cartridges.models.qwen.modeling_qwen3 as _mq
+    from cartridges.cache import TrainableCache as _TC
+    from cas_pieces import install as _install_pieces
+
+    _install_pieces(TrainDataset, _mq, _TC, PIECE_LENGTHS, PIECE_MODE, P_ISO, SEED)
+
 # Print the held-out loss as a parseable line. The library only logs
 # "Eval loss - <x>" through its logger, without the step.
 _orig_eval_ppl = _ct.evaluate_perplexity
@@ -466,7 +500,9 @@ config = TrainConfig(
     global_batch_size=GLOBAL_BS // MICRO_SEQS,
     max_optimizer_steps=STEPS,
     dataset=TrainDataset.Config(
-        data_sources=[DataSource(path=DATA_PARQUET, type="local")],
+        data_sources=[
+            DataSource(path=p, type="local") for p in (PIECE_PARQUETS or [DATA_PARQUET])
+        ],
         top_k_logits=20,
         packed_seq_length=2048,
         packing_mode="truncate",
