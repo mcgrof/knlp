@@ -210,6 +210,7 @@ if PIECE_CARTS:
 
     _parts = [load_cart(p) for p in PIECE_CARTS]
     PIECE_LENGTHS = [p[0][0].shape[2] for p in _parts]
+    os.makedirs(OUT_DIR, exist_ok=True)  # not created yet at this point
     CART_INIT = os.path.join(OUT_DIR, f"pieces_{PIECE_MODE}_init.pt")
     save_cart(*concat(_parts, shift=PIECE_MODE == "joint"), CART_INIT)
     del _parts
