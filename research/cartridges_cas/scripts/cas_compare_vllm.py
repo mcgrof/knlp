@@ -41,6 +41,8 @@ Env:
     OUT_JSON    results
     MODEL, BLOCK_SIZE, BACKEND, GPU_UTIL, MAX_LEN   engine settings
                 (Qwen/Qwen3-8B, 1, FLASHINFER, 0.85, 20480)
+    KV_CACHE_DTYPE  paged cache dtype (default auto, the model dtype;
+                fp8 stores keys and values in FP8)
 
 Usage:
     python cas_compare_vllm.py
@@ -123,6 +125,7 @@ def engine(extra):
         enable_prefix_caching=False,
         block_size=int(os.environ.get("BLOCK_SIZE", "1")),
         attention_config={"backend": os.environ.get("BACKEND", "FLASHINFER")},
+        kv_cache_dtype=os.environ.get("KV_CACHE_DTYPE", "auto"),
     )
     kw.update(extra)
     return LLM(**kw)
@@ -357,6 +360,8 @@ def main():
         seed=SEED,
         runs=RUNS,
         mem_config=MEM_CONFIG if ARM in ("rag", "memorilla") else None,
+        mem_ckpt=os.environ.get("MEM_CKPT") if ARM == "memorilla" else None,
+        kv_cache_dtype=os.environ.get("KV_CACHE_DTYPE", "auto"),
         carts=os.environ.get("CARTS") if ARM == "cart" else None,
         prep_s=round(prep_s, 2),
         generate_s=round(gen_s, 2),
