@@ -22,6 +22,17 @@ The ``check`` mode re-embeds the 100 PubMedQA test questions with the
 same builder and compares them with the vectors the authors published,
 so the encoder path is known to reproduce theirs before it is trusted.
 
+The ``write_ss`` and ``embed_ss`` modes write the cartridges' self-study
+conversations as a Memorilla training config, so the reader can be
+fine-tuned on exactly the data the cartridges were trained on. Each row
+is one conversation: ``question`` is its user turn, ``answer`` the
+teacher's final answer with the thinking block removed (Memorilla's
+template disables thinking), and ``documents`` the patient's whole
+collection, split exactly as the test config. Conversations whose
+teacher answer never left the thinking block are dropped. Rows are
+split into ``train`` and ``validation`` by whole prompt groups (the
+parquets repeat some prompts), about VAL_FRACTION of the groups.
+
 Env:
     OUT_ROOT    data root to write (data/ and embeddings/ below it)
     CHUNKS      passage sizes in reader tokens (default "256")
@@ -30,13 +41,20 @@ Env:
     MEM_DATA    the authors' data root (check mode)
     ENCODER     default Qwen/Qwen3-Embedding-4B
     TOKENIZER   reader tokenizer for passage sizes (default Qwen/Qwen3-8B)
+    SS_DIR      self-study parquets, one per patient (write_ss)
+    SS_PATIENTS patients whose conversations to write (write_ss)
+    SS_CONFIG   name of the training config (write_ss, embed_ss)
+    VAL_FRACTION  share of prompt groups held out (default 0.05)
 
 Usage:
     python cas_memorilla_build.py write
     python cas_memorilla_build.py embed
     python cas_memorilla_build.py check
+    python cas_memorilla_build.py write_ss
+    python cas_memorilla_build.py embed_ss
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -185,5 +203,73 @@ def check():
     )
 
 
+def final_answer(text):
+    """The teacher's answer after its thinking block, or None if cut off."""
+    if "</think>" not in text:
+        return None
+    answer = text.split("</think>", 1)[1].strip()
+    return answer or None
+
+
+def write_ss():
+    import pandas as pd
+    import pyarrow.parquet as pq
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(TOKENIZER)
+    data = json.loads(urllib.request.urlopen(DATASET_URL).read())
+    ss_dir = Path(os.environ["SS_DIR"])
+    config = os.environ["SS_CONFIG"]
+    val_fraction = float(os.environ.get("VAL_FRACTION", "0.05"))
+    (chunk,) = CHUNKS
+    splits = {"train": [], "validation": []}
+    stats = {}
+    for pid in os.environ["SS_PATIENTS"].split():
+        docs = []
+        for text in data[pid]["texts"].values():
+            docs.extend(passages(tok, text, chunk))
+        table = pq.read_table(ss_dir / f"{pid}.parquet", columns=["messages"])
+        kept = dropped = 0
+        for row in table.to_pylist():
+            user, assistant = row["messages"][0], row["messages"][1]
+            assert user["role"] == "user" and assistant["role"] == "assistant"
+            answer = final_answer(assistant["content"])
+            if answer is None:
+                dropped += 1
+                continue
+            question = user["content"].strip()
+            digest = hashlib.sha256(f"{pid}\0{question}".encode()).digest()
+            held_out = int.from_bytes(digest[:8], "big") / 2**64 < val_fraction
+            splits["validation" if held_out else "train"].append(
+                dict(
+                    collection_id=int(pid.split("_")[1]),
+                    question=question,
+                    answer=answer,
+                    documents=docs,
+                )
+            )
+            kept += 1
+        stats[pid] = dict(kept=kept, dropped=dropped, passages=len(docs))
+        print(f"SS,{pid},kept={kept},dropped={dropped}", flush=True)
+    d = OUT_ROOT / "data" / config
+    d.mkdir(parents=True, exist_ok=True)
+    for split, rows in splits.items():
+        # The embedding builder expects each collection's rows together,
+        # in ascending collection order.
+        rows.sort(key=lambda r: r["collection_id"])
+        pd.DataFrame(rows).to_parquet(d / f"{split}-00000-of-00001.parquet")
+        print(f"wrote {d}/{split} ({len(rows)} rows)", flush=True)
+    (OUT_ROOT / f"{config}.json").write_text(json.dumps(stats, indent=1))
+
+
+def embed_ss():
+    me = modern_encoder()
+    config = os.environ["SS_CONFIG"]
+    me.compute_embeddings(config, ["train", "validation"], OUT_ROOT, ENCODER, None)
+    print(f"embedded {config}", flush=True)
+
+
 if __name__ == "__main__":
-    {"write": write, "embed": embed, "check": check}[sys.argv[1]]()
+    modes = {"write": write, "embed": embed, "check": check}
+    modes.update(write_ss=write_ss, embed_ss=embed_ss)
+    modes[sys.argv[1]]()
