@@ -78,6 +78,11 @@ Env:
                 (default 0, off). A loss spike multiplies the value norms
                 of the first layers about eightfold in one step; keys
                 stay near the reader's scale (cas_cart_norms.py)
+  PACKED_LEN    tokens per packed training sequence (default 2048, the
+                upstream LongHealth example; the CAS paper uses 8192).
+                Packing is in truncate mode, so the conversation that
+                overflows a sequence loses its tail, and a longer
+                limit cuts fewer teacher targets
   MICRO_SEQS    packed sequences per forward pass (default 1, the
                 library's behaviour). Values above 1 concatenate that
                 many packed sequences into one pass with separate
@@ -192,6 +197,7 @@ assert ADAM_BETA2 is None or 0 < ADAM_BETA2 < 1, "ADAM_BETA2 must be in (0, 1)"
 DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
 DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
 MICRO_SEQS = int(os.environ.get("MICRO_SEQS", "1"))
+PACKED_LEN = int(os.environ.get("PACKED_LEN", "2048"))
 VALUE_CAP = float(os.environ.get("VALUE_CAP", "0"))
 assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
@@ -280,7 +286,7 @@ def _make_loss_evals():
     ds = TrainDataset.Config(
         data_sources=[DataSource(path=VAL_PARQUET, type="local", limit=VAL_LIMIT)],
         top_k_logits=20,
-        packed_seq_length=2048,
+        packed_seq_length=PACKED_LEN,
         packing_mode="truncate",
     )
     return [LossEvalConfig(dataset=ds, name_for_wandb="val")], VAL_EVERY
@@ -555,7 +561,7 @@ config = TrainConfig(
             DataSource(path=p, type="local") for p in (PIECE_PARQUETS or [DATA_PARQUET])
         ],
         top_k_logits=20,
-        packed_seq_length=2048,
+        packed_seq_length=PACKED_LEN,
         packing_mode="truncate",
     ),
     # every step reaches _save_cache_once below, which applies SAVE_EVERY
