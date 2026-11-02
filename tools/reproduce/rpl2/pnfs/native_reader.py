@@ -12,18 +12,26 @@ Modes:
   read         loop requests of --batch distinct keys over the first --hot
                objects, one request at a time, for --requests requests or
                --seconds seconds (optionally from --start-at, epoch
-               seconds); verify every --verify-every-th request
+               seconds); verify every --verify-every-th request, or with
+               0 every hot object once after the timed loop
   fingerprint  read each hot object once (first touch), then --requests
                repeat requests; record CLOCK_MONOTONIC phase windows so a
                trace taken with trace.sh can be split by phase
 
 ``--held`` sets the connector's ``held_fd_capacity``: 0 is stock LMCache
 (open, read and close per object), a positive value keeps that many read
-descriptors open across loads. Every record names the mode, the
-capacity, the extension and each request's latency.
+descriptors open across loads. ``--read-mode`` selects pool, inline or
+adaptive page-cache reads (an LMCache build with ``read_mode`` is
+needed; otherwise leave it unset). ``--pipeline`` keeps that many
+requests in flight from one connector. ``--odirect 0`` reads through the
+page cache. ``--mountstats`` adds the NFS client's per-operation RPC
+counts for the mount (see mountstats.py). Every record names the mode,
+the settings, the extension, process CPU time and each request's
+latency.
 """
 
 import argparse
+import collections
 import ctypes
 import glob
 import hashlib
@@ -33,9 +41,21 @@ import json
 import mmap
 import os
 import random
+import resource
 import select
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mountstats  # noqa: E402
+
+# inline_read_keys for "every key", as the LMCache adapter maps read_mode.
+INLINE_ALL_KEYS = (1 << 63) - 1
+
+
+def cpu_s():
+    r = resource.getrusage(resource.RUSAGE_SELF)
+    return r.ru_utime + r.ru_stime
 
 
 def load_fs_client(src):
@@ -93,9 +113,20 @@ def main():
     p.add_argument("--start-at", type=float, default=0)
     p.add_argument("--held", type=int, default=0, help="held_fd_capacity")
     p.add_argument("--read-workers", type=int, default=16)
-    p.add_argument("--verify-every", type=int, default=8)
+    p.add_argument(
+        "--verify-every",
+        type=int,
+        default=8,
+        help="hash every Nth request in the loop; 0 = every object once after it",
+    )
     p.add_argument("--client", default="cli")
     p.add_argument("--block", type=int, default=0)
+    p.add_argument("--odirect", type=int, default=1, help="1: O_DIRECT when aligned")
+    p.add_argument("--read-mode", choices=["pool", "inline", "adaptive"])
+    p.add_argument("--busy-target", type=int, default=16, help="read_busy_target")
+    p.add_argument("--pipeline", type=int, default=1, help="requests in flight")
+    p.add_argument("--workers", type=int, default=4, help="connector num_workers")
+    p.add_argument("--mountstats", action="store_true", help="record NFS RPCs")
     p.add_argument("--out", default="")
     a = p.parse_args()
     FS, so = load_fs_client(a.src)
@@ -137,14 +168,28 @@ def main():
     if a.batch > a.hot:
         sys.exit("--batch must not exceed --hot: a request reads distinct objects")
     hot = [key_of(i) for i in range(a.hot)]
-    direct = size % align == 0
-    c = FS(a.base, 4, "", True, 0, a.read_workers, 0, a.held)
+    direct = bool(a.odirect) and size % align == 0
+    args = [a.base, max(a.workers, a.pipeline), "", bool(a.odirect), 0]
+    args += [a.read_workers, 0, a.held]
+    if a.read_mode:
+        args.append(0 if a.read_mode == "pool" else INLINE_ALL_KEYS)
+        args.append(a.busy_target if a.read_mode == "adaptive" else 0)
+    try:
+        c = FS(*args)
+    except TypeError:
+        sys.exit("this LMCache build has no read_mode; drop --read-mode")
     ex = wait(c, c.submit_batch_exists(hot))
     if not ex[3] or not all(ex[3]):
         sys.exit("hot objects missing; run init first")
-    bufs = [aligned(size, align) for _ in range(a.batch)]
-    views = [b[1] for b in bufs]
+    bufs = [aligned(size, align) for _ in range(a.batch * a.pipeline)]
+    vsets = [
+        [b[1] for b in bufs[k * a.batch : (k + 1) * a.batch]] for k in range(a.pipeline)
+    ]
+    views = vsets[0]
     windows = []
+    rpcs = {}
+    snap = (lambda: mountstats.snapshot(a.base)) if a.mountstats else (lambda: None)
+    s0 = snap()
     mark = lambda msg: windows.append(
         {"mark": msg, "t_ns": time.monotonic_ns()}
     )  # noqa: E731
@@ -158,13 +203,60 @@ def main():
             if not done[1] or hashlib.sha256(views[0]).hexdigest() != m["digests"][k]:
                 sys.exit(f"first touch of {k} failed or mismatched")
         mark("phase first end")
+        s1 = snap()
+        rpcs["first"] = mountstats.delta(s0, s1)
+        s0 = s1
         mark("phase repeat begin")
     if a.start_at:
         time.sleep(max(0.0, a.start_at - time.time()))
     lat, fails, verified, bad = [], 0, 0, 0
     t_end = time.monotonic() + a.seconds if a.seconds else None
     n = 0
-    while (a.requests and n < a.requests) or (t_end and time.monotonic() < t_end):
+    if a.mode == "read":
+        s0 = snap()
+    c0, w0 = cpu_s(), time.monotonic()
+    more = lambda: (a.requests and n < a.requests) or (
+        t_end and time.monotonic() < t_end
+    )  # noqa: E731
+    if a.pipeline > 1:
+        # Several requests in flight from one connector, each with its own
+        # buffers; completions are matched by future id.
+        pending, inflight, nsub = {}, collections.deque(), 0
+
+        def submit(k):
+            nonlocal nsub
+            keys = [hot[(nsub * a.batch + j) % len(hot)] for j in range(a.batch)]
+            nsub += 1
+            fid = c.submit_batch_get(keys, vsets[k])
+            inflight.append((k, keys, time.monotonic_ns(), fid))
+
+        def wait_fid(fid):
+            while fid not in pending:
+                for comp in c.drain_completions():
+                    pending[comp[0]] = comp
+                if fid not in pending:
+                    select.select([c.event_fd()], [], [], 0.05)
+            return pending.pop(fid)
+
+        for k in range(a.pipeline):
+            submit(k)
+        while inflight:
+            k, keys, t0, fid = inflight.popleft()
+            done = wait_fid(fid)
+            t1 = time.monotonic_ns()
+            if not (done[1] and done[3] is not None and all(done[3])):
+                fails += 1
+            else:
+                lat.append((t1 - t0) / 1e6)
+                if a.verify_every and n % a.verify_every == 0:
+                    for key, v in zip(keys, vsets[k]):
+                        verified += 1
+                        if hashlib.sha256(v).hexdigest() != m["digests"][key]:
+                            bad += 1
+            n += 1
+            if more():
+                submit(k)
+    while a.pipeline == 1 and more():
         keys = [hot[(n * a.batch + j) % len(hot)] for j in range(a.batch)]
         t0 = time.monotonic_ns()
         done = wait(c, c.submit_batch_get(keys, views))
@@ -173,15 +265,31 @@ def main():
             fails += 1
         else:
             lat.append((t1 - t0) / 1e6)
-            if n % a.verify_every == 0:
+            if a.verify_every and n % a.verify_every == 0:
                 for k, v in zip(keys, views):
                     verified += 1
                     if hashlib.sha256(v).hexdigest() != m["digests"][k]:
                         bad += 1
         n += 1
+    cpu, wall = cpu_s() - c0, time.monotonic() - w0
+    if not a.verify_every:
+        # Verify every hot object once, after the timed window, so hashing
+        # never competes with the reads being timed.
+        for i in range(0, len(hot), a.batch):
+            keys = hot[i : i + a.batch]
+            done = wait(c, c.submit_batch_get(keys, views[: len(keys)]))
+            if not (done[1] and done[3] is not None and all(done[3])):
+                fails += 1
+                continue
+            for k, v in zip(keys, views):
+                verified += 1
+                if hashlib.sha256(v).hexdigest() != m["digests"][k]:
+                    bad += 1
     if a.mode == "fingerprint":
         mark("phase repeat end")
+    rpcs["repeat" if a.mode == "fingerprint" else "read"] = mountstats.delta(s0, snap())
     stats = c.held_fd_stats() if hasattr(c, "held_fd_stats") else None
+    read_stats = c.read_stats() if hasattr(c, "read_stats") else None
     c.close()
     ordered = sorted(lat)
     rec = {
@@ -208,6 +316,14 @@ def main():
         "first_touch_ms": first_lat,
         "windows": windows,
         "held_fd_stats": stats,
+        "read_stats": read_stats,
+        "read_mode": a.read_mode,
+        "busy_target": a.busy_target if a.read_mode == "adaptive" else None,
+        "pipeline": a.pipeline,
+        "read_workers": a.read_workers,
+        "wall_s": wall,
+        "cpu_s": cpu,
+        "nfs_rpcs": rpcs if a.mountstats else None,
         "extension": so,
     }
     if a.out:
