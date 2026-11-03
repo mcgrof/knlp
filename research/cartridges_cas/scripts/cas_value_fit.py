@@ -61,6 +61,10 @@ Env (capture):
     SEED        sampling seed (default 0)
     VAL_FRAC    fraction of prompt groups held out (default 0.2)
     OUT_DIR     capture directory (one file per layer, plus meta.json)
+    FIT_MANIFEST  optional cas_freeze_split.py manifest: stop unless the
+                fit and validation rows chosen here are exactly its
+                fit_rows and fit_check_rows (so a repaired or rewritten
+                parquet is captured on the same conversations)
     DEVICE      cuda (default)
 
 Env (solve):
@@ -161,6 +165,11 @@ def capture():
     rng = np.random.default_rng(seed)
     fit_i = sorted(rng.choice(fit_i, min(n_fit, len(fit_i)), replace=False))
     val_i = sorted(rng.choice(val_i, min(n_val, len(val_i)), replace=False))
+    if os.environ.get("FIT_MANIFEST"):
+        man = json.loads(Path(os.environ["FIT_MANIFEST"]).read_text())
+        assert [int(i) for i in fit_i] == man["fit_rows"], "fit rows differ"
+        assert [int(i) for i in val_i] == man["fit_check_rows"], "check rows differ"
+        print("[vfit] fit and check rows match FIT_MANIFEST", flush=True)
     sel = [(i, "fit") for i in fit_i] + [(i, "val") for i in val_i]
     by_sys = {}
     for i, split in sel:
