@@ -128,6 +128,11 @@ Env:
                 VAL_PARQUET have exactly that SHA-256 and row count, and
                 VAL_ROWS also requires VAL_LIMIT to cover every row. Hash
                 and row count are printed as INPUT_RECEIPT either way.
+  MEM_EVERY     every that many optimizer steps print
+                MEM_CSV,<step>,<peak allocated MiB>,<reserved MiB>,
+                <peak reserved MiB>,<unix time> for this process (default 0,
+                off). The optimizer's parameter and state dtypes, betas
+                and epsilon are printed once as OPT_STATE after step 1.
   LOAD_BF16     1 loads the model weights directly in bf16 instead of the
                 library's fp32-then-cast (same weights; fits a 24 GiB GPU)
   POS_WEIGHTS   .npz from cas_position_weights.py built on DATA_PARQUET
@@ -152,6 +157,7 @@ import inspect
 import logging
 import os
 import sys
+import time
 import types
 
 import torch
@@ -159,7 +165,9 @@ import torch
 os.environ.setdefault(
     "CARTRIDGES_DIR", os.environ.get("CARTRIDGES_DIR", "/root/cartridges")
 )
-OUT_DIR = os.environ.get("OUT_DIR", "/root/cart_out")
+# absolute: the library links cache_last.pt to its target by the path it
+# was given, so a relative OUT_DIR leaves a link that resolves nowhere
+OUT_DIR = os.path.abspath(os.environ.get("OUT_DIR", "/root/cart_out"))
 os.environ["CARTRIDGES_OUTPUT_DIR"] = OUT_DIR
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
@@ -211,6 +219,7 @@ PACKED_LEN = int(os.environ.get("PACKED_LEN", "2048"))
 PACKING_MODE = os.environ.get("PACKING_MODE", "truncate")
 assert PACKING_MODE in ("truncate", "pad"), "PACKING_MODE: truncate or pad"
 VALUE_CAP = float(os.environ.get("VALUE_CAP", "0"))
+MEM_EVERY = int(os.environ.get("MEM_EVERY", "0"))
 assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
@@ -475,6 +484,30 @@ class _ClippedAdam(torch.optim.Adam):
                 }
         _ClippedAdam._n_steps += 1
         out = super().step(closure)
+        if _ClippedAdam._n_steps == 1:
+            # what the optimizer actually holds: the library builds the
+            # cartridge in the reader's dtype, and Adam's state follows it
+            # the frozen sink is in the group but never gets a gradient
+            g = self.param_groups[0]
+            p0 = next(p for p in g["params"] if self.state.get(p))
+            st = self.state[p0]
+            print(
+                f"OPT_STATE param_dtype={p0.dtype} "
+                f"exp_avg_dtype={st['exp_avg'].dtype} "
+                f"exp_avg_sq_dtype={st['exp_avg_sq'].dtype} betas={g['betas']} "
+                f"eps={g['eps']} weight_decay={g['weight_decay']} "
+                f"amsgrad={g['amsgrad']}",
+                flush=True,
+            )
+        if MEM_EVERY and _ClippedAdam._n_steps % MEM_EVERY == 0:
+            mib = 2**20
+            print(
+                f"MEM_CSV,{_ClippedAdam._n_steps},"
+                f"{torch.cuda.max_memory_allocated() // mib},"
+                f"{torch.cuda.memory_reserved() // mib},"
+                f"{torch.cuda.max_memory_reserved() // mib},{time.time():.1f}",
+                flush=True,
+            )
         if VALUE_CAP > 0:
             with torch.no_grad():
                 vals = [
