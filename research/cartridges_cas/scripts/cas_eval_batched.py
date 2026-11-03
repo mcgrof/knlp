@@ -55,10 +55,12 @@ Env:
 list with question, reference, required and forbidden fields) with the
 same prefix and sampling, asking for a brief answer in <answer> tags.
 The scored text is the last tagged answer after the thinking, or the
-text after ``</think>`` when no tag is found (recorded). An answer is
-correct when, lowercased with whitespace collapsed, it contains one
-alternative from every ``required`` group and no ``forbidden`` string,
-each matched as a word (see ``rubric_hit``).
+text after ``</think>`` when no tag is found (recorded). The fixed rule
+is ``rubric_correct``: every required group met (optionally a number
+of times), none negated, no forbidden alternative, and, where a task
+lists exclusive_numbers, no other number. The summary reports raw
+accuracy and the mean over fact families (tasks sharing a ``family``
+averaged first), overall and for tasks marked ``low_overlap``.
 Answers that never close their thinking score as wrong.
 
 Usage:
@@ -379,30 +381,91 @@ def score_task(text, task):
     after = text.split("</think>", 1)[1]
     tags = re.findall(r"<answer>(.*?)</answer>", after, re.DOTALL | re.IGNORECASE)
     ans = tags[-1] if tags else after
+    return rubric_correct(ans, task), bool(tags), ans.strip()
+
+
+NEGATIONS = ("not", "no", "never", "without", "isn't", "wasn't", "aren't", "non")
+DATE_OR_TIME = r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b|\b\d{1,2}:\d{2}\b|patient_\d+"
+
+
+def rubric_correct(ans, task):
+    """The fixed scoring rule for one answer text.
+
+    Every required group must be met: a plain group by one alternative,
+    a {"any": [...], "count": n} group by n occurrences in total. An
+    occurrence counts only as a word (``rubric_hit``) and only when none
+    of the three words before it is a negation, unless the alternative
+    itself starts with one ("no residual"). No forbidden alternative may
+    occur. With exclusive_numbers, every number in the answer apart from
+    dates, times and patient ids must be one of those values, so a
+    hedged or contradictory value ("2 or 3") fails.
+    """
+    import re
+
     a = " ".join(ans.lower().split())
-    ok = all(any(rubric_hit(a, alt) for alt in grp) for grp in task["required"])
-    ok = ok and not any(rubric_hit(a, f) for f in task.get("forbidden", []))
-    return ok, bool(tags), ans.strip()
+    for grp in task["required"]:
+        alts = grp["any"] if isinstance(grp, dict) else grp
+        need = grp.get("count", 1) if isinstance(grp, dict) else 1
+        if sum(len(rubric_hits(a, alt)) for alt in alts) < need:
+            return False
+    if any(rubric_hits(a, f, negation=False) for f in task.get("forbidden", [])):
+        return False
+    allowed = task.get("exclusive_numbers")
+    if allowed is not None:
+        rest = re.sub(DATE_OR_TIME, " ", a)
+        nums = re.findall(r"\d+(?:\.\d+)?", rest)
+        if any(n not in allowed for n in nums):
+            return False
+    return True
 
 
-def rubric_hit(a, alt):
-    """alt occurs in the normalized answer a as a word, not inside one: no
-    letter or digit (or, before a number, a decimal point) may precede it,
-    and a number or a short alternative (under five characters) may not
-    be followed by one. Longer alternatives may match as word prefixes
-    ("hyperintens"), so "2" does not match "2021" and "mr" not "mrs"."""
+def rubric_hits(a, alt, negation=True):
+    """Start offsets of alt in the normalized answer a as a word, not
+    inside one: no letter or digit (or, before a number, a decimal point)
+    may precede it, and a number or a short alternative (under five
+    characters) may not be followed by one. Longer alternatives may match
+    as word prefixes ("hyperintens"), so "2" does not match "2021" and
+    "mr" not "mrs". With negation, an occurrence with a negation among
+    the three words before it is dropped, unless alt starts with one."""
     import re
 
     alt = " ".join(alt.lower().split())
     if not alt:
-        return False
+        return []
     pre = ""
     if alt[0].isalnum():
         pre = r"(?<![a-z0-9.])" if alt[0].isdigit() else r"(?<![a-z0-9])"
     post = ""
     if alt[-1].isalnum() and (alt[-1].isdigit() or len(alt) < 5):
         post = r"(?![a-z0-9])"
-    return re.search(pre + re.escape(alt) + post, a) is not None
+    hits = [m.start() for m in re.finditer(pre + re.escape(alt) + post, a)]
+    if negation and alt.split()[0] not in NEGATIONS:
+        hits = [
+            h
+            for h in hits
+            if not set(re.findall(r"[a-z']+", a[:h])[-3:]) & set(NEGATIONS)
+        ]
+    return hits
+
+
+def rubric_hit(a, alt):
+    return bool(rubric_hits(" ".join(a.lower().split()), alt, negation=False))
+
+
+def family_accuracy(rows, tasks_by_row, subset=None):
+    """Mean over fact families of the mean correctness of their tasks
+    (each task averaged over runs), optionally on a subset of tasks."""
+    fam = {}
+    for x in rows:
+        t = tasks_by_row[x["row"]]
+        if subset is None or subset(t):
+            fam.setdefault(t.get("family", x["row"]), {}).setdefault(
+                x["row"], []
+            ).append(x["correct"])
+    if not fam:
+        return None, 0
+    per = [sum(sum(v) / len(v) for v in f.values()) / len(f) for f in fam.values()]
+    return sum(per) / len(per), len(per)
 
 
 def tasks():
@@ -442,6 +505,9 @@ def tasks():
             )
         )
     n = len(rows)
+    by_row = {t["row"]: t for t in task_list}
+    fam_acc, n_fam = family_accuracy(rows, by_row)
+    low_acc, n_low = family_accuracy(rows, by_row, lambda t: t.get("low_overlap"))
     res = dict(
         protocol="short source-grounded answers, batched HF generation with "
         f"the cartridge as a prefix; temp 0.6, max {cap}, rubric match",
@@ -452,6 +518,10 @@ def tasks():
         tasks_sha256=hashlib.sha256(open(os.environ["TASKS"], "rb").read()).hexdigest(),
         runs=runs,
         seed=seed,
+        family_accuracy=fam_acc,
+        families=n_fam,
+        low_overlap_family_accuracy=low_acc,
+        low_overlap_families=n_low,
         accuracy=sum(x["correct"] for x in rows) / n,
         correct=sum(x["correct"] for x in rows),
         n=n,
@@ -469,7 +539,8 @@ def tasks():
     res["raw_path"] = raw
     json.dump(res, open(out_json, "w"), indent=2)
     print(
-        f"TASKS_DONE acc={res['accuracy']:.4f} ({res['correct']}/{n}) "
+        f"TASKS_DONE family_acc={res['family_accuracy']:.4f} "
+        f"acc={res['accuracy']:.4f} ({res['correct']}/{n}) "
         f"({res['seconds']:.0f}s) -> {out_json}",
         flush=True,
     )
