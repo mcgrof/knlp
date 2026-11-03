@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Keeping read descriptors open in LMCache's native file connector removes the NFS OPEN and CLOSE round trips of every KV-cache object read. On a pNFS metadata server that is four operations per read. How it works, when to use it, our measurements, and how to check it on your own NFS or pNFS deployment.">
+<title>Held descriptors for LMCache reads on NFS and pNFS</title>
+<link rel="canonical" href="https://knlp.io/lmcache-nfs-held-descriptors.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="ReadPlan navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-results.html">results</a>
+    <a href="lmcache-nfs-held-descriptors.html" aria-current="page">held descriptors</a>
+    <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
+    <a href="lmcache-readplan-l2-analysis.html">findings</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Held descriptors</p>
+<span class="eyebrow">For NFS and pNFS users of LMCache</span>
+<h1>Held descriptors: KV-cache reads without an open and close each time</h1>
+<p class="lead">LMCache's native file connector opens, reads and closes a
+file for every KV-cache object it loads. On a network filesystem the open
+and the close are round trips to the server. A new option,
+<code>held_fd_capacity</code>, keeps read-only descriptors of published
+objects open between loads, so a repeated read sends no metadata request
+at all. On a pNFS metadata server that does not grant delegations, this
+removes four server operations from every object read, lifted
+throughput from 37,926 to 140,427 object reads per second with 16
+clients in our lab, and removed close stalls of up to 3.3 seconds. On a
+local filesystem an open costs about a microsecond, so the gain there is
+small (4-5%).</p>
+<p>This page explains the option, its safety rules, our measurements and
+how to check it on your own deployment with one make target. It also
+describes three ways of reading page-cache hits that you can compare,
+and a Linux NFS client change that is in progress.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol>
+<li><a href="#what">What the option does</a></li>
+<li><a href="#when">When it helps</a></li>
+<li><a href="#safety">What it assumes about your objects</a></li>
+<li><a href="#configure">Configure it</a></li>
+<li><a href="#results">Our measurements</a></li>
+<li><a href="#validate">Check it on your deployment</a></li>
+<li><a href="#read-mode">Compare the three read modes</a></li>
+<li><a href="#kernel">The NFS client change, and how to test it</a></li>
+<li><a href="#status">Status and source</a></li>
+<li><a href="#limits">Limits</a></li>
+</ol></div>
+
+<section id="what">
+<h2>1. What the option does</h2>
+<p>LMCache stores each KV-cache object as one file and publishes it with
+an atomic rename. The key names the object's content, so a published file
+never changes under its name. Without the option, every load opens the
+file, reads it and closes it. With <code>held_fd_capacity</code> set to a
+positive number, the connector keeps up to that many read-only file
+descriptors open. A load of a held object reads through its descriptor
+with <code>pread</code>, and the existence check for a held object needs
+no <code>stat</code>.</p>
+<p>The descriptors live in a bounded cache, split into up to 16 shards by
+file name so readers of different objects do not share a lock. When the
+cache is full, the least recently used descriptor that no read is using
+is closed. A descriptor in use is never closed; when a delete through the
+adapter removes its entry, it is closed by its last reader. A read that
+fails or comes back short through a held descriptor drops it and tries
+once more with a fresh open, so a revoked or replaced file costs one
+retry, not a wrong answer. Readers that miss on the same file at the same
+time share one open: one of them opens it and the others wait for its
+descriptor, so the server sees one OPEN per file.</p>
+<p>On NFS version 4, an open file is also an open <em>state</em> on the
+server. Each held descriptor therefore keeps one open state there, the
+same as any process that keeps a file open.</p>
+</section>
+
+<section id="when">
+<h2>2. When it helps</h2>
+<p>The option removes the cost of an open and a close. How much that is
+depends on the filesystem and on what the server does with them.</p>
+<div class="table-wrap"><table>
+<caption>What one repeated object read sends, by filesystem</caption>
+<tr><th scope="col">Filesystem and server</th><th scope="col">Open per read (stock)</th><th scope="col">Held descriptor</th><th scope="col">What the option saves</th></tr>
+<tr><td class="hi">pNFS, metadata server without delegations (Lattice)</td><td>An OPEN and a CLOSE compound: four server operations (OPEN, CLOSE and two GETATTRs)</td><td>No metadata-server operation</td><td>Server load, round trips and the close stalls they cause</td></tr>
+<tr><td class="hi">NFSv4.2 server that grants read delegations (Linux knfsd)</td><td>No server operation: the client keeps OPEN and CLOSE local</td><td>No server operation</td><td>Client-side open and close cost: <code>openat</code> 11.4 µs on NFS against 1.07 µs on XFS</td></tr>
+<tr><td class="hi">Local XFS</td><td>No server; the open is a ~1 µs path walk and file setup</td><td>No open</td><td>At most the 6.6% of CPU cycles that open and close take</td></tr>
+</table></div>
+<p>So the option matters most where every open goes to a metadata
+server, which is the usual case for pNFS and for many shared NFS
+deployments. It is safe but nearly pointless on a local disk.</p>
+</section>
+
+<section id="safety">
+<h2>3. What it assumes about your objects</h2>
+<p>A held descriptor keeps reading the file it opened, even after the
+name is removed or renamed over. That is correct because LMCache writes
+each object once, publishes it by rename and never rewrites it in place:
+the bytes a descriptor reads are always the bytes of its key. Eviction by
+another LMCache process or host is therefore safe. A descriptor keeps
+serving an object another process evicted until it leaves the cache, and
+the file's storage stays allocated until then.</p>
+<p>The assumption breaks if something outside LMCache rewrites or
+replaces object files under the same names. In our fault tests a second
+client renamed a different file over a held name and unlinked another.
+The held arm kept serving the bytes it had admitted for the rest of the
+run in the first case, and for 3.1 seconds in the second, until the
+server returned <code>ESTALE</code>. Open per read would have followed the
+new name. Do not use held descriptors on a directory that other tools
+modify.</p>
+<p>Within that rule we found no wrong byte: 155,494 verified 8 MiB reads
+over file replacement through LMCache, layout revocation, data-server and
+metadata-server restarts, a second client's rename and unlink, and a
+metadata-server partition past its lease. During a short metadata-server
+outage the held arm kept serving reads that the open-per-read arm could
+not start.</p>
+</section>
+
+<section id="configure">
+<h2>4. Configure it</h2>
+<p>Set the capacity in the <code>fs_native</code> L2 adapter. Size it for
+the hot set you want served without opens; each held descriptor costs one
+open file on the client and, on NFS version 4, one open state on the
+server.</p>
+<pre><code>--l2-adapter '{"type": "fs_native", "base_path": "/mnt/pnfs/lmcache/l2",
+               "use_odirect": true, "held_fd_capacity": 4096}'</code></pre>
+<p>The default, 0, keeps the old behavior. Check the client's open-file
+limit (<code>ulimit -n</code>) and, for a large capacity, any per-client
+open-state limit of your NFS server.</p>
+</section>
+
+<section id="results">
+<h2>5. Our measurements</h2>
+<p>All runs completed every request and every digest check. The pNFS lab
+ran on one 16-core, 32-thread desktop host: a
+<a href="https://github.com/PEAK-AIO/pnfs-lattice">Lattice</a> metadata
+server with its RonDB catalogue, one NFSv3 kernel data server and
+NFSv4.2 kernel clients, each in its own network namespace. The metadata
+server, the data server and every client share that host's CPU and memory
+bandwidth, so absolute rates describe this host. The per-read operation
+counts are protocol behavior and carry over to any deployment of this
+server and client.</p>
+<h3>One client, paired blocks</h3>
+<p>Each figure is the mean of paired block medians, open per read minus
+held, with a 95% block-bootstrap interval where three or more blocks
+ran. Positive means held descriptors are faster.</p>
+<div class="table-wrap"><table>
+<caption>pNFS lab, 8 MiB objects read with O_DIRECT</caption>
+<tr><th scope="col">Client and request</th><th scope="col">Held faster by</th></tr>
+<tr><td class="hi">Same host, 1 object per request</td><td>0.205 ms [0.157, 0.258], 22.4% [18.2, 26.9]</td></tr>
+<tr><td class="hi">Same host, 16 objects per request</td><td>0.549 ms, 4.5% [3.2, 6.2]: the connector's read workers read the 16 objects in parallel</td></tr>
+<tr><td class="hi">Other host over 1 Gb/s, 1 object per request</td><td>0.602 ms [0.518, 0.667], 0.8%: one OPEN and one CLOSE round trip on the LAN, against 72 ms of payload</td></tr>
+<tr><td class="hi">Other host over 1 Gb/s, 16 objects per request</td><td>0.651 ms, 0.1%</td></tr>
+</table></div>
+<p>The absolute saving equals the removed round trips, so its share of a
+request falls as payload time grows. On the same host at 16 objects per
+request, open per read also stalled in 13 of 600 requests (0.4 to 1.14 s),
+and the metadata server and RonDB used 5.25 s of CPU against 0.50 s
+held.</p>
+<h3>Many clients</h3>
+<p>N clients, each its own NFS client identity, read the same 16 hot
+objects, 16 per request, for 20 s from one start time. 256 KiB objects
+are read through the page cache, so the metadata path dominates.</p>
+<div class="table-wrap"><table>
+<caption>pNFS lab, 256 KiB objects, page cache after first touch</caption>
+<tr><th scope="col">Clients</th><th scope="col">Open per read: reads/s, p50</th><th scope="col">Held: reads/s, p50</th><th scope="col">Server ops per 1,000 reads (open, held)</th><th scope="col">Server CPU ms per 1,000 reads (open, held)</th></tr>
+<tr><td>1</td><td>12,276, 0.53 ms</td><td>32,483, 0.28 ms</td><td>4,000, 0</td><td>169, 1.0</td></tr>
+<tr><td>2</td><td>17,517, 0.63 ms</td><td>61,392, 0.30 ms</td><td>4,000, 0</td><td>133, 0.6</td></tr>
+<tr><td>4</td><td>44,527, 1.03 ms</td><td>103,642, 0.40 ms</td><td>4,000, 0</td><td>114, 0.5</td></tr>
+<tr><td>8</td><td>41,398, 2.21 ms</td><td>139,479, 0.67 ms</td><td>4,000, 0</td><td>113, 0.5</td></tr>
+<tr><td>16</td><td>37,926, 4.77 ms</td><td>140,427, 1.56 ms</td><td>4,001, 0</td><td>117, 0.5</td></tr>
+</table></div>
+<p>Open per read reaches the server's ceiling at about four clients, after
+which throughput falls while latency keeps rising. Held descriptors send
+no operation after the first touch and scale until the shared host's CPU
+is the limit. With 8 MiB objects read directly from the data server, both
+arms become bandwidth-bound on this host, but open per read has close
+stalls of 0.86 to 3.3 s at p99 in every cell, and at one client reads 442
+objects per second against 865 held.</p>
+<p>One more finding concerns objects shared within one host. When a
+request names the same object twice and each read opens it, the client
+sends concurrent OPENs of one file. Lattice answers them with
+<code>NFS4ERR_DELAY</code> (148 times in 26 requests), the Linux client
+backs off at least 100 ms, and every request took about 108 ms. Held
+descriptors open each file once and avoid this.</p>
+<h3>Plain NFS and a local disk</h3>
+<p>Between two desktop hosts over 1 Gb/s, NFSv4.2 to a Linux server that
+grants read delegations, 256 KiB page-cache reads: no NFS operation reached
+the server in either arm. Held descriptors still raised throughput by 13%,
+4% and 18% at 1, 4 and 16 reader processes, by removing the client's own
+open and close work. On local XFS the gain is 4.7%, 4.4% and 4.0% at 1, 4
+and 16 readers, against a bound of 6.6% of cycles for open and close.
+Only 9% of that open and close cost is XFS's own code; the rest is the
+generic file open path. These local and plain-NFS figures use the
+sharded-cache revision of the option described above; the first
+revision's single cache lock made one local reader 6% slower.</p>
+<p>The full record, including the read-pool profile, is on the
+<a href="lmcache-readplan-l2-results.html">results page</a>.</p>
+</section>
+
+<section id="validate">
+<h2>6. Check it on your deployment</h2>
+<p>One profile runs the same measurements on a directory you already have,
+for example on a pNFS deployment with several data servers and many NVMe
+drives. It runs as an ordinary user and builds only LMCache's CPU
+extensions. It mounts, exports and reconfigures nothing, drops no cache,
+and writes only into one subdirectory, <code>rpl2-site</code>, of the
+directory you give; delete that subdirectory to undo the run. It needs
+about 1.1 GiB free there.</p>
+<pre><code>git clone https://github.com/mcgrof/knlp.git && cd knlp
+make defconfig-rpl2-site
+make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+     RPL2_SITE=/mnt/pnfs/scratch</code></pre>
+<p><code>RPL2P_ROOT</code> holds the LMCache build and must be on a disk
+filesystem; <code>RPL2_OUTPUT</code> receives the records. Before you
+run, record your deployment in the configuration
+(<code>make menuconfig</code> or the command line):
+<code>CONFIG_KNLP_RPL2_SITE_LABEL</code>,
+<code>CONFIG_KNLP_RPL2_SITE_DATA_SERVERS</code> and
+<code>CONFIG_KNLP_RPL2_SITE_DRIVES</code>. If you run Lattice, give its
+metrics endpoint in <code>CONFIG_KNLP_RPL2_SITE_MDS_METRICS</code> (for
+example <code>http://mds:9090/metrics</code>); the sweep then also counts
+server-side operations per read. Run it on a mount the run has to
+itself: the client's RPC counters are per mount, so other traffic on the
+same mount is counted too.</p>
+<div class="table-wrap"><table>
+<caption>Steps of the site profile and what to compare</caption>
+<tr><th scope="col">Step</th><th scope="col">What it records</th><th scope="col">Compare with</th></tr>
+<tr><td class="hi">doctor</td><td>Filesystem type, NFS mount options and pNFS layout driver, free space, and whether the mount accepts <code>O_DIRECT</code> and <code>RWF_NOWAIT</code></td><td>Confirms what you are testing</td></tr>
+<tr><td class="hi">fingerprint</td><td>NFS RPCs per object read, first touch and repeat, open per read against held, from the client's own counters</td><td>Repeat reads: OPEN and CLOSE per object with open per read, none held (pNFS lab)</td></tr>
+<tr><td class="hi">screen</td><td>Paired blocks of open per read against held, 1 and 16 objects of 8 MiB per request</td><td>The one-client table above; expect the same absolute saving per object and a share that depends on your payload time</td></tr>
+<tr><td class="hi">sweep</td><td>1 to 16 reader processes on this host, reads/s, latency, client CPU and RPCs per read, plus server operations with a metrics URL</td><td>The many-client table; note that here the processes share one client identity</td></tr>
+<tr><td class="hi">readmodes</td><td>The three read modes at 1, 4 and 16 requests in flight (next section)</td><td>The read-mode table on the results page</td></tr>
+<tr><td class="hi">kernel</td><td><code>nfs_open_scale</code> opens per second, when its binary is given (section 8)</td><td>The A/B table in section 8</td></tr>
+</table></div>
+<p>We ran the profile on the lab's own Lattice mount as a check. It
+reproduced the protocol counts: each repeated read with open per read sent
+an OPEN and a CLOSE, and the server counted 4,000 operations per 1,000
+reads, against 0.3 held. One 8 MiB object per request was 18.5% faster
+held in a single shortened block.</p>
+<p>The run ends with <code>site-summary.md</code>, which prints your
+figures beside ours with the scope of each. The most portable comparison
+is the operation count per read: if your metadata server answers each
+read's open and close, you see the same four operations, and held
+descriptors remove them. Throughput depends on your servers, drives and
+network, which our one-host lab does not model. To exercise many client
+identities, run the profile on several client hosts at once.</p>
+</section>
+
+<section id="read-mode">
+<h2>7. Compare the three read modes</h2>
+<p>Once an object is in the page cache, reading it is a memory copy.
+LMCache's read pool hands each object to a worker thread, which costs a
+wakeup and a contended lock per object. A new adapter setting,
+<code>read_mode</code>, chooses who copies cached objects:</p>
+<div class="table-wrap"><table>
+<caption>read_mode settings</caption>
+<tr><th scope="col">Setting</th><th scope="col">Who reads a cached object</th><th scope="col">What we measured</th></tr>
+<tr><td class="hi"><code>"pool"</code> (default)</td><td>A read worker, for every key</td><td>Lowest latency for a lone request; most CPU per object</td></tr>
+<tr><td class="hi"><code>"inline"</code></td><td>The worker that took the request, with <code>preadv2(RWF_NOWAIT)</code>; only uncached keys go to the pool</td><td>2-9 times less CPU per object; slower for a lone request, faster with several in flight</td></tr>
+<tr><td class="hi"><code>"adaptive"</code></td><td>The pool while fewer than <code>read_busy_target</code> reads (default 16) are in flight, inline above</td><td>Pool latency when idle; a request split between the two waits for the slower half</td></tr>
+</table></div>
+<pre><code>--l2-adapter '{"type": "fs_native", "base_path": "/mnt/pnfs/lmcache/l2",
+               "held_fd_capacity": 4096, "read_mode": "inline"}'</code></pre>
+<p>The mode never changes which bytes are read, only who copies them.
+With <code>use_odirect</code> on, every read goes to the device, so every
+mode behaves as <code>"pool"</code>. A filesystem that refuses
+<code>RWF_NOWAIT</code> also falls back to the pool after the first
+attempt: tmpfs refuses it, local XFS accepts it, and so far the Linux NFS
+client refuses it. On a Linux 7.3-rc2 client with an NFSv4.2 pNFS
+(flexible files) mount from the lab's Lattice server, a buffered
+<code>preadv2(RWF_NOWAIT)</code> fails with <code>EOPNOTSUPP</code>. The
+site profile's doctor step and the <code>inline_unsupported</code> counter
+in each read-mode record tell you which case you are in.</p>
+<p>On NFS the three modes therefore behave the same. In that lab, two
+runs at 1, 4 and 16 requests in flight put every mode between 417,475
+and 505,117 objects per second, with CPU per object within 9% of
+<code>"pool"</code> in each cell. A 15-second cell at 16 in flight sent 16
+OPENs for the 16 objects in each mode.</p>
+<p>An earlier build of the descriptor cache stalled here. It let readers
+that missed on the same file open it at the same time and kept one
+descriptor. At first touch the request workers' inline attempts and the
+read workers opened the same files at once. Lattice answers concurrent
+opens of one file from one client with <code>NFS4ERR_DELAY</code>, and the
+client's retry delay grows to seconds. At 16 requests in flight
+<code>"inline"</code> and <code>"adaptive"</code> fell to 7 and 14 objects
+per second, and one 15-second inline cell sent 95 OPENs and finished 17
+requests. The cache now opens each file once at a time (section 1), and
+the same cell finishes 459,213 requests. On local XFS the crossover points
+depend on how many copies run at once and on your CPU's cache layout, so
+compare the modes at your own load; the results page has our
+numbers.</p>
+</section>
+
+<section id="kernel">
+<h2>8. The NFS client change, and how to test it on bigger clients</h2>
+<p>Profiling plain NFSv4.2 opens showed a spin lock taking 10% of all
+cycles, under the client's state-owner code. A state owner is the NFSv4
+identity a client opens files under, one per credential. Two locks are
+involved: the per-server <code>clp-&gt;cl_lock</code>, which every open to
+that server from the host takes to find its state owner, and the state
+owner's own <code>so_lock</code>, which every open and close under one
+credential takes.</p>
+<p>Three Linux kernel commits on v7.3-rc7 address the first lock and
+measure the result:</p>
+<ol>
+<li><strong>selftests: filesystems: add an NFS open scaling test.</strong>
+<code>nfs_open_scale</code> opens and closes a set of small files under an
+NFS directory from a growing number of threads and reports opens per
+second at each thread count. By default the threads share one credential
+and so one state owner. <code>-u</code> gives each thread its own uid (it
+needs root), so the client-wide and the per-owner locks can be told
+apart; <code>-r N</code> cycles N uids per thread to stress owner
+lifetime. Usage:
+<code>nfs_open_scale -d &lt;dir on NFS&gt; -t 1,2,4,8 -f 64 -s 4 [-u] [-r N] [-F]</code>,
+or the directory in <code>NFS_OPEN_SCALE_DIR</code>; <code>-F</code> allows
+a non-NFS directory for comparison.</li>
+<li><strong>NFSv4: find an in-use state owner without taking cl_lock.</strong>
+The lookup walks the owner tree under RCU and takes a reference only
+on an owner already in use; idle owners still take the locked path.
+Owners are freed after an RCU grace period.</li>
+<li><strong>NFSv4: do not scan the state owner LRU on every open.</strong>
+The idle-owner scan is skipped while the list is empty and otherwise runs
+at most once a second per server.</li>
+</ol>
+<p>We measured them as an A/B on one 8-vCPU virtual machine, NFSv4.2 over
+loopback to a Linux server in the same machine with read delegations
+granted, so no OPEN reached the server after the first open of each file.
+Boots alternated between the base kernel (v7.3-rc7 with the selftest) and
+the patched one, six runs per cell:</p>
+<div class="table-wrap"><table>
+<caption>nfs_open_scale, opens per second, median of six runs</caption>
+<tr><th scope="col">Credentials</th><th scope="col">Threads</th><th scope="col">Base</th><th scope="col">Patched</th><th scope="col">Change</th></tr>
+<tr><td>One shared</td><td>1</td><td>393,134</td><td>382,077</td><td>&minus;2.8%</td></tr>
+<tr><td>One shared</td><td>8</td><td>1,311,758</td><td>1,307,902</td><td>&minus;0.3%</td></tr>
+<tr><td>One per thread</td><td>4</td><td>1,223,906</td><td>1,214,638</td><td>&minus;0.8%</td></tr>
+<tr><td>One per thread</td><td>8</td><td>1,908,312</td><td>2,081,534</td><td>+9.1%</td></tr>
+</table></div>
+<p><strong>With one shared credential, which is how an LMCache reader pool
+opens files, the change gives no gain</strong>; every thread count is
+within the run-to-run spread, slightly below base. Profiles show why: on
+the base kernel 36.8% of cycles are in the spin lock slow path, and
+almost all of it is the owner's <code>so_lock</code>
+(<code>nfs4_try_open_cached</code>, <code>nfs4_get_open_state</code>,
+<code>__nfs4_close</code>, <code>update_open_stateid</code>), while
+<code>nfs4_get_state_owner</code> is 1.0%. With a credential per thread the
+<code>cl_lock</code> sites fall from about 12% of cycles to about 3%, as
+designed, and throughput rises 9.1% at 8 threads only, with a wide
+patched range (1.16 to 2.11 million), so that is weak evidence. A kernel
+with lock, RCU, memory and list debugging enabled showed no report under
+owner churn. The next kernel step is the per-owner lock itself. We make no
+speed claim for LMCache from this change.</p>
+<p><strong>Test it on a client with more cores.</strong> A shared lock
+costs more as cores grow, and our 8-vCPU machine is small. A site can run
+the same A/B on its own clients against its Lattice or NFS mount:</p>
+<ol>
+<li>Build two client kernels from the same base, one without and one
+with the two NFSv4 commits, both with the selftest
+(<code>make -C tools/testing/selftests TARGETS=filesystems/nfs</code>).</li>
+<li>Boot the base kernel and run, on a directory of the mount used by
+nothing else,
+<code>nfs_open_scale -d &lt;dir&gt; -t 1,2,4,8,16,32 -f 64 -s 4</code>
+three times, then the same as root with <code>-u</code>. The site
+profile's kernel step runs the first form when
+<code>CONFIG_KNLP_RPL2_SITE_KERNEL_SELFTEST</code> names the binary.</li>
+<li>Boot the patched kernel and repeat; alternate boots at least twice so
+each kernel has two boots.</li>
+<li>Record opens per second for each thread count and mode, the kernel
+release, the client's core count, whether the server grants read
+delegations, and one profile per kernel at the top thread count
+(<code>perf record -g</code>, then the callers of
+<code>native_queued_spin_lock_slowpath</code>).</li>
+</ol>
+<p>Compare the shared-credential rows with ours: if your client also
+shows no gain there, <code>so_lock</code> dominates for you too. A gain
+in the per-thread rows that grows with cores would say the change is
+worth more on large clients than on our test machine. The patches and
+the selftest are pending publication by the author; this section will
+link them when they are posted.</p>
+</section>
+
+<section id="status">
+<h2>9. Status and source</h2>
+<p>The option is in LMCache's native file connector on the branch
+<a href="https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-fs-native-held-fd">2026-10-28-feature-fs-native-held-fd</a>,
+proposed upstream as the draft
+<a href="https://github.com/LMCache/LMCache/pull/6133">LMCache pull request
+6133</a>, which is not merged. The sharded-cache revision, with one open
+per file at a time, and the read-mode settings are on the branch
+<code>2026-10-31-proto-fs-native-inline-reads</code>, which the site
+profile builds. The adapter documentation in that tree,
+<code>docs/source/mp/l2_storage/fs_native.rst</code>, describes both
+settings.</p>
+</section>
+
+<section id="limits">
+<h2>10. Limits</h2>
+<p>Our pNFS figures come from one metadata server and one data server on
+one host, with a small RonDB configuration, and a remote client at
+1 Gb/s. The many-client plateau describes that shared host; a dedicated
+metadata server saturates at a different rate, but it still sees four
+operations per read from every client that opens per read. The first
+read of an object still sends LOOKUP and OPEN. We did not measure layout
+recall storms, the server-side cost of many held open states, or a
+serving engine end to end, so none of these figures is a time-to-first
+token result.</p>
+</section>
+<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2-results.html">&larr; Results</a><a href="lmcache-readplan-l2-reproduce.html">Reproduce &rarr;</a></nav>
+<footer>
+<a href="lmcache-readplan-l2.html">ReadPlan overview</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html">KMesh</a>
+</footer>
+</main>
+</body>
+</html>

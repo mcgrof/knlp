@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="Open questions for metadata-aware KV-cache offload reads: what work survives client caching, how to separate metadata from payload time, how reuse stays valid, and whether storage changes reach serving.">
-<title>LMCache ReadPlan L2: Open questions</title>
+<title>LMCache ReadPlan L2: Findings</title>
 <link rel="canonical" href="https://knlp.io/lmcache-readplan-l2-analysis.html">
 <link rel="stylesheet" href="kmesh.css">
 </head>
@@ -15,20 +15,27 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-results.html">results</a>
+    <a href="lmcache-nfs-held-descriptors.html">held descriptors</a>
     <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
-    <a href="lmcache-readplan-l2-analysis.html" aria-current="page">open questions</a>
+    <a href="lmcache-readplan-l2-analysis.html" aria-current="page">findings</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Open questions</p>
-<span class="eyebrow">Analysis still to do</span>
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Findings</p>
+<span class="eyebrow">The four questions, answered where we could</span>
 <h1>What would a metadata adapter have to show?</h1>
 <p class="lead">Caching where a KV object lives only helps if real work
 remains after the storage client's own caching, if that work is on the
-request's critical path, and if reuse never returns the wrong bytes.
-These four questions are open. This page states them and the evidence
-an answer would need; it reports no result.</p>
+request's critical path, and if reuse never returns the wrong bytes. We
+stated these four questions before measuring. Three now have answers for
+the systems we tested: what remains is an open and a close per object,
+whole-request paired blocks separate it from payload time, and reuse of
+sealed objects stays correct under the faults we ran. The fourth, the
+effect on a serving request, is still open. Each section keeps the
+question and adds what we found; the numbers are on the
+<a href="lmcache-readplan-l2-results.html">results page</a>.</p>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol>
@@ -56,6 +63,15 @@ operations. An answer therefore has to name the software versions and
 default settings it used, count the operations actually sent for each
 case and leave the normal caches enabled. Disabling a cache to create
 work for an adapter to remove would answer a different question.</p>
+<p><strong>What we found.</strong> With normal caching on, a repeated read
+sends no layout or device request: the Linux pNFS client keeps both
+across close. What remains is the open and the close. On the Lattice
+metadata server, which grants no delegations, that is one OPEN and one
+CLOSE compound, four server operations per object read. On a Linux NFS
+server that grants read delegations, no operation reaches the server at
+all, and the open and close cost only client CPU (11.4 µs and 1.36 µs per
+call, against 1.07 µs and 0.35 µs on local XFS). A plan cache has nothing
+to remove that a held file descriptor does not remove more simply.</p>
 </section>
 
 <section id="separating-time">
@@ -72,6 +88,15 @@ differ in one thing and run alternately on the same system, because a
 comparison between different filesystems or adapters changes more than
 metadata. Tracing and verification also cost time, so it helps to know
 how much the measurement itself adds.</p>
+<p><strong>What we found.</strong> We timed whole requests in paired,
+alternating blocks that differ in one setting, counted RPCs per phase
+from the client's own counters or a trace, and kept hashing out of the
+timed window where it would compete with the reads. That separated a
+0.2 ms saving per 8 MiB object in the pNFS lab, and showed that on a
+1 Gb/s link the same saving is under 1% of a request because the payload
+dominates. It also caught our own harness twice: a hash inside the timed
+loop that took half of the cycles, and clients that fell into step and
+shared each other's cached data.</p>
 </section>
 
 <section id="location-changes">
@@ -89,6 +114,15 @@ under a new name. A timeout
 or a checksum alone cannot show that an object is current. Tests need the
 replacement, deletion, recall, server restart and partial-failure cases,
 each with a defined correct outcome.</p>
+<p><strong>What we found.</strong> For sealed objects published by rename
+and named by their content, reusing an open descriptor returned no wrong
+byte in 155,494 verified 8 MiB reads over replacement, layout revocation,
+data-server and metadata-server restarts, a second client's rename and
+unlink, and a metadata-server partition past its lease. A layout recall
+to a held reader was never sent by the server, so that case is not
+tested. The case that breaks reuse is a writer outside LMCache that
+replaces a name: the held descriptor keeps serving the bytes it admitted.
+That is why the option is limited to directories only LMCache writes.</p>
 </section>
 
 <section id="serving-effect">
@@ -100,6 +134,11 @@ measures: time to first token, throughput and memory, on a real model,
 with the output checked against a run that does not use the offloaded
 state. A storage improvement that does not change those measures may
 still matter elsewhere, but it is not a serving result.</p>
+<p><strong>Still open.</strong> None of our measurements runs a serving
+engine end to end, so we make no time-to-first-token claim. The storage
+results do bound what a serving test could see: removing four
+metadata-server operations per object read, and close stalls of up to
+3.3 seconds under load on the lab server.</p>
 </section>
 
 <section id="evidence">
@@ -127,6 +166,10 @@ request sent, does not check whether pNFS layouts were used and does not
 control the page cache. It is useful for checking a mount, its
 correctness and its ordinary whole-object read time before any
 deeper analysis.</p>
+<p>The <a href="lmcache-readplan-l2-reproduce.html#site">site and
+closure profiles</a> run the same RPC counts, paired screen, many-reader
+sweep and read-mode comparison on any filesystem you already have, as an
+ordinary user.</p>
 <p>The <a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">pNFS lab
 profiles</a> address the first three questions for one server and client
 pair. They count the RPCs each arm sends to each server, hold every case to

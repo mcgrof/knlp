@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="How to run the basic ReadPlan reproduction: CPU-only smoke tests and a verified whole-object read baseline on a filesystem you supply, including an NFS mount.">
-<title>LMCache ReadPlan L2: Reproduce the basic baseline</title>
+<title>LMCache ReadPlan L2: Reproduce the read-path profiles</title>
 <link rel="canonical" href="https://knlp.io/lmcache-readplan-l2-reproduce.html">
 <link rel="stylesheet" href="kmesh.css">
 </head>
@@ -15,19 +15,25 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-results.html">results</a>
+    <a href="lmcache-nfs-held-descriptors.html">held descriptors</a>
     <a href="lmcache-readplan-l2-reproduce.html" aria-current="page">reproduce</a>
-    <a href="lmcache-readplan-l2-analysis.html">open questions</a>
+    <a href="lmcache-readplan-l2-analysis.html">findings</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
 <p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Reproduce</p>
-<span class="eyebrow">Basic reproduction</span>
-<h1>Run the basic read baseline</h1>
-<p class="lead">Two defconfigs give a starting point that anyone can run.
-The smoke profile tests the tools on any Linux machine. The mounted
-profile times whole-object reads on a filesystem you supply and checks
-every byte. Neither one needs root, and neither changes your system.</p>
+<span class="eyebrow">Reproduction</span>
+<h1>Run the read-path profiles</h1>
+<p class="lead">Seven defconfigs reproduce this work. The smoke profile
+tests the tools on any Linux machine, and the mounted profile times
+whole-object reads on a filesystem you supply. The closure and site
+profiles run LMCache's native connector on a filesystem you already
+have, as an ordinary user: per-object NFS RPCs, open per read against
+held descriptors, many readers and the three read modes. The three pNFS
+lab profiles build a complete pNFS system on one host. Only the lab
+needs root, and none of them changes your system's settings.</p>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol>
@@ -36,6 +42,7 @@ every byte. Neither one needs root, and neither changes your system.</p>
 <li><a href="#mounted">Measure reads on a mounted filesystem</a></li>
 <li><a href="#nfs">Use an NFS or pNFS mount</a></li>
 <li><a href="#pnfs-lab">Build a pNFS lab and compare held descriptors</a></li>
+<li><a href="#site">Measure your own filesystem: the site and closure profiles</a></li>
 <li><a href="#output">Read the records and summary</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 </ol></div>
@@ -52,6 +59,12 @@ optional: when present, each record names the source commit.</p>
 outside the source tree. The <strong>target</strong> directory holds the
 test objects; the <strong>output</strong> directory receives the records.
 The default object set is sixteen 8 MiB objects, 128 MiB in all.</p>
+<p>The site, closure and pNFS profiles also build LMCache's CPU
+extensions, which needs git, a C++ compiler and a Python with torch.
+Give that Python in <code>CONFIG_KNLP_RPL2_PNFS_PYTHON</code>, or leave it
+empty and have <code>uv</code> create one with CPU torch. Only the pNFS
+lab profiles need root and the Lattice build dependencies listed in
+their section.</p>
 </section>
 
 <section id="smoke">
@@ -181,13 +194,71 @@ and the metadata server's own hardware set the balance. For larger
 systems you can run more data servers
 (<code>CONFIG_KNLP_RPL2_PNFS_DATA_SERVERS</code>), clients on other hosts
 over the real network, or the same readers against your own pNFS
-deployment: <code>native_reader.py</code> in
+deployment with the <a href="#site">site profile</a>. <code>native_reader.py</code> in
 <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2/pnfs">tools/reproduce/rpl2/pnfs</a>
 takes a mount path and an LMCache tree, and does not depend on the lab.</p>
 </section>
 
+<section id="site">
+<span class="fragment-alias" id="closure"></span>
+<h2>6. Measure your own filesystem: the site and closure profiles</h2>
+<p>Two defconfigs run the lab's readers against a directory you already
+have, for example on an NFS server or on a pNFS deployment with many
+data servers and NVMe drives. They run as an ordinary user and build
+only LMCache's CPU extensions into <code>RPL2P_ROOT</code>. They mount,
+export and reconfigure nothing, drop no cache, and write only into one
+subdirectory, <code>rpl2-site</code>, of the directory you give; delete
+it to undo a run. About 1.1 GiB must be free there.</p>
+<pre><code>make defconfig-rpl2-site
+make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+     RPL2_SITE=/mnt/pnfs/scratch</code></pre>
+<p>Plain <code>make</code> builds LMCache and then runs these steps into
+one run directory, <code>site-&lt;UTC time&gt;</code> under the output
+directory:</p>
+<div class="table-wrap"><table>
+<caption>Site profile steps</caption>
+<tr><th scope="col">Step</th><th scope="col">What it does</th></tr>
+<tr><td class="hi">doctor</td><td>Records the filesystem type, the NFS mount options and pNFS layout driver from <code>/proc/self/mountstats</code>, free space, and whether an <code>O_DIRECT</code> read and a buffered <code>RWF_NOWAIT</code> read work there.</td></tr>
+<tr><td class="hi">fixture</td><td>Seals 64 objects of 8 MiB and 64 of 256 KiB, written once with digests. A later run reuses them.</td></tr>
+<tr><td class="hi">fingerprint</td><td>Reads 8 hot objects once and then 100 times, open per read and held, and records the NFS RPCs each phase sent per object from the client's per-mount counters. No trace or root is needed.</td></tr>
+<tr><td class="hi">screen</td><td>Three alternating blocks of 200 requests, open per read against held, with 1 and with 16 objects of 8 MiB per request; the summary is the paired block-median difference with a bootstrap interval.</td></tr>
+<tr><td class="hi">sweep</td><td>1, 2, 4, 8 and 16 reader processes on this host, 16 objects of 256 KiB per request for 20 s, open per read and held, with throughput, latency, client CPU and RPCs per read. With a Lattice metrics URL it also counts server operations per read.</td></tr>
+<tr><td class="hi">readmodes</td><td><code>read_mode</code> pool, inline and adaptive at 1, 4 and 16 requests in flight from one connector, over 16 cached objects of 256 KiB. Bytes are verified after each timed window.</td></tr>
+<tr><td class="hi">kernel</td><td>Runs the kernel selftest <code>nfs_open_scale</code> on the directory with one shared credential, for an A/B of client kernels; skipped unless <code>CONFIG_KNLP_RPL2_SITE_KERNEL_SELFTEST</code> names the binary. The procedure is on the <a href="lmcache-nfs-held-descriptors.html#kernel">held descriptors page</a>.</td></tr>
+</table></div>
+<p>The run ends with <code>site-summary.md</code> and
+<code>site-summary.json</code>, which put your figures beside ours, each
+with the scope it was measured in. Single steps run with
+<code>make rpl2-site-&lt;step&gt; RPL2_SITE_RUN=&lt;run dir&gt;</code>, and
+<code>make rpl2-site-report RPL2_SITE_RUN=&lt;run dir&gt;</code> rewrites the
+summary. Settings such as the label, the number of data servers and
+drives (recorded only), the metrics URL, the client counts and the
+read-mode depths are in <code>make menuconfig</code> under the site
+profile. The client's RPC counters are per mount, so run on a mount the
+run has to itself. The sweep's processes share this host's NFS client
+identity; to load the server from many identities, run the profile on
+several client hosts at once.</p>
+<p>The <code>rpl2-closure</code> defconfig runs only the doctor,
+fixture, fingerprint and screen steps, with the published
+held-descriptor build of LMCache. It reproduces the measurement that
+closed the read-plan question: how much of an 8 MiB object read is
+per-object control work, and whether holding the descriptor removes it.
+Run it at each position you care about, changing
+<code>CONFIG_KNLP_RPL2_SITE_LABEL</code>: a local directory, an NFS
+export of the same host mounted over loopback, and an NFS export over
+the network. The original closing screen compared LMCache's Python file
+adapter with a raw-block image; this profile compares open per read with
+held descriptors in today's native connector, which is the remedy the
+screen pointed to. Its numbers are therefore comparable in mechanism,
+not identical in arms.</p>
+<p>The site profile builds LMCache from the branch
+<code>2026-10-31-proto-fs-native-inline-reads</code>, which has both
+held descriptors and <code>read_mode</code>. With an LMCache build that
+has no <code>read_mode</code>, turn the readmodes step off.</p>
+</section>
+
 <section id="output">
-<h2>6. Read the records and summary</h2>
+<h2>7. Read the records and summary</h2>
 <p>Each run creates <code>rpl2-&lt;UTC time&gt;/records.jsonl</code> under the
 output directory. The first line is a header; each further line is one
 request. The example below is synthetic and shortened, not a measurement.</p>
@@ -219,7 +290,7 @@ the maximum, so raise the request count before reading much into it.</p>
 </section>
 
 <section id="troubleshooting">
-<h2>7. Troubleshooting</h2>
+<h2>8. Troubleshooting</h2>
 <div class="table-wrap"><table>
 <caption>Common messages</caption>
 <tr><th scope="col">Message</th><th scope="col">Cause and fix</th></tr>
@@ -236,7 +307,7 @@ the maximum, so raise the request count before reading much into it.</p>
 reads. Very high first requests usually reflect the first open or read of
 each object. Both are kept in the records rather than filtered out.</p>
 </section>
-<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2.html">&larr; Overview</a><a href="lmcache-readplan-l2-analysis.html">Open questions &rarr;</a></nav>
+<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-nfs-held-descriptors.html">&larr; Held descriptors</a><a href="lmcache-readplan-l2-analysis.html">Findings &rarr;</a></nav>
 <footer>
 <a href="lmcache-readplan-l2.html">ReadPlan overview</a>
 &nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">Reproduction scripts</a>

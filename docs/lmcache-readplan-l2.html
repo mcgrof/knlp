@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="LMCache ReadPlan L2 asks what work a KV-cache offload read does before and while its bytes move, and whether caching where an object lives could help reads from network storage such as pNFS.">
+<meta name="description" content="LMCache ReadPlan L2 measured what work a KV-cache offload read does before and while its bytes move. A read-plan cache is not needed; keeping read descriptors open removes the remaining NFS and pNFS metadata work.">
 <title>LMCache ReadPlan L2: what a KV-cache offload read does before its bytes move</title>
 <link rel="canonical" href="https://knlp.io/lmcache-readplan-l2.html">
 <link rel="stylesheet" href="kmesh.css">
@@ -16,8 +16,10 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="lmcache-readplan-l2.html" aria-current="page">overview</a>
+    <a href="lmcache-readplan-l2-results.html">results</a>
+    <a href="lmcache-nfs-held-descriptors.html">held descriptors</a>
     <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
-    <a href="lmcache-readplan-l2-analysis.html">open questions</a>
+    <a href="lmcache-readplan-l2-analysis.html">findings</a>
   </nav>
 </header>
 <main id="content">
@@ -31,7 +33,8 @@ requests. Each read from storage first has to find the object and decide
 how to read it. This project asks how much that lookup work costs on
 network storage, and whether remembering the answer could help.</p>
 <p><a href="#status">Current status</a> &nbsp;&middot;&nbsp;
-<a href="lmcache-readplan-l2-reproduce.html">Run the baseline</a></p>
+<a href="lmcache-readplan-l2-results.html">Results</a> &nbsp;&middot;&nbsp;
+<a href="lmcache-nfs-held-descriptors.html">Held descriptors for NFS users</a></p>
 </div>
 
 <section id="motivation">
@@ -62,24 +65,41 @@ and to preserve correctness when locations change.</p>
 
 <section id="status">
 <h2>Current status</h2>
-<p><strong>No public performance result is reported.</strong> The open
-question is stated on the <a href="lmcache-readplan-l2-analysis.html">open
-questions page</a>, together with the evidence a claim would need.</p>
-<p>A basic reproduction is available in knlp. The <code>rpl2-smoke</code>
-defconfig runs CPU-only unit tests for the record format and byte
-verification. The <code>rpl2-mounted-fs</code> defconfig writes a few
-immutable objects to a directory you supply, which can be on an NFS mount
-you set up. It then times whole-object reads and checks every byte against
-a digest. It measures complete request time and correctness only. It does
-not separate metadata time from payload time, set up NFS or pNFS, or
-verify which servers carried the bytes.</p>
-<p>Three pNFS profiles go further. <code>rpl2-pnfs-lab</code> builds a
-pNFS metadata server, data servers and a client in network namespaces on
-one host. It then compares stock LMCache with its native connector's
-held-descriptor option, with an RPC fingerprint and a paired timing screen.
-<code>rpl2-pnfs-sweep</code> adds many clients reading shared objects.
-<code>rpl2-pnfs-remote</code> runs the client side on another host over a
-real network. See the <a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">reproduction
+<p><strong>The read-plan cache is not needed, and one simpler change
+is.</strong> On local XFS, NFS loopback and NFS over a 1 Gb/s link, the
+per-object control work added at most 14.8% to an 8 MiB request, and
+LMCache's native connector already removes most of it. On pNFS the
+kernel client keeps file layouts across close, so the only metadata work
+left on a repeated read is an open and a close: four metadata-server
+operations per object read on the Lattice server. Keeping read
+descriptors open (<code>held_fd_capacity</code>) removes them. In our
+one-host pNFS lab that made one 8 MiB read 22.4% faster and let 16 clients
+reach 140,427 reads per second against 37,926 with open per read. The
+<a href="lmcache-nfs-held-descriptors.html">held descriptors page</a> is
+written for NFS and pNFS users who want to check this on their own
+deployment.</p>
+<p>Profiling the native read path then showed where a page-cache hit
+spends CPU: the copy itself and the read pool's thread handoff, not
+metadata. A new <code>read_mode</code> setting with three values,
+<code>pool</code>, <code>inline</code> and <code>adaptive</code>, trades
+that handoff against latency. Reading into GPU memory with DMA-BUF costs
+almost no host CPU and is bounded by the drives, and a projection onto
+datacenter GPUs shows that the NVMe bandwidth needed is cheap against the
+GPU. The <a href="lmcache-readplan-l2-results.html">results page</a> has
+the measurements. A Linux NFS client change that takes a
+per-server lock off the open path removes that lock as designed but
+gives no gain for opens that share one credential, which is LMCache's
+case; its selftest lets sites with larger clients check whether the
+result changes with core count.</p>
+<p>Seven defconfigs reproduce the work: the CPU-only
+<code>rpl2-smoke</code>, the mounted-filesystem baseline
+<code>rpl2-mounted-fs</code>, the three pNFS lab profiles
+<code>rpl2-pnfs-lab</code>, <code>rpl2-pnfs-sweep</code> and
+<code>rpl2-pnfs-remote</code>, and two that run on a filesystem you
+already have as an ordinary user: <code>rpl2-closure</code>, the
+read-plan closing measurement at one position, and
+<code>rpl2-site</code>, which adds the many-reader sweep and the read
+modes. See the <a href="lmcache-readplan-l2-reproduce.html">reproduction
 page</a>.</p>
 </section>
 
@@ -101,23 +121,43 @@ page</a>.</p>
 <h2>Where to go next</h2>
 <div class="page-links">
 <article class="question-group">
-<span class="range">Reproduce</span>
-<h3><a href="lmcache-readplan-l2-reproduce.html">Run the basic baseline</a></h3>
-<p>Prerequisites, the two defconfigs, what each record means and how to
-fix the common failures.</p>
+<span class="range">Results</span>
+<h3><a href="lmcache-readplan-l2-results.html">What a read costs, and what to change</a></h3>
+<p>The closing measurement, held descriptors, the read-path profile, the
+read pool, the three read modes, DMA-BUF into GPU memory and the NVMe
+value projection.</p>
 <ol>
-<li><a href="lmcache-readplan-l2-reproduce.html#smoke">Run the CPU-only smoke tests</a></li>
-<li><a href="lmcache-readplan-l2-reproduce.html#mounted">Measure reads on a mounted filesystem</a></li>
-<li><a href="lmcache-readplan-l2-reproduce.html#output">Read the records and summary</a></li>
+<li><a href="lmcache-readplan-l2-results.html#closure">Why the read-plan cache closed</a></li>
+<li><a href="lmcache-readplan-l2-results.html#pool">The read pool and its size</a></li>
+<li><a href="lmcache-readplan-l2-results.html#projection">What NVMe bandwidth is worth to a GPU</a></li>
 </ol></article>
 <article class="question-group">
-<span class="range">Open questions</span>
-<h3><a href="lmcache-readplan-l2-analysis.html">What still needs analysis</a></h3>
-<p>Four questions a metadata adapter would have to answer, and the
-evidence that would support a claim.</p>
+<span class="range">For NFS users</span>
+<h3><a href="lmcache-nfs-held-descriptors.html">Held descriptors</a></h3>
+<p>What the option does, its safety rules, our measurements, and one
+make target to check it and the read modes on your own deployment.</p>
+<ol>
+<li><a href="lmcache-nfs-held-descriptors.html#when">When it helps</a></li>
+<li><a href="lmcache-nfs-held-descriptors.html#validate">Check it on your deployment</a></li>
+<li><a href="lmcache-nfs-held-descriptors.html#read-mode">Compare the three read modes</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Reproduce</span>
+<h3><a href="lmcache-readplan-l2-reproduce.html">Run the profiles</a></h3>
+<p>Prerequisites, the seven defconfigs, what each record means and how
+to fix the common failures.</p>
+<ol>
+<li><a href="lmcache-readplan-l2-reproduce.html#smoke">Run the CPU-only smoke tests</a></li>
+<li><a href="lmcache-readplan-l2-reproduce.html#site">Measure your own filesystem</a></li>
+<li><a href="lmcache-readplan-l2-reproduce.html#pnfs-lab">Build a pNFS lab</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Findings</span>
+<h3><a href="lmcache-readplan-l2-analysis.html">What the questions turned out to be</a></h3>
+<p>The four questions a metadata adapter had to answer, what we found
+for each and what remains open.</p>
 <ol>
 <li><a href="lmcache-readplan-l2-analysis.html#remaining-work">What metadata work remains after normal client caching?</a></li>
-<li><a href="lmcache-readplan-l2-analysis.html#separating-time">How can metadata, scheduling and payload time be told apart?</a></li>
 <li><a href="lmcache-readplan-l2-analysis.html#location-changes">How can reuse stay valid when a location changes?</a></li>
 <li><a href="lmcache-readplan-l2-analysis.html#serving-effect">Does a storage-level change affect a serving request?</a></li>
 </ol></article>

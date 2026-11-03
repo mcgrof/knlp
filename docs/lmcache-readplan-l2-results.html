@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Results of the LMCache ReadPlan L2 study: why a read-plan cache is not needed, what held descriptors save on NFS and pNFS, where the native read path spends CPU, three read modes to compare, DMA-BUF reads into GPU memory, and what NVMe bandwidth is worth to a GPU.">
+<title>LMCache ReadPlan L2: Results</title>
+<link rel="canonical" href="https://knlp.io/lmcache-readplan-l2-results.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="ReadPlan navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="lmcache-readplan-l2.html">overview</a>
+    <a href="lmcache-readplan-l2-results.html" aria-current="page">results</a>
+    <a href="lmcache-nfs-held-descriptors.html">held descriptors</a>
+    <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
+    <a href="lmcache-readplan-l2-analysis.html">findings</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Results</p>
+<span class="eyebrow">Measured results</span>
+<h1>What a KV-cache offload read costs, and what to change</h1>
+<p class="lead">A read-plan cache is not needed: the storage client
+already caches where data lives, and the only per-object metadata work
+left is an open and a close. Keeping read descriptors open removes it,
+which matters on pNFS and little on a local disk. Once metadata is gone,
+a page-cache hit costs a CPU copy at memory speed, and LMCache's read
+pool adds a thread handoff per object; a new read-mode setting lets you
+trade that handoff for latency. Reading from NVMe straight into GPU
+memory with DMA-BUF costs almost no CPU and is bounded by the drives,
+which are cheap next to the GPU they feed.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol>
+<li><a href="#setup">Hardware and software</a></li>
+<li><a href="#closure">Why the read-plan cache closed</a></li>
+<li><a href="#held">Held descriptors on NFS and pNFS</a></li>
+<li><a href="#profile">Where the native read path spends CPU</a></li>
+<li><a href="#pool">The read pool and its size</a></li>
+<li><a href="#read-mode">Three read modes</a></li>
+<li><a href="#dmabuf">Into GPU memory: DMA-BUF against the page cache</a></li>
+<li><a href="#projection">What NVMe bandwidth is worth to a GPU</a></li>
+<li><a href="#kernel">The NFS client's own open cost</a></li>
+<li><a href="#not-reproducible">What is not reproducible from these pages yet</a></li>
+</ol></div>
+
+<section id="setup">
+<h2>1. Hardware and software</h2>
+<p>Unless a table says otherwise, the hosts are desktop machines with a
+16-core, 32-thread CPU built from two core complexes with 96 MiB and
+32 MiB of L3 cache, DDR5 memory in two channels, and PCIe Gen4 x4
+consumer NVMe SSDs. The GPU results use one RTX 4090. The kernels are
+Linux 7.3 release candidates carrying the experimental
+<a href="io-uring-dmabuf.html">io_uring DMA-BUF series</a>. LMCache is the
+native file connector, <code>fs_native</code>, at the revisions named in
+each section. Every run checked every byte it counted against a SHA-256
+digest, and none found a wrong byte. Medians are of three or more
+repeats unless stated.</p>
+</section>
+
+<section id="closure">
+<h2>2. Why the read-plan cache closed</h2>
+<p>A read plan is the answer to "where is this object and how do I read
+it". We first measured how much of a whole 8 MiB object read is spent
+on anything other than moving the payload, at three positions: local
+XFS, NFS from the same host (loopback) and NFS over a physical 1 Gb/s
+link. The arm with per-object control work was LMCache's Python file
+adapter, which opens and closes each object; the control read the same
+bytes from a preallocated raw-block image with no per-object metadata.
+Paired, alternating blocks, one request at a time:</p>
+<div class="table-wrap"><table>
+<caption>Per-request cost of per-object control work, 8 MiB objects, direct I/O</caption>
+<tr><th scope="col">Position</th><th scope="col">1 object per request</th><th scope="col">16 objects per request</th></tr>
+<tr><td class="hi">Local XFS</td><td>+0.005 ms</td><td>+0.63 ms</td></tr>
+<tr><td class="hi">NFS loopback</td><td>+0.039 ms (+4.9%)</td><td>+2.04 ms (+14.8%)</td></tr>
+<tr><td class="hi">NFS over 1 Gb/s</td><td>+0.50 ms (+0.70%)</td><td>+8.47 ms (+0.74%)</td></tr>
+</table></div>
+<p>Over the physical link, the client's own counters show why: the
+Python adapter sends one OPEN and one CLOSE round trip per object
+(0.125 ms and 0.115 ms). LMCache's native connector already replaces
+them with one GETATTR and is within 0.3% of the control. A plan cache
+could remove at most that GETATTR, which at the measured 117 MB/s would
+reach a 10% share only for objects below about 0.1 MiB. LMCache's
+default chunks are several MiB.</p>
+<p>On pNFS the question was reopened, because a metadata server answers
+opens and many data servers shrink payload time. The kernel client
+already keeps a file's layout and device information across close, so a
+repeat read sends no layout request. What remains is the open and the
+close. That is not a read-plan problem; it is solved by not closing the
+file, which is the next section. A richer metadata adapter is not
+indicated by anything we measured.</p>
+</section>
+
+<section id="held">
+<h2>3. Held descriptors on NFS and pNFS</h2>
+<p>LMCache's native connector can keep read-only descriptors of published
+objects open between loads (<code>held_fd_capacity</code>). In a one-host
+pNFS lab with the Lattice metadata server, a repeated read with open per
+read sends four metadata-server operations and with held descriptors
+none. One client reading one 8 MiB object per request is 0.205 ms
+[0.157, 0.258] faster, 22.4% [18.2, 26.9]. Sixteen clients reading
+256 KiB objects reach 140,427 reads per second held against 37,926 with
+open per read, which stops scaling at about four clients. With 8 MiB
+objects, open per read has close stalls of 0.86 to 3.3 seconds at p99.
+On local XFS the gain is 4-5%, against a bound of 6.6% of CPU cycles for
+open and close. The <a href="lmcache-nfs-held-descriptors.html">held
+descriptors page</a> has the full tables, the safety rules and how to
+check it on your own deployment.</p>
+</section>
+
+<section id="profile">
+<h2>4. Where the native read path spends CPU</h2>
+<p>With metadata out of the way, we profiled one client reading 16 hot
+256 KiB objects from the page cache on local XFS, 16 objects per request,
+with open per read and no profiling probes:</p>
+<div class="table-wrap"><table>
+<caption>Share of the reader process's cycles, local XFS, page-cache hits</caption>
+<tr><th scope="col">Path</th><th scope="col">Share</th></tr>
+<tr><td class="hi">read system call (<code>filemap_read</code>)</td><td>70.2%</td></tr>
+<tr><td class="hi">of which the copy from page cache to the buffer (<code>_copy_to_iter</code>)</td><td>53.5%</td></tr>
+<tr><td class="hi">futex calls (read pool sleeps and wakeups)</td><td>10.9%</td></tr>
+<tr><td class="hi">open (<code>do_sys_openat2</code>)</td><td>5.14%</td></tr>
+<tr><td class="hi">close</td><td>1.42%</td></tr>
+</table></div>
+<p>XFS's own code is 0.58% of cycles, 9% of the open and close cost; the
+rest is the generic file open path. So any local filesystem has the same
+bound for held descriptors. The large terms are the copy and the pool.</p>
+<p>The copy is the payload itself: every byte of a page-cache hit is moved
+by a CPU core. A small C program that reads the same files with no
+connector gives its floor. One thread copies a cached 256 KiB object for
+4.1 µs of CPU from L3 cache and for 14.3 µs from DRAM, including open and
+close. The host's copy limit from DRAM is about 66 GB/s, or about 250,000
+objects per second, reached at 16 threads; at 32 threads the rate is the
+same and the CPU per object doubles. With a 1 GiB working set, the copy is
+78% of the connector's cycles, futex calls 2.6% and open 1.8%. Where the
+data sits matters as much: a 64 MiB set fits the larger L3 but not the
+smaller, and one client reads 524,918 objects per second on the cores of
+the first and 199,742 on the cores of the second.</p>
+</section>
+
+<section id="pool">
+<h2>5. The read pool and its size</h2>
+<p>LMCache's read pool hands each object of a request to its own worker
+thread through one shared mutex and one condition variable. With 16
+workers that costs 4.3 futex calls and 2.5 context switches per object.
+A complete count of 2,961,238 futex calls in 3 seconds attributes 51% to
+the condition variable (wakeups and sleeps) and 37% to the contended
+mutex. The woken workers also land on cores far from the data, which
+makes the copy itself dearer: 1,567 L3 misses per object at 16 workers
+against 428 at 4. The pool size therefore sets the CPU per object:</p>
+<div class="table-wrap"><table>
+<caption>One client, 16 objects of 256 KiB per request, objects per second and CPU per object</caption>
+<tr><th scope="col">Read workers</th><th scope="col">Cached (16 hot objects)</th><th scope="col">From DRAM (4,096 hot objects)</th></tr>
+<tr><td>1</td><td>163,584, 6.1 µs</td><td>59,422, 16.8 µs</td></tr>
+<tr><td>4</td><td>451,142, 6.6 µs</td><td>144,378, 24.6 µs</td></tr>
+<tr><td>16</td><td>543,470, 13.5 µs</td><td>161,568, 65.7 µs</td></tr>
+<tr><td>256 (the default)</td><td>172,380, 53.1 µs</td><td>109,108, 105.9 µs</td></tr>
+</table></div>
+<p>The 256-worker row is from a separate run, in which 16 workers gave
+589,694 and 162,332 objects per second. Against that run, LMCache's
+default of 256 read workers is 3.4 times slower than 16 on cached data at
+4 times the CPU, and 33% slower from DRAM. This test sends one request of
+16 keys at a time, so a server with many concurrent requests may use more
+of a large pool. With the oldest-idle-first wakeup of the condition
+variable, all 256 threads take turns; waking the most recently idle
+worker first left only 37 of them busy and lifted the 256-worker default
+by 10% to 193%, but it stayed above 16 workers in CPU per object.</p>
+</section>
+
+<section id="read-mode">
+<h2>6. Three read modes</h2>
+<p>A new <code>fs_native</code> setting, <code>read_mode</code>, chooses
+who copies objects that are already in the page cache. <code>"pool"</code>
+(the default) hands every key to the workers. <code>"inline"</code> has
+the worker that took the request read cached keys itself with
+<code>preadv2(RWF_NOWAIT)</code>, and hands only uncached keys to the pool.
+<code>"adaptive"</code> uses the pool while fewer than
+<code>read_busy_target</code> reads (default 16) are in flight and inline
+above. One connector, 16 objects of 256 KiB per request, 16 workers, held
+descriptors, objects per second and CPU per object, median of three:</p>
+<div class="table-wrap"><table>
+<caption>read_mode on local XFS</caption>
+<tr><th scope="col">Data</th><th scope="col">Requests in flight</th><th scope="col">pool</th><th scope="col">inline</th><th scope="col">adaptive, target 16</th></tr>
+<tr><td>Cached, 4 MiB set</td><td>1</td><td>511,146, 14.1 µs</td><td>175,786, 5.8 µs</td><td>457,400, 15.7 µs</td></tr>
+<tr><td>Cached, 4 MiB set</td><td>4</td><td>445,444, 36.9 µs</td><td>612,982, 6.6 µs</td><td>283,824, 29.5 µs</td></tr>
+<tr><td>Cached, 4 MiB set</td><td>16</td><td>477,372, 36.1 µs</td><td>286,736, 39.8 µs</td><td>215,262, 65.8 µs</td></tr>
+<tr><td>From DRAM, 1 GiB set</td><td>1</td><td>162,488, 65.7 µs</td><td>56,558, 17.7 µs</td><td>167,368, 65.7 µs</td></tr>
+<tr><td>From DRAM, 1 GiB set</td><td>4</td><td>157,692, 105 µs</td><td>154,744, 25.8 µs</td><td>135,838, 67.4 µs</td></tr>
+<tr><td>From DRAM, 1 GiB set</td><td>16</td><td>144,074, 116 µs</td><td>138,044, 93.1 µs</td><td>132,046, 109 µs</td></tr>
+</table></div>
+<p>Inline reads cut the CPU per object up to 5.6 times and futex calls to
+0.2 per object, but one request's copies then run one after another, so
+a lone request is slower. Adaptive behaves as designed (full fan-out when
+idle, 59-89% of keys inline under load), but a request split between the
+pool and inline waits for its slower half, so on cached data it was
+slower than both pure modes. What sets the cost is how many copies run at
+once: 4 inline copiers cost 6.6 µs per object and 16 copiers 36-40 µs,
+inline or pooled. From DRAM, at 4 or more requests in flight, every mode
+is within 18% (35-42 GB/s): memory bandwidth is the limit, and the modes
+differ in CPU by up to 4 times. Most of these cells (66 of 72) ran while
+another job used about a tenth of one core; the single-request medians
+matched quiet runs.</p>
+<p>On NFS the inline modes do not help yet. The Linux 7.3-rc2 NFS client
+refuses a buffered <code>RWF_NOWAIT</code> read with
+<code>EOPNOTSUPP</code>, so <code>"inline"</code> and
+<code>"adaptive"</code> fall back to the pool, and in the pNFS lab all
+three modes ran at 417,475 to 505,117 objects per second at 1, 4 and 16
+requests in flight. An earlier build stalled at 16 in flight (7 and 14
+objects per second): readers that missed on the same file opened it at
+the same time, Lattice answered the concurrent opens with
+<code>NFS4ERR_DELAY</code>, and the client's retry delay grew to seconds.
+The descriptor cache now opens each file once at a time; a 15-second
+cell at 16 in flight went from 95 OPENs and 17 requests to 16 OPENs and
+459,213 requests. You can run the same comparison on your own
+filesystem with the <a href="lmcache-readplan-l2-reproduce.html#site">site
+profile</a>.</p>
+</section>
+
+<section id="dmabuf">
+<h2>7. Into GPU memory: DMA-BUF against the page cache</h2>
+<p>LMCache ultimately needs the KV bytes in GPU memory. We compared three
+ways to get them there from one PCIe Gen4 x4 NVMe SSD under XFS, on an
+RTX 4090, 16 objects per request with 4 requests in flight:</p>
+<ul>
+<li><strong>DMA-BUF:</strong> O_DIRECT io_uring fixed reads straight into a
+registered VRAM DMA-BUF through LMCache's raw-block engine. No page cache,
+no host buffer, no CPU copy. The engine's journal showed every read on the
+DMA-BUF path.</li>
+<li><strong>Page cache:</strong> the native connector into pinned host
+memory, then one host-to-device copy per request. "Pool" is 16 read
+workers; "inline" is the inline read mode.</li>
+<li><strong>O_DIRECT host staging:</strong> the native connector reading
+the device into pinned host memory, then the same copy.</li>
+</ul>
+<div class="table-wrap"><table>
+<caption>File to GPU memory, 4 requests of 16 objects in flight, throughput and CPU per object</caption>
+<tr><th scope="col">Object</th><th scope="col">DMA-BUF</th><th scope="col">O_DIRECT + copy</th><th scope="col">Page cache, pool</th><th scope="col">Page cache, inline</th></tr>
+<tr><td>256 KiB</td><td>5.86 GB/s, 9.6 µs</td><td>6.55 GB/s, 11.9 µs</td><td>21.37 GB/s, 101 µs</td><td>21.22 GB/s, 28.1 µs</td></tr>
+<tr><td>2 MiB</td><td>6.50 GB/s, 15.7 µs</td><td>6.57 GB/s, 57.0 µs</td><td>21.49 GB/s, 1,472 µs</td><td>15.62 GB/s, 443 µs</td></tr>
+<tr><td>8 MiB</td><td>6.54 GB/s, 31.0 µs</td><td>6.54 GB/s, 155 µs</td><td>17.12 GB/s, 7,888 µs</td><td>16.21 GB/s, 1,733 µs</td></tr>
+</table></div>
+<p>Per GB moved, DMA-BUF costs 0.004-0.04 core-seconds, host staging
+0.02-0.05, the page cache with inline reads 0.11-0.21 and the page cache
+with the pool 0.39-0.94. DMA-BUF reaches the drive's limit, about 87% of
+its rated read speed, from 2 MiB objects up. A page-cache hit beats one
+drive by 2.6-3.6 times in throughput, but only for data already in host
+memory and at 10-250 times the CPU per byte: at 8 MiB objects the pool
+burns about 16 cores to move 17 GB/s. The DMA-BUF engine's own wait polls
+every 10 µs, which is included in its CPU.</p>
+</section>
+
+<section id="projection">
+<h2>8. What NVMe bandwidth is worth to a GPU</h2>
+<p>One consumer drive and one consumer GPU are a test of the software, not
+a sizing answer. The question for a deployment is how much restore
+bandwidth a GPU needs before reading KV from storage beats recomputing it,
+how many drives supply that, and what the host pays if the bytes come
+through the page cache instead. We projected the measured costs onto
+datacenter GPUs. Assumptions: prefill costs 2 FLOPs per parameter per
+token at 50% of dense peak, which ignores attention and so overstates the
+bandwidth storage needs at long context; KV is BF16 (Llama-3.1-8B
+128 KiB per token, Llama-3.1-70B 320 KiB); drives deliver 85% of their
+rated read speed (ours measured 87%); prices are October 2026 market
+estimates.</p>
+<div class="table-wrap"><table>
+<caption>Restore bandwidth per GPU, and its cost, at 4 times the speed of recompute</caption>
+<tr><th scope="col">GPU and prefill precision</th><th scope="col">Model</th><th scope="col">Break-even GB/s</th><th scope="col">4× GB/s</th><th scope="col">Gen5 drives</th><th scope="col">Drive cost against GPU price, consumer; datacenter</th><th scope="col">Host cores through the page cache</th></tr>
+<tr><td>H100, BF16</td><td>8B</td><td>4.1</td><td>16.2</td><td>2</td><td>2-3%; 30-42%</td><td>2-15</td></tr>
+<tr><td>H100, BF16</td><td>70B</td><td>1.1</td><td>4.6</td><td>1</td><td>1-2%; 15-21%</td><td>1-4</td></tr>
+<tr><td>H100, FP8</td><td>8B</td><td>8.1</td><td>32.4</td><td>3</td><td>3-5%; 45-62%</td><td>4-30</td></tr>
+<tr><td>B200, FP8</td><td>8B</td><td>18.4</td><td>63 (PCIe x16 limit)</td><td>6</td><td>5-8%; 62-104%</td><td>7-59</td></tr>
+<tr><td>B200, FP8</td><td>70B</td><td>5.2</td><td>20.9</td><td>2</td><td>2-3%; 21-35%</td><td>2-20</td></tr>
+<tr><td>B300, FP4</td><td>8B</td><td>55.3</td><td>63 (PCIe x16 limit)</td><td>6</td><td>4-6%; 59-83%</td><td>7-59</td></tr>
+<tr><td>B300, FP4</td><td>70B</td><td>15.7</td><td>62.7</td><td>6</td><td>4-6%; 59-83%</td><td>7-59</td></tr>
+</table></div>
+<p>Three things follow. NVMe bandwidth is cheap against a GPU: one to six
+Gen5 drives per GPU cost 1-8% of its price with consumer drives and
+10-104% with datacenter drives. Faster GPUs raise the bar in proportion to
+their prefill speed, until the GPU's own PCIe Gen5 x16 link (63 GB/s)
+rather than the drives is the limit. And the page cache does not scale
+with GPUs: at these rates it costs 7-59 host cores per GPU, and an
+8-GPU server at the x16 limit would need about 1.5 TB/s of DRAM traffic,
+more than the 1.2 TB/s theoretical peak of two 12-channel DDR5-6400
+sockets. DMA-BUF keeps the bytes out of host DRAM, so its cost grows only
+with drives. Larger models need less bandwidth per GPU: a 70B token holds
+2.5 times the KV of an 8B token but costs about 9 times the FLOPs to
+recompute.</p>
+<p>What has to be true. The DMA-BUF registration path has no hook in
+device-mapper or NVMe multipath devices, so "more drives" means LMCache
+striping objects across one registration per drive, not a RAID device.
+LMCache's default 256-token chunk is 32 MiB for the 8B model and 80 MiB
+for the 70B, well above the 2 MiB where DMA-BUF reached the drive limit.
+PCIe switch topology, drive endurance under cache churn and hit rate are
+not measured here. The projection script is
+<code>tools/reproduce/rpl2/project.py</code> in knlp, so you can change
+the assumptions.</p>
+<p>Sources: AMD's <a href="https://www.amd.com/en/products/processors/server/epyc/9005-series/amd-epyc-9555P.html">EPYC 9555P product page</a> (12 channels of DDR5-6400, 614 GB/s per socket);
+dense TFLOPS from <a href="https://inferencex.semianalysis.com/chips/b200">SemiAnalysis InferenceX B200</a>,
+<a href="https://inferencex.semianalysis.com/chips/b300">B300</a>,
+<a href="https://datacrunch.io/blog/nvidia-b300-vs-b200-complete-gpu-comparison-to-date">DataCrunch's B300 and B200 comparison</a>
+and <a href="https://www.spheron.network/blog/nvidia-h100-specs/">Spheron's H100 specifications</a>;
+GPU prices from the <a href="https://intuitionlabs.ai/articles/nvidia-ai-gpu-pricing-guide">IntuitionLabs pricing guide</a>
+and <a href="https://www.cloudzero.com/blog/h100-gpu-cost/">CloudZero</a>;
+drive prices and speeds from <a href="https://www.newegg.com/insider/pcie-5-0-nvme-ssd-buying-guide-2026-is-it-worth-the-upgrade">Newegg's 2026 PCIe 5.0 guide</a>,
+<a href="https://cheapestssd.com/">Cheapest SSD per TB</a>,
+<a href="https://www.tweaktown.com/reviews/10951/solidigm-d7-ps1010-3-84tb-enterprise-ssd-best-in-class/index.html">TweakTown's datacenter Gen5 review</a>
+and <a href="https://esaitech.com/collections/ssd?page=2">reseller listings</a>.
+The B300 FP8 figure follows the majority of sources.</p>
+</section>
+
+<section id="kernel">
+<h2>9. The NFS client's own open cost</h2>
+<p>On plain NFSv4.2 with read delegations, an open sends nothing to the
+server but costs the client 11.4 µs against 1.07 µs on local XFS, and a
+spin lock is 10% of all cycles under the client's state-owner code. Three
+Linux kernel commits on v7.3-rc7 add an open-scaling selftest,
+<code>nfs_open_scale</code>, and take the per-server lock off the
+state-owner lookup for owners already in use. On an 8-vCPU virtual
+machine with loopback NFSv4.2, alternating boots and six runs per cell,
+the change gave no gain when all threads share one credential (1,311,758
+against 1,307,902 opens per second at 8 threads, &minus;0.3%), because
+that case serializes on the state owner's own lock. With a credential
+per thread it gave +9.1% at 8 threads only, with a wide range. A debug
+kernel showed no lock, RCU or memory report. LMCache's reader pool opens
+under one credential, so we claim no LMCache gain from it. The details
+and an A/B procedure for larger clients are on the
+<a href="lmcache-nfs-held-descriptors.html#kernel">held descriptors
+page</a>; the patches are pending publication by their author.</p>
+</section>
+
+<section id="not-reproducible">
+<h2>10. What is not reproducible from these pages yet</h2>
+<p>The closure screen's two original arms, LMCache's Python file adapter
+and the raw-block image control, are not packaged here; the raw-block
+control needs the experimental DMA-BUF and prefill/decode LMCache series.
+The <a href="lmcache-readplan-l2-reproduce.html#closure">closure
+profile</a> measures the same quantity with today's connector: per-object
+RPCs and open per read against held descriptors, which remove the
+per-object work, at any position you mount. The shared-namespace handoff
+between two LMCache owners, which passed 24 named protocol cases on one
+host and across two, depends on that same experimental series and a
+stubbed engine context, so it is not reproducible from these pages. The
+read-pool profiles, the C copy floor and the DMA-BUF comparison need
+profiling privileges, a patched kernel or a GPU, and are reported here
+without a one-command reproducer; the site profile covers their
+connector-level parts.</p>
+</section>
+<nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2.html">&larr; Overview</a><a href="lmcache-nfs-held-descriptors.html">Held descriptors &rarr;</a></nav>
+<footer>
+<a href="lmcache-readplan-l2.html">ReadPlan overview</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html">KMesh</a>
+</footer>
+</main>
+</body>
+</html>
