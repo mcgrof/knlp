@@ -117,11 +117,17 @@ Env:
   VAL_PARQUET   held-out parquet for a distillation-loss eval (same top-20
                 loss as training) every VAL_EVERY optimizer steps (default
                 60), including step 0 and the end; VAL_LIMIT caps its rows
-                (default 256). Printed as VAL_CSV,<step>,<loss> lines, one
+                (default 256, "all" for none; the library keeps the FIRST
+                VAL_LIMIT rows). Printed as VAL_CSV,<step>,<loss> lines, one
                 per eval, where <step> is the number of updates applied.
                 The eval at a step precedes that step's save, so a run
                 that ends at STEPS gets its final eval only when
                 VAL_EVERY divides STEPS.
+  DATA_SHA256, DATA_ROWS, VAL_SHA256, VAL_ROWS
+                when set, the run stops at startup unless DATA_PARQUET and
+                VAL_PARQUET have exactly that SHA-256 and row count, and
+                VAL_ROWS also requires VAL_LIMIT to cover every row. Hash
+                and row count are printed as INPUT_RECEIPT either way.
   LOAD_BF16     1 loads the model weights directly in bf16 instead of the
                 library's fp32-then-cast (same weights; fits a 24 GiB GPU)
   POS_WEIGHTS   .npz from cas_position_weights.py built on DATA_PARQUET
@@ -229,7 +235,39 @@ if PIECE_CARTS:
 SAVE_INIT = os.environ.get("SAVE_INIT", "1") not in ("0", "", "n", "no")
 VAL_PARQUET = os.environ.get("VAL_PARQUET", "")
 VAL_EVERY = int(os.environ.get("VAL_EVERY", "60"))
-VAL_LIMIT = int(os.environ.get("VAL_LIMIT", "256"))
+VAL_LIMIT = os.environ.get("VAL_LIMIT", "256")
+VAL_LIMIT = None if VAL_LIMIT == "all" else int(VAL_LIMIT)
+
+
+def _input_receipt(path, sha_env, rows_env):
+    """Hash and count one input parquet; check it against env if given."""
+    import hashlib
+    import pyarrow.parquet as pq
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 24), b""):
+            h.update(chunk)
+    rec = dict(
+        path=os.path.abspath(path),
+        sha256=h.hexdigest(),
+        rows=pq.ParquetFile(path).metadata.num_rows,
+    )
+    want_sha, want_rows = os.environ.get(sha_env), os.environ.get(rows_env)
+    assert not want_sha or rec["sha256"] == want_sha, f"{sha_env}: {path} differs"
+    assert not want_rows or rec["rows"] == int(want_rows), f"{rows_env}: {path}"
+    return rec
+
+
+INPUT_RECEIPT = {}
+if not PIECE_PARQUETS:
+    INPUT_RECEIPT["data"] = _input_receipt(DATA_PARQUET, "DATA_SHA256", "DATA_ROWS")
+if VAL_PARQUET:
+    _val = _input_receipt(VAL_PARQUET, "VAL_SHA256", "VAL_ROWS")
+    _val["rows_read"] = min(_val["rows"], VAL_LIMIT or _val["rows"])
+    if os.environ.get("VAL_ROWS"):
+        assert _val["rows_read"] == _val["rows"], "VAL_LIMIT drops held-out rows"
+    INPUT_RECEIPT["val"] = _val
 REC = f"{os.environ.get('RECORDS_DIR', '/root/cart_records')}/{PATIENT}.txt"
 CARTS_DIR = os.path.join(OUT_DIR, "carts")
 os.makedirs(CARTS_DIR, exist_ok=True)
@@ -604,6 +642,9 @@ if __name__ == "__main__":
         f"decay={f'{DECAY_LAMBDA} to {DECAY_TO}' if DECAY_LAMBDA > 0 else None}",
         flush=True,
     )
+    import json as _json
+
+    print("INPUT_RECEIPT " + _json.dumps(INPUT_RECEIPT), flush=True)
     try:
         config.run()
     except _StopTraining as stop:
