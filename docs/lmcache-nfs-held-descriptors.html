@@ -21,6 +21,7 @@
 .tip { position: absolute; pointer-events: none; display: none; background: #0c1410; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); font: 12px/1.6 var(--mono); white-space: nowrap; z-index: 2; }
 .tip b { font-weight: 650; }
 .steps-cmd { margin: 8px 0 18px; }
+#testbed { margin-top: 40px; }
 </style>
 </head>
 <body>
@@ -43,22 +44,56 @@
 <h1>LMCache on NFS and pNFS: held descriptors and a faster NFS client</h1>
 <p class="lead">LMCache's native file connector opens, reads and closes a
 file for every KV-cache object it loads. On a network filesystem the open
-and the close are round trips to the server. A new option,
-<code>held_fd_capacity</code>, keeps read-only descriptors of published
-objects open between loads, so a repeated read sends no metadata request
-at all. On a pNFS metadata server that does not grant delegations, this
-removes four server operations from every object read, lifted
-throughput from 37,926 to 140,427 object reads per second with 16
-clients in our lab, and removed close stalls of up to 3.3 seconds. On a
-local filesystem an open costs about a microsecond, so the gain there is
-small (4-5%).</p>
+and the close are round trips to the server. We are evaluating a new
+option, <code>held_fd_capacity</code>, which keeps read-only descriptors
+of published objects open between loads, so a repeated read sends no
+metadata request at all. On a pNFS metadata server that does not grant
+delegations, this removes four server operations from every object read.
+On one small desktop host with one NVMe drive and no GPU in the data
+path, 16 test clients rose from 37,926 to 140,427 object reads per
+second, and close stalls of up to 3.3 seconds went away. On a local
+filesystem an open costs about a microsecond, so the gain there is small
+(4-5%).</p>
 <div class="stat-grid">
-<div class="stat"><div class="val">3.7&times;</div><div class="label">object reads per second with 16 pNFS clients, held against open per read (140,427 vs 37,926)</div></div>
+<div class="stat"><div class="val">3.7&times;</div><div class="label">object reads per second, 16 pNFS clients on one 16-core host, held against open per read (140,427 vs 37,926)</div></div>
 <div class="stat"><div class="val cyan">4 &rarr; 0</div><div class="label">metadata-server operations per repeated object read on a Lattice pNFS server</div></div>
-<div class="stat"><div class="val amber">+64%</div><div class="label">NFS opens per second, 8 threads under one credential, with the client kernel change (8-vCPU VM; hardware A/B running)</div></div>
+<div class="stat"><div class="val amber">+61-78%</div><div class="label">NFS opens per second, 16 and 32 threads under one credential, with the client kernel change, on two 16-core hosts</div></div>
 </div>
+<div class="note"><strong>What this is, and what it is not yet.</strong>
+These are measurements of the storage read path, taken by a test
+program that calls LMCache's native file connector directly. They are
+not yet a full vLLM integration test. One step closer to serving, we
+drove the same connector through the storage manager of LMCache's
+multiprocess (MP) server, the separate LMCache process that vLLM talks
+to, but without vLLM. There, on 256 KiB objects already in memory and an
+NFS server that keeps opens on the client, held descriptors gained only
+2-5%: the storage manager spends about 27 µs per object, against about
+2 µs for the open and close they remove. On a pNFS metadata server each
+open is a network round trip, so the saving there should be larger, but
+we have not measured it through the MP server yet. Three things remain
+to be done: a vLLM integration test through the MP server, scaling tests
+with higher-end NVMe drives and faster GPUs, and a production-grade pNFS
+network, with dedicated metadata and data servers, several data servers
+and many client hosts on real network links.</div>
+<h2 id="testbed">The test system</h2>
+<p>Every pNFS figure on this page comes from one deliberately small
+host. The table lists what we used and what a larger test should use;
+if you have that hardware, the <a href="#quickstart">site profile</a>
+repeats our measurements on your mount and prints your figures beside
+ours.</p>
+<div class="table-wrap"><table>
+<caption>Our test system and the scale-up we want tested</caption>
+<tr><th scope="col">Part</th><th scope="col">Our lab</th><th scope="col">What a scale-up test should use</th></tr>
+<tr><td class="hi">Host</td><td>One desktop host: 16 cores, 32 threads, 96 GiB DDR5. The metadata server, the data server and all clients share it.</td><td>Separate metadata-server, data-server and client hosts</td></tr>
+<tr><td class="hi">Storage</td><td>One PCIe 4.0 x4 NVMe SSD, 4 TB class, 512-byte logical blocks, behind the chipset</td><td>Several higher-end NVMe drives per data server, PCIe 5.0</td></tr>
+<tr><td class="hi">Filesystem</td><td>pNFS: NFSv4.2 clients with the flexible-files layout, served by a <a href="https://github.com/PEAK-AIO/pnfs-lattice">Lattice</a> metadata server with a RonDB catalogue. One data server, the Linux kernel NFSv3 server, exports a directory on XFS.</td><td>Several data servers; a production metadata server</td></tr>
+<tr><td class="hi">Network</td><td>Virtual Ethernet between network namespaces inside the host; one remote client on a 1 Gb/s link</td><td>Real NICs at 100 Gb/s or more, many client hosts</td></tr>
+<tr><td class="hi">GPU</td><td>None in these measurements: objects are read into host memory. The host's one GPU, a 24 GiB RTX 4090, was idle.</td><td>Data-center GPUs, with KV loaded into GPU memory</td></tr>
+<tr><td class="hi">Workload</td><td>A test program calling the connector; 256 KiB and 8 MiB objects. In the many-client run the 256 KiB objects come from the client page cache after the first read, so it measures the metadata path, not the drive.</td><td>vLLM through the LMCache MP server, with real KV-cache chunk sizes</td></tr>
+</table></div>
 <p>This page is for anyone who runs LMCache on NFS or pNFS and wants to
-try these changes. It explains the option and its safety rule, shows
+try these changes, and for anyone with larger hardware who can help
+scale the test up. It explains the option and its safety rule, shows
 our measurements, and gives one make target that repeats them on your
 own mount. It also covers <code>read_mode</code>, which chooses who
 copies objects that are already in the page cache, and a Linux NFS
@@ -217,14 +252,11 @@ open-state limit of your NFS server.</p>
 <section id="results">
 <h2>7. Our measurements</h2>
 <p>All runs completed every request and every digest check. The pNFS lab
-ran on one 16-core, 32-thread desktop host: a
-<a href="https://github.com/PEAK-AIO/pnfs-lattice">Lattice</a> metadata
-server with its RonDB catalogue, one NFSv3 kernel data server and
-NFSv4.2 kernel clients, each in its own network namespace. The metadata
-server, the data server and every client share that host's CPU and memory
-bandwidth, so absolute rates describe this host. The per-read operation
-counts are protocol behavior and carry over to any deployment of this
-server and client.</p>
+is the one host described in <a href="#testbed">the test system</a>: the
+metadata server, the data server and every client share that host's CPU
+and memory bandwidth, so absolute rates describe this host. The per-read
+operation counts are protocol behavior and carry over to any deployment
+of this server and client.</p>
 <h3>One client, paired blocks</h3>
 <p>Each figure is the mean of paired block medians, open per read minus
 held, with a 95% block-bootstrap interval where three or more blocks
@@ -464,14 +496,43 @@ taking <code>cl_lock</code> off the lookup.</p>
 ran owner churn, uid rotation, both credential modes and remounts with all
 four commits and reported nothing. Those runs open files only for read;
 opens for write and state recovery after a lease expiry are not yet
-tested. The gain appears at 8 threads, where the machine's two virtual
-NUMA nodes both take part, so a larger client should show more. We are
-now repeating the A/B on two 16-core hosts, as an NFS client of a local
-Linux server and of a server across a 1 Gb/s link, and will add the
-result here. We make no LMCache speed claim from the virtual machine.</p>
+tested.</p>
+<h3>On two 16-core hosts</h3>
+<p>We then repeated the A/B on two desktop hosts with 16 cores and 32
+threads each: one an NFS client of the Linux server on the same host,
+the other a client of that server over a 1 Gb/s link. Both mounts are
+NFSv4.2 with read delegations, so the opens stay on the client. Each
+kernel was booted fresh and idle and ran three times. The kernels carry
+unrelated block-layer patches; their NFS client code is that of v7.3-rc7
+without and with the four commits.</p>
+<div class="table-wrap"><table>
+<caption>nfs_open_scale on hardware, opens per second, median of three runs on a fresh boot</caption>
+<tr><th scope="col">Client</th><th scope="col">Credentials</th><th scope="col">Threads</th><th scope="col">Without</th><th scope="col">With the four commits</th><th scope="col">Change</th></tr>
+<tr><td>Same host as the server</td><td>One shared</td><td>8</td><td>1.660M</td><td>1.760M</td><td>+6.0%</td></tr>
+<tr><td>Same host as the server</td><td>One shared</td><td>16</td><td>0.912M</td><td>1.537M</td><td>+68.5%</td></tr>
+<tr><td>Same host as the server</td><td>One shared</td><td>32</td><td>0.973M</td><td>1.735M</td><td>+78.4%</td></tr>
+<tr><td>Over 1 Gb/s</td><td>One shared</td><td>8</td><td>1.723M</td><td>1.865M</td><td>+8.2%</td></tr>
+<tr><td>Over 1 Gb/s</td><td>One shared</td><td>16</td><td>0.942M</td><td>1.511M</td><td>+60.5%</td></tr>
+<tr><td>Over 1 Gb/s</td><td>One shared</td><td>32</td><td>0.963M</td><td>1.673M</td><td>+73.7%</td></tr>
+<tr><td>Same host as the server</td><td>One per thread</td><td>16</td><td>1.130M</td><td>1.473M</td><td>+30.3%</td></tr>
+<tr><td>Same host as the server</td><td>One per thread</td><td>32</td><td>1.084M</td><td>1.367M</td><td>+26.1%</td></tr>
+<tr><td>Over 1 Gb/s</td><td>One per thread</td><td>16</td><td>1.105M</td><td>1.404M</td><td>+27.0%</td></tr>
+<tr><td>Over 1 Gb/s</td><td>One per thread</td><td>32</td><td>1.058M</td><td>1.329M</td><td>+25.6%</td></tr>
+</table></div>
+<p>Without the commits, opens under one credential collapse past 8
+threads: from 1.66-1.72 million per second at 8 threads to 0.91-0.97
+million at 16 and 32. With them, both hosts hold 1.51-1.74 million, and
+at 16 and 32 threads the slowest run with the commits beats the fastest
+run without them. Up to 4 threads nothing changes beyond 4%.</p>
+<p>For LMCache the effect is smaller and depends on where you measure.
+The connector, called directly with one open per read, completed 10-12%
+more reads with the commits. Through the MP server's storage manager the
+difference was within run-to-run noise (-1% to +2%), for the reason given
+at the top of this page: there the opens are a small part of each
+object's cost.</p>
 <p><strong>Test it on a client with more cores.</strong> A shared lock
-costs more as cores grow, and our 8-vCPU machine is small. A site can run
-the same A/B on its own clients against its Lattice or NFS mount:</p>
+costs more as cores grow, and our clients have 16. A site can run the
+same A/B on its own clients against its Lattice or NFS mount:</p>
 <ol>
 <li>Build two client kernels from the same base, one without and one
 with the four commits; build the selftest from the patched tree
@@ -493,7 +554,7 @@ delegations, and one profile per kernel at the top thread count
 </ol>
 <p>Compare the shared-credential rows with ours. A gain that grows with
 cores in those rows says the change is worth more on large clients than
-on our test machine; the per-thread rows separate the client-wide lock
+on our 16-core hosts; the per-thread rows separate the client-wide lock
 from the per-owner one. The site profile's records and these runs are
 what we would like to see from other clients.</p>
 </section>
@@ -502,14 +563,18 @@ what we would like to see from other clients.</p>
 <section id="limits">
 <h2>11. Limits</h2>
 <p>Our pNFS figures come from one metadata server and one data server on
-one host, with a small RonDB configuration, and a remote client at
-1 Gb/s. The many-client plateau describes that shared host; a dedicated
-metadata server saturates at a different rate, but it still sees four
-operations per read from every client that opens per read. The first
-read of an object still sends LOOKUP and OPEN. We did not measure layout
-recall storms, the server-side cost of many held open states, or a
-serving engine end to end, so none of these figures is a time-to-first
-token result.</p>
+one host (<a href="#testbed">the test system</a>), with a small RonDB
+configuration, one NVMe drive and a remote client at 1 Gb/s. The
+many-client plateau describes that shared host; a dedicated metadata
+server saturates at a different rate, but it still sees four operations
+per read from every client that opens per read. The first read of an
+object still sends LOOKUP and OPEN. We did not measure layout recall
+storms, the server-side cost of many held open states, or a serving
+engine end to end, so none of these figures is a time-to-first-token
+result. The one measurement through LMCache's MP server used a Linux NFS
+server with read delegations and small cached objects, not pNFS. The
+kernel change is tested for opens for read only; opens for write and
+state recovery after a lease expiry are not yet tested.</p>
 </section>
 <nav class="page-nav" aria-label="ReadPlan pages"><a href="lmcache-readplan-l2-results.html">&larr; Results</a><a href="lmcache-readplan-l2-reproduce.html">Reproduce &rarr;</a></nav>
 <footer>
