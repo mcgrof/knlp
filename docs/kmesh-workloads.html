@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="What released agent traces ask of shared and saved inference state: wide launches share only a session preamble, long contexts idle between turns, and vLLM removed cascade attention.">
+<title>KMesh: What agent traffic asks of shared state</title>
+<link rel="canonical" href="https://knlp.io/kmesh-workloads.html">
+<link rel="stylesheet" href="kmesh.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="KMesh navigation">
+<a class="logo" href="https://knlp.io/">knlp</a>
+<span class="spacer"></span>
+<a href="kmesh.html">overview</a>
+<a href="kmesh-design.html">design</a>
+<a href="kmesh-baselines.html">baselines</a>
+<a href="kmesh-storage.html">storage</a>
+<a href="kmesh-retention.html">retention</a>
+<a href="kmesh-recovery.html">recovery</a>
+<a href="kmesh-workloads.html" aria-current="page">workloads</a>
+</nav></header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Agent workloads and cascade attention</p>
+<span class="eyebrow">Questions 26–29</span>
+<h1>What does real agent traffic ask of shared state?</h1>
+<p class="lead">The earlier questions measured sharing, retention and early
+loading on request families we built. This page asks what released agent
+traces actually contain: how often one agent starts many children at once,
+what those children share, and how long large contexts sit idle. It also
+records why vLLM removed cascade attention, the shared-prefix attention
+method that wide request families would use.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol start="26">
+<li><a href="#agent-traces">Which agent traces can answer these questions?</a></li>
+<li><a href="#fan-out">Do agent launches fan out over a shared saved ancestor?</a></li>
+<li><a href="#resume">Where does long context sit idle?</a></li>
+<li><a href="#cascade-upstream">What happened to cascade attention in vLLM?</a></li>
+</ol></div>
+
+<div class="note"><strong>The evidence points to the resumed turn, not the
+wide fan-out.</strong> Launches of four or more children are uncommon, and
+their children share only a harness preamble that belongs to one session.
+No wide launch in any trace shares a saved family ancestor. Long contexts
+instead sit idle between turns. In the public Copilot release, the
+deployment's own cache counts fall to zero after five idle minutes, and
+those resumes carry about a fifth of the prompt tokens it recomputes. vLLM
+removed cascade attention in October 2026: its design rarely engaged on
+mixed batches, and agent traffic gives it few wide groups.</div>
+<div class="stat-grid">
+<div class="stat"><div class="val">0 tokens</div><div class="label">Saved family ancestor in any launch of four or more children</div></div>
+<div class="stat"><div class="val cyan">17–19%</div><div class="label">Recomputed Copilot prompt tokens in same-model resumes after five or more idle minutes</div></div>
+<div class="stat"><div class="val amber">v0.32.0</div><div class="label">First vLLM release without cascade attention</div></div>
+</div>
+
+<section id="agent-traces">
+<h2>26. Which agent traces can answer these questions?</h2>
+<p><strong>Four released traces, and each answers a different part.</strong>
+None of them releases prompt text. Two release block identifiers: each
+request's prompt is cut into fixed-size blocks, and equal blocks get equal
+identifiers. Equal leading identifiers then stand in for a shared prefix.
+That is a workload intention, not a verified KV identity on any model.</p>
+<div class="table-wrap"><table>
+<caption>Released agent traces and what each can show</caption>
+<tr><th scope="col">Trace</th><th scope="col">Coverage</th><th scope="col">What it records</th><th scope="col">What it cannot show</th></tr>
+<tr><td class="hi"><a href="https://github.com/LMCache/lmcache-agent-trace/tree/780bcc2979715150d8b9fd4737e026e625444cc9">LMCache agent-trace corpus</a>, revision <code>780bcc29</code></td><td>78 JSONL files, 1,915 unique records across agent frameworks</td><td>Record text statistics and timestamps</td><td>No parent links and no invocation timing; see <a href="kmesh-retention.html#trace-audit">question 17</a></td></tr>
+<tr><td class="hi"><a href="https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126">Weka Claude Code corpus</a>, revision <code>23f152f6</code>, Apache-2.0</td><td>393 Claude Code sessions, 98,827 model requests, 1,697 subagents</td><td>Each request's input and output size, start time and duration; each subagent's spawn time and requests; 64-token hash blocks</td><td>Block identifiers are local to a session. Sampling kept sessions with at most 10 concurrent subagent groups, which removes the widest sessions</td></tr>
+<tr><td class="hi"><a href="https://huggingface.co/datasets/harvardMadsys/freeinference_agentic_trace">FreeInference agentic trace</a>, revision <code>16d3c04d</code>, CC BY 4.0</td><td>Weeks of 2026-05-17 (125 sessions) and 2026-07-12 (969 sessions), eleven harnesses including Claude Code, Codex, opencode and Kilo</td><td>Parent session and spawning step, 16-token block identifiers shared across the week, cache-read tokens</td><td>Few families: 17 and 146 launches</td></tr>
+<tr><td class="hi"><a href="https://github.com/Azure/AzurePublicDataset/blob/215becdacba1ce682c7368642ce97d5a332de7a6/GitHubCopilotCodingAgentDataset2026.md">GitHub Copilot coding agent traces</a>, release <code>ghcp-coding-agent-2026</code>, CC BY</td><td>Seven days released; we read 2026-06-02 and 2026-06-06: 70,819 sessions, 276,539 turns, 2.18 million model calls</td><td>Each call's prompt, completion and cached tokens, model label and timing; tool names</td><td>No block identifiers and no subagent tool: the release is the Visual Studio slice</td></tr>
+</table></div>
+<p>The Copilot release accompanies Liu et al.,
+<a href="https://arxiv.org/abs/2608.00101">Agentic Coding in the Wild</a>,
+which studies a larger population of 13 million sessions. Its main
+observations for KMesh are that cache reuse is high inside a turn and much
+lower across turn boundaries, that model switches and context compaction
+invalidate reuse, and that users leave minutes-long idle gaps between
+turns. Our counts below come from the released days only.</p>
+<p>One reading note for that release. An LLM call's <code>timestamp</code>
+marks the <strong>end</strong> of the call. In 81,519 consecutive call
+pairs, 99.94% fit that reading and 75% fit the start reading that the
+release's own analysis code uses. Read as start times, calls appear to
+overlap. Read as end times, two or more calls overlap in under 0.2% of
+turns, and four or more in 0.02–0.06%. Tool-batch timestamps do not agree
+with the call clock, so our turn times use model calls only.</p>
+</section>
+
+<section id="fan-out">
+<h2>27. Do agent launches fan out over a shared saved ancestor?</h2>
+<p><strong>No. Wide launches exist, but their children share only the harness
+preamble.</strong> A <strong>launch</strong> is one parent step that starts
+one or more children; its <strong>width</strong> is the number of children.
+For each launch we compare the children's first requests. The
+<strong>group span</strong> is the prefix common to all of them. The
+<strong>preamble span</strong> is the part the first child also shares with
+a child of a different launch: the system prompt and tool definitions that
+every launch carries. The <strong>saved family ancestor</strong> is the part
+of the group span that existed before the launch and is not preamble. It
+is the state a storage read could serve to all children at once.</p>
+<div class="table-wrap"><table>
+<caption>Launches of four or more children and what they share</caption>
+<tr><th scope="col">Trace</th><th scope="col">Launches</th><th scope="col">Launches of 4+ children (their children)</th><th scope="col">Group span, p50</th><th scope="col">Preamble span, p50</th><th scope="col">Saved family ancestor, largest</th></tr>
+<tr><td class="hi">Weka, spawns within 1 s</td><td>1,456</td><td>29 (143 of 1,697)</td><td>30.0K tokens</td><td>30.0K tokens</td><td>0</td></tr>
+<tr><td class="hi">Weka, spawns within 5 s</td><td>1,141</td><td>75 (375 of 1,697)</td><td>31.5K</td><td>31.4K</td><td>0</td></tr>
+<tr><td class="hi">FreeInference, July week</td><td>146</td><td>22 (99 of 270)</td><td>9.1K</td><td>8.5K</td><td>0</td></tr>
+<tr><td class="hi">FreeInference, May week</td><td>17</td><td>0</td><td>none</td><td>none</td><td>none</td></tr>
+</table></div>
+<p>Wide launches are 2% of Weka launches, with 8% of its children, and 15% of
+FreeInference July launches. They are four to seven children wide. What
+the children share beyond the preamble is at most 2.4K tokens in Weka at
+1 s grouping, 21.8K at 5 s and 5.3K in FreeInference, and all of it first
+appears at the launch. Storage holds no copy of state that was only just
+produced. Children also receive almost nothing from their parent: in Weka,
+1,374 of 1,697 children share no leading block with the parent's last
+request, and the largest share is 9% of the child's prompt. No harness in
+either trace hands its children the parent's conversation.</p>
+<h3>The preamble can go cold, but the repeated reads are small</h3>
+<p>The preamble is specific to a session, not shared by every user of a
+harness. In FreeInference, where block identifiers are shared across the
+week, a child shares a median of only 144 tokens with children launched by
+other users. A session's preamble can therefore leave GPU memory between
+its launches. A wide launch would then read it back once per child, which
+is the case <a href="kmesh-storage.html#singleflight">singleflight</a>
+removes. We counted it after the first comparison came back empty:</p>
+<div class="table-wrap"><table>
+<caption>Wide launches whose shared span of 16K tokens or more sat idle first</caption>
+<tr><th scope="col">Trace</th><th scope="col">Launches, idle 60 s or more</th><th scope="col">Their children</th><th scope="col">Repeated tokens a per-child read would load</th></tr>
+<tr><td class="hi">Weka, spawns within 1 s</td><td>13 (0.9% of launches)</td><td>68 (4.0%)</td><td>1.5 million</td></tr>
+<tr><td class="hi">Weka, spawns within 1 s, idle 300 s or more</td><td>6 (0.4%)</td><td>30 (1.8%)</td><td>0.65 million</td></tr>
+<tr><td class="hi">Weka, spawns within 5 s</td><td>32 (2.8%)</td><td>162 (9.5%)</td><td>3.4 million</td></tr>
+<tr><td class="hi">FreeInference, July week</td><td>1 (0.7%)</td><td>4 (1.5%)</td><td>75 thousand</td></tr>
+</table></div>
+<p>Singleflight only helps reads that are in flight together. In Weka, the
+children of a wide launch grouped at 1 s start within 0.2 s of each other
+at the median (0.7 s at p90). Grouping at 5 s merges spawns 2.8 s apart at the
+median and 12 s at p90, long enough for the first child's restore to finish
+before the next child asks. The 1 s row is the relevant one, and its
+1.5 million repeated tokens compare with 21.6 billion input tokens in the
+whole corpus.</p>
+</section>
+
+<section id="resume">
+<h2>28. Where does long context sit idle?</h2>
+<p><strong>Between turns. The resumed turn is the large storage target.</strong>
+In the Weka corpus we counted main-agent requests of at least 32K input
+tokens that arrive at least 60 s after the previous main-agent request
+ended. A resume counts as a subagent wait when a subagent was spawned
+inside the gap.</p>
+<div class="table-wrap"><table>
+<caption>Long-idle resumes against wide-launch repeated reads, Weka</caption>
+<tr><th scope="col">Weka work</th><th scope="col">Count</th><th scope="col">Input tokens</th><th scope="col">Share of main-agent input tokens</th></tr>
+<tr><td class="hi">Resume after a user or tool wait</td><td>7,837 requests</td><td>2.79 billion</td><td>15.7%</td></tr>
+<tr><td class="hi">Resume after a subagent wait</td><td>445 requests</td><td>122 million</td><td>0.68%</td></tr>
+<tr><td class="hi">Cold preamble re-reads in wide launches</td><td>68 children</td><td>1.5 million</td><td>0.008%</td></tr>
+</table></div>
+<p>A parent that waits for a subagent is a large object with some notice: it
+resumes with a median of 229K input tokens (541K at p90) after a median
+wait of 205 s, and the subagent's recorded end comes a median of 8.6 s
+before the parent's next request. The user's own turn is about 23 times
+larger in total tokens, and it gives no notice.</p>
+<p>The Copilot release shows what a production deployment does at that
+boundary. The cached-token fraction at a turn's first call is the
+deployment's own count. It falls off a cliff at five idle minutes:</p>
+<div class="table-wrap"><table>
+<caption>Cached fraction of the first call in a turn, same model as the previous call</caption>
+<tr><th scope="col">Idle before the turn</th><th scope="col">Weekday turns</th><th scope="col">Cached, p50 / mean</th><th scope="col">Weekend turns</th><th scope="col">Cached, p50 / mean</th></tr>
+<tr><td class="hi">10 to 60 s</td><td>38,724</td><td>0.95 / 0.73</td><td>7,454</td><td>0.95 / 0.73</td></tr>
+<tr><td class="hi">1 to 5 min</td><td>68,027</td><td>0.94 / 0.71</td><td>12,617</td><td>0.95 / 0.72</td></tr>
+<tr><td class="hi">5 to 30 min</td><td>43,169</td><td>0.00 / 0.21</td><td>7,028</td><td>0.00 / 0.31</td></tr>
+<tr><td class="hi">30 to 60 min</td><td>7,355</td><td>0.00 / 0.14</td><td>991</td><td>0.00 / 0.25</td></tr>
+<tr><td class="hi">1 to 24 h</td><td>10,589</td><td>0.00 / 0.07</td><td>1,422</td><td>0.00 / 0.12</td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<caption>Copilot turn resumes on the same model, not compacted, with prompts of 32K tokens or more</caption>
+<tr><th scope="col">Measure</th><th scope="col">Weekday, 2026-06-02</th><th scope="col">Weekend, 2026-06-06</th></tr>
+<tr><td class="hi">Idle 60 s or more: share of turn boundaries</td><td>51.8%</td><td>48.7%</td></tr>
+<tr><td class="hi">Idle 60 s or more: share of all prompt tokens</td><td>7.1%</td><td>5.8%</td></tr>
+<tr><td class="hi">Idle 60 s or more: share of all recomputed prompt tokens</td><td>26.3%</td><td>23.5%</td></tr>
+<tr><td class="hi">Idle 300 s or more: share of all recomputed prompt tokens</td><td>19.2%</td><td>16.8%</td></tr>
+<tr><td class="hi">Idle 300 s or more: recomputed part of their own prompts</td><td>82%</td><td>75%</td></tr>
+<tr><td class="hi">Resuming prompt, p50 / p90</td><td>80K / 164K tokens</td><td>81K / 165K tokens</td></tr>
+<tr><td class="hi">Idle gap, p50 / p90</td><td>274 s / 2,592 s</td><td>240 s / 1,855 s</td></tr>
+</table></div>
+<p>About a fifth of all the prompt tokens this deployment recomputes belong
+to long-context turns that resume on the same model after five or more idle
+minutes. Storing a context at the end of a turn and restoring it when the
+next turn starts targets exactly those tokens. Unlike a subagent wait, the
+user's return gives no notice, and the gap runs from minutes to an hour,
+so the stored copy must stay in storage that long. A model switch (about
+5% of turn boundaries) or a compaction (about 3%) invalidates a stored copy;
+the table excludes both.</p>
+<div class="note"><strong>These are client counts, not our engine.</strong>
+The cached fraction is the deployment's own label. The five-minute cliff
+matches a provider prompt-cache lifetime; it does not show what a local
+engine with storage would keep. Recomputed tokens are prompt tokens minus
+cached tokens, which is not the same as GPU time: longer prompts cost more
+per token.</div>
+</section>
+
+<section id="cascade-upstream">
+<h2>29. What happened to cascade attention in vLLM?</h2>
+<p><strong>vLLM removed it in October 2026, after it had been off by default
+since March.</strong> Cascade attention computes attention over a prefix
+shared by many requests once, computes each request's private part
+separately, and merges the results. <a href="kmesh-storage.html#cascade">Question
+12</a> enabled it explicitly with an 8,192-token shared ancestor and 32
+children: generation wall time fell 17.8%, and 24 of 96 continuations
+changed because the floating-point evaluation order changed.</p>
+<div class="table-wrap"><table>
+<caption>Cascade attention in vLLM</caption>
+<tr><th scope="col">Date</th><th scope="col">Change</th></tr>
+<tr><td class="hi">2025-11-21</td><td><a href="https://github.com/vllm-project/vllm/pull/25266">#25266</a> adds a rewritten GPU model runner. It never implements cascade.</td></tr>
+<tr><td class="hi">2026-03-11</td><td><a href="https://github.com/vllm-project/vllm/pull/36318">#36318</a> turns cascade off by default "to avoid potential numerical issues by default". It changes only the configuration default.</td></tr>
+<tr><td class="hi">2026-08-27</td><td><a href="https://github.com/vllm-project/vllm/pull/53183">#53183</a> makes the rewritten runner the default for all models.</td></tr>
+<tr><td class="hi">2026-10-12</td><td><a href="https://github.com/vllm-project/vllm/pull/61126">#61126</a> removes cascade attention: kernels, heuristics, scheduler and KV-cache plumbing, runner logic, tests and documents. It first ships in v0.32.0. The <code>disable_cascade_attn</code> option remains as a no-op that is scheduled for removal.</td></tr>
+</table></div>
+<p>The removal states its reason directly. Cascade attention "has been
+opt-in (<code>disable_cascade_attn=True</code> by default), already
+hard-disabled for FlashInfer (see #25679), force-disabled for async spec
+decode / DBO /
+batch invariance / CPU, and unsupported by most backends — yet it still
+costs a per-step scheduler scan, branches in the model runner and backends,
+and recurring bugs." Its tests check accuracy and identical outputs on a
+shared-prefix batch; it reports no performance comparison.</p>
+<h3>Why it reached so few batches</h3>
+<p>The engagement rule was strict. Before each step, the scheduler counted
+the leading KV blocks referenced by <strong>every request holding KV in the
+engine</strong>, not only the requests in the batch. One request without the
+prefix turned cascade off for the whole batch. The code's own comment
+notes that the count can be zero "even though all scheduled requests share
+a common prefix". There was one shared prefix per batch, with no support
+for several request groups that each share a different prefix. The
+reference count could also be wrong: issue
+<a href="https://github.com/vllm-project/vllm/issues/61673">#61673</a>
+reports a request decoded against another request's KV prefix while a
+CPU offload connector was in use.</p>
+<p>Other serving stacks are in a similar place. SGLang's cascade kernel
+request, <a href="https://github.com/sgl-project/sglang/issues/1715">#1715</a>,
+has been open since October 2024. TensorRT-LLM added a cascade kernel for
+beam-search decode in <a href="https://github.com/NVIDIA/TensorRT-LLM/pull/14396">#14396</a>,
+behind an environment variable that is off by default. The published gains
+come from batches built to share a prefix, beam or tree decoding, or a
+common system prompt:
+<a href="https://arxiv.org/abs/2402.05099">Hydragen</a>,
+<a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's cascade inference</a>,
+<a href="https://arxiv.org/abs/2403.08845">Bifurcated Attention</a>,
+<a href="https://arxiv.org/abs/2404.00242">DeFT</a> and
+<a href="https://arxiv.org/abs/2511.22333">PAT</a>. PAT groups requests by
+shared prefix as a vLLM plugin and reports 17–93% lower time per output
+token. We found no evaluation on Claude Code, Copilot or SWE-agent traffic.</p>
+<h3>Was it dropped because agent workloads have no use for it?</h3>
+<p><strong>Partly, but that is not the stated cause.</strong> In order of
+evidence strength:</p>
+<ol>
+<li><strong>Engineering scope.</strong> The rewritten runner never had
+cascade, and it became the default for all models. The removal cites
+maintenance cost against little reach. This is stated upstream.</li>
+<li><strong>The engagement rule.</strong> The whole engine had to share
+one prefix, which mixed serving traffic rarely does. This is in the
+source.</li>
+<li><strong>The workloads.</strong> The traces in questions 27 and 28 show
+agent launches four to seven wide that share a session preamble. Cascade
+pays when many concurrent decodes read one long prefix: reinforcement
+learning rollouts with many samples per prompt, best-of-n sampling, beam
+search and tree search. This is our inference from the traces and the
+published results.</li>
+<li><strong>Numerics.</strong> Changed outputs explain the off-by-default
+change in March, not the removal.</li>
+</ol>
+<p>The kernel still works where wide same-prefix groups exist, as question
+12 measured. A return of cascade to vLLM would need a per-group design in
+the current runner and a workload with such groups. On this evidence,
+agent serving is not that workload.</p>
+</section>
+
+<section id="workload-direction">
+<h2>What the evidence points to</h2>
+<p><strong>KMesh's storage tests move to the resumed turn.</strong> The
+next test stores a long context when its turn ends, lets competing sessions
+evict it from GPU memory, and restores it on demand when the next turn
+arrives with no notice. It compares that restore with recomputation and
+charges the store's cost to the competing sessions. Singleflight stays in
+place for the rare wide launch; the traces give it little volume.
+Family-aware hints still matter for subagent waits, which come with
+seconds of notice, but they are a small share of the idle tokens.</p>
+<p>These are workload counts, not KV measurements. Equal block identifiers
+are a workload intention. Weka's sampling removes the widest sessions, so a
+corpus of heavy parallel exploration, such as tree search or many-agent
+planners, could still contain wide launches over a large saved ancestor.
+FreeInference's family counts are small. Copilot's subagent behavior in its
+other editors is not in the public slice. The thresholds of 16K tokens,
+60 s and 300 s are our choices, not measured break-even points.</p>
+<h3>Reproduce the trace counts</h3>
+<pre><code>cd tools/reproduce/kmesh_traces
+python3 fanout_spans.py --weka /path/to/weka/traces.jsonl --window-s 1 --output weka-w1.json
+PYTHONPATH=/path/to/fi-artifact python3 fanout_spans.py \
+  --release /path/to/fi-layout --week 2026-07-12 --output fi-2026-07-12.json
+python3 weka_resume.py --traces /path/to/weka/traces.jsonl --output weka-resume.json
+python3 copilot_resume.py --data /path/to/copilot --days 2026-06-02 --output copilot-2026-06-02.json</code></pre>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_traces/README.md">trace README</a>
+gives the pinned revisions, download commands, archive digests, the
+FreeInference reader layout and the span definitions. Everything runs on a
+CPU from published data; no model or GPU is needed.</p>
+</section>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh-recovery.html">&larr; Recovery across processes</a><a href="kmesh.html">Overview &rarr;</a></nav>
+<footer>
+<a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
+</footer>
+</main>
+</body>
+</html>

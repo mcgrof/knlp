@@ -224,6 +224,11 @@ describes the authenticated inputs, process-local policy, rejected comparisons
 and CPU recheck. This tests an existing vLLM feature, with no family-aware
 scheduler or new attention kernel. The following section tests a
 cold external-cache burst versus a leader completed before its followers.</p>
+<div class="note"><strong>vLLM has since removed cascade attention.</strong>
+This test used a build from before the removal. vLLM PR #61126 removed the
+feature in October 2026, first in v0.32.0, so current vLLM cannot repeat
+it. <a href="kmesh-workloads.html#cascade-upstream">Question 29</a> gives
+the upstream history and what agent traces offer cascade.</div>
 </section>
 
 <section id="coldburst">

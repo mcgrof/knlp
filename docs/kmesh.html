@@ -20,6 +20,8 @@
     <a href="kmesh-baselines.html">baselines</a>
     <a href="kmesh-storage.html">storage</a>
     <a href="kmesh-retention.html">retention</a>
+    <a href="kmesh-recovery.html">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
   </nav>
 </header>
 <main id="content">
@@ -72,6 +74,14 @@ unmeasured.</p>
 <p>See the <a href="kmesh-storage.html#cascade">Cascade controls</a> and
 <a href="kmesh-retention.html#prefetch-demand">retained early-loading
 comparison</a> for the measured results.</p>
+<p><strong>vLLM removed cascade attention in v0.32.0</strong>, citing its
+maintenance cost against little reach. It engaged only when every request
+holding KV shared one prefix. Released agent traces also give it little to
+work with: launches of four or more children are uncommon, and their
+children share only a session preamble. The traces point instead to long
+contexts that sit idle between turns. The
+<a href="kmesh-workloads.html">agent workloads page</a> gives the trace
+sources, the counts and the upstream history.</p>
 </section>
 
 
@@ -256,6 +266,17 @@ processing related requests one model layer at a time.</p>
 <li><a href="kmesh-recovery.html#serial">Evaluating model outputs and DMA-BUF loading costs</a></li>
 <li><a href="kmesh-recovery.html#collective">Testing layer-major execution across four related requests</a></li>
 </ol></article>
+<article class="question-group">
+<span class="range">Questions 26–29</span>
+<h3><a href="kmesh-workloads.html">Agent workloads and cascade attention</a></h3>
+<p>What released Claude Code, FreeInference and Copilot traces contain, where
+long context sits idle, and why vLLM removed cascade attention.</p>
+<ol start="26">
+<li><a id="agent-traces" href="kmesh-workloads.html#agent-traces">Which agent traces can answer these questions?</a></li>
+<li><a id="fan-out" href="kmesh-workloads.html#fan-out">Do agent launches fan out over a shared saved ancestor?</a></li>
+<li><a id="resume" href="kmesh-workloads.html#resume">Where does long context sit idle?</a></li>
+<li><a id="cascade-upstream" href="kmesh-workloads.html#cascade-upstream">What happened to cascade attention in vLLM?</a></li>
+</ol></article>
 </div>
 </section>
 
@@ -267,6 +288,18 @@ processing related requests one model layer at a time.</p>
   Shared-prefix attention computation and merging with private suffixes.
   The post describes multi-level prefix hierarchies already implemented in
   MLC-Serving; KMesh explores coordination and future reuse around that computation.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2608.00101">Agentic Coding in the Wild: Characterizing GitHub Copilot Traces at Production Scale</a></span><br>
+  Production agent sessions: high cache reuse inside a turn, much lower
+  reuse across turn boundaries, invalidation by model switches and
+  compaction, and minutes-long user idle gaps. Its released traces supply
+  the turn-resume counts on the workloads page.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2511.22333">PAT: Accelerating LLM Decoding via Prefix-Aware Attention with Resource Efficient Multi-Tile Kernel</a></span><br>
+  Groups decode requests by shared prefix inside one batch, as a vLLM
+  plugin. It addresses the single-prefix limit of the removed cascade path.
 </li>
 <li>
   <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>

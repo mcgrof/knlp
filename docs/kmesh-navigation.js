@@ -26,7 +26,11 @@
     "trace-audit": "kmesh-retention.html",
     "family-residency": "kmesh-retention.html",
     "reasoning-demand": "kmesh-retention.html",
-    "prefetch-demand": "kmesh-retention.html"
+    "prefetch-demand": "kmesh-retention.html",
+    "agent-traces": "kmesh-workloads.html",
+    "fan-out": "kmesh-workloads.html",
+    "resume": "kmesh-workloads.html",
+    "cascade-upstream": "kmesh-workloads.html"
   };
 
   function followQuestion() {
