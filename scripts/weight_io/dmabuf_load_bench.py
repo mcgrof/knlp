@@ -164,6 +164,14 @@ def sectors_read(path):
     return int(stat.split()[2]) * 512 if stat else None
 
 
+def one_file_per_device(files):
+    """One shard per block device, for counting bytes read per device."""
+    seen = {}
+    for f in files:
+        seen.setdefault(str(sysfs_block(f)), f)
+    return list(seen.values())
+
+
 def drop_caches():
     os.sync()
     try:
@@ -240,6 +248,8 @@ def worker(args):
     sync = torch.cuda.synchronize if device.type == "cuda" else (lambda: None)
     sync()
 
+    devs = one_file_per_device(files)
+    before = [sectors_read(f) for f in devs]
     t0 = time.perf_counter()
     pl = ParallelLoader(
         pg=SingleGroup(),
@@ -258,6 +268,9 @@ def worker(args):
         pl.close()
     sync()
     out["load_s"] = time.perf_counter() - t0
+    after = [sectors_read(f) for f in devs]
+    if None not in before and None not in after:
+        out["drive_bytes_read"] = sum(a - b for a, b in zip(after, before))
     out["bytes"] = sum(t.nbytes for t in params.values())
     gc.collect()
     if device.type == "cuda":
@@ -293,7 +306,7 @@ def fst_info():
     return info
 
 
-def run_trial(args, reader, ref, devstat_files):
+def run_trial(args, reader, ref):
     env = dict(os.environ)
     for k in ("FASTSAFETENSORS_USE_DMABUF", "FASTSAFETENSORS_DMABUF_STRICT"):
         env.pop(k, None)
@@ -301,11 +314,9 @@ def run_trial(args, reader, ref, devstat_files):
         env["FASTSAFETENSORS_USE_DMABUF"] = "1"
         env["FASTSAFETENSORS_DMABUF_STRICT"] = "1"
     cold = drop_caches() if args.drop_caches else False
-    before = {f: sectors_read(f) for f in devstat_files}
     cmd = [sys.executable, os.path.abspath(__file__), "--worker", reader]
     cmd += ["--device", args.device] + (["--ref", ref] if ref else [])
     r = subprocess.run(cmd + args.files, env=env, capture_output=True, text=True)
-    after = {f: sectors_read(f) for f in devstat_files}
     line = next(
         (x for x in r.stdout.splitlines()[::-1] if x.startswith("RESULT ")), None
     )
@@ -314,8 +325,6 @@ def run_trial(args, reader, ref, devstat_files):
         return {"reader": reader, "cold": cold, "error": "\n".join(tail)}
     res = json.loads(line[len("RESULT ") :])
     res["cold"] = cold
-    if None not in before.values() and None not in after.values():
-        res["drive_bytes_read"] = sum(after[f] - before[f] for f in devstat_files)
     res["gb_per_s"] = res["bytes"] / res["load_s"] / 1e9
     return res
 
@@ -373,18 +382,12 @@ def main():
         with os.fdopen(fd, "w") as fp:
             json.dump(digests, fp)
 
-    devstat_files = {}
-    for f in args.files:
-        node = sysfs_block(f)
-        devstat_files.setdefault(str(node), f)
-    devstat_files = list(devstat_files.values())
-
     try:
         for t in range(args.trials):
             order = readers[t % len(readers) :] + readers[: t % len(readers)]
             for reader in order:
                 check = args.verify == "all" or (args.verify == "first" and t == 0)
-                res = run_trial(args, reader, ref if check else None, devstat_files)
+                res = run_trial(args, reader, ref if check else None)
                 res["trial"] = t
                 report["trials"].append(res)
                 if "gpu" in res:
