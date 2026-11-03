@@ -170,7 +170,7 @@ config KNLP_RPL2_PNFS_LMCACHE_REF
 
 config KNLP_RPL2_PNFS_LMCACHE_COMMIT
 	string "LMCache commit, checked after checkout"
-	default "3e4b3839ce47655e2d0d33cad3f66d4bf920d767"
+	default "fc836c1303eaced6363fe79ec59e5cba5edf8eaa"
 
 config KNLP_RPL2_PNFS_PREFIX
 	string "Lab name prefix for namespaces, units and interfaces"

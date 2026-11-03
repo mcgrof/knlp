@@ -27,7 +27,7 @@ RONDB_URL=https://repo.hops.works/master/rondb-26.02.4-linux-glibc2.28-x86_64.ta
 RONDB_SHA=dfe8ef1346769568b1dad3cf7f66ed3884acc47cb05ac23a59a3dc0797a0e626
 LMCACHE_REPO=${RPL2P_LMCACHE_REPO:-https://github.com/mcgrof/LMCache.git}
 LMCACHE_REF=${RPL2P_LMCACHE_REF:-2026-10-28-feature-fs-native-held-fd}
-LMCACHE_COMMIT=${RPL2P_LMCACHE_COMMIT:-3e4b3839ce47655e2d0d33cad3f66d4bf920d767}
+LMCACHE_COMMIT=${RPL2P_LMCACHE_COMMIT:-fc836c1303eaced6363fe79ec59e5cba5edf8eaa}
 JOBS=${RPL2P_JOBS:-8}
 
 case $(stat -f -c %T "$R" 2>/dev/null || echo missing) in
