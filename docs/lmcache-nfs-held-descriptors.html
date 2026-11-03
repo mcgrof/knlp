@@ -3,10 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Keeping read descriptors open in LMCache's native file connector removes the NFS OPEN and CLOSE round trips of every KV-cache object read. On a pNFS metadata server that is four operations per read. How it works, when to use it, our measurements, and how to check it on your own NFS or pNFS deployment.">
-<title>Held descriptors for LMCache reads on NFS and pNFS</title>
+<meta name="description" content="Held read descriptors in LMCache's native file connector remove the NFS OPEN and CLOSE of every KV-cache object read, and a Linux NFSv4 client change removes lock contention for threads under one credential. Measurements, branches, and one make target to test both on your own NFS or pNFS mount.">
+<title>LMCache on NFS and pNFS</title>
 <link rel="canonical" href="https://knlp.io/lmcache-nfs-held-descriptors.html">
 <link rel="stylesheet" href="kmesh.css">
+<style>
+:root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --grid: #203128; }
+.stat-grid .stat .val { font-size: clamp(24px, 2.6vw, 32px); }
+.chart { position: relative; margin: 24px 0 8px; background: linear-gradient(145deg, var(--card), var(--card2)); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 10px; }
+.chart h3 { margin: 0 0 4px; font-size: 17px; }
+.chart .cap { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg text { fill: var(--muted); font: 12px var(--mono); }
+.chart svg .lbl { fill: var(--text); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 8px; padding: 0; list-style: none; color: var(--text); font: 12px var(--mono); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.tip { position: absolute; pointer-events: none; display: none; background: #0c1410; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); font: 12px/1.6 var(--mono); white-space: nowrap; z-index: 2; }
+.tip b { font-weight: 650; }
+.steps-cmd { margin: 8px 0 18px; }
+</style>
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
@@ -16,16 +31,16 @@
     <span class="spacer"></span>
     <a href="lmcache-readplan-l2.html">overview</a>
     <a href="lmcache-readplan-l2-results.html">results</a>
-    <a href="lmcache-nfs-held-descriptors.html" aria-current="page">held descriptors</a>
+    <a href="lmcache-nfs-held-descriptors.html" aria-current="page">NFS and pNFS</a>
     <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
     <a href="lmcache-readplan-l2-analysis.html">findings</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / Held descriptors</p>
+<p class="breadcrumb"><a href="lmcache-readplan-l2.html">ReadPlan L2</a> / NFS and pNFS</p>
 <span class="eyebrow">For NFS and pNFS users of LMCache</span>
-<h1>Held descriptors: KV-cache reads without an open and close each time</h1>
+<h1>LMCache on NFS and pNFS: held descriptors and a faster NFS client</h1>
 <p class="lead">LMCache's native file connector opens, reads and closes a
 file for every KV-cache object it loads. On a network filesystem the open
 and the close are round trips to the server. A new option,
@@ -37,27 +52,90 @@ throughput from 37,926 to 140,427 object reads per second with 16
 clients in our lab, and removed close stalls of up to 3.3 seconds. On a
 local filesystem an open costs about a microsecond, so the gain there is
 small (4-5%).</p>
-<p>This page explains the option, its safety rules, our measurements and
-how to check it on your own deployment with one make target. It also
-describes three ways of reading page-cache hits that you can compare,
-and a Linux NFS client change that is in progress.</p>
+<div class="stat-grid">
+<div class="stat"><div class="val">3.7&times;</div><div class="label">object reads per second with 16 pNFS clients, held against open per read (140,427 vs 37,926)</div></div>
+<div class="stat"><div class="val cyan">4 &rarr; 0</div><div class="label">metadata-server operations per repeated object read on a Lattice pNFS server</div></div>
+<div class="stat"><div class="val amber">+64%</div><div class="label">NFS opens per second, 8 threads under one credential, with the client kernel change (8-vCPU VM; hardware A/B running)</div></div>
+</div>
+<p>This page is for anyone who runs LMCache on NFS or pNFS and wants to
+try these changes. It explains the option and its safety rule, shows
+our measurements, and gives one make target that repeats them on your
+own mount. It also covers <code>read_mode</code>, which chooses who
+copies objects that are already in the page cache, and a Linux NFS
+client change that removes lock contention when many threads open files
+under one credential, as an LMCache reader pool does. Every branch and
+commit is listed in <a href="#source">section 2</a>.</p>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol>
+<li><a href="#quickstart">Test it on your mount</a></li>
+<li><a href="#source">Branches and commits</a></li>
 <li><a href="#what">What the option does</a></li>
 <li><a href="#when">When it helps</a></li>
 <li><a href="#safety">What it assumes about your objects</a></li>
 <li><a href="#configure">Configure it</a></li>
 <li><a href="#results">Our measurements</a></li>
-<li><a href="#validate">Check it on your deployment</a></li>
+<li><a href="#validate">What the site profile measures</a></li>
 <li><a href="#read-mode">Compare the three read modes</a></li>
 <li><a href="#kernel">The NFS client change, and how to test it</a></li>
-<li><a href="#status">Status and source</a></li>
 <li><a href="#limits">Limits</a></li>
 </ol></div>
 
+<section id="quickstart">
+<h2>1. Test it on your mount</h2>
+<p>You need a Linux client with the NFS or pNFS mount you serve LMCache
+from, a C++ compiler, git, <a href="https://docs.astral.sh/uv/">uv</a>
+(or a Python that already has PyTorch, given in
+<code>CONFIG_KNLP_RPL2_PNFS_PYTHON</code>) and about 1.1 GiB free in a
+directory of that mount. The site profile runs as an ordinary user. It
+clones and builds LMCache's CPU extensions from the branch below, writes
+only into one subdirectory, <code>rpl2-site</code>, of the directory you
+give, and changes no mount, export or cache setting; delete that
+subdirectory to undo the run.</p>
+<pre class="steps-cmd"><code>git clone https://github.com/mcgrof/knlp.git && cd knlp
+make defconfig-rpl2-site
+make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+     RPL2_SITE=/mnt/pnfs/scratch</code></pre>
+<p><code>RPL2P_ROOT</code> holds the LMCache build and must be on a local
+disk; <code>RPL2_OUTPUT</code> receives the records; <code>RPL2_SITE</code>
+is the directory on your mount. The run ends with
+<code>site-summary.md</code>, which sets your figures beside ours. Three
+defconfigs cover the cases:</p>
+<div class="table-wrap"><table>
+<caption>Defconfigs for NFS and pNFS testing</caption>
+<tr><th scope="col">Defconfig</th><th scope="col">Needs</th><th scope="col">What it runs</th></tr>
+<tr><td class="hi">rpl2-site</td><td>Your mount, no root</td><td>Mount check, NFS RPCs per read, open per read against held descriptors, many reader processes, the three read modes, and optionally the kernel selftest (<a href="#validate">section 8</a>)</td></tr>
+<tr><td class="hi">rpl2-closure</td><td>Your mount, no root</td><td>Only the RPC count and the paired screen of open per read against held, with the held-descriptor branch</td></tr>
+<tr><td class="hi">rpl2-pnfs-lab</td><td>Root, one Linux host</td><td>Builds a Lattice pNFS metadata server, a data server and clients in network namespaces, then runs the lab measurements below; see the <a href="lmcache-readplan-l2-reproduce.html">reproduction page</a></td></tr>
+</table></div>
+<p>To try the options in your own LMCache deployment instead, build
+LMCache from the read-mode branch below and set
+<code>held_fd_capacity</code> in the <code>fs_native</code> adapter
+(<a href="#configure">section 6</a>). To test the NFS client change, see
+<a href="#kernel">section 10</a>.</p>
+</section>
+
+<section id="source">
+<h2>2. Branches and commits</h2>
+<p>None of this is merged upstream yet. Each defconfig pins the exact
+commit it builds and checks it after checkout.</p>
+<div class="table-wrap"><table class="branches">
+<caption>Where each change lives</caption>
+<tr><th scope="col">Change</th><th scope="col">Branch</th><th scope="col">Commit</th><th scope="col">Status</th></tr>
+<tr><td class="hi">Held descriptors (<code>held_fd_capacity</code>)</td><td><a href="https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-fs-native-held-fd">mcgrof/LMCache 2026-10-28-feature-fs-native-held-fd</a></td><td><code>fc836c130</code></td><td>Draft <a href="https://github.com/LMCache/LMCache/pull/6133">LMCache pull request 6133</a></td></tr>
+<tr><td class="hi">Held descriptors plus <code>read_mode</code></td><td><a href="https://github.com/mcgrof/LMCache/tree/2026-10-31-proto-fs-native-inline-reads">mcgrof/LMCache 2026-10-31-proto-fs-native-inline-reads</a></td><td><code>e76f8f181</code></td><td>Prototype for measurement; the site profile builds it</td></tr>
+<tr><td class="hi">NFSv4 client: state-owner locking, and the <code>nfs_open_scale</code> selftest</td><td><a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4-nfs">mcgrof/linux.git 2026-10-30-dmabuf-on-axboe-for-7.4-nfs</a></td><td>top four commits</td><td>Not posted; under test (<a href="#kernel">section 10</a>)</td></tr>
+<tr><td class="hi">Defconfigs and scripts</td><td><a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">mcgrof/knlp main, tools/reproduce/rpl2</a></td><td>main</td><td>Public</td></tr>
+</table></div>
+<p>The four kernel commits sit on top of a DMA-BUF series on that
+branch but do not depend on it; they apply unchanged to v7.3-rc7. The
+LMCache adapter documentation in either LMCache branch,
+<code>docs/source/mp/l2_storage/fs_native.rst</code>, describes both
+settings.</p>
+</section>
+
 <section id="what">
-<h2>1. What the option does</h2>
+<h2>3. What the option does</h2>
 <p>LMCache stores each KV-cache object as one file and publishes it with
 an atomic rename. The key names the object's content, so a published file
 never changes under its name. Without the option, every load opens the
@@ -82,7 +160,7 @@ same as any process that keeps a file open.</p>
 </section>
 
 <section id="when">
-<h2>2. When it helps</h2>
+<h2>4. When it helps</h2>
 <p>The option removes the cost of an open and a close. How much that is
 depends on the filesystem and on what the server does with them.</p>
 <div class="table-wrap"><table>
@@ -98,7 +176,7 @@ deployments. It is safe but nearly pointless on a local disk.</p>
 </section>
 
 <section id="safety">
-<h2>3. What it assumes about your objects</h2>
+<h2>5. What it assumes about your objects</h2>
 <p>A held descriptor keeps reading the file it opened, even after the
 name is removed or renamed over. That is correct because LMCache writes
 each object once, publishes it by rename and never rewrites it in place:
@@ -123,7 +201,7 @@ not start.</p>
 </section>
 
 <section id="configure">
-<h2>4. Configure it</h2>
+<h2>6. Configure it</h2>
 <p>Set the capacity in the <code>fs_native</code> L2 adapter. Size it for
 the hot set you want served without opens; each held descriptor costs one
 open file on the client and, on NFS version 4, one open state on the
@@ -136,7 +214,7 @@ open-state limit of your NFS server.</p>
 </section>
 
 <section id="results">
-<h2>5. Our measurements</h2>
+<h2>7. Our measurements</h2>
 <p>All runs completed every request and every digest check. The pNFS lab
 ran on one 16-core, 32-thread desktop host: a
 <a href="https://github.com/PEAK-AIO/pnfs-lattice">Lattice</a> metadata
@@ -167,6 +245,14 @@ held.</p>
 <p>N clients, each its own NFS client identity, read the same 16 hot
 objects, 16 per request, for 20 s from one start time. 256 KiB objects
 are read through the page cache, so the metadata path dominates.</p>
+<figure class="chart" id="chart-clients">
+<h3>Object reads per second as pNFS clients are added</h3>
+<p class="cap">Lattice pNFS lab, 256 KiB objects, 16 per request, 20 s per point</p>
+<ul class="legend" aria-hidden="true"></ul>
+<svg role="img" aria-labelledby="chart-clients-desc"></svg>
+<p id="chart-clients-desc" class="cap">Line chart. Open per read peaks at 44,527 reads per second with 4 clients and falls to 37,926 at 16. Held descriptors rise from 32,483 with one client to 140,427 with 16. The table below has every value.</p>
+<div class="tip" role="presentation"></div>
+</figure>
 <div class="table-wrap"><table>
 <caption>pNFS lab, 256 KiB objects, page cache after first touch</caption>
 <tr><th scope="col">Clients</th><th scope="col">Open per read: reads/s, p50</th><th scope="col">Held: reads/s, p50</th><th scope="col">Server ops per 1,000 reads (open, held)</th><th scope="col">Server CPU ms per 1,000 reads (open, held)</th></tr>
@@ -205,7 +291,7 @@ revision's single cache lock made one local reader 6% slower.</p>
 </section>
 
 <section id="validate">
-<h2>6. Check it on your deployment</h2>
+<h2>8. What the site profile measures</h2>
 <p>One profile runs the same measurements on a directory you already have,
 for example on a pNFS deployment with several data servers and many NVMe
 drives. It runs as an ordinary user and builds only LMCache's CPU
@@ -254,7 +340,7 @@ identities, run the profile on several client hosts at once.</p>
 </section>
 
 <section id="read-mode">
-<h2>7. Compare the three read modes</h2>
+<h2>9. Compare the three read modes</h2>
 <p>Once an object is in the page cache, reading it is a memory copy.
 LMCache's read pool hands each object to a worker thread, which costs a
 wakeup and a contended lock per object. A new adapter setting,
@@ -299,7 +385,7 @@ numbers.</p>
 </section>
 
 <section id="kernel">
-<h2>8. The NFS client change, and how to test it on bigger clients</h2>
+<h2>10. The NFS client change, and how to test it</h2>
 <p>Profiling plain NFSv4.2 opens showed a spin lock taking 10% of all
 cycles, under the client's state-owner code. A state owner is the NFSv4
 identity a client opens files under, one per credential. Two locks are
@@ -307,8 +393,9 @@ involved: the per-server <code>clp-&gt;cl_lock</code>, which every open to
 that server from the host takes to find its state owner, and the state
 owner's own <code>so_lock</code>, which every open and close under one
 credential takes.</p>
-<p>Three Linux kernel commits on v7.3-rc7 address the first lock and
-measure the result:</p>
+<p>Four Linux kernel commits address both locks and measure the
+result. They are the top four commits of the kernel branch in
+<a href="#source">section 2</a> and apply unchanged to v7.3-rc7.</p>
 <ol>
 <li><strong>selftests: filesystems: add an NFS open scaling test.</strong>
 <code>nfs_open_scale</code> opens and closes a set of small files under an
@@ -328,41 +415,67 @@ Owners are freed after an RCU grace period.</li>
 <li><strong>NFSv4: do not scan the state owner LRU on every open.</strong>
 The idle-owner scan is skipped while the list is empty and otherwise runs
 at most once a second per server.</li>
+<li><strong>NFSv4: protect the open counts with a per-state lock.</strong>
+Each open file's state gets its own lock for its open counts and mode,
+which the cached-open, open-stateid update and close paths took under
+the owner's <code>so_lock</code>. Opens of different files under one
+credential no longer share a lock. <code>so_lock</code> keeps protecting
+the owner's list of open files.</li>
 </ol>
 <p>We measured them as an A/B on one 8-vCPU virtual machine, NFSv4.2 over
 loopback to a Linux server in the same machine with read delegations
 granted, so no OPEN reached the server after the first open of each file.
-Boots alternated between the base kernel (v7.3-rc7 with the selftest) and
-the patched one, six runs per cell:</p>
+Boots alternated between three kernels, two boots each, three runs per
+boot: the base (v7.3-rc7 with the selftest), commits 2 and 3, and all
+four commits.</p>
+<figure class="chart" id="chart-kernel">
+<h3>Opens per second, threads sharing one credential</h3>
+<p class="cap">nfs_open_scale on an 8-vCPU virtual machine, median of six runs per bar</p>
+<ul class="legend" aria-hidden="true"></ul>
+<svg role="img" aria-labelledby="chart-kernel-desc"></svg>
+<p id="chart-kernel-desc" class="cap">Bar chart. At 8 threads the base kernel opens 1.32 million files per second, commits 2 and 3 1.27 million, and all four commits 2.16 million. At 1 to 4 threads the three kernels are within 6% of each other. The table below has every value.</p>
+<div class="tip" role="presentation"></div>
+</figure>
 <div class="table-wrap"><table>
-<caption>nfs_open_scale, opens per second, median of six runs</caption>
-<tr><th scope="col">Credentials</th><th scope="col">Threads</th><th scope="col">Base</th><th scope="col">Patched</th><th scope="col">Change</th></tr>
-<tr><td>One shared</td><td>1</td><td>393,134</td><td>382,077</td><td>&minus;2.8%</td></tr>
-<tr><td>One shared</td><td>8</td><td>1,311,758</td><td>1,307,902</td><td>&minus;0.3%</td></tr>
-<tr><td>One per thread</td><td>4</td><td>1,223,906</td><td>1,214,638</td><td>&minus;0.8%</td></tr>
-<tr><td>One per thread</td><td>8</td><td>1,908,312</td><td>2,081,534</td><td>+9.1%</td></tr>
+<caption>nfs_open_scale, opens per second, median of six runs [range]</caption>
+<tr><th scope="col">Credentials</th><th scope="col">Threads</th><th scope="col">Base</th><th scope="col">Commits 2-3</th><th scope="col">All four</th><th scope="col">All four vs base</th></tr>
+<tr><td>One shared</td><td>1</td><td>388,185</td><td>391,208</td><td>399,210</td><td>+2.8%</td></tr>
+<tr><td>One shared</td><td>2</td><td>706,205</td><td>713,240</td><td>721,212</td><td>+2.1%</td></tr>
+<tr><td>One shared</td><td>4</td><td>1,252,326</td><td>1,249,964</td><td>1,328,593</td><td>+6.1%</td></tr>
+<tr><td>One shared</td><td>8</td><td>1,321,686 [1.27-1.48M]</td><td>1,274,300 [0.91-1.46M]</td><td>2,163,788 [1.99-2.17M]</td><td>+63.7%</td></tr>
+<tr><td>One per thread</td><td>4</td><td>1,205,593</td><td>1,230,073</td><td>1,255,808</td><td>+4.2%</td></tr>
+<tr><td>One per thread</td><td>8</td><td>1,757,260 [1.06-1.95M]</td><td>2,060,338 [1.85-2.07M]</td><td>2,128,936 [2.09-2.15M]</td><td>+21.2%</td></tr>
 </table></div>
 <p><strong>With one shared credential, which is how an LMCache reader pool
-opens files, the change gives no gain</strong>; every thread count is
-within the run-to-run spread, slightly below base. Profiles show why: on
-the base kernel 36.8% of cycles are in the spin lock slow path, and
-almost all of it is the owner's <code>so_lock</code>
-(<code>nfs4_try_open_cached</code>, <code>nfs4_get_open_state</code>,
-<code>__nfs4_close</code>, <code>update_open_stateid</code>), while
-<code>nfs4_get_state_owner</code> is 1.0%. With a credential per thread the
-<code>cl_lock</code> sites fall from about 12% of cycles to about 3%, as
-designed, and throughput rises 9.1% at 8 threads only, with a wide
-patched range (1.16 to 2.11 million), so that is weak evidence. A kernel
-with lock, RCU, memory and list debugging enabled showed no report under
-owner churn. The next kernel step is the per-owner lock itself. We make no
-speed claim for LMCache from this change.</p>
+opens files, the per-state lock lifts opens per second 64% at 8
+threads</strong>, and the slowest of its six runs (1.99 million) beats the
+fastest base run (1.48 million). Commits 2 and 3 alone give nothing in
+that case. Profiles show why: on the kernel with commits 2 and 3, 20.6%
+of cycles at 8 threads are in the spin lock slow path, nearly all of it
+on <code>so_lock</code> (<code>nfs4_try_open_cached</code>,
+<code>nfs4_get_open_state</code>, <code>__nfs4_close</code>,
+<code>update_open_stateid</code>). With all four commits the slow path
+drops out of the top three symbols; what remains is the list insert and
+delete of an open state, about 3% of cycles. With a credential per thread
+there is no shared owner, and commits 2 and 3 give most of the gain by
+taking <code>cl_lock</code> off the lookup.</p>
+<p>A kernel with lock, RCU, memory and list debugging (lockdep, KASAN)
+ran owner churn, uid rotation, both credential modes and remounts with all
+four commits and reported nothing. Those runs open files only for read;
+opens for write and state recovery after a lease expiry are not yet
+tested. The gain appears at 8 threads, where the machine's two virtual
+NUMA nodes both take part, so a larger client should show more. We are
+now repeating the A/B on two 16-core hosts, as an NFS client of a local
+Linux server and of a server across a 1 Gb/s link, and will add the
+result here. We make no LMCache speed claim from the virtual machine.</p>
 <p><strong>Test it on a client with more cores.</strong> A shared lock
 costs more as cores grow, and our 8-vCPU machine is small. A site can run
 the same A/B on its own clients against its Lattice or NFS mount:</p>
 <ol>
 <li>Build two client kernels from the same base, one without and one
-with the two NFSv4 commits, both with the selftest
-(<code>make -C tools/testing/selftests TARGETS=filesystems/nfs</code>).</li>
+with the four commits; build the selftest from the patched tree
+(<code>make -C tools/testing/selftests TARGETS=filesystems/nfs</code>) and
+use the same binary on both kernels.</li>
 <li>Boot the base kernel and run, on a directory of the mount used by
 nothing else,
 <code>nfs_open_scale -d &lt;dir&gt; -t 1,2,4,8,16,32 -f 64 -s 4</code>
@@ -377,30 +490,16 @@ delegations, and one profile per kernel at the top thread count
 (<code>perf record -g</code>, then the callers of
 <code>native_queued_spin_lock_slowpath</code>).</li>
 </ol>
-<p>Compare the shared-credential rows with ours: if your client also
-shows no gain there, <code>so_lock</code> dominates for you too. A gain
-in the per-thread rows that grows with cores would say the change is
-worth more on large clients than on our test machine. The patches and
-the selftest are pending publication by the author; this section will
-link them when they are posted.</p>
+<p>Compare the shared-credential rows with ours. A gain that grows with
+cores in those rows says the change is worth more on large clients than
+on our test machine; the per-thread rows separate the client-wide lock
+from the per-owner one. The site profile's records and these runs are
+what we would like to see from other clients.</p>
 </section>
 
-<section id="status">
-<h2>9. Status and source</h2>
-<p>The option is in LMCache's native file connector on the branch
-<a href="https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-fs-native-held-fd">2026-10-28-feature-fs-native-held-fd</a>,
-proposed upstream as the draft
-<a href="https://github.com/LMCache/LMCache/pull/6133">LMCache pull request
-6133</a>, which is not merged. The sharded-cache revision, with one open
-per file at a time, and the read-mode settings are on the branch
-<code>2026-10-31-proto-fs-native-inline-reads</code>, which the site
-profile builds. The adapter documentation in that tree,
-<code>docs/source/mp/l2_storage/fs_native.rst</code>, describes both
-settings.</p>
-</section>
 
 <section id="limits">
-<h2>10. Limits</h2>
+<h2>11. Limits</h2>
 <p>Our pNFS figures come from one metadata server and one data server on
 one host, with a small RonDB configuration, and a remote client at
 1 Gb/s. The many-client plateau describes that shared host; a dedicated
@@ -418,5 +517,106 @@ token result.</p>
 &nbsp;&middot;&nbsp; <a href="kmesh.html">KMesh</a>
 </footer>
 </main>
+<script>
+(() => {
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const fmt = v => v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? Math.round(v / 1e3) + "k" : String(v);
+  const full = v => v.toLocaleString("en-US");
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  function frame(fig, series) {
+    const legend = fig.querySelector(".legend");
+    series.forEach(s => {
+      const li = document.createElement("li");
+      li.innerHTML = '<i style="background:' + css(s.color) + '"></i>' + s.name;
+      legend.appendChild(li);
+    });
+    const svg = fig.querySelector("svg");
+    // Draw in the container's own pixels so text stays 12px on a phone.
+    const W = Math.round(Math.max(320, Math.min(860, (fig.clientWidth - 36) || 860)));
+    return { svg, tip: fig.querySelector(".tip"), W, H: W < 600 ? 280 : 340, narrow: W < 600 };
+  }
+  function showTip(fig, tip, evt, html) {
+    const r = fig.getBoundingClientRect();
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    let x = evt.clientX - r.left + 14, y = evt.clientY - r.top - 10;
+    if (x + tip.offsetWidth > r.width - 8) x = evt.clientX - r.left - tip.offsetWidth - 14;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  }
+  function axes(svg, W, H, m, ymax, ticks, xs, xlabel, ylabel) {
+    const y = v => H - m.b - (v / ymax) * (H - m.t - m.b);
+    ticks.forEach(t => {
+      el("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: css("--grid"), "stroke-width": 1 }, svg);
+      el("text", { x: m.l - 8, y: y(t) + 4, "text-anchor": "end" }, svg, fmt(t));
+    });
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, svg, xlabel);
+    el("text", { x: 12, y: m.t - 10 }, svg, ylabel);
+    return y;
+  }
+  function lineChart(id, xs, series, ymax, ticks, xlabel, ylabel) {
+    const fig = document.getElementById(id), { svg, tip, W, H, narrow } = frame(fig, series);
+    const m = { l: 48, r: narrow ? 78 : 110, t: 28, b: 42 };
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    const y = axes(svg, W, H, m, ymax, ticks, xs, xlabel, ylabel);
+    const x = i => m.l + (i / (xs.length - 1)) * (W - m.l - m.r);
+    xs.forEach((v, i) => el("text", { x: x(i), y: H - m.b + 18, "text-anchor": "middle" }, svg, v));
+    series.forEach(s => {
+      const d = s.values.map((v, i) => (i ? "L" : "M") + x(i) + " " + y(v)).join(" ");
+      el("path", { d, fill: "none", stroke: css(s.color), "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+      s.values.forEach((v, i) => el("circle", { cx: x(i), cy: y(v), r: 4.5, fill: css(s.color), stroke: css("--card"), "stroke-width": 2 }, svg));
+      const last = s.values.length - 1;
+      el("text", { x: x(last) + 10, y: y(s.values[last]) + 4, class: "lbl" }, svg, s.name.split(" ")[0] + " " + fmt(s.values[last]));
+    });
+    const cross = el("line", { y1: m.t, y2: H - m.b, stroke: css("--muted"), "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
+    xs.forEach((v, i) => {
+      const w = (W - m.l - m.r) / (xs.length - 1);
+      const hit = el("rect", { x: x(i) - w / 2, y: m.t, width: w, height: H - m.t - m.b, fill: "transparent" }, svg);
+      hit.addEventListener("mousemove", e => {
+        cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+        showTip(fig, tip, e, "<b>" + v + " " + xlabel.toLowerCase().replace(/s$/, v === 1 ? "" : "s") + "</b><br>" +
+          series.map(s => '<span style="color:' + css(s.color) + '">&#9632;</span> ' + s.name + ": " + full(s.values[i])).join("<br>"));
+      });
+      hit.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+    });
+  }
+  function barChart(id, xs, series, ymax, ticks, xlabel, ylabel) {
+    const fig = document.getElementById(id), { svg, tip, W, H } = frame(fig, series);
+    const m = { l: 48, r: 12, t: 28, b: 42 };
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    const y = axes(svg, W, H, m, ymax, ticks, xs, xlabel, ylabel);
+    const group = (W - m.l - m.r) / xs.length, gap = 2, bw = Math.min(34, (group * 0.7 - gap * (series.length - 1)) / series.length);
+    xs.forEach((v, i) => {
+      const gx = m.l + i * group + (group - (bw * series.length + gap * (series.length - 1))) / 2;
+      el("text", { x: m.l + i * group + group / 2, y: H - m.b + 18, "text-anchor": "middle" }, svg, v);
+      series.forEach((s, j) => {
+        const val = s.values[i], top = y(val), bx = gx + j * (bw + gap), h = H - m.b - top, r = Math.min(4, h);
+        el("path", { d: "M" + bx + " " + (H - m.b) + "V" + (top + r) + "Q" + bx + " " + top + " " + (bx + r) + " " + top +
+          "H" + (bx + bw - r) + "Q" + (bx + bw) + " " + top + " " + (bx + bw) + " " + (top + r) + "V" + (H - m.b) + "Z", fill: css(s.color) }, svg);
+        if (i === xs.length - 1 && j === series.length - 1) el("text", { x: bx + bw / 2, y: top - 6, "text-anchor": "middle", class: "lbl" }, svg, fmt(val));
+        const hit = el("rect", { x: bx - 1, y: m.t, width: bw + 2, height: H - m.t - m.b, fill: "transparent" }, svg);
+        hit.addEventListener("mousemove", e => showTip(fig, tip, e, "<b>" + v + " threads</b><br>" + s.name + ": " + full(val)));
+        hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      });
+    });
+  }
+  lineChart("chart-clients", [1, 2, 4, 8, 16], [
+    { name: "Open per read", color: "--s1", values: [12276, 17517, 44527, 41398, 37926] },
+    { name: "Held descriptors", color: "--s2", values: [32483, 61392, 103642, 139479, 140427] },
+  ], 150000, [0, 50000, 100000, 150000], "Clients", "reads/s");
+  barChart("chart-kernel", [1, 2, 4, 8], [
+    { name: "Base", color: "--s1", values: [388185, 706205, 1252326, 1321686] },
+    { name: "Commits 2-3", color: "--s2", values: [391208, 713240, 1249964, 1274300] },
+    { name: "All four commits", color: "--s3", values: [399210, 721212, 1328593, 2163788] },
+  ], 2500000, [0, 500000, 1000000, 1500000, 2000000, 2500000], "Threads", "opens/s");
+})();
+</script>
 </body>
 </html>

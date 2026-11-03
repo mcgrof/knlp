@@ -16,7 +16,7 @@
     <span class="spacer"></span>
     <a href="lmcache-readplan-l2.html">overview</a>
     <a href="lmcache-readplan-l2-results.html" aria-current="page">results</a>
-    <a href="lmcache-nfs-held-descriptors.html">held descriptors</a>
+    <a href="lmcache-nfs-held-descriptors.html">NFS and pNFS</a>
     <a href="lmcache-readplan-l2-reproduce.html">reproduce</a>
     <a href="lmcache-readplan-l2-analysis.html">findings</a>
   </nav>
@@ -318,20 +318,20 @@ The B300 FP8 figure follows the majority of sources.</p>
 <h2>9. The NFS client's own open cost</h2>
 <p>On plain NFSv4.2 with read delegations, an open sends nothing to the
 server but costs the client 11.4 µs against 1.07 µs on local XFS, and a
-spin lock is 10% of all cycles under the client's state-owner code. Three
-Linux kernel commits on v7.3-rc7 add an open-scaling selftest,
-<code>nfs_open_scale</code>, and take the per-server lock off the
-state-owner lookup for owners already in use. On an 8-vCPU virtual
-machine with loopback NFSv4.2, alternating boots and six runs per cell,
-the change gave no gain when all threads share one credential (1,311,758
-against 1,307,902 opens per second at 8 threads, &minus;0.3%), because
-that case serializes on the state owner's own lock. With a credential
-per thread it gave +9.1% at 8 threads only, with a wide range. A debug
-kernel showed no lock, RCU or memory report. LMCache's reader pool opens
-under one credential, so we claim no LMCache gain from it. The details
-and an A/B procedure for larger clients are on the
-<a href="lmcache-nfs-held-descriptors.html#kernel">held descriptors
-page</a>; the patches are pending publication by their author.</p>
+spin lock is 10% of all cycles under the client's state-owner code. Four
+Linux kernel commits add an open-scaling selftest,
+<code>nfs_open_scale</code>, take the per-server lock off the state-owner
+lookup for owners already in use, and give each open file's state its own
+lock for its open counts, which every open and close under one credential
+took under the state owner's lock. On an 8-vCPU virtual machine with
+loopback NFSv4.2, alternating boots and six runs per cell, all four
+commits raised opens per second 64% at 8 threads sharing one credential
+(1,321,686 to 2,163,788), the case of LMCache's reader pool; the lookup
+change alone gave nothing there. A kernel with lock, RCU and memory
+debugging reported nothing. The A/B on two 16-core hosts is running. The
+details, the branch and an A/B procedure for larger clients are on the
+<a href="lmcache-nfs-held-descriptors.html#kernel">NFS and pNFS
+page</a>.</p>
 </section>
 
 <section id="not-reproducible">
