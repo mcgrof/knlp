@@ -31,8 +31,14 @@ repaired whole-patient file is also written as <stem>_master.parquet,
 row for row in source order, for tools that index the source by row
 (the fitted start's capture).
 
+EXCLUDE, when set, is a JSON file whose rows (a list of objects with a
+row index) are removed from the train and development files: an
+eligibility overlay on the frozen split. Group assignment and the
+confirmation file are unchanged; an exclusion that names a confirmation
+row stops the run.
+
 Env: PARQUET, MANIFEST (cas_freeze_split.py JSON), OUT_DIR,
-CONF_GROUPS (64), CONF_SEED (0), REPAIRS (optional).
+CONF_GROUPS (64), CONF_SEED (0), REPAIRS (optional), EXCLUDE (optional).
 """
 
 import hashlib
@@ -52,6 +58,7 @@ OUT_DIR = Path(os.environ["OUT_DIR"])
 CONF_GROUPS = int(os.environ.get("CONF_GROUPS", "64"))
 CONF_SEED = int(os.environ.get("CONF_SEED", "0"))
 REPAIRS = os.environ.get("REPAIRS", "")
+EXCLUDE = os.environ.get("EXCLUDE", "")
 
 
 def norm(s):
@@ -123,7 +130,7 @@ def main():
             assert shas[i] == r["old_row_sha"], f"repair row {i} source differs"
             if r["status"] == "complete":
                 repaired[i] = rt.slice(by_sha[r["new_row_sha"]], 1)
-            else:
+            elif r["status"] in ("still_capped", "failed"):
                 unresolved.append(dict(row=i, status=r["status"]))
         full = pa.concat_tables(
             [
@@ -136,6 +143,17 @@ def main():
         for i in repaired:
             assert shas2[i] != shas[i]
         shas = shas2
+
+    excluded, train0, dev0 = [], list(train), list(dev)
+    if EXCLUDE:
+        ex = json.loads(Path(EXCLUDE).read_text())
+        assert ex["source_sha256"] == man["parquet_sha256"], "exclusion source"
+        excluded = sorted({r["row"] for r in ex["rows"]})
+        confset = set(conf)
+        assert not confset & set(excluded), "exclusions may not touch confirmation"
+        drop = set(excluded)
+        train = [i for i in train if i not in drop]
+        dev = [i for i in dev if i not in drop]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = Path(PARQUET).stem
@@ -150,6 +168,16 @@ def main():
         "settings": dict(CONF_GROUPS=CONF_GROUPS, CONF_SEED=CONF_SEED),
         "files": {},
     }
+    if EXCLUDE:
+        rec["exclusions"] = {
+            "file": os.path.abspath(EXCLUDE),
+            "sha256": file_sha(EXCLUDE),
+            "rows": excluded,
+            "by_file": {
+                n: sum(1 for i in excluded if i in set(idx0))
+                for n, idx0 in (("train", train0), ("dev", dev0))
+            },
+        }
     if REPAIRS:
         master = OUT_DIR / f"{stem}_master.parquet"
         pq.write_table(full, master)
@@ -192,7 +220,7 @@ def main():
             "row_sha": back_shas,
             "group_ids": gids,
         }
-    assert sum(len(v) for v in parts.values()) == len(users)
+    assert sum(len(v) for v in parts.values()) + len(excluded) == len(users)
     out = OUT_DIR / f"{stem}_materialized.json"
     out.write_text(json.dumps(rec, indent=1))
     summary = {
