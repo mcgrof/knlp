@@ -1,0 +1,39 @@
+# The read-plan closing screen, at one position you mount.
+#
+# The read-plan question closed on one measurement: how much of a whole
+# 8 MiB object read is per-object control work (open, close, attribute
+# checks) rather than payload.  This profile measures it with the
+# published held-descriptor build: NFS RPCs per object read, then paired
+# blocks of open per read against held descriptors, which remove that
+# work.  Run it once per position, with a label:
+#
+#   make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+#        RPL2_SITE=/local/xfs/dir            # position: local
+#   ... RPL2_SITE=/mnt/nfs-loopback/dir      # NFS export of this host
+#   ... RPL2_SITE=/mnt/nfs-remote/dir        # NFS export over the network
+#
+# Change CONFIG_KNLP_RPL2_SITE_LABEL to match each position.  As an
+# ordinary user it touches only rpl2-site inside the directory given.
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_SITE=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_PYTHON=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-28-feature-fs-native-held-fd"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="fc836c1303eaced6363fe79ec59e5cba5edf8eaa"
+CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY=64
+CONFIG_KNLP_RPL2_PNFS_BLOCKS=3
+CONFIG_KNLP_RPL2_PNFS_REQUESTS=200
+CONFIG_KNLP_RPL2_PNFS_CLIENTS="1"
+CONFIG_KNLP_RPL2_PNFS_SECONDS=20
+CONFIG_KNLP_RPL2_SITE_DIR=""
+CONFIG_KNLP_RPL2_SITE_LABEL="local"
+CONFIG_KNLP_RPL2_SITE_DATA_SERVERS=""
+CONFIG_KNLP_RPL2_SITE_DRIVES=""
+CONFIG_KNLP_RPL2_SITE_MDS_METRICS=""
+CONFIG_KNLP_RPL2_SITE_FINGERPRINT=y
+CONFIG_KNLP_RPL2_SITE_SCREEN=y
+# CONFIG_KNLP_RPL2_SITE_SWEEP is not set
+# CONFIG_KNLP_RPL2_SITE_READMODES is not set
+# CONFIG_KNLP_RPL2_SITE_KERNEL is not set

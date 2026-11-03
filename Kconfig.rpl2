@@ -69,6 +69,24 @@ config KNLP_RPL2_PNFS_REMOTE
 	  host, list this host's address in KNLP_RPL2_PNFS_REMOTE_CLIENTS
 	  before bringing the lab up.
 
+config KNLP_RPL2_SITE
+	bool "Your own filesystem: held descriptors, read modes and NFS RPCs"
+	help
+	  Runs on a directory you already have, for example on a pNFS
+	  deployment with several data servers and many NVMe drives, as an
+	  ordinary user.  Nothing is mounted, exported or reconfigured, no
+	  cache is dropped, and every file goes into one subdirectory,
+	  rpl2-site, of the directory you give.  It builds LMCache only.
+
+	  The steps record the filesystem and NFS mount options, the NFS
+	  RPCs each object read sends (from the client's own per-mount
+	  counters), a paired screen of open per read against held
+	  descriptors, many reader processes on this host, and the three
+	  read_mode settings at several requests in flight.  The defconfig
+	  rpl2-closure runs only the fingerprint and the screen with the
+	  published held-descriptor build, which reproduces the read-plan
+	  closing measurement at any position you mount.
+
 endchoice
 
 config KNLP_RPL2_TARGET_DIR
@@ -138,7 +156,7 @@ config KNLP_RPL2_SEED
 	default 1
 	depends on KNLP_RPL2_MOUNTED_FS
 
-if KNLP_RPL2_PNFS_LAB || KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_PNFS_REMOTE
+if KNLP_RPL2_PNFS_LAB || KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_PNFS_REMOTE || KNLP_RPL2_SITE
 
 config KNLP_RPL2_PNFS_ROOT
 	string "Task root directory for sources, builds and lab state"
@@ -166,14 +184,21 @@ config KNLP_RPL2_PNFS_LMCACHE_REPO
 
 config KNLP_RPL2_PNFS_LMCACHE_REF
 	string "LMCache branch"
+	default "2026-10-31-proto-fs-native-inline-reads" if KNLP_RPL2_SITE
 	default "2026-10-28-feature-fs-native-held-fd"
 
 config KNLP_RPL2_PNFS_LMCACHE_COMMIT
 	string "LMCache commit, checked after checkout"
+	default "e76f8f181c954de6ba8a80d013aa2fba0bbe8faf" if KNLP_RPL2_SITE
 	default "fc836c1303eaced6363fe79ec59e5cba5edf8eaa"
+	help
+	  The read_mode steps need a build with read_mode (the site
+	  default).  The published held-descriptor build has no read_mode;
+	  with it, turn the read_mode step off.
 
 config KNLP_RPL2_PNFS_PREFIX
 	string "Lab name prefix for namespaces, units and interfaces"
+	depends on !KNLP_RPL2_SITE
 	default "rpl2p"
 	help
 	  At most 6 characters.  Two labs on one host need different
@@ -181,6 +206,7 @@ config KNLP_RPL2_PNFS_PREFIX
 
 config KNLP_RPL2_PNFS_NET
 	string "Private /24 subnet of the lab, first three octets"
+	depends on !KNLP_RPL2_SITE
 	default "10.247.0"
 	help
 	  Must not be routed on the host already; the lab refuses to start
@@ -190,7 +216,7 @@ config KNLP_RPL2_PNFS_DATA_SERVERS
 	int "Data servers"
 	range 1 8
 	default 1
-	depends on !KNLP_RPL2_PNFS_REMOTE
+	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE
 
 config KNLP_RPL2_PNFS_HELD_CAPACITY
 	int "held_fd_capacity for the held-descriptor arm"
@@ -209,22 +235,114 @@ config KNLP_RPL2_PNFS_REQUESTS
 config KNLP_RPL2_PNFS_CLIENTS
 	string "Client counts for the sweep"
 	default "1 2 4 8 16"
-	depends on KNLP_RPL2_PNFS_SWEEP
+	depends on KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_SITE
+	help
+	  In the site profile these are reader processes on this host.
+	  They share this host's NFS client identity, unlike the lab's
+	  clients, which each have their own.
 
 config KNLP_RPL2_PNFS_SECONDS
 	int "Seconds per sweep cell"
 	default 20
-	depends on KNLP_RPL2_PNFS_SWEEP
+	depends on KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_SITE
 
 config KNLP_RPL2_PNFS_SWEEP_FIXTURE
 	string "Sweep fixture: rpl2-256k (metadata-bound) or rpl2-8m"
 	default "rpl2-256k"
 	depends on KNLP_RPL2_PNFS_SWEEP
 
+if KNLP_RPL2_SITE
+
+config KNLP_RPL2_SITE_DIR
+	string "Existing writable directory on the filesystem under test"
+	default ""
+	help
+	  The run creates rpl2-site inside it and touches nothing else.
+	  It needs about 1.1 GiB free.  Override with RPL2_SITE=/path on
+	  the make command.
+
+config KNLP_RPL2_SITE_LABEL
+	string "A name for this position or deployment, recorded only"
+	default ""
+	help
+	  For example local, loopback, remote-1g or site-a.
+
+config KNLP_RPL2_SITE_DATA_SERVERS
+	string "Data servers behind the mount, recorded only"
+	default ""
+
+config KNLP_RPL2_SITE_DRIVES
+	string "NVMe drives behind the mount, recorded only"
+	default ""
+
+config KNLP_RPL2_SITE_MDS_METRICS
+	string "Lattice MDS metrics URL, read before and after each sweep cell"
+	default ""
+	help
+	  For example http://mds:9090/metrics.  Empty skips the server
+	  side; the client's own RPC counts are always recorded.
+
+config KNLP_RPL2_SITE_FINGERPRINT
+	bool "Record NFS RPCs per object read, stock and held"
+	default y
+
+config KNLP_RPL2_SITE_SCREEN
+	bool "Paired screen: open per read against held descriptors"
+	default y
+
+config KNLP_RPL2_SITE_SWEEP
+	bool "Many reader processes at once, stock and held"
+	default y
+
+config KNLP_RPL2_SITE_READMODES
+	bool "read_mode pool, inline and adaptive"
+	default y
+
+config KNLP_RPL2_SITE_INFLIGHT
+	string "Requests in flight for the read_mode step"
+	default "1 4 16"
+	depends on KNLP_RPL2_SITE_READMODES
+
+config KNLP_RPL2_SITE_MODES
+	string "read_mode values to run"
+	default "pool inline adaptive"
+	depends on KNLP_RPL2_SITE_READMODES
+
+config KNLP_RPL2_SITE_BUSY_TARGET
+	int "read_busy_target for adaptive"
+	default 16
+	depends on KNLP_RPL2_SITE_READMODES
+
+config KNLP_RPL2_SITE_KERNEL
+	bool "NFS client open scaling selftest (nfs_open_scale)"
+	default n
+	help
+	  Runs the kernel selftest nfs_open_scale on the directory: N
+	  threads open and close 64 small files and it reports opens per
+	  second at each thread count, with the threads sharing one
+	  credential as an LMCache reader pool does.  It is the A/B test
+	  for an NFSv4 client change to state-owner locking: boot the
+	  base and the patched kernel in turn on the client and run this
+	  step on each.  The step is skipped unless
+	  KNLP_RPL2_SITE_KERNEL_SELFTEST names the built binary.  The
+	  kernel change and the selftest are not yet published.
+
+config KNLP_RPL2_SITE_KERNEL_SELFTEST
+	string "Path to the open/close selftest binary"
+	default ""
+	depends on KNLP_RPL2_SITE_KERNEL
+
+config KNLP_RPL2_SITE_KERNEL_THREADS
+	string "Thread counts for the selftest, comma separated"
+	default "1,2,4,8"
+	depends on KNLP_RPL2_SITE_KERNEL
+
+endif
+
 config KNLP_RPL2_PNFS_REMOTE_CLIENTS
 	string "Addresses of client hosts allowed to mount this lab"
 	default ""
-	depends on !KNLP_RPL2_PNFS_REMOTE
+	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE
 	help
 	  Space-separated.  When set, bringing the lab up also adds the
 	  route back to those hosts and two accept rules for the lab subnet

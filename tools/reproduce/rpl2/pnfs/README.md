@@ -2,7 +2,9 @@
 
 These scripts build a pNFS system on one Linux host and compare stock
 LMCache with LMCache's native file connector keeping read descriptors open
-(`held_fd_capacity`). The usual entry points are the knlp defconfigs
+(`held_fd_capacity`). The same readers also run on a filesystem you
+already have, without root, through `site.sh` (the `rpl2-site` and
+`rpl2-closure` defconfigs). The usual entry points are the knlp defconfigs
 `rpl2-pnfs-lab`, `rpl2-pnfs-sweep` and `rpl2-pnfs-remote`. The
 [reproduction page](../../../../docs/lmcache-readplan-l2-reproduce.html#pnfs-lab)
 explains them; this file maps the scripts.
@@ -24,6 +26,9 @@ explains them; this file maps the scripts.
 | [sweep.sh](sweep.sh) | Many clients, each its own NFS client identity, reading the same objects at once. |
 | [remote-client.sh](remote-client.sh), [remote-holder.sh](remote-holder.sh) | A client on another host, mounted in a private mount namespace. |
 | [summarize.py](summarize.py) | Screen, sweep and fingerprint summaries. |
+| [site.sh](site.sh) | The site and closure profiles: the same readers on a directory you already have, as an ordinary user. Steps doctor, fixture, fingerprint, screen, sweep, readmodes and kernel. |
+| [mountstats.py](mountstats.py) | Per-operation NFS RPC counts for one mount from `/proc/self/mountstats`, without root; `native_reader.py --mountstats` records them per phase. |
+| [site_summary.py](site_summary.py) | Summary of a site run beside the reference results, each with its scope. |
 | [tests/](tests/) | Unit tests on synthetic records (`make rpl2-pnfs-test`). |
 
 ## Safety

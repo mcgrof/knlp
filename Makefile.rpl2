@@ -6,6 +6,8 @@
 #   make defconfig-rpl2-pnfs-lab    pNFS lab on one host: stock vs held
 #   make defconfig-rpl2-pnfs-sweep  pNFS lab: many clients, shared objects
 #   make defconfig-rpl2-pnfs-remote client for a lab on another host
+#   make defconfig-rpl2-site        your own NFS or pNFS mount, no root
+#   make defconfig-rpl2-closure     read-plan closing screen at a mount
 #
 # Plain `make` then runs the selected profile.  The mounted-filesystem
 # profile needs two directories outside the source tree, given in the
@@ -36,11 +38,39 @@ RPL2_PNFS_SUDO = sudo -E env $(RPL2_PNFS_ENV)
 RPL2_PNFS_BIN = $(RPL2P_ROOT)/bin
 RPL2_PNFS_CAP = $(CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY)
 
+# Site profile: an existing directory, ordinary user, no root.  One run
+# directory holds every step; give RPL2_SITE_RUN to add steps to it.
+RPL2_SITE ?= $(call unq,$(CONFIG_KNLP_RPL2_SITE_DIR))
+RPL2_SITE_RUN ?= $(RPL2_PNFS_OUT)/site-$(RPL2_PNFS_STAMP)
+RPL2_SITE_STEPS = doctor fixture \
+	$(if $(filter y,$(CONFIG_KNLP_RPL2_SITE_FINGERPRINT)),fingerprint) \
+	$(if $(filter y,$(CONFIG_KNLP_RPL2_SITE_SCREEN)),screen) \
+	$(if $(filter y,$(CONFIG_KNLP_RPL2_SITE_SWEEP)),sweep) \
+	$(if $(filter y,$(CONFIG_KNLP_RPL2_SITE_READMODES)),readmodes) \
+	$(if $(filter y,$(CONFIG_KNLP_RPL2_SITE_KERNEL)),kernel)
+RPL2_SITE_ENV = RPL2P_ROOT="$(RPL2P_ROOT)" SITE_DIR="$(RPL2_SITE)" \
+	CAP=$(RPL2_PNFS_CAP) BLOCKS=$(CONFIG_KNLP_RPL2_PNFS_BLOCKS) \
+	REQS=$(CONFIG_KNLP_RPL2_PNFS_REQUESTS) \
+	CLIENTS="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_CLIENTS))" \
+	SECS=$(CONFIG_KNLP_RPL2_PNFS_SECONDS) \
+	INFLIGHT="$(call unq,$(CONFIG_KNLP_RPL2_SITE_INFLIGHT))" \
+	MODES="$(call unq,$(CONFIG_KNLP_RPL2_SITE_MODES))" \
+	BUSY=$(CONFIG_KNLP_RPL2_SITE_BUSY_TARGET) \
+	MDS_METRICS="$(call unq,$(CONFIG_KNLP_RPL2_SITE_MDS_METRICS))" \
+	DATA_SERVERS="$(call unq,$(CONFIG_KNLP_RPL2_SITE_DATA_SERVERS))" \
+	DRIVES="$(call unq,$(CONFIG_KNLP_RPL2_SITE_DRIVES))" \
+	LABEL="$(call unq,$(CONFIG_KNLP_RPL2_SITE_LABEL))" \
+	KERNEL_SELFTEST="$(call unq,$(CONFIG_KNLP_RPL2_SITE_KERNEL_SELFTEST))" \
+	KERNEL_THREADS="$(call unq,$(CONFIG_KNLP_RPL2_SITE_KERNEL_THREADS))"
+
 .PHONY: rpl2 rpl2-help rpl2-doctor rpl2-smoke rpl2-run rpl2-report
 .PHONY: rpl2-pnfs-check rpl2-pnfs-setup rpl2-pnfs-smoke rpl2-pnfs-up \
 	rpl2-pnfs-down rpl2-pnfs-status rpl2-pnfs-fingerprint rpl2-pnfs-screen \
 	rpl2-pnfs-sweep rpl2-pnfs-remote-up rpl2-pnfs-remote-down \
 	rpl2-pnfs-remote-fingerprint rpl2-pnfs-remote-screen rpl2-pnfs-test
+# The step targets rpl2-site-<step> come from a pattern rule, so they are
+# not listed as phony (make skips pattern rules for phony targets).
+.PHONY: rpl2-site-check rpl2-site-steps rpl2-site-report
 
 rpl2-help:
 	@echo "KV-offload read path (tools/reproduce/rpl2):"
@@ -63,6 +93,13 @@ rpl2-help:
 	@echo "  make rpl2-pnfs-sweep         many-client cells"
 	@echo "  make rpl2-pnfs-remote-up / -fingerprint / -screen / -down"
 	@echo "  make rpl2-pnfs-test          unit tests of the summaries (no root)"
+	@echo "Your own mount (tools/reproduce/rpl2/pnfs/site.sh, no root):"
+	@echo "  make defconfig-rpl2-site     held descriptors, read modes, NFS RPCs"
+	@echo "  make defconfig-rpl2-closure  read-plan closing screen at one position"
+	@echo "  make rpl2-site-<step>        doctor fixture fingerprint screen sweep"
+	@echo "                               readmodes kernel, into RPL2_SITE_RUN"
+	@echo "  make rpl2-site-report        summary beside the reference results"
+	@echo "Variables: RPL2P_ROOT=<dir> RPL2_OUTPUT=<dir> RPL2_SITE=<dir on the mount>"
 	@echo "Variables: RPL2P_ROOT=<dir> RPL2_OUTPUT=<dir>"
 
 rpl2-doctor:
@@ -86,7 +123,7 @@ rpl2-pnfs-check:
 
 rpl2-pnfs-setup: rpl2-pnfs-check
 	@env RPL2P_ROOT="$(RPL2P_ROOT)" RPL2P_PYTHON="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_PYTHON))" \
-		RPL2P_CLIENT_ONLY=$(if $(filter y,$(CONFIG_KNLP_RPL2_PNFS_REMOTE)),1,0) \
+		RPL2P_CLIENT_ONLY=$(if $(filter y,$(CONFIG_KNLP_RPL2_PNFS_REMOTE) $(CONFIG_KNLP_RPL2_SITE)),1,0) \
 		RPL2P_LMCACHE_REPO="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO))" \
 		RPL2P_LMCACHE_REF="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF))" \
 		RPL2P_LMCACHE_COMMIT="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT))" \
@@ -137,6 +174,22 @@ rpl2-pnfs-remote-screen: rpl2-pnfs-check
 		$(CONFIG_KNLP_RPL2_PNFS_BLOCKS) $(CONFIG_KNLP_RPL2_PNFS_REQUESTS) $(RPL2_PNFS_CAP)
 	@python3 $(RPL2_PNFS_DIR)/summarize.py screen $(RPL2_PNFS_OUT)/screen-$(RPL2_PNFS_STAMP)
 
+rpl2-site-check: rpl2-pnfs-check
+	@test -n "$(RPL2_SITE)" || { echo "set RPL2_SITE or CONFIG_KNLP_RPL2_SITE_DIR" >&2; exit 1; }
+	@test -d "$(RPL2_SITE)" || { echo "$(RPL2_SITE) must be an existing directory" >&2; exit 1; }
+	@test -x "$(RPL2_PNFS_BIN)/site.sh" || { echo "run make rpl2-pnfs-setup first" >&2; exit 1; }
+
+rpl2-site-%: rpl2-site-check
+	@env $(RPL2_SITE_ENV) $(RPL2_PNFS_BIN)/site.sh $* "$(RPL2_SITE_RUN)"
+
+rpl2-site-steps: rpl2-site-check
+	@set -e; for s in $(RPL2_SITE_STEPS); do \
+		env $(RPL2_SITE_ENV) $(RPL2_PNFS_BIN)/site.sh $$s "$(RPL2_SITE_RUN)"; done
+	@python3 $(RPL2_PNFS_BIN)/site_summary.py "$(RPL2_SITE_RUN)"
+
+rpl2-site-report:
+	@python3 $(RPL2_PNFS_DIR)/site_summary.py "$(RPL2_SITE_RUN)"
+
 rpl2-pnfs-test:
 	@$(RPL2_PY) -m unittest discover -s tools/reproduce/rpl2/pnfs/tests -t . -v
 
@@ -162,6 +215,10 @@ rpl2:
 	@$(MAKE) --no-print-directory rpl2-pnfs-remote-fingerprint || { $(MAKE) --no-print-directory rpl2-pnfs-remote-down; exit 1; }
 	@$(MAKE) --no-print-directory rpl2-pnfs-remote-screen || { $(MAKE) --no-print-directory rpl2-pnfs-remote-down; exit 1; }
 	@$(MAKE) --no-print-directory rpl2-pnfs-remote-down
+else ifeq ($(CONFIG_KNLP_RPL2_SITE),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-pnfs-setup
+	@$(MAKE) --no-print-directory rpl2-site-steps RPL2_SITE_RUN="$(RPL2_SITE_RUN)"
 else ifeq ($(CONFIG_KNLP_RPL2_MOUNTED_FS),y)
 rpl2:
 	@$(MAKE) --no-print-directory rpl2-doctor

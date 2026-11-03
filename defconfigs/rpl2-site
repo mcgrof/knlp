@@ -1,0 +1,44 @@
+# Your own NFS or pNFS mount: held descriptors, read modes and NFS RPCs.
+#
+# Runs as an ordinary user on a directory you already have, for example
+# on a Lattice pNFS deployment with several data servers and NVMe
+# drives.  It builds LMCache's CPU extensions only.  Nothing is mounted,
+# exported or reconfigured, no cache is dropped, and every file goes into
+# one subdirectory, rpl2-site, of the directory you give; remove it to
+# undo the run.  The steps record the mount, NFS RPCs per object read,
+# a paired screen of open per read against held descriptors, many reader
+# processes on this host, and read_mode pool, inline and adaptive at 1,
+# 4 and 16 requests in flight.
+#
+#   make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+#        RPL2_SITE=/mnt/pnfs/scratch
+#
+# Record the number of data servers and drives in
+# CONFIG_KNLP_RPL2_SITE_DATA_SERVERS and CONFIG_KNLP_RPL2_SITE_DRIVES,
+# and give a Lattice metrics URL to count server-side operations too.
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_SITE=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_PYTHON=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-31-proto-fs-native-inline-reads"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="e76f8f181c954de6ba8a80d013aa2fba0bbe8faf"
+CONFIG_KNLP_RPL2_PNFS_HELD_CAPACITY=64
+CONFIG_KNLP_RPL2_PNFS_BLOCKS=3
+CONFIG_KNLP_RPL2_PNFS_REQUESTS=200
+CONFIG_KNLP_RPL2_PNFS_CLIENTS="1 2 4 8 16"
+CONFIG_KNLP_RPL2_PNFS_SECONDS=20
+CONFIG_KNLP_RPL2_SITE_DIR=""
+CONFIG_KNLP_RPL2_SITE_LABEL=""
+CONFIG_KNLP_RPL2_SITE_DATA_SERVERS=""
+CONFIG_KNLP_RPL2_SITE_DRIVES=""
+CONFIG_KNLP_RPL2_SITE_MDS_METRICS=""
+CONFIG_KNLP_RPL2_SITE_FINGERPRINT=y
+CONFIG_KNLP_RPL2_SITE_SCREEN=y
+CONFIG_KNLP_RPL2_SITE_SWEEP=y
+CONFIG_KNLP_RPL2_SITE_READMODES=y
+CONFIG_KNLP_RPL2_SITE_INFLIGHT="1 4 16"
+CONFIG_KNLP_RPL2_SITE_MODES="pool inline adaptive"
+CONFIG_KNLP_RPL2_SITE_BUSY_TARGET=16
+# CONFIG_KNLP_RPL2_SITE_KERNEL is not set
