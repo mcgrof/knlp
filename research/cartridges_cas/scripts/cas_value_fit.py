@@ -80,7 +80,25 @@ Env (solve):
     KV_WLSE     weight of the log-normalizer term (default 0.1)
     DEVICE      cpu (default) or cuda
 
+``filter`` (CPU) drops whole conversations from an existing capture.
+The capture stores each conversation's scored positions in a fixed
+order with no row labels, so the filter first replays the capture's row
+choice and every random position draw from the same parquet and seed,
+and stops unless the replayed positions equal the stored positions
+exactly for both sets. Only then does it remove the blocks of the
+dropped rows and write a capture the solver reads as usual, with the
+surviving rows listed in rows.json. The remaining positions are the
+ones the original capture drew; nothing is redrawn or refilled.
+
+Env (filter):
+    CAPTURE     source capture directory
+    OUT_CAPTURE filtered capture directory
+    PARQUET     the parquet the capture read (hash must match meta's path)
+    DROP_ROWS   comma list of row indices to remove
+    VAL_FRAC    as at capture (default 0.2)
+
 Usage:
+    python cas_value_fit.py filter
     python cas_value_fit.py capture
     python cas_value_fit.py solve
     python cas_value_fit.py selftest
@@ -323,6 +341,89 @@ def capture():
     )
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
     print(f"VFIT_CAPTURE_DONE {out} ({meta['seconds']:.0f}s)", flush=True)
+
+
+# ---------------------------------------------------------------- filter
+def replay_capture(parquet, n_fit, n_val, q_per, seed, val_frac, tok):
+    """The capture's conversation order and position draws, without the
+    model: {"fit"|"val": [(row, positions), ...]} in storage order."""
+    from cartridges.datasets import qwen_messages_to_element, read_conversations
+
+    rows = read_conversations(parquet)
+    fit_i, val_i = group_split(rows, val_frac, seed)
+    rng = np.random.default_rng(seed)
+    fit_i = sorted(rng.choice(fit_i, min(n_fit, len(fit_i)), replace=False))
+    val_i = sorted(rng.choice(val_i, min(n_val, len(val_i)), replace=False))
+    sel = [(i, "fit") for i in fit_i] + [(i, "val") for i in val_i]
+    by_sys = {}
+    for i, split in sel:
+        by_sys.setdefault(rows[i].system_prompt, []).append((i, split))
+    order = {"fit": [], "val": []}
+    for _sysp, items in by_sys.items():
+        for i, split in items:
+            el = qwen_messages_to_element(rows[i].messages, tokenizer=tok)
+            T = len(el.input_ids.tolist())
+            cand = np.unique(el.topk_token_idxs.numpy() - 1)
+            cand = cand[(cand >= 0) & (cand < T)]
+            pick = np.sort(rng.choice(cand, min(q_per, len(cand)), replace=False))
+            order[split].append((int(i), pick))
+    return order
+
+
+def filter_capture():
+    from transformers import AutoTokenizer
+
+    src = Path(os.environ["CAPTURE"])
+    dst = Path(os.environ["OUT_CAPTURE"])
+    parquet = os.environ["PARQUET"]
+    drop = {int(x) for x in os.environ["DROP_ROWS"].split(",") if x}
+    val_frac = float(os.environ.get("VAL_FRAC", "0.2"))
+    meta = json.loads((src / "meta.json").read_text())
+    assert os.path.abspath(parquet) == meta["parquet"], "not the captured parquet"
+    tok = AutoTokenizer.from_pretrained(meta["model"])
+    order = replay_capture(
+        parquet,
+        meta["n_fit_conv"],
+        meta["n_val_conv"],
+        meta["q_per_conv"],
+        meta["seed"],
+        val_frac,
+        tok,
+    )
+    first = torch.load(src / "layer00.pt", weights_only=False)
+    for s in ("fit", "val"):
+        replayed = np.concatenate([p for _, p in order[s]])
+        assert np.array_equal(replayed, first[s]["t"].numpy()), f"{s} replay differs"
+    found = {i for s in order for i, _ in order[s]} & drop
+    assert found == drop, f"rows not in the capture: {sorted(drop - found)}"
+    keep = {}
+    for s in ("fit", "val"):
+        m = np.concatenate([np.full(len(p), i not in drop) for i, p in order[s]])
+        keep[s] = torch.as_tensor(m)
+    dst.mkdir(parents=True, exist_ok=True)
+    for l in range(meta["n_layers"]):
+        d = torch.load(src / f"layer{l:02d}.pt", weights_only=False)
+        torch.save(
+            {s: {k: v[keep[s]] for k, v in d[s].items()} for s in ("fit", "val")},
+            dst / f"layer{l:02d}.pt",
+        )
+    kept = {s: [(i, len(p)) for i, p in order[s] if i not in drop] for s in order}
+    meta.update(
+        n_fit_conv=len(kept["fit"]),
+        n_val_conv=len(kept["val"]),
+        n_fit_queries=int(keep["fit"].sum()),
+        n_val_queries=int(keep["val"].sum()),
+        filtered_from=str(src.resolve()),
+        dropped_rows=sorted(drop),
+        replay_verified=True,
+    )
+    (dst / "meta.json").write_text(json.dumps(meta, indent=1))
+    (dst / "rows.json").write_text(json.dumps(kept))
+    print(
+        f"VFIT_FILTER_DONE {dst} fit {meta['n_fit_conv']} val {meta['n_val_conv']} "
+        f"dropped {sorted(drop)}",
+        flush=True,
+    )
 
 
 # ----------------------------------------------------------------- solve
@@ -578,4 +679,9 @@ def selftest():
 
 
 if __name__ == "__main__":
-    {"capture": capture, "solve": solve, "selftest": selftest}[sys.argv[1]]()
+    {
+        "capture": capture,
+        "filter": filter_capture,
+        "solve": solve,
+        "selftest": selftest,
+    }[sys.argv[1]]()
