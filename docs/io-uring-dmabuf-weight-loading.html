@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Loading model weights from NVMe straight into GPU memory with fastsafetensors and io_uring DMA-BUF: what was built, what was tested, and how to test it on other hardware and send results.">
+<title>Weight loading — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-weight-loading.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html">Drivers</a>
+<a href="io-uring-dmabuf-memory.html">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+<a href="io-uring-dmabuf-weight-loading.html" aria-current="page">Weight loading</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 2 November 2026</span>
+<h1>Loading model weights straight into GPU memory</h1>
+<p class="lead"><strong>vLLM can load a model from NVMe directly into GPU
+memory, with no copy through host memory, and serve the same output as
+its other loaders.</strong> We added a DMA-BUF reader to fastsafetensors
+and tested it on one AMD GPU with one NVMe drive. We now need
+measurements from other GPUs, more drives and arm64 hosts.</p>
+<nav class="toc" aria-label="On this page"><a href="#what">What we built</a><a href="#tested">What we tested</a><a href="#results">Results</a><a href="#untested">Not tested yet</a><a href="#value">Why it matters at scale</a><a href="#test">Test it on your hardware</a><a href="#send">Send us your results</a></nav>
+</div>
+
+<section id="what">
+<h2>What we built</h2>
+<p><a href="https://github.com/foundation-model-stack/fastsafetensors">fastsafetensors</a>
+is a library that loads safetensors checkpoints into GPU memory. vLLM
+uses it when you start a server with <code>--load-format fastsafetensors</code>.
+On NVIDIA systems with GPUDirect Storage it reads through NVIDIA's cuFile
+library. Everywhere else it uses its <code>nogds</code> reader: the drive
+writes each chunk into pinned host memory, and the GPU then copies that
+chunk into its own memory.</p>
+<p>The new <strong>DMA-BUF copier</strong> removes the host copy. A DMA-BUF
+is the Linux handle that lets one driver share a buffer with another.
+The copier uses the
+<a href="io-uring-dmabuf.html">io_uring DMA-BUF interface</a>
+that the rest of this guide describes:</p>
+<div class="flow">
+<div><b>1. Allocate</b><span>Allocate GPU memory for a shard with HIP or CUDA.</span></div>
+<div><b>2. Export</b><span>Export that memory as a DMA-BUF.</span></div>
+<div><b>3. Register</b><span>Register the DMA-BUF with io_uring as a fixed buffer for the shard file.</span></div>
+<div><b>4. Read</b><span>Submit <code>READ_FIXED</code>. The NVMe controller writes into GPU memory.</span></div>
+</div>
+<p>Tensors are views into that GPU memory. No payload byte goes through
+host memory, and no cuFile installation is necessary. When the kernel or
+the GPU driver refuses a step, the copier logs one warning and uses
+<code>nogds</code>. Set <code>FASTSAFETENSORS_DMABUF_STRICT=1</code> to make
+that an error.</p>
+<p>vLLM builds its loader with only a <code>nogds</code> choice, so it
+cannot ask for the new copier directly. Set
+<code>FASTSAFETENSORS_USE_DMABUF=1</code> to select it without changes to
+vLLM.</p>
+<p>The code is three commits on the
+<a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">2026-10-28-iouring-dma-buf</a>
+branch of our fastsafetensors fork, on top of the 0.5.0 release. It is
+not yet a pull request upstream.</p>
+</section>
+
+<section id="tested">
+<h2>What we tested</h2>
+<p>One machine, one GPU, one drive and one model. These runs show that
+the path is correct and that it works with vLLM. They are not the value
+case; see <a href="#value">why it matters at scale</a>.</p>
+<div class="scroll"><table>
+<caption>The test configuration</caption>
+<thead><tr><th scope="col">Part</th><th scope="col">Configuration</th></tr></thead>
+<tbody>
+<tr><td>GPU</td><td>AMD RDNA3 workstation GPU, PCIe Gen4 x16, ROCm 6.4.3, PyTorch 2.9.1</td></tr>
+<tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 2 MiB largest DMA-BUF command</td></tr>
+<tr><td>File system</td><td>XFS</td></tr>
+<tr><td>Kernel</td><td>Linux 7.3-rc2 with the <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a> branch (see <a href="#kernel">kernel requirements</a>)</td></tr>
+<tr><td>Model</td><td>Qwen2.5-7B-Instruct, BF16, four shards, 15.23 GB, 339 tensors</td></tr>
+<tr><td>Serving engine</td><td>vLLM 0.18.1 (ROCm build), one GPU, eager mode</td></tr>
+</tbody></table></div>
+<p>Every trial started with an empty page cache. We compared three
+readers: vLLM's default safetensors reader, fastsafetensors'
+<code>nogds</code> reader, and the DMA-BUF copier.</p>
+</section>
+
+<section id="results">
+<h2>Results</h2>
+<div class="grid3">
+<article class="card rule good">
+<strong>SAME OUTPUT</strong>
+<p>In nine vLLM trials, three per reader, all 312 parameter and buffer
+hashes were identical. Greedy output for eight prompts was identical,
+with zero log-probability difference.</p>
+</article>
+<article class="card rule good">
+<strong>NO HOST COPY</strong>
+<p>The GPU's counter for host-mapped memory did not change during any
+DMA-BUF load. The copier read the file bytes plus 0.4 MB of alignment.
+The <code>nogds</code> reader read 119 MB more.</p>
+</article>
+<article class="card rule good">
+<strong>DRIVE SPEED</strong>
+<p>The DMA-BUF copier loaded the model at 6.9 GB/s, close to the
+drive's rated read speed. Both fastsafetensors readers are limited by
+the drive.</p>
+</article>
+</div>
+<div class="scroll"><table>
+<caption>Weight load time in vLLM, three trials per reader, empty page cache</caption>
+<thead><tr><th scope="col">Reader</th><th scope="col">Load time (s)</th><th scope="col">KV cache tokens after load</th></tr></thead>
+<tbody>
+<tr><td>DMA-BUF copier</td><td class="yes">2.212, 2.215, 2.218</td><td>241,808</td></tr>
+<tr><td>fastsafetensors nogds</td><td>2.279, 2.285, 2.291</td><td class="conditional">105,360</td></tr>
+<tr><td>vLLM default (safetensors)</td><td>6.214, 6.234, 6.237</td><td>241,808</td></tr>
+</tbody></table></div>
+<p>The DMA-BUF copier is 3% faster than <code>nogds</code> here, and the
+ranges do not overlap. Both fastsafetensors readers are about 2.8 times
+faster than vLLM's default reader.</p>
+<p><strong>KV cache capacity.</strong> vLLM sizes its KV cache after it
+loads the weights. On vLLM 0.18.1 the <code>nogds</code> reader leaves its
+buffers in PyTorch's memory cache, so the KV cache holds 56% fewer
+tokens. The DMA-BUF copier returns its memory to the driver. Current
+vLLM fixes the <code>nogds</code> loss (pull request #57516 empties the cache
+after loading). With that fix applied, <code>nogds</code> leaves 132 MiB
+in use and the DMA-BUF copier leaves none.</p>
+<h3>Current vLLM's loader call</h3>
+<p>There is no current vLLM build for the ROCm stack on this machine. We
+therefore called fastsafetensors' <code>ParallelLoader</code> exactly as
+current vLLM does, outside the engine, and checked every tensor against
+a SHA-256 of the file bytes. Eleven loads with the DMA-BUF copier took
+2.18 to 2.21 s, and every tensor matched the file. <code>nogds</code> took
+2.28 to 2.34 s. Each shard was read as one piece with no configuration.</p>
+<h3>Details we found on the way</h3>
+<ul>
+<li><strong>Registration size.</strong> The kernel refuses a DMA-BUF larger
+than 4 GiB, because it stores the buffer offset in 32 bits. The copier
+starts at 4 GiB minus 2 MiB, so a typical shard is one registration.
+Earlier kernel revisions refused anything above 1 GiB; the copier then
+retries at 1 GiB. We tested both cases on a real kernel.</li>
+<li><strong>Memory reuse.</strong> After the copier frees a piece, the
+GPU's memory counter still shows it for 20 to 100 ms. The memory is
+free: on a nearly full GPU, 20 of 20 new allocations succeeded, each in
+about 42 ms. vLLM 0.18.1's loading loop holds one extra shard for both readers; the
+copier itself needs no more live memory than <code>nogds</code>.</li>
+<li><strong>Worker threads.</strong> On XFS, io_uring sends every DMA-BUF
+read to a kernel worker thread. A trace counted 228 of 228 reads.
+Different worker limits did not change the load time.</li>
+<li><strong>Consumer NVIDIA GPUs.</strong> A GeForce GPU with driver
+615.71.09 reports <code>CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED = 0</code>,
+and CUDA refuses the export (error 801). The copier falls back to
+<code>nogds</code> there. NVIDIA data-center GPUs report support with the
+open kernel modules; we have not run the copier on one.</li>
+</ul>
+</section>
+
+<section id="untested">
+<h2>Not tested yet</h2>
+<div class="scroll"><table>
+<caption>Open questions, and why each one matters</caption>
+<thead><tr><th scope="col">Case</th><th scope="col">Status</th><th scope="col">Why it matters</th></tr></thead>
+<tbody>
+<tr><td>NVIDIA data-center GPUs</td><td>Code path written; not run</td><td>The main deployment target</td></tr>
+<tr><td>arm64 hosts</td><td>The io_uring rings use acquire and release ordering for arm64; not run</td><td>Grace-based systems use arm64</td></tr>
+<tr><td>More than one drive</td><td>Not run</td><td>This is where the value is; see below</td></tr>
+<tr><td>Several GPUs (tensor parallel)</td><td>Device selection is fixed for every GPU index; not run</td><td>Large models use several GPUs</td></tr>
+<tr><td>PCIe Gen5 drives and GPUs</td><td>Not run</td><td>Twice the bandwidth per drive and per GPU link</td></tr>
+<tr><td>ext4</td><td>Kernel support only on the test branch; the copier was not run on ext4</td><td>A common file system</td></tr>
+<tr><td>The smallest kernel patch set</td><td>Not run (see <a href="#kernel">kernel requirements</a>)</td><td>The path most users will build</td></tr>
+<tr><td>Serving on current vLLM</td><td>Only the loader call was reproduced</td><td>Confirms the end-to-end path</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="value">
+<h2>Why it matters at scale</h2>
+<p><strong>On one 7 GB/s drive, every reader waits for the drive. The 3%
+gain above is not the reason for this work.</strong> The reason is cost.
+NVMe bandwidth is cheap to add: put more drives in the server. GPU time
+is expensive, and it costs more on each new GPU generation. A GPU that
+waits for weights does no work, and every load that waits on storage
+has a direct cost.</p>
+<p>The table below is a <strong>projection, not a measurement</strong>. It
+assumes an 8-GPU server, one PCIe Gen5 drive per GPU at about 14 GB/s,
+and load time limited only by drive bandwidth.</p>
+<div class="scroll"><table>
+<caption>Projected GPU cost of one cold load on an 8-GPU server</caption>
+<thead><tr><th scope="col">Checkpoint</th><th scope="col">One Gen4 drive (7 GB/s)</th><th scope="col">Eight Gen5 drives (112 GB/s)</th><th scope="col">GPU cost saved per load at $3 / $7 per GPU-hour</th></tr></thead>
+<tbody>
+<tr><td>140 GB (70B parameters, BF16)</td><td>20 s</td><td>1.3 s</td><td>$0.13 / $0.29</td></tr>
+<tr><td>700 GB (671B-parameter FP8 mixture of experts)</td><td>100 s</td><td>6.3 s</td><td>$0.63 / $1.46</td></tr>
+</tbody></table></div>
+<p>$3 per GPU-hour is a typical H100-class rental price. $7 is within the
+recent range of B200-class prices. Eight 7.68 TB Gen5 drives cost about
+$36,000 at about $4,500 each. For the 700 GB checkpoint, the drives
+repay themselves after about 58,000 loads on H100-class GPUs, or about
+25,000 loads on B200-class GPUs. A server that changes models every ten
+minutes makes about 52,000 loads a year. One that changes models once an
+hour makes about 8,800. The faster and more expensive the GPU, the
+sooner the drives repay.</p>
+<p><strong>Where DMA-BUF fits.</strong> The <code>nogds</code> reader could also
+read from eight drives, but each byte then goes through host memory
+twice: the drive writes it, and the GPU reads it. At 112 GB/s that is
+about 224 GB/s of host memory traffic, plus pinned buffers and threads,
+on a host that also serves requests. With the DMA-BUF copier, the drive
+writes into GPU memory directly. When the drive and the GPU are below the
+same PCIe switch, the data does not go to the CPU at all. We do not know
+yet at what rate the host copy becomes the limit. A multi-drive,
+multi-GPU comparison of <code>nogds</code> and the DMA-BUF copier that also
+records host memory bandwidth will answer that. It is the most useful
+result you can send us.</p>
+</section>
+
+<section id="test">
+<h2>Test it on your hardware</h2>
+<div class="steps">
+<div class="step"><strong>Check the GPU</strong><span>AMD GPUs export memory
+through ROCm's <code>hsa_amd_portable_export_dmabuf</code>; we used ROCm
+6.4.3. NVIDIA GPUs need the open kernel modules and must report
+<code>CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED</code>. The benchmark below
+reports that attribute. Consumer GeForce GPUs report 0.</span></div>
+<div class="step" id="kernel"><strong>Build a kernel with DMA-BUF file reads</strong><span>No
+released kernel supports this yet. The io_uring DMA-BUF series is queued
+for Linux 7.4 in Jens Axboe's
+<a href="https://git.kernel.org/pub/scm/linux/kernel/git/axboe/linux.git/log/?h=for-7.4/io_uring-dmabuf">for-7.4/io_uring-dmabuf</a>
+branch, but it supports only raw block devices. To read files on XFS,
+also apply the three patches of the
+<a href="https://lore.kernel.org/all/20261016091919.971295-1-anuj1072538@gmail.com/">XFS RFC</a>
+(<code>b4 am 20261016091919.971295-1-anuj1072538@gmail.com</code>). That is
+the smallest patch set. Our results used the
+<a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a>
+branch instead. It has the same series and the XFS RFC, plus ext4
+support and patches that let DMA-BUF reads use the drive's largest
+command size. With only the smallest set, reads can be split into
+smaller commands; we have not measured that difference.</span></div>
+<div class="step"><strong>Put the checkpoint on XFS on a PCIe NVMe namespace</strong><span>Only
+PCIe NVMe namespaces implement DMA-BUF I/O today. Software RAID (md),
+device-mapper volumes and NVMe multipath devices do not. To test several
+drives, make one XFS file system on each drive, spread the shard files
+across them, and link them into one model directory with symbolic
+links.</span></div>
+<div class="step"><strong>Install the fastsafetensors branch</strong><span><code>git clone -b 2026-10-28-iouring-dma-buf https://github.com/mcgrof/fastsafetensors</code>
+and then <code>pip install ./fastsafetensors</code> in the Python
+environment that has PyTorch for your GPU. This builds a small C++
+extension.</span></div>
+<div class="step"><strong>Run the benchmark</strong><span>Download
+<a href="https://github.com/mcgrof/knlp/blob/main/scripts/weight_io/dmabuf_load_bench.py">dmabuf_load_bench.py</a>
+and run it as root, so that it can empty the page cache before each
+trial:
+<code>sudo /path/to/venv/bin/python dmabuf_load_bench.py --model /models/Qwen2.5-7B-Instruct --trials 3 --out result.json</code>.
+It loads the checkpoint with <code>nogds</code> and with the DMA-BUF copier,
+each trial in a new process, and checks every tensor against the file on
+the first trial. Add <code>--readers nogds,dmabuf,gds</code> on an NVIDIA
+system with cuFile to include GPUDirect Storage. The model must fit in
+one GPU with room for two shards.</span></div>
+<div class="step"><strong>Optional: start vLLM with it</strong><span><code>FASTSAFETENSORS_USE_DMABUF=1 FASTSAFETENSORS_DMABUF_STRICT=1 vllm serve MODEL --load-format fastsafetensors</code>.
+Compare the "Model loading took" line and the KV cache size in the log
+with a start without the two variables.</span></div>
+</div>
+</section>
+
+<section id="send">
+<h2>Send us your results</h2>
+<p>Open an issue on
+<a href="https://github.com/mcgrof/knlp/issues/new?title=Weight%20loading%20result">github.com/mcgrof/knlp</a>
+and attach <code>result.json</code>. Please also tell us:</p>
+<ul>
+<li>the CPU architecture (x86-64 or arm64) and the number of GPUs and drives;</li>
+<li>whether each drive and GPU are below the same PCIe switch
+(<code>lspci -tv</code> shows this);</li>
+<li>for a multi-drive run, how you spread the shards and, if you can,
+host memory bandwidth during the load;</li>
+<li>the full error text for any reader that failed.</li>
+</ul>
+<p>Failures are useful too: a refused export or registration tells us
+which GPU drivers and kernels still need work. The JSON file records the
+kernel version, the GPU architecture, the drive's block sizes, command
+limits, PCIe link and capacity, and no serial numbers. When we add your
+results to this page, we describe hardware by architecture, link and
+drive geometry, not by product name.</p>
+</section>
+
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf-linux.html">← Linux & reproduce</a><a href="io-uring-dmabuf.html">Overview →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="pd-disaggregation.html">Prefill / decode</a> ·
+<a href="kmesh.html">KMesh</a> ·
+<a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">fastsafetensors branch</a>
+<p>Experimental evaluation. Results apply to the stated GPU, kernel, drive and file system.</p>
+</footer>
+</main>
+</body>
+</html>

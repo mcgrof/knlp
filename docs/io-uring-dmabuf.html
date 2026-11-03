@@ -18,13 +18,14 @@
 <a href="io-uring-dmabuf-memory.html">Memory & integration</a>
 <a href="io-uring-dmabuf-results.html">Qualification & results</a>
 <a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+<a href="io-uring-dmabuf-weight-loading.html">Weight loading</a>
 </nav></header>
 <main id="content">
 <div class="hero">
-<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 27 October 2026</span>
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 2 November 2026</span>
 <h1>GPU memory to storage</h1>
 <p class="lead"><strong>NVIDIA and AMD GPU memory can reach NVMe through the same experimental Linux storage interface.</strong> Native CUDA export, the Vulkan/RM workaround and ROCm export have each passed storage tests on specific configurations. The application validation differs by path.</p>
-<nav class="toc" aria-label="On this page"><a href="#tested-paths">Tested paths</a><a href="#pending-paths">What still needs validation</a><a href="#vendor-paths">Existing vendor routes</a><a href="#idea">Linux interface</a><a href="#layers">Who does what?</a><a href="#guide">Detailed guides</a><a href="#workshop">Workshop &amp; slides</a></nav>
+<nav class="toc" aria-label="On this page"><a href="#tested-paths">Tested paths</a><a href="#weight-loading">Weight loading</a><a href="#pending-paths">What still needs validation</a><a href="#vendor-paths">Existing vendor routes</a><a href="#idea">Linux interface</a><a href="#layers">Who does what?</a><a href="#guide">Detailed guides</a><a href="#workshop">Workshop &amp; slides</a></nav>
 </div>
 <section id="tested-paths">
 <h2>The paths tested today</h2>
@@ -87,6 +88,19 @@ serving cohorts on 15 October. See the
 before extending a result to another configuration. These paths submit
 io_uring directly; they do not call cuFile or hipFile.</p>
 </section>
+<section id="weight-loading">
+<h2>New: loading model weights straight into GPU memory</h2>
+<p>The same interface can load a model. We added a DMA-BUF reader to
+fastsafetensors, the library behind vLLM's
+<code>--load-format fastsafetensors</code>. It reads checkpoint shards from
+NVMe into GPU memory with no copy through host memory. On one AMD GPU
+and one NVMe drive, vLLM loaded Qwen2.5-7B with it and served output
+identical to its other readers.</p>
+<p>The value is at scale, with several drives per server and expensive
+GPUs waiting for weights. We need measurements from NVIDIA data-center
+GPUs, arm64 hosts and multi-drive servers.</p>
+<p><a href="io-uring-dmabuf-weight-loading.html">What we tested, and how to test it on your hardware →</a></p>
+</section>
 <section id="pending-paths">
 <h2>What still needs validation?</h2>
 <div class="scroll"><table>
@@ -137,7 +151,7 @@ stock Linux kernel or GPU driver.</span></div>
 cuFile or hipFile. Those libraries have their own storage paths and would
 need an explicit backend change to adopt this interface.</p>
 </section>
-<section id="guide"><h2>Choose a question</h2><div class="page-links"><article class="card"><h3><a href="io-uring-dmabuf-drivers.html">Drivers and routes</a></h3><p>Which parts are upstream, open or proprietary? Why are nvidia-fs, P2PDMA and AIS different routes?</p><ul class="question-list"><li><a href="io-uring-dmabuf-drivers.html#routes">Compare the storage paths</a></li><li><a href="io-uring-dmabuf-drivers.html#openrm">Understand OpenRM</a></li><li><a href="io-uring-dmabuf-drivers.html#nova">Nouveau and Nova</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-memory.html">Memory and integration</a></h3><p>Where is memory allocated? What changed in LMCache? Could Vulkan serve both vendors?</p><ul class="question-list"><li><a href="io-uring-dmabuf-memory.html#providers">Choose an exporter</a></li><li><a href="io-uring-dmabuf-memory.html#vulkan">Vulkan and the RM helper</a></li><li><a href="io-uring-dmabuf-memory.html#userspace">What userspace actually does</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-results.html">Qualification and results</a></h3><p>What was tested, what failed, and what do the performance comparisons establish?</p><ul class="question-list"><li><a href="io-uring-dmabuf-results.html#driver-tests">Exporter and driver evidence</a></li><li><a href="io-uring-dmabuf-results.html#performance">cuFile and AIS comparisons</a></li><li><a href="io-uring-dmabuf-results.html#platform">Qualify the PCIe route</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-linux.html">Linux and reproduction</a></h3><p>The proposed kernel interface, its admission history, and the pinned build and test instructions.</p><ul class="question-list"><li><a href="io-uring-dmabuf-linux.html#kernel">Kernel support</a></li><li><a href="io-uring-dmabuf-linux.html#history">P2PDMA history</a></li><li><a href="io-uring-dmabuf-linux.html#reproduce">Build and reproduce</a></li></ul></article></div></section><section id="conclusions">
+<section id="guide"><h2>Choose a question</h2><div class="page-links"><article class="card"><h3><a href="io-uring-dmabuf-drivers.html">Drivers and routes</a></h3><p>Which parts are upstream, open or proprietary? Why are nvidia-fs, P2PDMA and AIS different routes?</p><ul class="question-list"><li><a href="io-uring-dmabuf-drivers.html#routes">Compare the storage paths</a></li><li><a href="io-uring-dmabuf-drivers.html#openrm">Understand OpenRM</a></li><li><a href="io-uring-dmabuf-drivers.html#nova">Nouveau and Nova</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-memory.html">Memory and integration</a></h3><p>Where is memory allocated? What changed in LMCache? Could Vulkan serve both vendors?</p><ul class="question-list"><li><a href="io-uring-dmabuf-memory.html#providers">Choose an exporter</a></li><li><a href="io-uring-dmabuf-memory.html#vulkan">Vulkan and the RM helper</a></li><li><a href="io-uring-dmabuf-memory.html#userspace">What userspace actually does</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-results.html">Qualification and results</a></h3><p>What was tested, what failed, and what do the performance comparisons establish?</p><ul class="question-list"><li><a href="io-uring-dmabuf-results.html#driver-tests">Exporter and driver evidence</a></li><li><a href="io-uring-dmabuf-results.html#performance">cuFile and AIS comparisons</a></li><li><a href="io-uring-dmabuf-results.html#platform">Qualify the PCIe route</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-linux.html">Linux and reproduction</a></h3><p>The proposed kernel interface, its admission history, and the pinned build and test instructions.</p><ul class="question-list"><li><a href="io-uring-dmabuf-linux.html#kernel">Kernel support</a></li><li><a href="io-uring-dmabuf-linux.html#history">P2PDMA history</a></li><li><a href="io-uring-dmabuf-linux.html#reproduce">Build and reproduce</a></li></ul></article><article class="card"><h3><a href="io-uring-dmabuf-weight-loading.html">Weight loading</a></h3><p>Can vLLM load a model from NVMe straight into GPU memory? What was tested, and how can you test it?</p><ul class="question-list"><li><a href="io-uring-dmabuf-weight-loading.html#results">Results</a></li><li><a href="io-uring-dmabuf-weight-loading.html#value">Why it matters at scale</a></li><li><a href="io-uring-dmabuf-weight-loading.html#test">Test it and send results</a></li></ul></article></div></section><section id="conclusions">
 <h2>What to take away</h2>
 
 <p><strong>OpenRM is an open-source Linux kernel driver, but it is
