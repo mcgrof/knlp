@@ -25,10 +25,18 @@ text that decides it, and derives the verdict mechanically: a quote
 that is not in the note makes its claim UNVERIFIED, and any central
 claim that is not SUPPORTED excludes the answer.
 
+merge mode combines the judgments of several judges so that an item
+passes only when every judge passed it. JUDGMENTS lists the judges'
+files in order; the first judge that failed the item, or that has no
+parsed reply for it, decides the merged record. A passing item is
+SUPPORTED only when every judge said SUPPORTED, else MINOR_ISSUES.
+Each merged record keeps every judge's verdict.
+
 Env: ITEMS (comma list of items JSONL), NOTES (comma list of notes
 JSON), OUT (judgments JSONL), URL (http://localhost:8000/v1), MODEL,
 CONCURRENCY (64), MAX_TOKENS (4096), REASONING_EFFORT (medium, sent
-when set), LIMIT (optional). calibrate: OUT, LABELS.
+when set), LIMIT (optional). calibrate: OUT, LABELS. merge: ITEMS,
+JUDGMENTS (comma list of judgments JSONL), OUT.
 """
 
 import asyncio
@@ -319,5 +327,41 @@ def calibrate():
     )
 
 
+def merge():
+    items = [
+        json.loads(line) for p in os.environ["ITEMS"].split(",") for line in open(p)
+    ]
+    items = [it for it in items if it["status"] == "judge"]
+    judges = [load_done(p) for p in os.environ["JUDGMENTS"].split(",")]
+    counts = {}
+    with open(os.environ["OUT"], "w") as f:
+        for it in items:
+            recs = [j.get(it["key"]) for j in judges]
+            rec = dict(
+                key=it["key"], judges=[r["verdict"] if r else None for r in recs]
+            )
+            for n, r in enumerate(recs):
+                if r is None:
+                    rec.update(verdict="UNJUDGED", exclude=True, decided_by=n)
+                    break
+                if r["exclude"]:
+                    rec.update(
+                        verdict=r["verdict"],
+                        exclude=True,
+                        decided_by=n,
+                        accepted_false_premise=r.get("accepted_false_premise"),
+                        issues=r.get("issues", ""),
+                    )
+                    break
+            else:
+                both = all(r["verdict"] == "SUPPORTED" for r in recs)
+                rec.update(
+                    verdict="SUPPORTED" if both else "MINOR_ISSUES", exclude=False
+                )
+            counts[rec["verdict"]] = counts.get(rec["verdict"], 0) + 1
+            f.write(json.dumps(rec) + "\n")
+    print(f"MERGE_DONE items={len(items)} {json.dumps(counts, sort_keys=True)}")
+
+
 if __name__ == "__main__":
-    {"judge": judge, "calibrate": calibrate}[sys.argv[1]]()
+    {"judge": judge, "calibrate": calibrate, "merge": merge}[sys.argv[1]]()
