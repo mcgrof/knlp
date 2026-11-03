@@ -124,12 +124,13 @@ commit it builds and checks it after checkout.</p>
 <tr><th scope="col">Change</th><th scope="col">Branch</th><th scope="col">Commit</th><th scope="col">Status</th></tr>
 <tr><td class="hi">Held descriptors (<code>held_fd_capacity</code>)</td><td><a href="https://github.com/mcgrof/LMCache/tree/2026-10-28-feature-fs-native-held-fd">mcgrof/LMCache 2026-10-28-feature-fs-native-held-fd</a></td><td><code>fc836c130</code></td><td>Draft <a href="https://github.com/LMCache/LMCache/pull/6133">LMCache pull request 6133</a></td></tr>
 <tr><td class="hi">Held descriptors plus <code>read_mode</code></td><td><a href="https://github.com/mcgrof/LMCache/tree/2026-10-31-proto-fs-native-inline-reads">mcgrof/LMCache 2026-10-31-proto-fs-native-inline-reads</a></td><td><code>e76f8f181</code></td><td>Prototype for measurement; the site profile builds it</td></tr>
-<tr><td class="hi">NFSv4 client: state-owner locking, and the <code>nfs_open_scale</code> selftest</td><td><a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4-nfs">mcgrof/linux.git 2026-10-30-dmabuf-on-axboe-for-7.4-nfs</a></td><td>top four commits</td><td>Not posted; under test (<a href="#kernel">section 10</a>)</td></tr>
+<tr><td class="hi">NFSv4 client: state-owner locking, and the <code>nfs_open_scale</code> selftest</td><td><a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-02-nfs4-state-owner-rcu">mcgrof/linux.git 2026-11-02-nfs4-state-owner-rcu</a></td><td>four commits on v7.3-rc7</td><td>Not posted; under test (<a href="#kernel">section 10</a>)</td></tr>
 <tr><td class="hi">Defconfigs and scripts</td><td><a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/rpl2">mcgrof/knlp main, tools/reproduce/rpl2</a></td><td>main</td><td>Public</td></tr>
 </table></div>
-<p>The four kernel commits sit on top of a DMA-BUF series on that
-branch but do not depend on it; they apply unchanged to v7.3-rc7. The
-LMCache adapter documentation in either LMCache branch,
+<p>Nothing here needs DMA-BUF or any other out-of-tree change: held
+descriptors and <code>read_mode</code> work on any NFS or pNFS mount, and
+the four kernel commits sit directly on v7.3-rc7. The LMCache adapter
+documentation in either LMCache branch,
 <code>docs/source/mp/l2_storage/fs_native.rst</code>, describes both
 settings.</p>
 </section>
@@ -394,8 +395,8 @@ that server from the host takes to find its state owner, and the state
 owner's own <code>so_lock</code>, which every open and close under one
 credential takes.</p>
 <p>Four Linux kernel commits address both locks and measure the
-result. They are the top four commits of the kernel branch in
-<a href="#source">section 2</a> and apply unchanged to v7.3-rc7.</p>
+result. They are on v7.3-rc7, on the kernel branch in
+<a href="#source">section 2</a>.</p>
 <ol>
 <li><strong>selftests: filesystems: add an NFS open scaling test.</strong>
 <code>nfs_open_scale</code> opens and closes a set of small files under an
