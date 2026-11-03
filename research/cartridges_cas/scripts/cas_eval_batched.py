@@ -47,7 +47,12 @@ Env:
                    with one row per answer (SAVE_TOKENS=1, the default,
                    keeps its generated token ids there)
     MODEL, DEVICE  reader and device (defaults Qwen/Qwen3-8B, cuda)
-    TASKS          (tasks mode) task JSON; RUNS repeats it (default 1)
+    TASKS          (tasks mode) task JSON; RUNS repeats it (default 1).
+                   Controls: CART=none answers with no prefix (empty
+                   context); DOC_TEXT=<file> puts that text before each
+                   question in the user turn (full source, usually with
+                   CART=none); another patient's cartridge as CART is the
+                   wrong-source control
     PARITY_DUMP    (check mode) a cas_logit_parity.py dump to compare with
     N              (check mode) prompts (default 5)
 
@@ -154,7 +159,7 @@ def generate(tok, model, keys, values, prompts, cap, B, seed):
     separate completion facts."""
     import cas_eval_table15 as ev
 
-    S = keys[0].shape[2]
+    S = keys[0].shape[2] if keys is not None else 0
     eos = model.generation_config.eos_token_id
     eos = list(eos) if isinstance(eos, (list, tuple)) else [eos]
     think_end = tok.convert_tokens_to_ids("</think>")
@@ -162,7 +167,7 @@ def generate(tok, model, keys, values, prompts, cap, B, seed):
     for b in range(0, len(prompts), B):
         chunk = prompts[b : b + B]
         ids, mask = batch_inputs(tok, chunk, S)
-        cache = prefix_cache(keys, values, len(chunk))
+        cache = prefix_cache(keys, values, len(chunk)) if keys is not None else None
         torch.manual_seed(seed + b // B)
         with torch.no_grad():
             gen = model.generate(
@@ -360,11 +365,12 @@ TASK_SYSTEM_PROMPT = (
 )
 
 
-def task_prompt_ids(tok, question):
+def task_prompt_ids(tok, question, doc_text=None):
+    user = question if doc_text is None else f"{doc_text}\n\n{question}"
     return tok.apply_chat_template(
         [
             {"role": "system", "content": TASK_SYSTEM_PROMPT},
-            {"role": "user", "content": question},
+            {"role": "user", "content": user},
         ],
         tokenize=True,
         add_generation_prompt=True,
@@ -479,14 +485,15 @@ def tasks():
     save_tokens = os.environ.get("SAVE_TOKENS", "1") == "1"
     t0 = time.time()
     tok, model = load()
-    keys, values = cart_kv(cart)
+    keys, values = cart_kv(cart) if cart != "none" else (None, None)
+    doc = open(os.environ["DOC_TEXT"]).read() if os.environ.get("DOC_TEXT") else None
     items = [(r, t) for r in range(runs) for t in task_list]
     gens = generate(
         tok,
         model,
         keys,
         values,
-        [task_prompt_ids(tok, t["question"]) for _, t in items],
+        [task_prompt_ids(tok, t["question"], doc) for _, t in items],
         cap,
         B,
         seed,
@@ -513,7 +520,12 @@ def tasks():
         f"the cartridge as a prefix; temp 0.6, max {cap}, rubric match",
         evaluator="cas_eval_batched tasks",
         model=MODEL,
-        cart=os.path.abspath(cart),
+        cart=os.path.abspath(cart) if cart != "none" else "none",
+        cart_slots=int(keys[0].shape[2]) if keys is not None else 0,
+        doc_text=os.path.abspath(os.environ["DOC_TEXT"]) if doc else None,
+        doc_text_sha256=(
+            hashlib.sha256(doc.encode()).hexdigest() if doc is not None else None
+        ),
         tasks=os.path.abspath(os.environ["TASKS"]),
         tasks_sha256=hashlib.sha256(open(os.environ["TASKS"], "rb").read()).hexdigest(),
         runs=runs,
