@@ -79,10 +79,14 @@ Env:
                 of the first layers about eightfold in one step; keys
                 stay near the reader's scale (cas_cart_norms.py)
   PACKED_LEN    tokens per packed training sequence (default 2048, the
-                upstream LongHealth example; the CAS paper uses 8192).
-                Packing is in truncate mode, so the conversation that
-                overflows a sequence loses its tail, and a longer
-                limit cuts fewer teacher targets
+                upstream LongHealth example; the CAS paper uses 8192)
+  PACKING_MODE  truncate (default, the upstream example) or pad. The
+                library forms the packs once per run, so in truncate
+                mode the conversation that overflows a sequence loses
+                its tail in every epoch. In pad mode it starts the next
+                sequence instead and the rest is padded; only a single
+                conversation longer than PACKED_LEN is still cut.
+                Applies to the validation loss data too
   MICRO_SEQS    packed sequences per forward pass (default 1, the
                 library's behaviour). Values above 1 concatenate that
                 many packed sequences into one pass with separate
@@ -198,6 +202,8 @@ DECAY_LAMBDA = float(os.environ.get("DECAY_LAMBDA", "0"))
 DECAY_TO = os.environ.get("DECAY_TO", "init").lower()
 MICRO_SEQS = int(os.environ.get("MICRO_SEQS", "1"))
 PACKED_LEN = int(os.environ.get("PACKED_LEN", "2048"))
+PACKING_MODE = os.environ.get("PACKING_MODE", "truncate")
+assert PACKING_MODE in ("truncate", "pad"), "PACKING_MODE: truncate or pad"
 VALUE_CAP = float(os.environ.get("VALUE_CAP", "0"))
 assert GLOBAL_BS % MICRO_SEQS == 0, "MICRO_SEQS must divide GLOBAL_BS"
 assert DECAY_TO in ("init", "zero"), f"DECAY_TO must be init or zero, not {DECAY_TO}"
@@ -287,7 +293,7 @@ def _make_loss_evals():
         data_sources=[DataSource(path=VAL_PARQUET, type="local", limit=VAL_LIMIT)],
         top_k_logits=20,
         packed_seq_length=PACKED_LEN,
-        packing_mode="truncate",
+        packing_mode=PACKING_MODE,
     )
     return [LossEvalConfig(dataset=ds, name_for_wandb="val")], VAL_EVERY
 
@@ -562,7 +568,7 @@ config = TrainConfig(
         ],
         top_k_logits=20,
         packed_seq_length=PACKED_LEN,
-        packing_mode="truncate",
+        packing_mode=PACKING_MODE,
     ),
     # every step reaches _save_cache_once below, which applies SAVE_EVERY
     # and SAVE_AT and writes each step at most once
