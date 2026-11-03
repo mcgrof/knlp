@@ -21,8 +21,18 @@ files are read back and checked for row counts, row hashes and zero
 shared prompt groups. The receipt records, per file, the SHA-256, the
 ordered original row indices, the row hashes and the group IDs.
 
+REPAIRS, when set, is a cas_teacher_repair.py receipt (its
+<stem>_repairs.parquet beside it). Each row it reports complete
+replaces the original row at the same index, after checking the old
+row hash against the source and the new one against the repaired row;
+rows it reports still capped or failed keep their original content and
+are listed as unresolved. Membership is unchanged by a repair. The
+repaired whole-patient file is also written as <stem>_master.parquet,
+row for row in source order, for tools that index the source by row
+(the fitted start's capture).
+
 Env: PARQUET, MANIFEST (cas_freeze_split.py JSON), OUT_DIR,
-CONF_GROUPS (64), CONF_SEED (0).
+CONF_GROUPS (64), CONF_SEED (0), REPAIRS (optional).
 """
 
 import hashlib
@@ -33,6 +43,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 PARQUET = os.environ["PARQUET"]
@@ -40,6 +51,7 @@ MANIFEST = os.environ["MANIFEST"]
 OUT_DIR = Path(os.environ["OUT_DIR"])
 CONF_GROUPS = int(os.environ.get("CONF_GROUPS", "64"))
 CONF_SEED = int(os.environ.get("CONF_SEED", "0"))
+REPAIRS = os.environ.get("REPAIRS", "")
 
 
 def norm(s):
@@ -98,6 +110,33 @@ def main():
     conf = sorted(i for g in conf_g for i in groups[g])
     dev = sorted(i for g in groups if g not in conf_g for i in groups[g])
 
+    repaired, unresolved, rep_rec = {}, [], None
+    if REPAIRS:
+        rep_rec = json.loads(Path(REPAIRS).read_text())
+        assert rep_rec["source_sha256"] == man["parquet_sha256"], "repair source"
+        rp = Path(REPAIRS).with_name(Path(REPAIRS).name.replace(".json", ".parquet"))
+        rt = pq.read_table(rp).cast(full.schema)
+        _, rshas = rows_of(rt.column("messages").to_pylist())
+        by_sha = {h: j for j, h in enumerate(rshas)}
+        for r in rep_rec["rows"]:
+            i = r["row"]
+            assert shas[i] == r["old_row_sha"], f"repair row {i} source differs"
+            if r["status"] == "complete":
+                repaired[i] = rt.slice(by_sha[r["new_row_sha"]], 1)
+            else:
+                unresolved.append(dict(row=i, status=r["status"]))
+        full = pa.concat_tables(
+            [
+                repaired[i] if i in repaired else full.slice(i, 1)
+                for i in range(len(users))
+            ]
+        )
+        users2, shas2 = rows_of(full.column("messages").to_pylist())
+        assert users2 == users
+        for i in repaired:
+            assert shas2[i] != shas[i]
+        shas = shas2
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = Path(PARQUET).stem
     parts = {"train": train, "dev": dev, "confirm": conf}
@@ -111,6 +150,28 @@ def main():
         "settings": dict(CONF_GROUPS=CONF_GROUPS, CONF_SEED=CONF_SEED),
         "files": {},
     }
+    if REPAIRS:
+        master = OUT_DIR / f"{stem}_master.parquet"
+        pq.write_table(full, master)
+        _, back = rows_of(
+            pq.read_table(master, columns=["messages"]).column("messages").to_pylist()
+        )
+        assert back == shas, "master read-back differs"
+        rec["repairs"] = {
+            "master": master.name,
+            "master_sha256": file_sha(master),
+            "receipt": os.path.abspath(REPAIRS),
+            "receipt_sha256": file_sha(REPAIRS),
+            "repaired_rows": sorted(repaired),
+            "unresolved": unresolved,
+            "by_file": {
+                n: dict(
+                    repaired=sum(1 for i in idx if i in repaired),
+                    unresolved=sum(1 for u in unresolved if u["row"] in set(idx)),
+                )
+                for n, idx in parts.items()
+            },
+        }
     seen = {}
     for name, idx in parts.items():
         path = OUT_DIR / f"{stem}_{name}.parquet"
