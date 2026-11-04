@@ -242,6 +242,7 @@ rpl2-vllm-lab-run: rpl2-vllm-check
 		HF_HOME="$${HF_HOME:-$$HOME/.cache/huggingface}" \
 		L2_BASE="$(RPL2P_ROOT)/run/cli/mnt" WRAP="$(RPL2_PNFS_BIN)/labctl.sh cli" \
 		LOAD="$(RPL2_PNFS_BIN)/load.sh" LOAD_CLIENTS=$(CONFIG_KNLP_RPL2_VLLM_LOAD_CLIENTS) \
+		$(if $(CONFIG_KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ),LOAD_HELD=0) \
 		MDS_CMD="$(RPL2_PNFS_BIN)/mds_ops.sh" $(RPL2_VLLM_SRC)/run.sh "$(RPL2_VLLM_RUN)"
 
 rpl2-vllm-report:

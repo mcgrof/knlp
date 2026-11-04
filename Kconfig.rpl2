@@ -474,6 +474,17 @@ config KNLP_RPL2_VLLM_LOAD_CLIENTS
 	  as busy as a fleet of nodes with that setting would make it.  Eight
 	  saturate one metadata server on a 16-core host with open per read.
 
+config KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ
+	bool "Keep the load clients on open per read in both arms"
+	default n
+	depends on KNLP_RPL2_VLLM_PNFS_LAB
+	help
+	  By default the load clients follow the arm, so the busy phases
+	  compare a fleet that opens per read with a fleet that holds
+	  descriptors.  Say Y to keep the load clients on open per read
+	  (held 0) in both arms, so only vLLM's own setting changes and the
+	  metadata server stays busy in both.
+
 endif
 
 config KNLP_RPL2_PNFS_LAB_HOST

@@ -26,6 +26,8 @@
 #   LOAD          optional command run as
 #                 LOAD <held> <start-epoch> <seconds> <record-prefix>
 #                 during busy phases (the pNFS lab's extra clients)
+#   LOAD_HELD     the load's held setting in every arm; unset, the load
+#                 follows the arm (0 for stock, 64 for held)
 #   MDS_CMD       optional command printing metadata-server counters
 #   OWNER         when run as root with WRAP: the user who owns the records
 set -uo pipefail
@@ -42,6 +44,7 @@ SECS=${SECS:-60}
 CONCURRENCY=${CONCURRENCY:-1 4}
 REPEATS=${REPEATS:-2}
 LOAD=${LOAD:-}
+LOAD_HELD=${LOAD_HELD:-}
 MDS_CMD=${MDS_CMD:-}
 read -r -a WRAPV <<<"${WRAP:-}"
 [ -e "$OUT" ] && { echo "$OUT exists; runs are preserved" >&2; exit 1; }
@@ -134,6 +137,7 @@ phase() {
 measured_arm() {
 	local tag=$1 held=$2 odirect=$3 l2=$4 c base=100 lheld=0
 	[ "$held" -gt 0 ] && lheld=64
+	[ -n "$LOAD_HELD" ] && lheld=$LOAD_HELD
 	start_arm "$tag" lmcache "$held" "$odirect" "$l2" || return 1
 	bench run --out "$ARM/warm.json" --passes 1 --pass-base 10 || { stop_arm; return 1; }
 	for c in $CONCURRENCY; do
@@ -154,6 +158,7 @@ populate_arm() {
 }
 
 log "model $MODEL prompts $PROMPTS x $PREFIX_TOKENS tokens, L1 $L1_GB GiB, held $CAP, io '$IO'"
+[ -n "$LOAD" ] && log "load held: ${LOAD_HELD:-follows the arm}"
 log "kernel $(uname -r), LMCache $(git -C "$LMCACHE_SRC" rev-parse HEAD 2>/dev/null)"
 as_owner "$PY" -c 'import vllm, torch; print("vLLM", vllm.__version__, "torch", torch.__version__)'
 # as the owner, so the mount is resolved where WRAP makes it visible
