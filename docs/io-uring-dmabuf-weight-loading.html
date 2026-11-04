@@ -64,6 +64,12 @@ vLLM.</p>
 <a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">2026-10-28-iouring-dma-buf</a>
 branch of our fastsafetensors fork, on top of the 0.5.0 release. It is
 not yet a pull request upstream.</p>
+<p>fastsafetensors considered io_uring before, in
+<a href="https://github.com/foundation-model-stack/fastsafetensors/issues/9">issue #9</a>.
+That proposal read into pinned host memory, so every byte still passed
+through host memory on its way to the GPU. The issue was closed without
+io_uring code. The DMA-BUF copier goes one step further: the drive writes
+straight into GPU memory.</p>
 </section>
 
 <section id="tested">
