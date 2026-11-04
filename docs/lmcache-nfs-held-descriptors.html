@@ -53,14 +53,16 @@ On one small desktop host with one NVMe drive and no GPU in the data
 path, 16 test clients rose from 37,926 to 140,427 object reads per
 second, and close stalls of up to 3.3 seconds went away. With vLLM
 serving through LMCache on the same host, time to first token does not
-change while the metadata server is idle. When eight other clients load
-that server, the baseline's 90th-percentile time to first token rises
-to 1.5 seconds, slower than recomputing the prefix (0.94 s); when every
-client holds descriptors it stays at 0.16 s. On a local filesystem an
+change while the metadata server is idle. When eight other clients keep
+that server busy, the baseline's 90th-percentile time to first token
+rises to 1.5 seconds at one request in flight, slower than recomputing
+the prefix (0.94 s); vLLM with held descriptors stays at 0.15 s. On a
+local filesystem an
 open costs about a microsecond, so the gain there is small (4-5%).</p>
 <div class="stat-grid">
 <div class="stat"><div class="val">3.7&times;</div><div class="label">object reads per second, 16 pNFS clients on one 16-core host, held against open per read (140,427 vs 37,926)</div></div>
 <div class="stat"><div class="val cyan">4 &rarr; 0</div><div class="label">metadata-server operations per repeated object read on a Lattice pNFS server</div></div>
+<div class="stat"><div class="val">10&times;</div><div class="label">lower 90th-percentile time to first token for vLLM when other clients keep the pNFS metadata server busy (1,522 to 148 ms)</div></div>
 <div class="stat"><div class="val amber">+61-78%</div><div class="label">NFS opens per second, 16 and 32 threads under one credential, with the client kernel change, on two 16-core hosts</div></div>
 </div>
 <div class="note"><strong>What this is, and what it is not yet.</strong>
@@ -71,11 +73,10 @@ server, the separate LMCache process that vLLM talks to, with the KV
 cache on the pNFS lab (<a href="#vllm-results">results</a>). It shows
 that the gain appears only when the metadata server is busy: idle, the
 open and close calls run in parallel with the reads and cost nothing
-visible. In that test the extra clients that load the metadata server
-also hold descriptors in the held arm, so it compares a fleet that opens
-per read with a fleet that holds; we have not yet measured vLLM holding
-descriptors while the other clients do not. All of it ran on one small
-host. Two things remain to be done: scaling tests with higher-end NVMe
+visible. When other clients keep that server busy, vLLM with held
+descriptors keeps its idle-server times while the baseline slows down
+past the cost of recomputing. All of it ran on one small host, with the
+KV data in host memory. Two things remain to be done: scaling tests with higher-end NVMe
 drives, faster GPUs and data larger than the servers' memory, and a
 production-grade pNFS network, with dedicated metadata and data
 servers, several data servers and many client hosts on real network
@@ -173,11 +174,11 @@ make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
 <code>RPL2P_ROOT</code> and put on <code>PYTHONPATH</code>. The run ends
 with <code>summary.md</code>. Our results from the pNFS lab profile are
 in <a href="#vllm-results">section 7</a>. In the lab profile the load
-clients follow the arm, so the busy phases compare a fleet that opens per
-read with a fleet that holds descriptors. Set
-<code>CONFIG_KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ=y</code> to keep the load
-clients on open per read in both arms, so only vLLM's own setting
-changes.</p>
+clients open per read in both arms, so the metadata server is equally
+busy in both and only vLLM's own setting changes. Set
+<code>CONFIG_KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ=n</code> to let the load
+clients hold descriptors in the held arm too, as a whole fleet that
+adopts the option would.</p>
 <p>To try the options in your own LMCache deployment instead, build
 LMCache from the read-mode branch below and set
 <code>held_fd_capacity</code> in the <code>fs_native</code> adapter
@@ -356,64 +357,75 @@ profile: vLLM 0.30 serves Llama-3.1-8B-Instruct on the host's RTX 4090
 through LMCache's MP server, whose <code>fs_native</code> adapter keeps
 the KV cache on the pNFS lab. Every request loads its whole 8,192-token
 prefix, 32 objects of 32 MiB, from the lab, because LMCache's 8 GiB
-host-memory cache holds only half of the 16 GiB working set. Held
-descriptors remove all 32 OPEN and 32 CLOSE calls per request, which cut
-the metadata server's work from about 128 operations per request to
-about one. Each phase ran for 60 seconds, twice per arm, in alternating
-order; each arm started a fresh LMCache server and a fresh vLLM.</p>
+host-memory cache holds only half of the 16 GiB working set. The
+baseline (<code>held_fd_capacity</code> 0) sends 32 OPEN and 32 CLOSE
+calls per request, about 128 metadata-server operations; held
+descriptors (4096) send none, about one operation per request. Each
+phase ran for 60 seconds, twice per arm, in alternating order; each arm
+started a fresh LMCache server and a fresh vLLM.</p>
 <p>With the metadata server idle, time to first token does not change in
 either read mode: the adapter's workers open and read the 32 objects in
 parallel, so the opens are not on the critical path. In the busy rows
-eight other lab clients read small objects as fast as they can. When
-every client opens per read, the metadata server handles 16,000 to
-76,000 operations per second, vLLM's requests slow down, and they spread
-out: at one request in flight the 90th percentile reaches 1.5 seconds,
-slower than recomputing the prefix (0.94 s). In the held arm the load
-clients also hold descriptors, the metadata server falls to about 20
-operations per second, and vLLM's times stay close to idle. The load
-clients themselves read 7 to 11 times more objects per second in the held
-arm.</p>
+eight other lab clients open per read in both arms, as fast as they can,
+so the metadata server handles 14,000 to 83,000 operations per second in
+both. The baseline vLLM then slows down and spreads out: at one request
+in flight its 90th percentile reaches 1.5 seconds, slower than
+recomputing the prefix (0.94 s). vLLM with held descriptors sends the
+busy server nothing and keeps its idle times.</p>
 <figure class="chart" id="chart-vllm-buf" data-unit="">
 <h3>vLLM time to first token, buffered reads</h3>
-<p class="cap">90th percentile in ms, median of two repeats; 60 s per phase; recompute takes 937 ms at one request in flight</p>
+<p class="cap">90th percentile in ms, median of two repeats; busy means eight other clients opening per read in both arms; recompute takes 944 ms at one request in flight</p>
 <ul class="legend" aria-hidden="true"></ul>
 <svg role="img" aria-labelledby="chart-vllm-buf-desc"></svg>
-<p id="chart-vllm-buf-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 65 ms of each other. With it busy, the baseline's 90th percentile is 1,479 ms at one request in flight and 1,788 ms at four; held is 163 and 381 ms. The table below has every value.</p>
+<p id="chart-vllm-buf-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 6 ms of each other. With it busy, the baseline's 90th percentile is 1,522 ms at one request in flight and 2,183 ms at four; held is 148 and 351 ms. The table below has every value.</p>
 <div class="tip" role="presentation"></div>
 </figure>
 <figure class="chart" id="chart-vllm-odir" data-unit="">
 <h3>vLLM time to first token, O_DIRECT reads</h3>
-<p class="cap">90th percentile in ms, median of two repeats; 60 s per phase</p>
+<p class="cap">90th percentile in ms, median of two repeats; busy means eight other clients opening per read in both arms</p>
 <ul class="legend" aria-hidden="true"></ul>
 <svg role="img" aria-labelledby="chart-vllm-odir-desc"></svg>
-<p id="chart-vllm-odir-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 25 ms of each other. With it busy, the baseline's 90th percentile is 1,575 ms at one request in flight and 2,937 ms at four; held is 372 and 1,392 ms. The table below has every value.</p>
+<p id="chart-vllm-odir-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 13 ms of each other. With it busy, the baseline's 90th percentile is 1,493 ms at one request in flight and 2,982 ms at four; held is 258 and 621 ms. The table below has every value.</p>
 <div class="tip" role="presentation"></div>
 </figure>
 <div class="table-wrap"><table>
 <caption>Time to first token in ms and requests per second, baseline (held_fd_capacity 0) against held (4096)</caption>
 <tr><th scope="col">Reads</th><th scope="col">Metadata server</th><th scope="col">In flight</th><th scope="col">p50, baseline</th><th scope="col">p50, held</th><th scope="col">p90, baseline</th><th scope="col">p90, held</th><th scope="col">Requests/s, baseline</th><th scope="col">Requests/s, held</th></tr>
-<tr><td class="hi">Buffered</td><td>Idle</td><td>1</td><td>141&#8209;247*</td><td>140</td><td>207</td><td>142</td><td>5.1*</td><td>7.1</td></tr>
-<tr><td class="hi">Buffered</td><td>Idle</td><td>4</td><td>327&#8209;328</td><td>327&#8209;328</td><td>367</td><td>347</td><td>11.8</td><td>12.2</td></tr>
-<tr><td class="hi">Buffered</td><td>Busy</td><td>1</td><td>338&#8209;655</td><td>157</td><td>1,479</td><td>163</td><td>1.4</td><td>6.3</td></tr>
-<tr><td class="hi">Buffered</td><td>Busy</td><td>4</td><td>935&#8209;1,136</td><td>343</td><td>1,788</td><td>381</td><td>3.7</td><td>11.6</td></tr>
-<tr><td class="hi">O_DIRECT</td><td>Idle</td><td>1</td><td>176&#8209;178</td><td>176&#8209;177</td><td>186</td><td>211</td><td>5.4</td><td>5.5</td></tr>
-<tr><td class="hi">O_DIRECT</td><td>Idle</td><td>4</td><td>373&#8209;384</td><td>378&#8209;383</td><td>520</td><td>511</td><td>10.1</td><td>10.1</td></tr>
-<tr><td class="hi">O_DIRECT</td><td>Busy</td><td>1</td><td>408&#8209;544</td><td>347&#8209;348</td><td>1,575</td><td>372</td><td>1.3</td><td>2.9</td></tr>
-<tr><td class="hi">O_DIRECT</td><td>Busy</td><td>4</td><td>1,781&#8209;1,847</td><td>1,006&#8209;1,025</td><td>2,937</td><td>1,392</td><td>2.1</td><td>3.8</td></tr>
+<tr><td class="hi">Buffered</td><td>Idle</td><td>1</td><td>140&#8209;141</td><td>140</td><td>145</td><td>142</td><td>6.6</td><td>7.1</td></tr>
+<tr><td class="hi">Buffered</td><td>Idle</td><td>4</td><td>325&#8209;326</td><td>326&#8209;327</td><td>348</td><td>343</td><td>12.2</td><td>12.2</td></tr>
+<tr><td class="hi">Buffered</td><td>Busy</td><td>1</td><td>469&#8209;476</td><td>140&#8209;141</td><td>1,522</td><td>148</td><td>1.4</td><td>6.3</td></tr>
+<tr><td class="hi">Buffered</td><td>Busy</td><td>4</td><td>897&#8209;1,236</td><td>325&#8209;326</td><td>2,183</td><td>351</td><td>3.6</td><td>11.9</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>Idle</td><td>1</td><td>175&#8209;178</td><td>175&#8209;176</td><td>185</td><td>183</td><td>5.1</td><td>5.6</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>Idle</td><td>4</td><td>367&#8209;373</td><td>372&#8209;376</td><td>520</td><td>507</td><td>10.1</td><td>10.2</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>Busy</td><td>1</td><td>300&#8209;645</td><td>174&#8209;176</td><td>1,493</td><td>258</td><td>1.4</td><td>5.1</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>Busy</td><td>4</td><td>1,615&#8209;1,858</td><td>412&#8209;422</td><td>2,982</td><td>621</td><td>2.2</td><td>9.1</td></tr>
 </table></div>
 <p>p50 is shown as the range over the two repeats; p90 and requests per
 second are the median of the two. vLLM without LMCache, recomputing each
-prefix, takes 933 ms at one request in flight and 3,653 ms at four.
-* The first baseline repeat was the first arm measured after the cache was
-filled and ran at 247 ms; the second (141 ms) equals the held arm, so
-this row shows no real difference. Buffered reads never reached the
-server: the client page cache held the data. O_DIRECT reads went to the
-data server, which most likely answered from its own page cache. So
-this test, too, measures the metadata path and not the drive. Every
-request found its whole prefix cached, none failed, and first tokens
-matched the recompute run in 1,064 of 1,072 requests; the eight
-differences are the same request in all eight measured arms, baseline and
-held alike.</p>
+prefix, takes 940 ms at one request in flight and 3,670 ms at four.
+Buffered reads never reached the server: the client page cache held the
+data. O_DIRECT reads went to the data server, which most likely answered
+from its own page cache. So this test, too, measures the metadata path
+and not the drive. Every request found its whole prefix cached, none
+failed, and first tokens matched the recompute run in 1,056 of 1,064
+requests; the eight differences are the same request in all eight
+measured arms, baseline and held alike.</p>
+<p>An earlier run let the load clients follow the arm: they opened per
+read in the baseline arm and held descriptors in the held arm, as a
+whole fleet that adopts the option would. The baseline was close to the
+run above. The held arm was slower than above, most with O_DIRECT reads
+(p90 1,392 against 621 ms at four in flight), most likely because the
+load clients, no longer limited by the metadata server, read 38,000 to
+111,000 objects per second and competed with vLLM for the data server
+and the host's CPU:</p>
+<div class="table-wrap"><table>
+<caption>Busy rows when the load clients follow the arm: time to first token in ms</caption>
+<tr><th scope="col">Reads</th><th scope="col">In flight</th><th scope="col">p50, baseline</th><th scope="col">p50, held</th><th scope="col">p90, baseline</th><th scope="col">p90, held</th><th scope="col">Load reads/s, baseline</th><th scope="col">Load reads/s, held</th></tr>
+<tr><td class="hi">Buffered</td><td>1</td><td>338&#8209;655</td><td>157</td><td>1,479</td><td>163</td><td>9,743</td><td>86,892</td></tr>
+<tr><td class="hi">Buffered</td><td>4</td><td>935&#8209;1,136</td><td>343</td><td>1,788</td><td>381</td><td>3,426</td><td>38,051</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>1</td><td>408&#8209;544</td><td>347&#8209;348</td><td>1,575</td><td>372</td><td>16,186</td><td>111,326</td></tr>
+<tr><td class="hi">O_DIRECT</td><td>4</td><td>1,781&#8209;1,847</td><td>1,006&#8209;1,025</td><td>2,937</td><td>1,392</td><td>12,403</td><td>100,315</td></tr>
+</table></div>
 <h3>Plain NFS and a local disk</h3>
 <p>Between two desktop hosts over 1 Gb/s, NFSv4.2 to a Linux server that
 grants read delegations, 256 KiB page-cache reads: no NFS operation reached
@@ -800,12 +812,12 @@ state recovery after a lease expiry are not yet tested.</p>
   ], 2500000, [0, 500000, 1000000, 1500000, 2000000, 2500000], "Threads", "opens/s");
   const vllmX = ["Idle, 1", "Idle, 4", "Busy, 1", "Busy, 4"];
   barChart("chart-vllm-buf", vllmX, [
-    { name: "Baseline (held 0)", color: "--s1", values: [207, 367, 1479, 1788] },
-    { name: "Held descriptors (4096)", color: "--s2", values: [142, 347, 163, 381] },
+    { name: "Baseline (held 0)", color: "--s1", values: [145, 348, 1522, 2183] },
+    { name: "Held descriptors (4096)", color: "--s2", values: [142, 343, 148, 351] },
   ], 3000, [0, 1000, 2000, 3000], "Metadata server, requests in flight", "ms");
   barChart("chart-vllm-odir", vllmX, [
-    { name: "Baseline (held 0)", color: "--s1", values: [186, 520, 1575, 2937] },
-    { name: "Held descriptors (4096)", color: "--s2", values: [211, 511, 372, 1392] },
+    { name: "Baseline (held 0)", color: "--s1", values: [185, 520, 1493, 2982] },
+    { name: "Held descriptors (4096)", color: "--s2", values: [183, 507, 258, 621] },
   ], 3000, [0, 1000, 2000, 3000], "Metadata server, requests in flight", "ms");
   lineChart("chart-hw", [1, 2, 4, 8, 16, 32], [
     { name: "Without the commits", color: "--s1", values: [383000, 642000, 1112000, 1660000, 912000, 973000] },
