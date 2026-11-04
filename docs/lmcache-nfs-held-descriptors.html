@@ -54,7 +54,7 @@ path, 16 test clients rose from 37,926 to 140,427 object reads per
 second, and close stalls of up to 3.3 seconds went away. With vLLM
 serving through LMCache on the same host, time to first token does not
 change while the metadata server is idle. When eight other clients load
-that server, the stock path's 90th-percentile time to first token rises
+that server, the baseline's 90th-percentile time to first token rises
 to 1.5 seconds, slower than recomputing the prefix (0.94 s); when every
 client holds descriptors it stays at 0.16 s. On a local filesystem an
 open costs about a microsecond, so the gain there is small (4-5%).</p>
@@ -172,7 +172,12 @@ make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
 <p>Nothing is installed into the vLLM environment: LMCache is built in
 <code>RPL2P_ROOT</code> and put on <code>PYTHONPATH</code>. The run ends
 with <code>summary.md</code>. Our results from the pNFS lab profile are
-in <a href="#vllm-results">section 7</a>.</p>
+in <a href="#vllm-results">section 7</a>. In the lab profile the load
+clients follow the arm, so the busy phases compare a fleet that opens per
+read with a fleet that holds descriptors. Set
+<code>CONFIG_KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ=y</code> to keep the load
+clients on open per read in both arms, so only vLLM's own setting
+changes.</p>
 <p>To try the options in your own LMCache deployment instead, build
 LMCache from the read-mode branch below and set
 <code>held_fd_capacity</code> in the <code>fs_native</code> adapter
@@ -368,9 +373,25 @@ clients also hold descriptors, the metadata server falls to about 20
 operations per second, and vLLM's times stay close to idle. The load
 clients themselves read 7 to 11 times more objects per second in the held
 arm.</p>
+<figure class="chart" id="chart-vllm-buf" data-unit="">
+<h3>vLLM time to first token, buffered reads</h3>
+<p class="cap">90th percentile in ms, median of two repeats; 60 s per phase; recompute takes 937 ms at one request in flight</p>
+<ul class="legend" aria-hidden="true"></ul>
+<svg role="img" aria-labelledby="chart-vllm-buf-desc"></svg>
+<p id="chart-vllm-buf-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 65 ms of each other. With it busy, the baseline's 90th percentile is 1,479 ms at one request in flight and 1,788 ms at four; held is 163 and 381 ms. The table below has every value.</p>
+<div class="tip" role="presentation"></div>
+</figure>
+<figure class="chart" id="chart-vllm-odir" data-unit="">
+<h3>vLLM time to first token, O_DIRECT reads</h3>
+<p class="cap">90th percentile in ms, median of two repeats; 60 s per phase</p>
+<ul class="legend" aria-hidden="true"></ul>
+<svg role="img" aria-labelledby="chart-vllm-odir-desc"></svg>
+<p id="chart-vllm-odir-desc" class="cap">Bar chart. With the metadata server idle, baseline and held are within 25 ms of each other. With it busy, the baseline's 90th percentile is 1,575 ms at one request in flight and 2,937 ms at four; held is 372 and 1,392 ms. The table below has every value.</p>
+<div class="tip" role="presentation"></div>
+</figure>
 <div class="table-wrap"><table>
-<caption>Time to first token in ms and requests per second, stock (held_fd_capacity 0) against held (4096)</caption>
-<tr><th scope="col">Reads</th><th scope="col">Metadata server</th><th scope="col">In flight</th><th scope="col">p50, stock</th><th scope="col">p50, held</th><th scope="col">p90, stock</th><th scope="col">p90, held</th><th scope="col">Requests/s, stock</th><th scope="col">Requests/s, held</th></tr>
+<caption>Time to first token in ms and requests per second, baseline (held_fd_capacity 0) against held (4096)</caption>
+<tr><th scope="col">Reads</th><th scope="col">Metadata server</th><th scope="col">In flight</th><th scope="col">p50, baseline</th><th scope="col">p50, held</th><th scope="col">p90, baseline</th><th scope="col">p90, held</th><th scope="col">Requests/s, baseline</th><th scope="col">Requests/s, held</th></tr>
 <tr><td class="hi">Buffered</td><td>Idle</td><td>1</td><td>141&#8209;247*</td><td>140</td><td>207</td><td>142</td><td>5.1*</td><td>7.1</td></tr>
 <tr><td class="hi">Buffered</td><td>Idle</td><td>4</td><td>327&#8209;328</td><td>327&#8209;328</td><td>367</td><td>347</td><td>11.8</td><td>12.2</td></tr>
 <tr><td class="hi">Buffered</td><td>Busy</td><td>1</td><td>338&#8209;655</td><td>157</td><td>1,479</td><td>163</td><td>1.4</td><td>6.3</td></tr>
@@ -383,7 +404,7 @@ arm.</p>
 <p>p50 is shown as the range over the two repeats; p90 and requests per
 second are the median of the two. vLLM without LMCache, recomputing each
 prefix, takes 933 ms at one request in flight and 3,653 ms at four.
-* The first stock repeat was the first arm measured after the cache was
+* The first baseline repeat was the first arm measured after the cache was
 filled and ran at 247 ms; the second (141 ms) equals the held arm, so
 this row shows no real difference. Buffered reads never reached the
 server: the client page cache held the data. O_DIRECT reads went to the
@@ -391,7 +412,7 @@ data server, which most likely answered from its own page cache. So
 this test, too, measures the metadata path and not the drive. Every
 request found its whole prefix cached, none failed, and first tokens
 matched the recompute run in 1,064 of 1,072 requests; the eight
-differences are the same request in all eight measured arms, stock and
+differences are the same request in all eight measured arms, baseline and
 held alike.</p>
 <h3>Plain NFS and a local disk</h3>
 <p>Between two desktop hosts over 1 Gb/s, NFSv4.2 to a Linux server that
@@ -761,9 +782,9 @@ state recovery after a lease expiry are not yet tested.</p>
         const val = s.values[i], top = y(val), bx = gx + j * (bw + gap), h = H - m.b - top, r = Math.min(4, h);
         el("path", { d: "M" + bx + " " + (H - m.b) + "V" + (top + r) + "Q" + bx + " " + top + " " + (bx + r) + " " + top +
           "H" + (bx + bw - r) + "Q" + (bx + bw) + " " + top + " " + (bx + bw) + " " + (top + r) + "V" + (H - m.b) + "Z", fill: css(s.color) }, svg);
-        if (i === xs.length - 1 && j === series.length - 1) el("text", { x: bx + bw / 2, y: top - 6, "text-anchor": "middle", class: "lbl" }, svg, fmt(val));
+        if (i === xs.length - 1 && j === series.length - 1) el("text", { x: bx + bw / 2, y: top - 6, "text-anchor": "middle", class: "lbl" }, svg, val >= 1e5 ? fmt(val) : full(val));
         const hit = el("rect", { x: bx - 1, y: m.t, width: bw + 2, height: H - m.t - m.b, fill: "transparent" }, svg);
-        hit.addEventListener("mousemove", e => showTip(fig, tip, e, "<b>" + v + " threads</b><br>" + s.name + ": " + full(val)));
+        hit.addEventListener("mousemove", e => showTip(fig, tip, e, "<b>" + v + (fig.dataset.unit === "" ? "" : " threads") + "</b><br>" + s.name + ": " + full(val)));
         hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
       });
     });
@@ -777,6 +798,15 @@ state recovery after a lease expiry are not yet tested.</p>
     { name: "Commits 2-3", color: "--s2", values: [391208, 713240, 1249964, 1274300] },
     { name: "All four commits", color: "--s3", values: [399210, 721212, 1328593, 2163788] },
   ], 2500000, [0, 500000, 1000000, 1500000, 2000000, 2500000], "Threads", "opens/s");
+  const vllmX = ["Idle, 1", "Idle, 4", "Busy, 1", "Busy, 4"];
+  barChart("chart-vllm-buf", vllmX, [
+    { name: "Baseline (held 0)", color: "--s1", values: [207, 367, 1479, 1788] },
+    { name: "Held descriptors (4096)", color: "--s2", values: [142, 347, 163, 381] },
+  ], 3000, [0, 1000, 2000, 3000], "Metadata server, requests in flight", "ms");
+  barChart("chart-vllm-odir", vllmX, [
+    { name: "Baseline (held 0)", color: "--s1", values: [186, 520, 1575, 2937] },
+    { name: "Held descriptors (4096)", color: "--s2", values: [211, 511, 372, 1392] },
+  ], 3000, [0, 1000, 2000, 3000], "Metadata server, requests in flight", "ms");
   lineChart("chart-hw", [1, 2, 4, 8, 16, 32], [
     { name: "Without the commits", color: "--s1", values: [383000, 642000, 1112000, 1660000, 912000, 973000] },
     { name: "With the four commits", color: "--s3", values: [377000, 636000, 1128000, 1760000, 1537000, 1735000] },
