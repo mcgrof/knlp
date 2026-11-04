@@ -199,7 +199,8 @@ async def judge_all(items, notes, out_path):
     claims = os.environ.get("JUDGE_MODE", "verdict") == "claims"
     sem = asyncio.Semaphore(conc)
     done = [0]
-    async with httpx.AsyncClient(base_url=url, timeout=1800) as client:
+    limits = httpx.Limits(max_connections=conc, max_keepalive_connections=conc)
+    async with httpx.AsyncClient(base_url=url, timeout=1800, limits=limits) as client:
 
         async def one(it, f):
             body = dict(
