@@ -175,7 +175,38 @@ class Load:
             self.copier.set_byte_ranges(meta.select_byte_ranges(lambda n: n in names))
         self.t_construct1 = time.perf_counter()
 
+    def _instrument(self):
+        """Time completion reaping and registration release inside wait_io.
+
+        Diagnostic only (EMO_IFP_DIAG=1): wraps two copier internals, so
+        it is run separately from the uninstrumented timing pass.
+        """
+        c = self.copier
+        self.diag = {"ring_wait_s": 0.0, "release_s": 0.0, "first_wait_t": None}
+        ring_wait, release = c.ring.wait, c._release_registrations
+
+        def timed_wait(ud):
+            t = time.perf_counter()
+            if self.diag["first_wait_t"] is None:
+                self.diag["first_wait_t"] = t
+            try:
+                return ring_wait(ud)
+            finally:
+                self.diag["ring_wait_s"] += time.perf_counter() - t
+
+        def timed_release():
+            t = time.perf_counter()
+            try:
+                return release()
+            finally:
+                self.diag["release_s"] += time.perf_counter() - t
+
+        c.ring.wait = timed_wait
+        c._release_registrations = timed_release
+
     def submit(self):
+        if os.environ.get("EMO_IFP_DIAG") == "1" and hasattr(self.copier, "ring"):
+            self._instrument()
         self.t_submit0 = time.perf_counter()
         self.gbuf = self.copier.submit_io(True, 16 << 30)
         self.t_submit1 = time.perf_counter()
@@ -327,6 +358,9 @@ def run_request(model, slot, ids, policy, packed, decode, eos):
         rec["fallback"] = load.fallback
         rec["alloc_span"] = load.alloc_span
         rec["pieces"] = load.n_pieces
+        if getattr(load, "diag", None):
+            rec["diag_ring_wait_s"] = load.diag["ring_wait_s"]
+            rec["diag_release_s"] = load.diag["release_s"]
     rec["tokens"] = toks
     return rec, logits, load
 
