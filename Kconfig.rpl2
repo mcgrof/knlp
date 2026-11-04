@@ -469,21 +469,21 @@ config KNLP_RPL2_VLLM_LOAD_CLIENTS
 	default 8
 	depends on KNLP_RPL2_VLLM_PNFS_LAB
 	help
-	  Each reads the lab's 256 KiB fixture, 16 objects per request, with
-	  the arm's descriptor setting (0 or 64), so the metadata server is
-	  as busy as a fleet of nodes with that setting would make it.  Eight
-	  saturate one metadata server on a 16-core host with open per read.
+	  Each reads the lab's 256 KiB fixture, 16 objects per request, as
+	  fast as it can.  Eight saturate one metadata server on a 16-core
+	  host with open per read.  The next option sets their descriptor
+	  setting.
 
 config KNLP_RPL2_VLLM_LOAD_OPEN_PER_READ
 	bool "Keep the load clients on open per read in both arms"
-	default n
+	default y
 	depends on KNLP_RPL2_VLLM_PNFS_LAB
 	help
-	  By default the load clients follow the arm, so the busy phases
-	  compare a fleet that opens per read with a fleet that holds
-	  descriptors.  Say Y to keep the load clients on open per read
-	  (held 0) in both arms, so only vLLM's own setting changes and the
-	  metadata server stays busy in both.
+	  Keep the load clients on open per read (held 0) in both arms, so
+	  the metadata server stays busy in both and only vLLM's own
+	  setting changes.  Say N to let the load clients follow the arm
+	  (held 64 in the held arm), which compares a fleet that opens per
+	  read with a fleet that holds descriptors.
 
 endif
 
