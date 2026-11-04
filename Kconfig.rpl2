@@ -87,7 +87,39 @@ config KNLP_RPL2_SITE
 	  published held-descriptor build, which reproduces the read-plan
 	  closing measurement at any position you mount.
 
+config KNLP_RPL2_VLLM
+	bool "Your own filesystem: vLLM through the LMCache MP server"
+	help
+	  An end-to-end test of held descriptors: vLLM serves a model through
+	  the LMCache multiprocess (MP) server, whose fs_native L2 adapter
+	  stores KV-cache chunks on a directory you give, for example on an
+	  NFS or pNFS mount.  Each request has a long prefix that the L2
+	  holds and LMCache's host-memory L1 does not, so every request loads
+	  its prefix from the filesystem.  The run records the time to first
+	  token and requests per second with held_fd_capacity 0 (stock) and
+	  with held descriptors, for buffered and O_DIRECT reads, plus vLLM
+	  without LMCache as the recompute baseline.
+
+	  Needs one NVIDIA GPU, a Python environment with vLLM and CUDA
+	  PyTorch, the CUDA toolkit to build LMCache's extensions, and the
+	  model.  Nothing is installed into that environment; LMCache is
+	  built in the task root.  Runs as an ordinary user.
+
+config KNLP_RPL2_VLLM_PNFS_LAB
+	bool "pNFS lab on one host: vLLM through the LMCache MP server"
+	help
+	  The same vLLM test with the L2 on the one-host pNFS lab, where
+	  every open is a request to the metadata server.  It also repeats
+	  each measurement while the lab's extra clients load the metadata
+	  server, as other inference nodes sharing it would, and records the
+	  metadata server's operations per request.  Needs root (sudo) for
+	  the lab, and the GPU environment of the previous profile.
+
 endchoice
+
+config KNLP_RPL2_VLLM_ANY
+	bool
+	default y if KNLP_RPL2_VLLM || KNLP_RPL2_VLLM_PNFS_LAB
 
 config KNLP_RPL2_TARGET_DIR
 	string "Existing directory for the test objects"
@@ -156,7 +188,7 @@ config KNLP_RPL2_SEED
 	default 1
 	depends on KNLP_RPL2_MOUNTED_FS
 
-if KNLP_RPL2_PNFS_LAB || KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_PNFS_REMOTE || KNLP_RPL2_SITE
+if KNLP_RPL2_PNFS_LAB || KNLP_RPL2_PNFS_SWEEP || KNLP_RPL2_PNFS_REMOTE || KNLP_RPL2_SITE || KNLP_RPL2_VLLM_ANY
 
 config KNLP_RPL2_PNFS_ROOT
 	string "Task root directory for sources, builds and lab state"
@@ -177,6 +209,7 @@ config KNLP_RPL2_PNFS_OUTPUT_DIR
 config KNLP_RPL2_PNFS_PYTHON
 	string "Python with torch for building LMCache (empty: create one with uv)"
 	default ""
+	depends on !KNLP_RPL2_VLLM
 
 config KNLP_RPL2_PNFS_LMCACHE_REPO
 	string "LMCache repository"
@@ -198,7 +231,7 @@ config KNLP_RPL2_PNFS_LMCACHE_COMMIT
 
 config KNLP_RPL2_PNFS_PREFIX
 	string "Lab name prefix for namespaces, units and interfaces"
-	depends on !KNLP_RPL2_SITE
+	depends on !KNLP_RPL2_SITE && !KNLP_RPL2_VLLM
 	default "rpl2p"
 	help
 	  At most 6 characters.  Two labs on one host need different
@@ -206,7 +239,7 @@ config KNLP_RPL2_PNFS_PREFIX
 
 config KNLP_RPL2_PNFS_NET
 	string "Private /24 subnet of the lab, first three octets"
-	depends on !KNLP_RPL2_SITE
+	depends on !KNLP_RPL2_SITE && !KNLP_RPL2_VLLM
 	default "10.247.0"
 	help
 	  Must not be routed on the host already; the lab refuses to start
@@ -216,21 +249,22 @@ config KNLP_RPL2_PNFS_DATA_SERVERS
 	int "Data servers"
 	range 1 8
 	default 1
-	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE
+	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE && !KNLP_RPL2_VLLM
 
 config KNLP_RPL2_PNFS_HELD_CAPACITY
 	int "held_fd_capacity for the held-descriptor arm"
 	default 64
+	depends on !KNLP_RPL2_VLLM_ANY
 
 config KNLP_RPL2_PNFS_BLOCKS
 	int "Paired blocks in the screen"
 	default 3
-	depends on !KNLP_RPL2_PNFS_SWEEP
+	depends on !KNLP_RPL2_PNFS_SWEEP && !KNLP_RPL2_VLLM_ANY
 
 config KNLP_RPL2_PNFS_REQUESTS
 	int "Requests per arm per block"
 	default 200
-	depends on !KNLP_RPL2_PNFS_SWEEP
+	depends on !KNLP_RPL2_PNFS_SWEEP && !KNLP_RPL2_VLLM_ANY
 
 config KNLP_RPL2_PNFS_CLIENTS
 	string "Client counts for the sweep"
@@ -325,7 +359,11 @@ config KNLP_RPL2_SITE_KERNEL
 	  base and the patched kernel in turn on the client and run this
 	  step on each.  The step is skipped unless
 	  KNLP_RPL2_SITE_KERNEL_SELFTEST names the built binary.  The
-	  kernel change and the selftest are not yet published.
+	  four commits, the selftest first, are on the public branch
+	  2026-10-30-dmabuf-on-axboe-for-7.4-nfs of
+	  git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git; build
+	  the selftest there with
+	  make -C tools/testing/selftests TARGETS=filesystems/nfs.
 
 config KNLP_RPL2_SITE_KERNEL_SELFTEST
 	string "Path to the open/close selftest binary"
@@ -342,11 +380,101 @@ endif
 config KNLP_RPL2_PNFS_REMOTE_CLIENTS
 	string "Addresses of client hosts allowed to mount this lab"
 	default ""
-	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE
+	depends on !KNLP_RPL2_PNFS_REMOTE && !KNLP_RPL2_SITE && !KNLP_RPL2_VLLM_ANY
 	help
 	  Space-separated.  When set, bringing the lab up also adds the
 	  route back to those hosts and two accept rules for the lab subnet
 	  in the DOCKER-USER chain, which teardown removes.
+
+if KNLP_RPL2_VLLM_ANY
+
+config KNLP_RPL2_VLLM_PYTHON
+	string "Python with vLLM and CUDA PyTorch"
+	default ""
+	help
+	  The interpreter of an existing vLLM environment, for example
+	  /opt/vllm/bin/python.  LMCache is built against its PyTorch and
+	  put on PYTHONPATH; nothing is installed into it.  Override with
+	  RPL2_VLLM_PYTHON=/path.
+
+config KNLP_RPL2_VLLM_CUDA_HOME
+	string "CUDA toolkit for building LMCache's extensions"
+	default "/usr/local/cuda"
+
+config KNLP_RPL2_VLLM_DIR
+	string "Existing writable directory on the filesystem under test"
+	default ""
+	depends on KNLP_RPL2_VLLM
+	help
+	  The run creates one rpl2-vllm-<time> subdirectory in it for the
+	  L2 and touches nothing else.  It needs about prompts x prefix
+	  tokens x the model's KV bytes per token, twice (one copy per I/O
+	  mode): 32 GiB for the defaults with an 8B Llama model.  Override
+	  with RPL2_VLLM_DIR=/path.
+
+config KNLP_RPL2_VLLM_MODEL
+	string "Model"
+	default "meta-llama/Llama-3.1-8B-Instruct"
+	help
+	  A model vLLM can serve on the GPU with room for four 8K-token
+	  requests.  Llama-3.1-8B stores 128 KiB of KV per token, so one
+	  256-token LMCache chunk is a 32 MiB object.
+
+config KNLP_RPL2_VLLM_PROMPTS
+	int "Distinct prompt prefixes"
+	default 16
+
+config KNLP_RPL2_VLLM_PREFIX_TOKENS
+	int "Tokens in each prefix, a multiple of 256"
+	default 8192
+
+config KNLP_RPL2_VLLM_L1_GB
+	int "LMCache L1 (host memory) size in GiB"
+	default 8
+	help
+	  Keep it below the working set (prompts x prefix tokens x KV bytes
+	  per token), so prompts sent round robin always miss L1 and load
+	  from the filesystem.
+
+config KNLP_RPL2_VLLM_HELD_CAPACITY
+	int "held_fd_capacity for the held-descriptor arm"
+	default 4096
+
+config KNLP_RPL2_VLLM_IO
+	string "fs_native I/O modes: buffered, odirect or both"
+	default "buffered odirect"
+
+config KNLP_RPL2_VLLM_SECONDS
+	int "Seconds per phase"
+	default 60
+
+config KNLP_RPL2_VLLM_CONCURRENCY
+	string "Requests in flight, one phase each"
+	default "1 4"
+
+config KNLP_RPL2_VLLM_REPEATS
+	int "Repeats of each arm, in alternating order"
+	default 2
+
+config KNLP_RPL2_VLLM_GPU_UTIL
+	string "vLLM GPU memory utilization"
+	default "0.90"
+
+config KNLP_RPL2_VLLM_MAX_MODEL_LEN
+	int "vLLM maximum model length"
+	default 10240
+
+config KNLP_RPL2_VLLM_LOAD_CLIENTS
+	int "Extra lab clients that load the metadata server"
+	default 8
+	depends on KNLP_RPL2_VLLM_PNFS_LAB
+	help
+	  Each reads the lab's 256 KiB fixture, 16 objects per request, with
+	  the arm's descriptor setting (0 or 64), so the metadata server is
+	  as busy as a fleet of nodes with that setting would make it.  Eight
+	  saturate one metadata server on a 16-core host with open per read.
+
+endif
 
 config KNLP_RPL2_PNFS_LAB_HOST
 	string "LAN address of the host running the lab"

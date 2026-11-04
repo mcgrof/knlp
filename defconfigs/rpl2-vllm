@@ -1,0 +1,35 @@
+# vLLM through the LMCache MP server, with the L2 on your own mount.
+#
+# An end-to-end test of held descriptors: vLLM serves a model through
+# the LMCache multiprocess server, whose fs_native L2 adapter stores
+# KV-cache chunks in a directory you give.  Every request's long prefix
+# is in the L2 and not in LMCache's host-memory L1, so each request loads
+# it from the filesystem.  The run records time to first token and
+# requests per second with held_fd_capacity 0 and with held descriptors,
+# buffered and O_DIRECT, against vLLM without LMCache.  It needs one
+# NVIDIA GPU, a Python with vLLM and CUDA PyTorch, the CUDA toolkit and
+# about 32 GiB free on the mount for the defaults.
+#
+#   make RPL2P_ROOT=/disk/rpl2 RPL2_OUTPUT=$HOME/rpl2-records \
+#        RPL2_VLLM_PYTHON=/opt/vllm/bin/python RPL2_VLLM_DIR=/mnt/pnfs/scratch
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_VLLM=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-28-feature-fs-native-held-fd"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="fc836c1303eaced6363fe79ec59e5cba5edf8eaa"
+CONFIG_KNLP_RPL2_VLLM_PYTHON=""
+CONFIG_KNLP_RPL2_VLLM_CUDA_HOME="/usr/local/cuda"
+CONFIG_KNLP_RPL2_VLLM_DIR=""
+CONFIG_KNLP_RPL2_VLLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+CONFIG_KNLP_RPL2_VLLM_PROMPTS=16
+CONFIG_KNLP_RPL2_VLLM_PREFIX_TOKENS=8192
+CONFIG_KNLP_RPL2_VLLM_L1_GB=8
+CONFIG_KNLP_RPL2_VLLM_HELD_CAPACITY=4096
+CONFIG_KNLP_RPL2_VLLM_IO="buffered odirect"
+CONFIG_KNLP_RPL2_VLLM_SECONDS=60
+CONFIG_KNLP_RPL2_VLLM_CONCURRENCY="1 4"
+CONFIG_KNLP_RPL2_VLLM_REPEATS=2
+CONFIG_KNLP_RPL2_VLLM_GPU_UTIL="0.90"
+CONFIG_KNLP_RPL2_VLLM_MAX_MODEL_LEN=10240

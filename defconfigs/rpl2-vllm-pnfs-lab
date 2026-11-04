@@ -1,0 +1,37 @@
+# vLLM through the LMCache MP server, with the L2 on the one-host pNFS
+# lab, where every open is a request to the metadata server.
+#
+# Builds the lab (as rpl2-pnfs-lab does) and LMCache with its CUDA
+# extensions, brings the lab up with extra clients, and runs the vLLM
+# test of rpl2-vllm inside the lab client's namespaces.  Each phase runs
+# once with an idle metadata server and once while the extra clients load
+# it with the arm's descriptor setting.  Needs root (sudo) for the lab,
+# one NVIDIA GPU and a Python with vLLM and CUDA PyTorch.
+#
+#   make RPL2P_ROOT=/disk/rpl2-lab RPL2_OUTPUT=$HOME/rpl2-records \
+#        RPL2_VLLM_PYTHON=/opt/vllm/bin/python
+CONFIG_KNLP_REPRODUCE_RPL2=y
+CONFIG_KNLP_RPL2_VLLM_PNFS_LAB=y
+CONFIG_KNLP_RPL2_PNFS_ROOT=""
+CONFIG_KNLP_RPL2_PNFS_OUTPUT_DIR=""
+CONFIG_KNLP_RPL2_PNFS_PYTHON=""
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF="2026-10-28-feature-fs-native-held-fd"
+CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT="fc836c1303eaced6363fe79ec59e5cba5edf8eaa"
+CONFIG_KNLP_RPL2_PNFS_PREFIX="rpl2p"
+CONFIG_KNLP_RPL2_PNFS_NET="10.247.0"
+CONFIG_KNLP_RPL2_PNFS_DATA_SERVERS=1
+CONFIG_KNLP_RPL2_VLLM_PYTHON=""
+CONFIG_KNLP_RPL2_VLLM_CUDA_HOME="/usr/local/cuda"
+CONFIG_KNLP_RPL2_VLLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+CONFIG_KNLP_RPL2_VLLM_PROMPTS=16
+CONFIG_KNLP_RPL2_VLLM_PREFIX_TOKENS=8192
+CONFIG_KNLP_RPL2_VLLM_L1_GB=8
+CONFIG_KNLP_RPL2_VLLM_HELD_CAPACITY=4096
+CONFIG_KNLP_RPL2_VLLM_IO="buffered odirect"
+CONFIG_KNLP_RPL2_VLLM_SECONDS=60
+CONFIG_KNLP_RPL2_VLLM_CONCURRENCY="1 4"
+CONFIG_KNLP_RPL2_VLLM_REPEATS=2
+CONFIG_KNLP_RPL2_VLLM_GPU_UTIL="0.90"
+CONFIG_KNLP_RPL2_VLLM_MAX_MODEL_LEN=10240
+CONFIG_KNLP_RPL2_VLLM_LOAD_CLIENTS=8

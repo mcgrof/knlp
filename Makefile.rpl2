@@ -8,6 +8,8 @@
 #   make defconfig-rpl2-pnfs-remote client for a lab on another host
 #   make defconfig-rpl2-site        your own NFS or pNFS mount, no root
 #   make defconfig-rpl2-closure     read-plan closing screen at a mount
+#   make defconfig-rpl2-vllm        vLLM through LMCache MP on your mount
+#   make defconfig-rpl2-vllm-pnfs-lab  vLLM through LMCache MP, pNFS lab
 #
 # Plain `make` then runs the selected profile.  The mounted-filesystem
 # profile needs two directories outside the source tree, given in the
@@ -63,6 +65,26 @@ RPL2_SITE_ENV = RPL2P_ROOT="$(RPL2P_ROOT)" SITE_DIR="$(RPL2_SITE)" \
 	KERNEL_SELFTEST="$(call unq,$(CONFIG_KNLP_RPL2_SITE_KERNEL_SELFTEST))" \
 	KERNEL_THREADS="$(call unq,$(CONFIG_KNLP_RPL2_SITE_KERNEL_THREADS))"
 
+# vLLM through the LMCache MP server.  LMCache is built with its CUDA
+# extensions into $(RPL2P_ROOT)/src/lmcache-cuda, against the given
+# vLLM environment, which is not modified.
+RPL2_VLLM_PYTHON ?= $(call unq,$(CONFIG_KNLP_RPL2_VLLM_PYTHON))
+RPL2_VLLM_DIR ?= $(call unq,$(CONFIG_KNLP_RPL2_VLLM_DIR))
+RPL2_VLLM_SRC := $(CURDIR)/tools/reproduce/rpl2/vllm
+RPL2_VLLM_RUN ?= $(RPL2_PNFS_OUT)/vllm-$(RPL2_PNFS_STAMP)
+RPL2_VLLM_ENV = PY="$(RPL2_VLLM_PYTHON)" \
+	LMCACHE_SRC="$(RPL2P_ROOT)/src/lmcache-cuda" DEPS="$(RPL2P_ROOT)/vllm-deps" \
+	MODEL="$(call unq,$(CONFIG_KNLP_RPL2_VLLM_MODEL))" \
+	PROMPTS=$(CONFIG_KNLP_RPL2_VLLM_PROMPTS) \
+	PREFIX_TOKENS=$(CONFIG_KNLP_RPL2_VLLM_PREFIX_TOKENS) \
+	L1_GB=$(CONFIG_KNLP_RPL2_VLLM_L1_GB) CAP=$(CONFIG_KNLP_RPL2_VLLM_HELD_CAPACITY) \
+	IO="$(call unq,$(CONFIG_KNLP_RPL2_VLLM_IO))" SECS=$(CONFIG_KNLP_RPL2_VLLM_SECONDS) \
+	CONCURRENCY="$(call unq,$(CONFIG_KNLP_RPL2_VLLM_CONCURRENCY))" \
+	REPEATS=$(CONFIG_KNLP_RPL2_VLLM_REPEATS) \
+	GPU_UTIL="$(call unq,$(CONFIG_KNLP_RPL2_VLLM_GPU_UTIL))" \
+	MAX_MODEL_LEN=$(CONFIG_KNLP_RPL2_VLLM_MAX_MODEL_LEN)
+
+.PHONY: rpl2-vllm-check rpl2-vllm-setup rpl2-vllm-run rpl2-vllm-lab-run rpl2-vllm-report
 .PHONY: rpl2 rpl2-help rpl2-doctor rpl2-smoke rpl2-run rpl2-report
 .PHONY: rpl2-pnfs-check rpl2-pnfs-setup rpl2-pnfs-smoke rpl2-pnfs-up \
 	rpl2-pnfs-down rpl2-pnfs-status rpl2-pnfs-fingerprint rpl2-pnfs-screen \
@@ -100,6 +122,13 @@ rpl2-help:
 	@echo "                               readmodes kernel, into RPL2_SITE_RUN"
 	@echo "  make rpl2-site-report        summary beside the reference results"
 	@echo "Variables: RPL2P_ROOT=<dir> RPL2_OUTPUT=<dir> RPL2_SITE=<dir on the mount>"
+	@echo "vLLM through the LMCache MP server (tools/reproduce/rpl2/vllm):"
+	@echo "  make defconfig-rpl2-vllm           your mount, no root, one NVIDIA GPU"
+	@echo "  make defconfig-rpl2-vllm-pnfs-lab  the pNFS lab, idle and loaded metadata server"
+	@echo "  make rpl2-vllm-setup     build LMCache with CUDA against RPL2_VLLM_PYTHON"
+	@echo "  make rpl2-vllm-run       recompute, populate, then stock and held arms"
+	@echo "  make rpl2-vllm-report    summary of RPL2_VLLM_RUN"
+	@echo "Variables: RPL2_VLLM_PYTHON=<python with vLLM> RPL2_VLLM_DIR=<dir on the mount>"
 	@echo "Variables: RPL2P_ROOT=<dir> RPL2_OUTPUT=<dir>"
 
 rpl2-doctor:
@@ -190,6 +219,34 @@ rpl2-site-steps: rpl2-site-check
 rpl2-site-report:
 	@python3 $(RPL2_PNFS_DIR)/site_summary.py "$(RPL2_SITE_RUN)"
 
+rpl2-vllm-check: rpl2-pnfs-check
+	@test -x "$(RPL2_VLLM_PYTHON)" || { echo "set RPL2_VLLM_PYTHON or CONFIG_KNLP_RPL2_VLLM_PYTHON to a Python with vLLM" >&2; exit 1; }
+
+rpl2-vllm-setup: rpl2-vllm-check
+	@env RPL2P_ROOT="$(RPL2P_ROOT)" PY="$(RPL2_VLLM_PYTHON)" \
+		CUDA_HOME="$(call unq,$(CONFIG_KNLP_RPL2_VLLM_CUDA_HOME))" \
+		LMCACHE_REPO="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REPO))" \
+		LMCACHE_REF="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_REF))" \
+		LMCACHE_COMMIT="$(call unq,$(CONFIG_KNLP_RPL2_PNFS_LMCACHE_COMMIT))" \
+		$(RPL2_VLLM_SRC)/setup.sh
+
+rpl2-vllm-run: rpl2-vllm-check
+	@test -n "$(RPL2_VLLM_DIR)" && test -d "$(RPL2_VLLM_DIR)" || { echo "set RPL2_VLLM_DIR to an existing directory on the mount" >&2; exit 1; }
+	@env $(RPL2_VLLM_ENV) L2_BASE="$(RPL2_VLLM_DIR)" $(RPL2_VLLM_SRC)/run.sh "$(RPL2_VLLM_RUN)"
+
+# In the lab, vLLM and LMCache run as you inside the lab client's
+# namespaces, where the pNFS mount is; run.sh itself runs as root for the
+# metadata-server counters and the extra clients' load.
+rpl2-vllm-lab-run: rpl2-vllm-check
+	@$(RPL2_PNFS_SUDO) $(RPL2_VLLM_ENV) OWNER="$$(id -un)" OWNER_HOME="$$HOME" \
+		HF_HOME="$${HF_HOME:-$$HOME/.cache/huggingface}" \
+		L2_BASE="$(RPL2P_ROOT)/run/cli/mnt" WRAP="$(RPL2_PNFS_BIN)/labctl.sh cli" \
+		LOAD="$(RPL2_PNFS_BIN)/load.sh" LOAD_CLIENTS=$(CONFIG_KNLP_RPL2_VLLM_LOAD_CLIENTS) \
+		MDS_CMD="$(RPL2_PNFS_BIN)/mds_ops.sh" $(RPL2_VLLM_SRC)/run.sh "$(RPL2_VLLM_RUN)"
+
+rpl2-vllm-report:
+	@python3 $(RPL2_VLLM_SRC)/summarize.py "$(RPL2_VLLM_RUN)"
+
 rpl2-pnfs-test:
 	@$(RPL2_PY) -m unittest discover -s tools/reproduce/rpl2/pnfs/tests -t . -v
 
@@ -219,6 +276,18 @@ else ifeq ($(CONFIG_KNLP_RPL2_SITE),y)
 rpl2:
 	@$(MAKE) --no-print-directory rpl2-pnfs-setup
 	@$(MAKE) --no-print-directory rpl2-site-steps RPL2_SITE_RUN="$(RPL2_SITE_RUN)"
+else ifeq ($(CONFIG_KNLP_RPL2_VLLM),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-vllm-setup
+	@$(MAKE) --no-print-directory rpl2-vllm-run RPL2_VLLM_RUN="$(RPL2_VLLM_RUN)"
+else ifeq ($(CONFIG_KNLP_RPL2_VLLM_PNFS_LAB),y)
+rpl2:
+	@$(MAKE) --no-print-directory rpl2-pnfs-setup
+	@$(MAKE) --no-print-directory rpl2-vllm-setup
+	@$(MAKE) --no-print-directory rpl2-pnfs-up
+	@$(RPL2_PNFS_SUDO) $(RPL2_PNFS_BIN)/labctl.sh clients-up $(CONFIG_KNLP_RPL2_VLLM_LOAD_CLIENTS)
+	@$(MAKE) --no-print-directory rpl2-vllm-lab-run RPL2_VLLM_RUN="$(RPL2_VLLM_RUN)" || { $(MAKE) --no-print-directory rpl2-pnfs-down; exit 1; }
+	@$(MAKE) --no-print-directory rpl2-pnfs-down
 else ifeq ($(CONFIG_KNLP_RPL2_MOUNTED_FS),y)
 rpl2:
 	@$(MAKE) --no-print-directory rpl2-doctor

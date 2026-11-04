@@ -25,6 +25,7 @@ explains them; this file maps the scripts.
 | [screen.sh](screen.sh) | Paired screen, stock against held, in alternating blocks. |
 | [sweep.sh](sweep.sh) | Many clients, each its own NFS client identity, reading the same objects at once. |
 | [remote-client.sh](remote-client.sh), [remote-holder.sh](remote-holder.sh) | A client on another host, mounted in a private mount namespace. |
+| [load.sh](load.sh), [mds_ops.sh](mds_ops.sh) | For the vLLM profile in the lab: the extra clients' background load on the metadata server, and the metadata server's operation counters. |
 | [summarize.py](summarize.py) | Screen, sweep and fingerprint summaries. |
 | [site.sh](site.sh) | The site and closure profiles: the same readers on a directory you already have, as an ordinary user. Steps doctor, fixture, fingerprint, screen, sweep, readmodes and kernel. |
 | [mountstats.py](mountstats.py) | Per-operation NFS RPC counts for one mount from `/proc/self/mountstats`, without root; `native_reader.py --mountstats` records them per phase. |
