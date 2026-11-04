@@ -18,8 +18,9 @@ only in how the patient's record reaches the reader:
              prompt follows one placeholder token per cartridge position,
              and the request names its patient's cartridge
   memorilla  16 memory tokens from the Memorilla reader over the whole
-             collection, in the system turn as the authors place them,
-             sent as prompt embeddings
+             collection (or over the MEM_TOPK passages the rag arm would
+             pick), in the system turn as the authors place them, sent
+             as prompt embeddings
 
 Each request gets its own sampling seed (SEED, run, question), so two
 arms see the same seeds. Prefix caching is off so no arm reuses another
@@ -38,6 +39,9 @@ Env:
     MEM_CONFIG  collection config (default longhealth_c256)
     MEM_CKPT    Memorilla checkpoint directory (memorilla)
     TOPK_DOCS   passages for rag (default 5)
+    MEM_TOPK    memorilla: read only the passages most similar to the
+                question, chosen as in rag (default 0, the whole
+                collection)
     OUT_JSON    results
     MODEL, BLOCK_SIZE, BACKEND, GPU_UTIL, MAX_LEN   engine settings
                 (Qwen/Qwen3-8B, 1, FLASHINFER, 0.85, 20480)
@@ -71,6 +75,8 @@ THINK = os.environ.get("THINK", "1") == "1"
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 MEM_CONFIG = os.environ.get("MEM_CONFIG", "longhealth_c256")
 TOPK_DOCS = int(os.environ.get("TOPK_DOCS", "5"))
+MEM_TOPK = int(os.environ.get("MEM_TOPK", "0"))
+CONTEXT_TOKENS = []
 DATASET_URL = (
     "https://raw.githubusercontent.com/kbressem/LongHealth/refs/heads/main/"
     "data/benchmark_v5.json"
@@ -100,6 +106,16 @@ def chat_ids(tok, system, user):
     if not isinstance(ids, list):
         ids = list(ids["input_ids"])
     return [int(t) for t in ids]
+
+
+def top_passages(store, i, r, k):
+    """Indices of the k passages most similar to question row i."""
+    import torch
+
+    docs = store.documents(r["collection_id"]).float()
+    qv = store.question(i).float()
+    sim = torch.nn.functional.cosine_similarity(docs, qv[None], dim=-1)
+    return sim.topk(min(k, len(sim))).indices.tolist()
 
 
 def collection_store():
@@ -143,17 +159,13 @@ def build_requests(tok, patients):
                 ids = chat_ids(tok, ev.SYSTEM_PROMPT, ev.user_prompt(q, doc))
                 reqs.append((TokensPrompt(prompt_token_ids=ids), p, q, {}))
     elif ARM == "rag":
-        import torch
-
         store, rows = collection_store()
         for p in patients:
             for q in p.questions:
                 i, r = rows[q.question_id]
-                docs = store.documents(r["collection_id"]).float()
-                qv = store.question(i).float()
-                sim = torch.nn.functional.cosine_similarity(docs, qv[None], dim=-1)
-                top = sim.topk(min(TOPK_DOCS, len(sim))).indices.tolist()
+                top = top_passages(store, i, r, TOPK_DOCS)
                 doc = "\n\n".join(r["documents"][j] for j in top)
+                CONTEXT_TOKENS.append(len(tok.encode(doc, add_special_tokens=False)))
                 ids = chat_ids(tok, ev.SYSTEM_PROMPT, ev.user_prompt(q, doc))
                 reqs.append((TokensPrompt(prompt_token_ids=ids), p, q, {}))
     elif ARM == "cart":
@@ -230,9 +242,10 @@ def memorilla_requests(tok, patients):
         for p in patients:
             for q in p.questions:
                 i, r = rows[q.question_id]
-                docs = store.documents(r["collection_id"])[None].to(
-                    "cuda", torch.bfloat16
-                )
+                docs = store.documents(r["collection_id"])
+                if MEM_TOPK:
+                    docs = docs[top_passages(store, i, r, MEM_TOPK)]
+                docs = docs[None].to("cuda", torch.bfloat16)
                 qv = store.question(i)[None].to("cuda", torch.bfloat16)
                 mem = memory(docs, None, qv)
                 system = ev.SYSTEM_PROMPT + memory_placeholder(n_mem)
@@ -361,6 +374,12 @@ def main():
         runs=RUNS,
         mem_config=MEM_CONFIG if ARM in ("rag", "memorilla") else None,
         mem_ckpt=os.environ.get("MEM_CKPT") if ARM == "memorilla" else None,
+        topk_docs=TOPK_DOCS if ARM == "rag" else None,
+        mem_topk=MEM_TOPK if ARM == "memorilla" else None,
+        context_tokens_mean=(
+            sum(CONTEXT_TOKENS) / len(CONTEXT_TOKENS) if CONTEXT_TOKENS else None
+        ),
+        context_tokens_max=max(CONTEXT_TOKENS) if CONTEXT_TOKENS else None,
         kv_cache_dtype=os.environ.get("KV_CACHE_DTYPE", "auto"),
         carts=os.environ.get("CARTS") if ARM == "cart" else None,
         prep_s=round(prep_s, 2),
