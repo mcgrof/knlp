@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh studies family-aware caching and offloading of shared agent artifacts. KV-cache results establish the first measured path; broader artifact reuse remains an integration goal.">
-<title>KMesh: Shared inference state, read-once storage and early preparation</title>
+<meta name="description" content="KMesh studies how agent serving can keep long contexts across idle turns and restore them on demand. Earlier KV-cache results measured read-once storage and early preparation for request families; released agent traces move the work to the resumed turn.">
+<title>KMesh: Keeping agent context across idle turns</title>
 <link rel="canonical" href="https://knlp.io/kmesh.html">
 <link rel="stylesheet" href="kmesh.css">
 <script src="kmesh-navigation.js" defer></script>
@@ -26,20 +26,65 @@
 </header>
 <main id="content">
 <div class="hero">
-<span class="eyebrow">Inference systems · Application-informed reuse</span>
+<span class="eyebrow">Inference systems · Agent context retention</span>
 <h1>KMesh</h1>
-<div class="sub">Share useful state. Read it once. Prepare it early.</div>
-<p class="lead">Related agents often need the same context, tool results or
-saved model state. KMesh investigates how an application can identify that
-shared work, keep useful artifacts available and prepare them before the
-next requests arrive. The measured work so far focuses on KV cache in vLLM
-and LMCache; the broader goal includes other reusable agent artifacts.</p>
-<p><a href="#conclusions">Read the conclusions</a> &nbsp;&middot;&nbsp;
+<div class="sub">Keep what comes back. Restore it on demand.</div>
+<p class="lead">Agents leave long contexts idle while they wait for a user
+or a tool, and then come back to them. KMesh studies how a serving system
+can keep the saved model state for those contexts, the key/value (KV)
+cache, and restore it when the agent resumes instead of computing it
+again. KMesh began as a study of state shared between related agents.
+Released agent traces show that such sharing carries little volume, and
+that each session's own context between turns carries much more.</p>
+<p><a href="#direction">Read the direction</a> &nbsp;&middot;&nbsp;
+<a href="#conclusions">Read the conclusions</a> &nbsp;&middot;&nbsp;
 <a href="#questions">Explore the research</a></p>
 </div>
 
+<section id="direction">
+<h2>Where KMesh is going: from sharing to retention</h2>
+<p>The <a href="kmesh-workloads.html">agent workloads page</a> reads four
+released agent traces. Wide fan-out is rare in them. In a Claude Code
+corpus, launches of four or more children are 2% of all launches, and
+their children share only a preamble that belongs to one session. Long
+contexts sit idle between turns instead. In the same corpus, long
+main-agent requests that resume a minute or more after a user or tool wait
+carry 15.7% of the main agent's input tokens. In the GitHub Copilot
+release, long-context turns that resume on the same model after five or
+more idle minutes carry 17–19% of the prompt tokens the deployment
+recomputes. Their prompts are about
+80K tokens at the median and about 165K at the 90th percentile, and the
+user's return gives no notice.</p>
+<p>So the question changes from sharing to retention: which contexts to
+keep, in which memory tier and for how long, so that a resumed turn
+restores its context instead of computing it again. The parts we built for
+request families still apply to that question: singleflight, external
+retention, ownership of saved state across processes, and the SSD paths
+into GPU memory.</p>
+<div class="table-wrap"><table>
+<caption>What continues and what is parked</caption>
+<tr><th scope="col">Work</th><th scope="col">Status</th><th scope="col">Reason</th></tr>
+<tr><td class="hi">Restoring a resumed turn's own context</td><td>Main target</td><td>It carries the idle tokens in the traces. It must be measured at traced context sizes, with no notice and under competing load.</td></tr>
+<tr><td class="hi">Early preparation for subagent waits</td><td>Continues</td><td>This is the one resume with notice. The parent's next request comes a median of 8.6 s after its subagent ends, and the parent's context has a median of 229K tokens. These waits carry 0.68% of the main agent's input tokens.</td></tr>
+<tr><td class="hi">Singleflight</td><td>Continues</td><td>It is a cheap guard for the rare wide launch.</td></tr>
+<tr><td class="hi">DMA-BUF reads into GPU memory</td><td>Continues, with a different argument</td><td>In the <a href="kmesh-recovery.html#serial">recovery comparison</a>, read-call time fell 3.7% and complete restoration was faster in only four of seven pairs, so latency is the wrong argument. The path removes host staging copies and CPU work. The next measure is CPU time and host-memory bandwidth per GB restored.</td></tr>
+<tr><td class="hi">Saved state for compressed and hybrid models</td><td>Open question</td><td>Sparse, hybrid linear-attention and sliding-window models save other kinds of state, such as compressed blocks, recurrent checkpoints and window snapshots. What to save and restore for them is not yet defined.</td></tr>
+<tr><td class="hi">Cascade attention</td><td>Parked</td><td>vLLM removed it in v0.32.0, and agent traffic forms few wide groups.</td></tr>
+<tr><td class="hi">TokenDance's Master–Mirror sibling diffs</td><td>Parked</td><td>They target synchronized all-gather rounds between sibling agents. The traces do not contain such rounds.</td></tr>
+<tr><td class="hi">Holding a family's ancestor by default</td><td>Parked</td><td>In our <a href="kmesh-retention.html#family-residency">pressure test</a>, the hold displaced more cache hits than it saved.</td></tr>
+<tr><td class="hi">Artifacts beyond KV cache</td><td>Later</td><td>Tool results, document representations and other artifacts may still matter, but the traces do not show them yet.</td></tr>
+</table></div>
+<div class="note"><strong>The measured results are far below traced sizes.</strong>
+The experiments on these pages test the mechanisms on controlled request
+families. Most use a 0.5B model with about 4K shared tokens, or 48 MiB of
+KV cache, and the latency tests have no competing memory pressure. An
+80K-token resume on Llama-3.3-70B in BF16 holds about 24 GiB of KV cache,
+about 500 times more. The results show whether the mechanisms work and what they cost at
+small sizes. They do not show their value at traced sizes.</div>
+</section>
+
 <section id="grounding">
-<h2>The idea: coordinate reuse around existing engine sharing</h2>
+<h2>The first experiments: reuse inside a request family</h2>
 <p>Imagine an agent reads a document and then launches four follow-up
 requests. These related requests form a <strong>family</strong>. Their
 common context is the <strong>ancestor</strong>; each follow-up adds
@@ -54,8 +99,8 @@ adopt that copy.</p>
 cache serve later lookups without reading the SSD again?
 <strong>External retention keeps the restored objects in LMCache</strong>,
 in host RAM or an external GPU arena. Application notice can then move
-preparation before the follow-ups arrive. KMesh investigates this
-coordination and the lifetime of shared inference state.</p>
+preparation before the follow-ups arrive. The experiments below measure
+this coordination and the lifetime of shared inference state.</p>
 <h3 id="cascade-offload">Cascade attention and family-aware offloading</h3>
 <p><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's
 Cascade attention</a> shares access to a common KV prefix while computing
@@ -108,14 +153,17 @@ large shared artifacts create a different storage problem. KMesh should
 reuse the existing artifact loaders and coordinate with their development.
 CPU-consumed artifacts need an appropriate host-storage path; DMA-BUF is
 relevant where a qualified device-buffer path helps their actual consumer.</p>
-<p><strong>The objective is to establish whether family information makes
-offloading more useful.</strong> A fair comparison keeps ordinary caching,
+<p><strong>The first objective was to establish whether family information
+makes offloading more useful.</strong> A fair comparison keeps ordinary caching,
 the storage path, memory budget and output requirements fixed, then measures
 what changes when the cache knows which requests are related. Fewer reads
 are useful evidence, but completed agent work, waiting time, retained memory
 and displaced cache hits determine the tradeoff. The KV results below
 establish bounded benefits from retention and early preparation. They do
-not yet establish a general family-policy benefit or non-KV artifact support.</p>
+not yet establish a general family-policy benefit or non-KV artifact support.
+The released traces answer the volume side of that question: family
+structure carries little of the idle context, so this work now comes after
+the resumed turn.</p>
 </section>
 
 <section id="conclusions">
@@ -205,7 +253,7 @@ instructions</a> give the measurements and the next optimization targets.</p>
 
 <section id="questions">
 <h2>Explore the research</h2>
-<p>Each detail page covers five research topics with the experiment, findings,
+<p>Each detail page covers four or five research topics with the experiment, findings,
 limits and reproduction instructions. The overview gives the idea and
 conclusions; the detail pages retain the full measurements.</p>
 <div class="page-links">

@@ -27,6 +27,13 @@
 <span class="eyebrow">Questions 11–15</span>
 <h1>How does shared context reach the engine?</h1>
 <p class="lead">These five questions distinguish the transfer route, shared attention, cold restoration, singleflight and advance preparation. Sharing one engine copy and reading the SSD once are separate properties.</p>
+<div class="note"><strong>These tests measure mechanisms, not value at traced sizes.</strong>
+Most experiments here use a 0.5B model with about 4K shared tokens, or
+48 MiB of KV cache. A long-context resume in the released agent traces
+holds about 500 times more KV cache on a 70B model. The results show
+whether the mechanisms work and what they cost at small sizes. The
+<a href="kmesh.html#direction">overview</a> explains where the work goes
+next.</div>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol start="11">

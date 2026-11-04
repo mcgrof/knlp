@@ -277,14 +277,16 @@ agent serving is not that workload.</p>
 
 <section id="workload-direction">
 <h2>What the evidence points to</h2>
-<p><strong>KMesh's storage tests move to the resumed turn.</strong> The
-next test stores a long context when its turn ends, lets competing sessions
-evict it from GPU memory, and restores it on demand when the next turn
-arrives with no notice. It compares that restore with recomputation and
-charges the store's cost to the competing sessions. Singleflight stays in
-place for the rare wide launch; the traces give it little volume.
-Family-aware hints still matter for subagent waits, which come with
-seconds of notice, but they are a small share of the idle tokens.</p>
+<p><strong>In agent traffic, the KV cache worth saving is each session's
+own context between turns, not context shared between agents.</strong>
+KMesh's work moves to that resumed turn: which contexts to keep, in which
+memory tier and for how long, so that a resumed turn restores its context
+instead of computing it again. Singleflight stays in place for the rare
+wide launch; the traces give it little volume. Early preparation still
+matters for subagent waits, which come with seconds of notice, but they
+are a small share of the idle tokens. The
+<a href="kmesh.html#direction">overview</a> lists what continues and what
+is parked.</p>
 <p>These are workload counts, not KV measurements. Equal block identifiers
 are a workload intention. Weka's sampling removes the widest sessions, so a
 corpus of heavy parallel exploration, such as tree search or many-agent

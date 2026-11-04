@@ -31,6 +31,13 @@ positions. KMesh aims to keep one saved source for each shared segment and
 prepare the model state needed by each request. The work starts with safe
 restoration, then measures model outputs and storage costs before optimizing
 the loading path.</p>
+<div class="note"><strong>These tests measure mechanisms, not value at traced sizes.</strong>
+Most experiments here use a 0.5B model with 12 MiB of saved state per
+request. A long-context resume in the released agent traces holds about
+2,000 times more KV cache on a 70B model. The results show
+whether the mechanisms work and what they cost at small sizes. The
+<a href="kmesh.html#direction">overview</a> explains where the work goes
+next.</div>
 <h3>Shared source, request-specific model state</h3>
 <p>A language model saves attention state for text it has processed. This is
 its <strong>key/value (KV) cache</strong>. vLLM runs the model; LMCache stores

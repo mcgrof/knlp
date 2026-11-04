@@ -27,6 +27,12 @@
 <span class="eyebrow">Questions 1–5</span>
 <h1>Why coordinate shared inference state?</h1>
 <p class="lead">The application knows which requests are related. KMesh explores how to pass that knowledge to the inference runtime while preserving cache compatibility.</p>
+<div class="note"><strong>This page records the original premise.</strong>
+KMesh began with sharing state between related requests. Released agent
+traces later showed that such sharing carries little volume, and that each
+session's own context between turns carries much more. The
+<a href="kmesh.html#direction">overview</a> describes the change of
+direction.</div>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol start="1">
