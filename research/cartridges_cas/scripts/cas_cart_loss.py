@@ -44,6 +44,9 @@ Env:
     NOCART     1 to add the no-cartridge pass and the informative mask
     OUT_JSON   results (default cart_loss.json); ``.npz`` sibling written
     DEVICE     cuda (default)
+    PACKED_LEN tokens per packed sequence (default 2048, as before)
+    PACKING_MODE truncate (default, as before) or pad; match the
+               trainer's settings to read the same loss it reports
 
 Prints one ``CART_LOSS,<name>,<loss>,<loss_info>,<loss_rest>,<entries>``
 line per cartridge and ``CART_LOSS_DONE`` at the end.
@@ -79,7 +82,9 @@ CARTS = [c for c in os.environ.get("CARTS", "").split(",") if c]
 NOCART = os.environ.get("NOCART", "0") == "1"
 OUT_JSON = os.environ.get("OUT_JSON", "cart_loss.json")
 DEVICE = os.environ.get("DEVICE", "cuda")
-SEQ_LEN = 2048
+SEQ_LEN = int(os.environ.get("PACKED_LEN", "2048"))
+PACKING_MODE = os.environ.get("PACKING_MODE", "truncate")
+assert PACKING_MODE in ("truncate", "pad"), "PACKING_MODE: truncate or pad"
 
 
 def parse_carts(items):
@@ -98,7 +103,7 @@ def build_dataset(tokenizer):
         data_sources=[DataSource(path=PARQUET, type="local", limit=LIMIT)],
         top_k_logits=20,
         packed_seq_length=SEQ_LEN,
-        packing_mode="truncate",
+        packing_mode=PACKING_MODE,
     )
     return cfg.instantiate(tokenizer=tokenizer, seed=SEED)
 
@@ -145,7 +150,7 @@ def score(model, dataset, cache):
         base = b * SEQ_LEN
         ce_sum.index_add_(0, base + idx.cpu(), ce.double().cpu())
         n_ent.index_add_(0, base + idx.cpu(), torch.ones_like(idx.cpu()))
-        argmax[base : base + SEQ_LEN] = logits.argmax(dim=-1).cpu()
+        argmax[base : base + logits.shape[0]] = logits.argmax(dim=-1).cpu()
         del out, logits
     return ce_sum.numpy(), n_ent.numpy(), argmax.numpy()
 
