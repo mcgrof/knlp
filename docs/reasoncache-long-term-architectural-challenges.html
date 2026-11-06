@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReasonCACHE: Long-Term Architectural Challenges | knlp</title>
+  <meta name="description" content="A grounded assessment of ReasonCACHE, chain-of-thought faithfulness, generalization, opaque computation and latent reasoning. Primary papers with audio summaries and visualizations.">
+  <link rel="canonical" href="https://knlp.io/reasoncache-long-term-architectural-challenges.html">
+  <link rel="stylesheet" href="assets/knlp.css">
+  <style>
+    .reading { padding-bottom: 48px; }
+    .reading a { color: #83e5db; text-decoration: underline; text-underline-offset: 3px; }
+    .reading a:hover { color: #fff; }
+    .reading h1 { max-width: 970px; font-size: clamp(36px, 5vw, 64px); }
+    .reading h2 { margin: 0 0 18px; font-size: clamp(26px, 3vw, 36px); line-height: 1.2; letter-spacing: -.025em; }
+    .reading h3 { margin: 0 0 12px; font-size: 21px; line-height: 1.4; }
+    .reading p { max-width: 84ch; margin: 0 0 16px; color: #b8c6d8; }
+    .reading strong { color: #edf4fc; }
+    .reading .site-hero { padding: 60px 0 42px; }
+    .reading .site-lead { max-width: 80ch; font-size: 19px; line-height: 1.7; }
+    .reading .meta { margin-top: 22px; color: #95a9c0; font-size: 13px; }
+    .toc { display: flex; flex-wrap: wrap; gap: 10px 24px; padding: 20px 0; border-block: 1px solid #334155; }
+    .toc a { font-size: 14px; }
+    .reading section { padding: 40px 0; scroll-margin-top: 24px; }
+    .reading section + section { border-top: 1px solid #334155; }
+    .assessment { padding: 24px 28px; margin: 24px 0 0; border-left: 3px solid #58d5c7; background: #132c32; border-radius: 0 10px 10px 0; }
+    .assessment p:last-child, .paper p:last-child { margin-bottom: 0; }
+    .reading .assessment p { max-width: 92ch; }
+    .table-scroll { overflow-x: auto; border: 1px solid #334155; border-radius: 10px; margin-top: 24px; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 14px; }
+    caption { padding: 16px 18px; text-align: left; color: #cbd5e1; font-weight: 600; background: #182235; }
+    th, td { text-align: left; vertical-align: top; padding: 15px 18px; border-top: 1px solid #334155; }
+    thead th { color: #e2e8f0; background: #182235; }
+    tbody th { width: 20%; color: #e2e8f0; font-weight: 600; }
+    td { color: #b8c6d8; width: 40%; }
+    .paper { padding: 26px 0; border-bottom: 1px solid #334155; scroll-margin-top: 24px; }
+    .paper:last-child { border-bottom: 0; padding-bottom: 0; }
+    .reading .paper-label { color: #67e8d8; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 10px; }
+    .reading .source { font-size: 14px; color: #aabbd0; line-height: 1.75; }
+    .reading .source-note { font-size: 12px; color: #a3b2c5; }
+    .reading .limit { border-left: 2px solid #a77e3c; padding-left: 16px; }
+    .reading ul { padding-left: 23px; max-width: 90ch; color: #b8c6d8; }
+    .reading li { padding-left: 5px; margin-bottom: 14px; }
+    .reference-list { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 36px; }
+    .reference-list article { padding-top: 18px; border-top: 1px solid #334155; }
+    .reference-list h3 { font-size: 17px; }
+    .reference-list p { font-size: 14px; }
+    @media (max-width: 700px) {
+      .reference-list { grid-template-columns: 1fr; }
+      .reading .site-hero { padding-top: 38px; }
+      .assessment { padding: 20px; }
+      .reading section { padding: 32px 0; }
+    }
+    @media print {
+      .site-page { background: white; color: black; }
+      .reading p, .reading li, .reading strong, .reading a, td, th { color: black; }
+      .site-nav, .site-skip, .toc { display: none; }
+      .site-wrap { width: 100%; }
+      .assessment, thead th, caption { background: #f4f4f4; color: black; }
+      .table-scroll { overflow: visible; }
+      table { min-width: 0; }
+      .paper, .reference-list article { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav">
+    <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+    <nav class="site-nav-links" aria-label="Related pages">
+      <a href="reasoncache.html">ReasonCACHE</a>
+      <a href="learned_prefix_caches.html">Learned Prefix Caches</a>
+      <a href="https://github.com/mcgrof/knlp">GitHub</a>
+    </nav>
+  </header>
+  <main id="main" class="site-wrap reading">
+    <header class="site-hero">
+      <p class="site-eyebrow">Research assessment · learned prefixes</p>
+      <h1>ReasonCACHE: Long-Term Architectural Challenges</h1>
+      <p class="site-lead">Can reasoning demonstrations become useful, reusable learned state
+        when their written explanations may be unfaithful, brittle or replaceable?
+        This page collects the evidence that should shape that research question.</p>
+      <p class="meta">Reviewed November 6, 2026 · Companion to the
+        <a href="reasoncache.html">ReasonCACHE implementation and results</a>.</p>
+      <div class="assessment">
+        <p><strong>Assessment:</strong> CoT research exposes risks to the training signal,
+          evaluation and future compatibility of reasoning prefixes. It does not establish
+          that learned prefixes are ineffective. A useful behavior can be learned from a
+          trace that is an incomplete explanation of its teacher. Whether that behavior
+          transfers, remains useful after model changes, or supports an offloading workload
+          requires separate evidence.</p>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="On this page">
+      <a href="#scope">Scope and distinctions</a>
+      <a href="#risk-map">Risk map</a>
+      <a href="#evidence">Papers and companions</a>
+      <a href="#prefix-risks">Prefix-specific questions</a>
+      <a href="#public-debate">Public debate and free reading</a>
+      <a href="#further-reading">Further reading</a>
+    </nav>
+
+    <section id="scope" aria-labelledby="scope-title">
+      <h2 id="scope-title">Separate the mechanism from the explanation</h2>
+      <p><strong>Chain-of-thought (CoT)</strong> is the intermediate sequence a model produces
+        before its answer. Legibility asks whether a reader can understand that sequence.
+        Faithfulness asks whether it accurately reflects the factors and computation that
+        produced the answer. Correctness asks whether the answer is right. Generalization
+        asks whether success transfers beyond the conditions represented in training.
+        These properties require different evaluations.</p>
+      <p><a href="https://arxiv.org/pdf/2602.02366">ReasonCACHE: Teaching LLMs To Reason Without
+        Weight Updates</a> (Gupta et al., 2026) optimizes layer-wise key-value (KV) prefixes
+        while freezing the backbone. It adapts LLaMA-2 on MetaMathQA and Qwen-2.5-7B-Instruct
+        on filtered OpenThoughts-3, reporting accuracy on mathematical and scientific
+        reasoning benchmarks. The learned prefix is an offline-trained artifact, distinct
+        from the evolving KV history of a particular generated answer.</p>
+      <p class="limit"><strong>Scope of this assessment:</strong> The studies below examine
+        CoT or alternative reasoning representations. They are not direct negative trials
+        of ReasonCACHE. Their implications for prefix training are identified as inferences
+        or open questions. The original
+        <a href="https://arxiv.org/pdf/2101.00190">Prefix-Tuning</a> work also covers generation
+        tasks beyond reasoning, so CoT-specific failures cannot invalidate prefix tuning
+        as a whole.</p>
+    </section>
+
+    <section id="risk-map" aria-labelledby="risk-title">
+      <h2 id="risk-title">Which assumption is at risk?</h2>
+      <p>The central issue is the claim made for a cache. Improving task performance,
+        explaining a decision and preserving a reusable skill are different claims.</p>
+      <div class="table-scroll" role="region" aria-label="Research risk comparison" tabindex="0">
+        <table>
+          <caption>Evidence in the literature and implications to test for ReasonCACHE</caption>
+          <thead><tr><th scope="col">Assumption</th><th scope="col">Evidence or limitation</th><th scope="col">Implication for learned prefixes</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">A trace explains the computation</th><td><a href="#theater">Reasoning Theater</a> and hint studies find gaps between visible explanations and influences on answers.</td><td>Trace imitation alone cannot establish that a cache contains the claimed reasoning procedure.</td></tr>
+            <tr><th scope="row">A learned procedure transfers</th><td><a href="#distribution">DataAlchemy</a> exposes failures under task, length and format shifts.</td><td>Test transfer beyond familiar templates before calling a prefix a reusable reasoning skill.</td></tr>
+            <tr><th scope="row">Readable traces preserve useful computation</th><td><a href="#illegibility">Illegible CoT</a> can accompany correct answers; removing it can hurt performance.</td><td>Filtering or rewriting teacher traces for readability may change their usefulness. This needs controlled evaluation.</td></tr>
+            <tr><th scope="row">Reasoning will remain verbal</th><td><a href="#abstract">Abstract-CoT</a> uses a learned discrete vocabulary; continuous latent methods use hidden states.</td><td>Training objectives and artifact compatibility may change. A new representation does not automatically support an existing prefix.</td></tr>
+            <tr><th scope="row">Serial computation guarantees transparency</th><td><a href="#serial-depth">Opaque serial depth</a> depends on architecture and which nodes count as interpretable.</td><td>More intermediate computation does not by itself establish a faithful natural-language explanation.</td></tr>
+            <tr><th scope="row">Modular storage guarantees modular skills</th><td><a href="#prefix-risks">ReasonCACHE proposes skill composition</a>; plug-in structure alone does not prove it.</td><td>Evaluate interactions, selection and model-version compatibility independently of loading correctness.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="evidence" aria-labelledby="evidence-title">
+      <h2 id="evidence-title">Papers and companion resources</h2>
+      <p>Paper titles link directly to arXiv PDFs. Audio and visualization links lead to
+        AI Post Transformers companions. The papers are the evidence sources; companion
+        illustrations may be schematic. Episode discussions can predate later paper revisions.</p>
+
+      <article class="paper" id="theater">
+        <p class="paper-label">01 · Faithfulness</p>
+        <h3>A convincing trace can lag behind the model's answer</h3>
+        <p class="source"><a href="https://arxiv.org/pdf/2603.05488">Reasoning Theater:
+          Disentangling Model Beliefs from Chain-of-Thought</a> — Boppana et al., 2026
+          (<a href="https://podcast.do-not-panic.com/episodes/reasoning-theater-and-unfaithful-chain-of-thought/">Audio Summary</a>,
+          <a href="https://podcast.do-not-panic.com/viz/2026-05-05-reasoning-theater-and-unfaithful-chain-o-a4507e.html">Visualization</a>).</p>
+        <p><strong>Finding:</strong> Activation probes, forced early answers and text monitors
+          reveal task-dependent gaps in DeepSeek-R1 and GPT-OSS. On easier recall questions,
+          the eventual answer is often detectable internally before the trace makes it
+          apparent. Harder GPQA-Diamond questions show meaningful belief changes; visible
+          backtracking can track uncertainty.</p>
+        <p><strong>ReasonCACHE implication:</strong> Training on long explanations may teach
+          useful behavior, narration, or a mixture. Fluency and trace similarity cannot
+          distinguish them. Compare final correctness and robustness with answer-only and
+          shorter-trace controls.</p>
+        <p class="limit"><strong>Boundary:</strong> Probe decodability is not a complete causal
+          account of a model. This paper does not show that all CoT is theater or that models
+          never reason.</p>
+      </article>
+
+      <article class="paper" id="distribution">
+        <p class="paper-label">02 · Generalization</p>
+        <h3>Training-distribution success can hide fragile procedures</h3>
+        <p class="source"><a href="https://arxiv.org/pdf/2508.01191">Is Chain-of-Thought
+          Reasoning of LLMs a Mirage? A Data Distribution Lens</a> — Zhao et al., 2025,
+          revised 2026
+          (<a href="https://podcast.do-not-panic.com/episodes/chain-of-thought-reasoning-a-brittle-mirage/">Audio Summary</a>).</p>
+        <p class="source-note">No visualization is linked on this episode's page.</p>
+        <p><strong>Finding:</strong> DataAlchemy trains models in a controlled environment
+          and probes changes in task, sequence length and format. Success near the training
+          distribution does not reliably extend to the tested shifts.</p>
+        <p><strong>ReasonCACHE implication:</strong> A prefix may learn local strategies
+          or formatting regularities that look like a general skill on a narrow benchmark.
+          Hold out problem families, vary presentation, and test longer or differently
+          composed problems. Report where the gain disappears.</p>
+        <p class="limit"><strong>Boundary:</strong> Controlled failures constrain the tested
+          settings. They are not an impossibility proof for all reasoning models or all
+          learned prefixes. Even task-local improvements can have practical value when
+          their scope is explicit.</p>
+      </article>
+
+      <article class="paper" id="illegibility">
+        <p class="paper-label">03 · Legibility</p>
+        <h3>Human-readable language is not a reliable measure of usefulness</h3>
+        <p class="source"><a href="https://arxiv.org/pdf/2510.27338">Reasoning Models
+          Sometimes Output Illegible Chains of Thought</a> — Jose, 2025
+          (<a href="https://podcast.do-not-panic.com/episodes/reasoning-models-sometimes-output-illegible-chains-of-thought/">Audio Summary</a>).</p>
+        <p class="source-note">No visualization is linked on this episode's page.</p>
+        <p><strong>Finding:</strong> A study of 14 models on GPQA-Diamond without answer
+          choices finds opaque intermediate passages alongside readable final answers.
+          Restricting continuation to legible portions can reduce accuracy, while
+          resampling does not show a simple legibility-performance correlation.</p>
+        <p><strong>ReasonCACHE implication:</strong> Readability-based curation may discard
+          useful training signal; retaining opaque traces may weaken auditing. Assess
+          task utility, legibility and faithfulness separately instead of assuming that
+          one score measures all three.</p>
+        <p class="limit"><strong>Boundary:</strong> The study cannot identify the causal
+          mechanism behind the opaque text. Steganography, vestigial computation and
+          artifacts remain hypotheses. The observed exceptions also preclude claiming
+          that reinforcement learning inevitably destroys legibility.</p>
+      </article>
+
+      <article class="paper" id="serial-depth">
+        <p class="paper-label">04 · Architectural limits</p>
+        <h3>Hidden sequential computation has limits, with assumptions</h3>
+        <p class="source"><a href="https://arxiv.org/pdf/2603.09786">Quantifying the
+          Necessity of Chain of Thought through Opaque Serial Depth</a> — Brown-Cohen,
+          Lindner and Shah, 2026
+          (<a href="https://podcast.do-not-panic.com/episodes/opaque-serial-depth-and-chain-of-thought-limits/">Audio Summary</a>,
+          <a href="https://podcast.do-not-panic.com/viz/2026-06-03-opaque-serial-depth-and-chain-of-thought-e07fc1.html">Visualization</a>).</p>
+        <p><strong>Finding:</strong> The paper formalizes the depth of computation between
+          interpretable nodes and derives architecture-dependent upper bounds, including
+          for Gemma 3. The calculation explicitly depends on which nodes are treated as
+          interpretable.</p>
+        <p><strong>ReasonCACHE implication:</strong> A static learned prefix can guide
+          computation, but storing it does not establish that arbitrarily long sequential
+          reasoning has been precomputed. Changes to recurrence, latent feedback or
+          persistent state may change the interface needed to support reasoning.</p>
+        <p class="limit"><strong>Boundary:</strong> This is not evidence against all CoT.
+          It helps explain why intermediate computation can matter. Its own limitations
+          distinguish an interpretable snapshot of state from an explanation of the
+          algorithm; depth bounds do not certify faithful prose.</p>
+      </article>
+
+      <article class="paper" id="abstract">
+        <p class="paper-label">05 · Representation change</p>
+        <h3>Reasoning can move into a different token language</h3>
+        <p class="source"><a href="https://arxiv.org/pdf/2604.22709">Thinking Without
+          Words: Efficient Latent Reasoning with Abstract Chain-of-Thought</a> — Ramji,
+          Naseem and Astudillo, 2026
+          (<a href="https://podcast.do-not-panic.com/episodes/abstract-chain-of-thought-reasoning-with-discrete-latent-tokens/">Audio Summary</a>,
+          <a href="https://podcast.do-not-panic.com/viz/2026-10-05-abstract-chain-of-thought-reasoning-with-discrete-latent-tokens-1c378c.html">Visualization</a>).</p>
+        <p><strong>Finding:</strong> Post-training teaches models to emit a short sequence
+          from a reserved discrete vocabulary before answering. The authors report up to
+          11.6 times fewer reasoning tokens with comparable performance on their evaluated
+          tasks. This is learned, query-dependent intermediate computation.</p>
+        <p><strong>ReasonCACHE implication:</strong> Natural-language traces may cease to
+          be the preferred target for every reasoning task. Existing prefixes would need
+          qualification against the changed model and representation. Training useful
+          prefixes for such models is a research possibility, not a demonstrated result
+          of this paper.</p>
+        <p class="limit"><strong>Boundary:</strong> A generated abstract trace and an
+          offline-trained KV prefix are different objects. Token reduction is not a
+          measured reduction in total serving memory or SSD traffic, nor evidence that
+          learned-prefix adaptation becomes obsolete.</p>
+      </article>
+    </section>
+
+    <section id="prefix-risks" aria-labelledby="prefix-title">
+      <h2 id="prefix-title">Questions specific to learned prefixes</h2>
+      <p>The following are assessment questions, not failures established by the CoT papers.</p>
+      <ul>
+        <li><strong>Mechanistic claims:</strong> ReasonCACHE's discussion suggests
+          skill-prefix attention scores as an interpretability route. Those scores alone
+          do not establish what a prefix represents or why an answer is correct.
+          Controlled prefix removal, substitution and perturbation would provide stronger
+          evidence of its effect; even these do not fully explain its computation.</li>
+        <li><strong>Composition and reversibility:</strong> Removing an adaptation can
+          recover the base model. That does not establish that several active prefixes
+          compose reliably, that order is harmless, or that unrelated tasks are unaffected
+          while a prefix is loaded.</li>
+        <li><strong>Representational capacity:</strong> A mathematical expressivity
+          advantage under the paper's assumptions does not guarantee that optimization
+          finds transferable reasoning behavior. Capacity, training success and deployment
+          value need separate evidence.</li>
+        <li><strong>Compatibility over time:</strong> Learned keys and values attach to a
+          particular model's internal representations. Matching tensor dimensions after
+          a checkpoint change does not establish matching behavior. A revised backbone,
+          attention mechanism or reasoning vocabulary needs its own compatibility and
+          quality checks; an existing cache is not automatically a portable algorithm.</li>
+        <li><strong>Evaluation:</strong> Check held-out task outcomes, training-data overlap,
+          decoding budgets and seed variation. Compare against the frozen model, text
+          demonstrations and tuned adaptation baselines. Better-looking explanations
+          alone are insufficient evidence of a useful reasoning cache.</li>
+      </ul>
+      <p class="source">Source for the mechanism and proposed extensions:
+        <a href="https://arxiv.org/pdf/2602.02366">ReasonCACHE</a>, especially sections 4
+        and 6 and appendix C.3. The cautions above are this page's interpretation.</p>
+      <div class="assessment">
+        <p><strong>Storage remains a separate research question.</strong> Neither CoT
+          skepticism nor a successful prefix benchmark settles whether a useful offloading
+          workload can emerge. That analysis depends on artifact population, size, reuse,
+          concurrency and loading cost. A lack of workload evidence is an open question,
+          not evidence that the use case cannot grow. The broader
+          <a href="learned_prefix_caches.html">learned-prefix-cache architecture</a> can
+          be evaluated without assuming faithful verbal CoT.</p>
+      </div>
+    </section>
+
+    <section id="public-debate" aria-labelledby="debate-title">
+      <h2 id="debate-title">Public debate and free reading</h2>
+      <article class="paper">
+        <h3><a href="https://www.technologyreview.com/2026/10/02/1145639/dont-be-fooled-llms-dont-reason/">Don't
+          be fooled—LLMs don't reason</a></h3>
+        <p class="source">Thore Graepel · MIT Technology Review · October 2, 2026 ·
+          Opinion; access may require a subscription.</p>
+        <p>Graepel argues for explicit, auditable belief state and independent evaluation,
+          drawing on AlphaGo. This is an architectural position about trustworthy
+          reasoning, not an experimental refutation of ReasonCACHE or prefix tuning.
+          The stronger headline should not replace the narrower findings in the studies above.</p>
+        <p><strong>Free related author source:</strong>
+          <a href="https://metisreasoning.ai/whitepaper/the-age-of-reasoning-2026-10.pdf">The Age
+          of Reasoning</a> — Graepel, Berman, Warren and Ingram, October 2026. This open
+          white paper develops the argument for separating learned reasoning strategies
+          from an explicit record of knowledge and evidence. It is a research proposal,
+          not a validated replacement or a reprint of the Technology Review article.</p>
+      </article>
+      <article class="paper">
+        <h3><a href="https://news.mit.edu/2024/reasoning-skills-large-language-models-often-overestimated-0711">Reasoning
+          skills of large language models are often overestimated</a></h3>
+        <p class="source">Rachel Gordon · MIT News / CSAIL · July 11, 2024 · Free article.</p>
+        <p>This separate MIT article covers failures on unfamiliar variants of otherwise
+          familiar tasks. Its underlying paper,
+          <a href="https://arxiv.org/pdf/2307.02477">Reasoning or Reciting? Exploring the
+          Capabilities and Limitations of Language Models Through Counterfactual Tasks</a>
+          (Wu et al., 2023; revised 2024), finds both nontrivial counterfactual performance
+          and substantial degradation across 11 tasks. It supports testing transfer
+          carefully, rather than treating all success as memorization.</p>
+      </article>
+    </section>
+
+    <section id="further-reading" aria-labelledby="further-title">
+      <h2 id="further-title">Further primary reading</h2>
+      <p>These papers help distinguish explanation, computation and the adaptation mechanism.</p>
+      <div class="reference-list">
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2305.04388">Language Models Don't Always Say
+            What They Think: Unfaithful Explanations in Chain-of-Thought Prompting</a></h3>
+          <p>Turpin et al., 2023. Biasing prompt features can change answers without being
+            acknowledged in the explanation. A direct reason to distrust trace text as a
+            complete account of influences.</p>
+        </article>
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2505.05410">Reasoning Models Don't Always
+            Say What They Think</a></h3>
+          <p>Chen et al., 2025. Reasoning models often omit their use of supplied hints.
+            CoT monitoring can reveal problems, but absence of a disclosure cannot rule
+            them out in the tested settings.</p>
+        </article>
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2507.11473">Chain of Thought Monitorability:
+            A New and Fragile Opportunity for AI Safety</a></h3>
+          <p>Korbak et al., 2025. A position paper on preserving useful monitoring signals
+            through changes in training and architecture. Fragile monitorability is a
+            concern to measure, not proof that monitoring has no value.</p>
+        </article>
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2404.15758">Let's Think Dot by Dot:
+            Hidden Computation in Transformer Language Models</a></h3>
+          <p>Pfau, Merrill and Bowman, 2024. With specific training, filler tokens support
+            computation on two algorithmic tasks. Useful extra computation need not be
+            readable task decomposition; this is not a universal result for existing models.</p>
+        </article>
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2412.06769">Training Large Language Models
+            to Reason in a Continuous Latent Space</a></h3>
+          <p>Hao et al., 2024; revised 2026. Coconut feeds hidden states back as input
+            embeddings. This is another representation to consider when evaluating how
+            learned state could attach to future reasoning systems.</p>
+        </article>
+        <article>
+          <h3><a href="https://arxiv.org/pdf/2101.00190">Prefix-Tuning:
+            Optimizing Continuous Prompts for Generation</a></h3>
+          <p>Li and Liang, 2021. Learns continuous prefixes with a frozen language model
+            for table-to-text generation and summarization. The adaptation mechanism has
+            uses independent of whether verbal CoT is faithful.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+  <footer class="site-wrap site-footer">
+    <p>knlp · Research evidence and open questions · November 2026</p>
+    <p><a href="reasoncache.html">ReasonCACHE results</a> ·
+      <a href="https://github.com/mcgrof/knlp/blob/main/docs/reasoncache-long-term-architectural-challenges.html">Page source</a></p>
+  </footer>
+</body>
+</html>
