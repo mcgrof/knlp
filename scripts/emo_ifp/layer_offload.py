@@ -22,9 +22,15 @@ and readiness times, NVMe sectors read, host-mapped GPU memory (GTT) use,
 and checks the generated tokens and first-token logits against the
 resident run of the same request.
 
+With --moe fused, every MoE block runs vLLM's fused kernel (fused_moe.py)
+instead of EMO's per-expert loop, and the packed file must use the stacked
+layout (pack_pool_layer.py --stacked); the loaded tensors then become the
+layer's stacked routed weights.
+
 Usage:
     layer_offload.py MODEL_DIR POOL.json PACKED.safetensors BF16_MANIFEST.json \
-        SCREEN.json OUT_DIR [--trials 10] [--lengths 128 1024]
+        SCREEN.json OUT_DIR [--trials 10] [--lengths 128 1024] \
+        [--moe fused [--configs TUNED.json]]
 """
 
 import argparse
@@ -47,6 +53,7 @@ from common import (  # noqa
     load_model,
     mem_snapshot,
     runtime_identity,
+    stacked_name,
     tensor_sha256,
     write_json,
 )
@@ -271,6 +278,29 @@ class LayerSlot:
         return [n for ns in self.names for n in ns]
 
 
+class FusedLayerSlot(LayerSlot):
+    """The stacked routed weights of one fused MoE layer."""
+
+    def __init__(self, model, layer):
+        self.moe = model.model.layers[layer].mlp
+        self.layer = layer
+        self.n13 = stacked_name(layer, "w13")
+        self.n2 = stacked_name(layer, "w2")
+        self.ref = {self.n13: self.moe.w13.data, self.n2: self.moe.w2.data}
+        self.empty = torch.empty(0, device="cuda", dtype=torch.bfloat16)
+
+    def assign(self, tensors):
+        self.moe.w13.data = tensors[self.n13]
+        self.moe.w2.data = tensors[self.n2]
+
+    def clear(self):
+        self.moe.w13.data = self.empty
+        self.moe.w2.data = self.empty
+
+    def all_names(self):
+        return [self.n13, self.n2]
+
+
 # -- requests ---------------------------------------------------------------
 
 
@@ -483,6 +513,8 @@ def main():
     ap.add_argument("--lengths", type=int, nargs="+", default=[128, 1024])
     ap.add_argument("--decode", type=int, default=8)
     ap.add_argument("--policies", nargs="+", default=POLICIES)
+    ap.add_argument("--moe", choices=["reference", "fused"], default="reference")
+    ap.add_argument("--configs", default=None)
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     if os.environ.get("FASTSAFETENSORS_DMABUF_STRICT") != "1":
@@ -510,7 +542,18 @@ def main():
     apply_pool(model, pool)
     gc.collect()
     torch.cuda.empty_cache()
-    slot = LayerSlot(model, args.layer, pool["layers"][str(args.layer)]["routed"])
+    if args.moe == "fused":
+        from fused_moe import VLLM_SOURCE, ConfigTable, install_fused
+
+        res["fused_configs"] = install_fused(model, ConfigTable(args.configs)).source
+        res["kernel_source"] = VLLM_SOURCE
+        gc.collect()
+        torch.cuda.empty_cache()
+        slot = FusedLayerSlot(model, args.layer)
+        man_hashes = None  # stacked bytes: checked against the resident copy
+    else:
+        routed = pool["layers"][str(args.layer)]["routed"]
+        slot = LayerSlot(model, args.layer, routed)
     res["memory_after_pool"] = mem_snapshot()
     eos = tok.eos_token_id
     dev = block_device_of(args.packed)
@@ -521,10 +564,11 @@ def main():
         model, slot, tok, screen, args.packed, man_hashes, args.out_dir
     )
     print("gate", json.dumps(res["correctness_gate"])[:600], flush=True)
-    res["original_shard_probe"] = original_shard_probe(
-        slot, args.model_dir, man, args.out_dir
-    )
-    print("orig", res["original_shard_probe"], flush=True)
+    if args.moe == "reference":
+        res["original_shard_probe"] = original_shard_probe(
+            slot, args.model_dir, man, args.out_dir
+        )
+        print("orig", res["original_shard_probe"], flush=True)
     if not res["correctness_gate"]["pass"]:
         write_json(os.path.join(args.out_dir, "offload-summary.json"), res)
         sys.exit("correctness gate failed; no timing")
