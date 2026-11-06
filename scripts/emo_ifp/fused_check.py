@@ -235,12 +235,6 @@ def screen_agreement(fused_rows, ref_rows, side):
     }
 
 
-def free(model):
-    del model
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model_dir")
@@ -298,7 +292,11 @@ def main():
         r["seconds"] = time.time() - t0
         res[side] = r
         write_json(out_path, res)
-        free(model)
+        # Drop every reference before the next load; the full model and
+        # the pool do not fit together.
+        del model, rows, ref_e2e
+        gc.collect()
+        torch.cuda.empty_cache()
 
     fw = sum(
         1
