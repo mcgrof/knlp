@@ -74,6 +74,34 @@ equals declared F; for a third-party loader, observed F is the only F
 there is. A capture can be replayed against a copy of the checkpoint
 with `syscall_replayer` from the same tracer tree.
 
+## Loading straight into GPU memory with DMA-BUF
+
+Two scripts measure the
+[fastsafetensors DMA-BUF copier](https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf),
+which reads safetensors files from NVMe straight into GPU memory
+through io_uring DMA-BUF fixed buffers. Both need a kernel with
+io_uring DMA-BUF support and files on XFS, ext4 or a raw NVMe
+namespace.
+
+[`dmabuf_load_bench.py`](dmabuf_load_bench.py) compares the copier with
+fastsafetensors' host-bounce reader, the way vLLM loads a checkpoint:
+load time, drive bytes and a byte-for-byte check of every tensor.
+
+[`dmabuf_release_bench.py`](dmabuf_release_bench.py) loads a model one
+file after another and reports, per file, how long the copier spends
+releasing its registration (unregistering the buffer and closing the
+DMA-BUF) before it hands the tensors back. On some kernels that release
+waits for an RCU grace period, about 14 ms per file. With
+`--registration-file` it also times each step of a single
+registration's life, from allocation to free, for buffer sizes from
+64 MiB to 4 GiB.
+
+```
+git clone -b 2026-10-28-iouring-dma-buf https://github.com/mcgrof/fastsafetensors
+pip install ./fastsafetensors
+python3 dmabuf_release_bench.py --model /models/my-model --out load.json
+```
+
 ## What to publish
 
 A reproducibility claim needs the device's geometry, not its identity:
