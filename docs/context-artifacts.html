@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#mapped-results">Current results</a><a href="#architecture">Architecture</a><a href="#sharing">Sharing</a><a href="#reproduce">Run it</a><a href="#checkpoint-results">Author checkpoint</a><a href="#comparison">REFRAG comparison</a><a href="#sources">Sources</a></div></nav>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="learned_prefix_caches.html">Learned Prefix Caches</a><a href="#mapped-results">Current results</a><a href="#architecture">Architecture</a><a href="#sharing">Sharing</a><a href="#reproduce">Run it</a><a href="#checkpoint-results">Author checkpoint</a><a href="#comparison">REFRAG comparison</a><a href="memorilla-vs-cartridges.html">Memorilla vs Cartridges</a><a href="#sources">Sources</a></div></nav>
 <header class="wrap">
 <div class="eyebrow">Context reuse · checkpoint inference · October 2026</div>
 <h1>Reusable context,<br>typed by its consumer.</h1>
@@ -141,6 +141,7 @@ make memorilla-stress MEMORILLA_PYTHON=/path/to/python</code></pre>
 <section id="sources">
 <div class="eyebrow">09 / Primary sources</div><h2>Read the methods and the implementation.</h2>
 <ol class="refs">
+<li><a href="memorilla-vs-cartridges.html">Memorilla and Cartridges on clinical records</a>: answer quality on LongHealth against trained cartridges and retrieval at equal KV memory.</li>
 <li><a href="learned_prefix_caches.html">Learned Prefix Caches in knlp</a> — the trained KV-prefix architecture and its existing serving work.</li>
 <li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>, §2 and §7 — persistent vectors, query-conditioned readout, frozen-model interface, and limitations. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
 <li><a href="https://arxiv.org/abs/2509.01092v2">REFRAG: Rethinking RAG based Decoding, v2</a>, §2–3 and Appendix A.1 — chunk embeddings, decoder alignment, and selective expansion.</li>

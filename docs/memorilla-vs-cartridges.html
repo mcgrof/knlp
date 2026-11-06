@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Memorilla latent memory against trained cartridges and plain retrieval on LongHealth clinical records, with one frozen Qwen3-8B and one vLLM engine: results, fairness to Memorilla, training compute, and accuracy at equal KV memory.">
+<title>Memorilla and Cartridges on Clinical Records | knlp</title>
+<style>
+:root{color-scheme:dark;--bg:#080d16;--panel:#111b2a;--line:#2b3c51;--text:#eaf1fa;--muted:#a8b7ca;--cyan:#5ce1cf;--amber:#f5c46a;--blue:#82b8ff;--s0:#1fa596;--s1:#c0821a}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:radial-gradient(ellipse at top left,#143142 0,transparent 48%),var(--bg);color:var(--text);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--cyan);text-underline-offset:4px}a:hover{color:white}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{font-size:.88em}p code{overflow-wrap:anywhere}nav{background:#080d16f2;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}.nav-inner{max-width:1180px;margin:auto;padding:14px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}.brand{font-weight:800;color:var(--text);text-decoration:none}.nav-inner a{font-size:14px}.wrap{width:min(1140px,calc(100% - 48px));margin:auto}header{padding:88px 0 52px}.eyebrow{color:var(--cyan);font:700 13px/1.5 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase}h1{font-size:clamp(40px,6.4vw,72px);line-height:1.05;letter-spacing:-.045em;max-width:980px;margin:20px 0 25px}h2{font-size:clamp(28px,3.5vw,38px);line-height:1.2;letter-spacing:-.025em;margin:0 0 22px}h3{font-size:21px;line-height:1.3;margin:28px 0 12px}p{max-width:880px}.lede{font-size:clamp(20px,2.4vw,26px);line-height:1.45;max-width:910px}.muted,small{color:var(--muted)}.tags{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.tag{border:1px solid var(--line);border-radius:30px;padding:6px 12px;font-size:13px;color:var(--muted)}.tag.ok{color:var(--cyan)}.tag.pending{color:var(--amber)}section{padding:48px 0;border-top:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.card h3{margin-top:0}.card p{font-size:16px;margin-bottom:0}.card code{color:var(--cyan)}.notice{border-left:3px solid var(--amber);background:#252119;padding:18px 22px;border-radius:0 10px 10px 0}.notice p{margin:0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;margin:24px 0}table{width:100%;border-collapse:collapse;font-size:15px;min-width:640px;text-align:left}th,td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--cyan);background:#132333}tr:last-child td{border-bottom:0}td:first-child{font-weight:650;min-width:160px}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}tr.hl td{background:#122636}.caption{font-size:14px;color:var(--muted);max-width:100%}pre{padding:20px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#080f1a;font-size:14px;line-height:1.7}.refs li{margin-bottom:13px}footer{padding:36px 0 64px;color:var(--muted);font-size:14px}
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 8px;margin:24px 0;position:relative}.chart{width:100%;height:auto;display:block}.chart .grid{stroke:#22324a;stroke-width:1}.chart .axis{stroke:#4a5d76;stroke-width:1}.chart .tick{fill:var(--muted);font-size:13px}.chart .axis-label{fill:var(--muted);font-size:13px}.chart .ref{stroke:#7d8da3;stroke-width:1.5;stroke-dasharray:5 5}.chart .ref-label{fill:var(--muted);font-size:13px}.chart .direct{fill:var(--text);font-size:14px;font-weight:650}.chart .mark{stroke:var(--panel);stroke-width:2;cursor:default}.chart .mark:hover,.chart .mark:focus{stroke:var(--text);outline:none}.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:14px;color:var(--muted);margin:4px 0 10px}.legend span{display:inline-flex;align-items:center;gap:8px}.sw{width:12px;height:12px;border-radius:50%;display:inline-block}.sw.sq{border-radius:2px}.sw.di{border-radius:1px;transform:rotate(45deg);width:11px;height:11px}.sw.hollow{background:transparent;border:2px solid var(--muted)}.tip{position:absolute;pointer-events:none;background:#0b1422;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);white-space:nowrap;display:none}
+@media(max-width:820px){nav{position:static}header{padding-top:50px}.grid{grid-template-columns:1fr}.wrap{width:calc(100% - 32px)}.nav-inner{gap:12px;padding:12px 16px}section{padding:36px 0}table{font-size:14px}.figure{padding:12px 8px 4px;overflow-x:auto}.chart{min-width:620px}}
+</style>
+</head>
+<body>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="context-artifacts.html">Context artifacts &amp; Memorilla</a><a href="cartridges.html">Cartridges</a><a href="#results">Results</a><a href="#fairness">Fair to Memorilla?</a><a href="#equal-memory">Equal memory</a><a href="#thinking">Thinking</a><a href="#reproduce">Run it</a><a href="#sources">Sources</a></div></nav>
+<header class="wrap">
+<div class="eyebrow">Record delivery · LongHealth · November 2026</div>
+<h1>Memorilla and Cartridges on clinical records.</h1>
+<p class="lede">Two ways to give a frozen model a long record without pasting it in: a shared reader that turns passage vectors into 16 memory tokens, and a key/value prefix trained for each record. On LongHealth the trained prefix wins clearly, and plain retrieval is the method both have to beat.</p>
+<p class="muted">Memorilla (<a href="https://arxiv.org/abs/2610.21375v1">arXiv 2610.21375</a>) trains one reader module that reads any document collection without further training. Cartridges (<a href="https://arxiv.org/abs/2506.06266v3">arXiv 2506.06266</a>) train a key/value (KV) cache prefix per corpus with self-study. Neither paper runs the other. This page compares both, and retrieval, with the same frozen Qwen3-8B, the same prompts and seeds, and one vLLM engine. The <a href="context-artifacts.html">context artifacts page</a> covers how knlp stores and serves Memorilla collections; this page covers answer quality.</p>
+<div class="tags"><span class="tag ok">Same decoder, engine, prompts and seeds in every arm</span><span class="tag ok">Memorilla fine-tuned with the authors’ trainer</span><span class="tag ok">Retrieval matched to cartridge memory</span><span class="tag pending">Four patients, 80 questions</span></div>
+<div class="notice"><p><strong>Result:</strong> Memorilla does not read these records usefully. The released reader scores like no record (0.425 against 0.413). Fine-tuned on the cartridges’ own training conversations, it reaches 0.446 without thinking and 0.421 with thinking. A native cartridge scores 0.571 and 0.700. Four times more Memorilla training changes nothing, and giving the reader only the five right passages changes nothing. At the cartridge’s KV memory, retrieval matches the cartridge without thinking and trails it by 0.08 to 0.13 with thinking. <a href="#results">See the results.</a></p></div>
+</header>
+<main class="wrap">
+
+<section id="methods">
+<div class="eyebrow">01 / The two methods</div><h2>What each method gives the decoder.</h2>
+<div class="grid">
+<article class="card"><h3>Memorilla</h3><p>A 194M-parameter reader module (two cross-attention layers, 16 memory slots) sits beside a frozen decoder. Each passage of the record is stored as one Qwen3-Embedding-4B vector of 2,560 numbers. For each question, the reader attends from 16 learned, question-conditioned queries to those vectors and writes 16 soft tokens into the system turn. The decoder never sees passage text. One trained module serves every collection, so a new record costs only its embeddings.</p></article>
+<article class="card"><h3>Cartridge</h3><p>A trained KV prefix for one record: one key and one value per layer and head for each of 506 to 644 positions per patient here (75 to 95 MB in BF16). It is trained with self-study: a model writes questions about the record, the decoder answers them with the full record in context, and the prefix learns to reproduce those answers without the record. Training costs about 112 H100-minutes per patient. The prefix is computed once and shared by every question about that record.</p></article>
+</div>
+<p>Retrieval is the third arm. It pastes the passages most similar to the question as text, using the same Qwen3-Embedding-4B vectors, the question alone as the query, cosine similarity, and most similar first. This is the RAG-k baseline from the Memorilla paper. Retrieval needs no training, but every question pays its own prefill.</p>
+</section>
+
+<section id="setup">
+<div class="eyebrow">02 / Setup</div><h2>Keep everything equal except the record’s path.</h2>
+<p><a href="https://github.com/kbressem/LongHealth">LongHealth</a> is a benchmark of 20 fictional patient records, each with 20 five-option questions. Each record is about 10,000 to 13,000 tokens. The panel uses patients 01, 03, 05 and 06, three sampling runs per question, and one fixed sampling seed per request, shared by every arm. Prefix caching is off. All arms run on one Qwen3-8B in one vLLM v0.33 build with a cartridge KV connector, on an RTX 4090.</p>
+<p>There are two answer protocols. The panel protocol has thinking on and a 4,096-token answer cap. Every cartridge number in knlp uses it. The no-thinking protocol has a 1,024-token cap and matches the chat template Memorilla was trained with. Scoring is letter-aware: a bare option letter counts as that option. This matters for Memorilla, which often answers with a bare letter, and moves no other arm by more than 0.016. One panel’s sampling error is about 0.03 for a four-patient mean and 0.06 for one patient.</p>
+<p>Memorilla collections split each record into passages of at most 256 reader tokens (about 50 per patient), embedded with the authors’ builder. Re-embedding PubMedQA with this builder reproduces the authors’ vectors (cosine at least 0.99979). The Memorilla prompt matches the authors’ <code>build_messages</code> token for token.</p>
+</section>
+
+<section id="results">
+<div class="eyebrow">03 / Results</div><h2>A trained prefix carries the record; 16 memory tokens do not.</h2>
+<div class="table-wrap"><table><thead><tr><th>Arm</th><th>KV memory per question</th><th class="num">No thinking</th><th class="num">Thinking</th></tr></thead><tbody>
+<tr><td>No record</td><td>0</td><td class="num">0.413</td><td class="num">0.408</td></tr>
+<tr><td>Memorilla, released reader</td><td>16 tokens</td><td class="num">0.425</td><td class="num">0.200</td></tr>
+<tr><td>Memorilla, fine-tuned on another patient</td><td>16 tokens</td><td class="num">0.433</td><td class="num">0.400</td></tr>
+<tr><td>Memorilla, fine-tuned on these patients, 2 epochs</td><td>16 tokens</td><td class="num">0.446</td><td class="num">0.438</td></tr>
+<tr><td>Memorilla, fine-tuned on these patients, 8 epochs</td><td>16 tokens</td><td class="num">0.446</td><td class="num">0.421</td></tr>
+<tr class="hl"><td>Native cartridge</td><td>506 to 644 slots</td><td class="num">0.571</td><td class="num">0.700</td></tr>
+<tr><td>Retrieval, 5 passages of 256 tokens</td><td>1,162 tokens</td><td class="num">0.662–0.675</td><td class="num">0.725–0.729</td></tr>
+<tr><td>Full record</td><td>whole record</td><td class="num">0.812</td><td class="num">0.879</td></tr>
+</tbody></table></div>
+<p class="caption">Means over patients 01, 03, 05 and 06. The retrieval row shows two runs of the same arm. The released reader’s thinking score is off-template, because it was trained with thinking disabled; read its no-thinking score. The authors’ own evaluator and choice scoring, on all 20 patients, give the released reader 0.258 to 0.280 (chance is 0.20).</p>
+<div class="figure">
+<div class="legend" aria-hidden="true"><span><i class="sw" style="background:var(--s0)"></i>No thinking</span><span><i class="sw" style="background:var(--s1)"></i>Thinking</span><span><i class="sw sq hollow"></i>Memorilla, fine-tuned 8 epochs</span><span><i class="sw hollow"></i>Retrieval</span><span><i class="sw di hollow"></i>Native cartridge (bar: 506 to 644 slots)</span></div>
+<svg class="chart" viewBox="0 0 900 430" role="img" aria-labelledby="mvc-title mvc-desc">
+<title id="mvc-title">LongHealth accuracy against KV memory per question</title>
+<desc id="mvc-desc">The fine-tuned Memorilla reader at 16 memory tokens scores 0.446 without and 0.421 with thinking. Retrieval rises from 0.59 at 233 tokens to 0.78 at 1,351 tokens. The native cartridge at 506 to 644 slots scores 0.571 without thinking and 0.700 with thinking. No record scores 0.41.</desc>
+<line class="grid" x1="70" x2="870" y1="327.0" y2="327.0"/><text class="tick" x="60" y="332.0" text-anchor="end">0.4</text>
+<line class="grid" x1="70" x2="870" y1="261.0" y2="261.0"/><text class="tick" x="60" y="266.0" text-anchor="end">0.5</text>
+<line class="grid" x1="70" x2="870" y1="195.0" y2="195.0"/><text class="tick" x="60" y="200.0" text-anchor="end">0.6</text>
+<line class="grid" x1="70" x2="870" y1="129.0" y2="129.0"/><text class="tick" x="60" y="134.0" text-anchor="end">0.7</text>
+<line class="grid" x1="70" x2="870" y1="63.0" y2="63.0"/><text class="tick" x="60" y="68.0" text-anchor="end">0.8</text>
+<line class="grid" x1="70.0" x2="70.0" y1="30" y2="360"/><text class="tick" x="70.0" y="382" text-anchor="middle">10</text>
+<line class="grid" x1="235.9" x2="235.9" y1="30" y2="360"/><text class="tick" x="235.9" y="382" text-anchor="middle">30</text>
+<line class="grid" x1="417.7" x2="417.7" y1="30" y2="360"/><text class="tick" x="417.7" y="382" text-anchor="middle">100</text>
+<line class="grid" x1="583.6" x2="583.6" y1="30" y2="360"/><text class="tick" x="583.6" y="382" text-anchor="middle">300</text>
+<line class="grid" x1="765.3" x2="765.3" y1="30" y2="360"/><text class="tick" x="765.3" y="382" text-anchor="middle">1,000</text>
+<line class="grid" x1="870.0" x2="870.0" y1="30" y2="360"/><text class="tick" x="870.0" y="382" text-anchor="middle">2,000</text>
+<line class="axis" x1="70" x2="870" y1="360" y2="360"/>
+<text class="axis-label" x="470.0" y="410" text-anchor="middle">KV memory per question, in tokens (log scale; one token = one cartridge slot = 144 KiB)</text>
+<text class="axis-label" transform="translate(20 195.0) rotate(-90)" text-anchor="middle">Panel accuracy</text>
+<line class="ref" x1="70" x2="870" y1="320.4" y2="320.4"/><text class="ref-label" x="866" y="313.4" text-anchor="end">No record, 0.41</text>
+<line x1="662.5" x2="698.9" y1="214.1" y2="214.1" stroke="#1fa596" stroke-width="2"/>
+<line x1="662.5" x2="698.9" y1="129.0" y2="129.0" stroke="#c0821a" stroke-width="2"/>
+<circle class="mark" cx="545.4" cy="200.3" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 1 passage of 256: 233 tokens, no thinking 0.592"/>
+<circle class="mark" cx="545.4" cy="195.0" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 1 passage of 256: 233 tokens, thinking 0.600"/>
+<circle class="mark" cx="645.1" cy="195.0" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 1 passage of 512: 451 tokens, no thinking 0.600"/>
+<circle class="mark" cx="645.1" cy="216.8" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 1 passage of 512: 451 tokens, thinking 0.567"/>
+<circle class="mark" cx="647.1" cy="170.6" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 2 passages of 256: 457 tokens, no thinking 0.637"/>
+<circle class="mark" cx="647.1" cy="192.4" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 2 passages of 256: 457 tokens, thinking 0.604"/>
+<circle class="mark" cx="681.5" cy="173.2" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 5 passages of 128: 574 tokens, no thinking 0.633"/>
+<circle class="mark" cx="681.5" cy="181.1" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 5 passages of 128: 574 tokens, thinking 0.621"/>
+<circle class="mark" cx="785.0" cy="126.4" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 10 passages of 128: 1,139 tokens, no thinking 0.704"/>
+<circle class="mark" cx="785.0" cy="112.5" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 10 passages of 128: 1,139 tokens, thinking 0.725"/>
+<circle class="mark" cx="788.0" cy="154.1" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 5 passages of 256: 1,162 tokens, no thinking 0.662"/>
+<circle class="mark" cx="788.0" cy="109.9" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 5 passages of 256: 1,162 tokens, thinking 0.729"/>
+<circle class="mark" cx="810.8" cy="103.9" r="6" fill="#1fa596" tabindex="0" data-tip="Retrieval, 3 passages of 512: 1,351 tokens, no thinking 0.738"/>
+<circle class="mark" cx="810.8" cy="76.9" r="6" fill="#c0821a" tabindex="0" data-tip="Retrieval, 3 passages of 512: 1,351 tokens, thinking 0.779"/>
+<path class="mark" d="M683.9 205.1L692.9 214.1L683.9 223.1L674.9 214.1Z" fill="#1fa596" tabindex="0" data-tip="Native cartridge: 506 to 644 slots, no thinking 0.571"/>
+<path class="mark" d="M683.9 120.0L692.9 129.0L683.9 138.0L674.9 129.0Z" fill="#c0821a" tabindex="0" data-tip="Native cartridge: 506 to 644 slots, thinking 0.700"/>
+<rect class="mark" x="135.0" y="290.6" width="12" height="12" rx="2" fill="#1fa596" tabindex="0" data-tip="Memorilla fine-tuned: 16 memory tokens, no thinking 0.446"/>
+<rect class="mark" x="135.0" y="307.1" width="12" height="12" rx="2" fill="#c0821a" tabindex="0" data-tip="Memorilla fine-tuned: 16 memory tokens, thinking 0.421"/>
+<text class="direct" x="155.0" y="284.6">Memorilla</text>
+<text class="direct" x="669.9" y="115.0" text-anchor="end">Cartridge</text>
+<text class="direct" x="804.8" y="62.9" text-anchor="end">Retrieval</text>
+</svg>
+<div class="tip" role="status"></div>
+</div>
+<p class="caption">Accuracy against the KV memory each method adds per question. For Qwen3-8B one token of context and one cartridge slot both cost 36 layers × 8 KV heads × 128 dimensions × 2 (key and value) × 2 bytes = 147,456 bytes. The full record (about 10,000 to 13,000 tokens) is off the right edge. The released reader (0.425 / 0.200) is omitted; it would sit on top of the fine-tuned points.</p>
+</section>
+
+<section id="fairness">
+<div class="eyebrow">04 / Fair to Memorilla?</div><h2>Fine-tuning, longer training and more compute do not close the gap.</h2>
+<p>The first comparison used the released reader, which never saw a clinical record. Each cartridge, by contrast, was trained on its patient’s self-study conversations. Every Memorilla score in its paper also comes from a reader trained on that benchmark’s training split. To remove this difference, the released stage-3 reader was fine-tuned on the same self-study conversations the cartridges used. The run used the authors’ <code>train.py</code> and recipe unchanged: AdamW at 1e-4, weight decay 0.01, 10% warmup then cosine decay to 10% of peak, batch 1 with gradient accumulation 16, loss on answer tokens only, and thinking disabled. The data are about 13,800 training rows for the four patients. A transfer control was trained only on patient 02 and scored on the panel patients.</p>
+<p>Fine-tuning adds 0.02 to 0.03 over the released reader, and the transfer control gets most of that gain without seeing the panel patients. So most of what fine-tuning teaches is answer format, not these patients’ facts. On held-out patients 02, 04, 07 and 08, every fine-tuned checkpoint scores 0.358 to 0.383, against 0.400 with no record and 0.404 for the released reader.</p>
+<h3>Training length</h3>
+<p>A falling training loss cannot show whether the reader learns record facts or only answer style. A swap test separates the two. It scores 752 held-out self-study conversations twice per checkpoint: once with each conversation’s own patient collection, and once with another patient’s collection. The gap between the two losses is the part the right record explains.</p>
+<div class="table-wrap"><table><thead><tr><th>Checkpoint</th><th class="num">Own record</th><th class="num">Wrong record</th><th class="num">Gap</th><th class="num">Panel, no thinking / thinking</th></tr></thead><tbody>
+<tr><td>Released</td><td class="num">1.097</td><td class="num">1.117</td><td class="num">0.020</td><td class="num">0.425 / 0.200</td></tr>
+<tr><td>Epoch 1 of 8</td><td class="num">0.720</td><td class="num">0.876</td><td class="num">0.156</td><td class="num">0.421 / 0.433</td></tr>
+<tr><td>Epoch 2</td><td class="num">0.675</td><td class="num">0.881</td><td class="num">0.206</td><td class="num">0.442 / 0.354</td></tr>
+<tr><td>Epoch 4</td><td class="num">0.611</td><td class="num">0.936</td><td class="num">0.325</td><td class="num">0.450 / 0.421</td></tr>
+<tr><td>Epoch 6</td><td class="num">0.587</td><td class="num">0.956</td><td class="num">0.369</td><td class="num">0.454 / 0.421</td></tr>
+<tr><td>Epoch 8</td><td class="num">0.585</td><td class="num">0.965</td><td class="num">0.379</td><td class="num">0.446 / 0.421</td></tr>
+</tbody></table></div>
+<p>Record use nearly doubles from epoch 2 to epoch 6, and the wrong-record loss rises, so the reader depends on the record more and more. The panel does not follow. The rule was set before the run: training length is a limit if the best epoch beats the transfer control by 0.06 or more, and it is ruled out if the best epoch stays within 0.03 of the 2-epoch reader. The best epoch beats the control by 0.021 without thinking and 0.033 with thinking, and stays within 0.008 of the 2-epoch reader. Training length is ruled out.</p>
+<h3>Compute</h3>
+<p>Both methods keep the decoder frozen and backpropagate only to the decoder inputs, so a processed token costs about the same, roughly 4 × 8.2e9 FLOPs. The GPU type changes only wall time. Compare FLOPs and passes over the data, not GPU models.</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>Cartridges, four patients</th><th>Memorilla, 2 epochs</th><th>Memorilla, 8 epochs</th></tr></thead><tbody>
+<tr><td>Trained parameters</td><td>37.3M to 47.5M per patient</td><td>194M, shared</td><td>194M, shared</td></tr>
+<tr><td>Passes over the data</td><td>12.8 to 18.8</td><td>2</td><td>8</td></tr>
+<tr><td>Training FLOPs</td><td>8.3e18</td><td>4.0e17</td><td>1.6e18</td></tr>
+<tr><td>Measured wall time</td><td>7.5 H100-hours</td><td>3.5 W7900-hours</td><td>14 W7900-hours</td></tr>
+<tr><td>Stored result</td><td>75 to 95 MB per patient</td><td>371 MB for all records</td><td>371 MB</td></tr>
+<tr><td>Panel, no thinking / thinking</td><td>0.571 / 0.700</td><td>0.446 / 0.438</td><td>0.446 / 0.421</td></tr>
+</tbody></table></div>
+<p>The 8-epoch run uses about a fifth of the cartridges’ FLOPs. Matching them would take about 43 epochs. The data argue against that run: four times more Memorilla training did not raise the panel score, and both the swap gap and the loss stop moving after epoch 6. Cartridges also saturate early: the patient-06 native cartridge scores 0.717 at step 120 and at step 240. Two costs are not counted: the authors’ pretraining of the released module, a fixed cost shared by every collection, and the shared self-study data generation.</p>
+<h3>Is the test fair?</h3>
+<p>The released reader on new records is exactly Memorilla’s design point, so that test is fair. Training on another patient adds in-domain data, which is generous. Training on the scored patients adds per-record training that Memorilla was built not to need, so it tilts the test toward Memorilla. Memorilla trails in all three settings. The failure falls inside a limit its paper states in Section 7: Memorilla “can lose fine-grained factual details,” likely “because the document encoder was never trained for memory compression.” Its paper evaluates personalization, long-document and knowledge question answering, and agent memory. It names health records as a possible collection but evaluates no clinical benchmark. Memorilla is about cost: at zero training per record, its competitor is retrieval, which its own paper runs and which wins here by about 0.25.</p>
+</section>
+
+<section id="equal-memory">
+<div class="eyebrow">05 / Retrieval at equal memory</div><h2>Retrieval matches a cartridge without thinking and trails it with thinking.</h2>
+<p>Neither paper compares retrieval with cartridges. The Cartridges paper compares methods as accuracy against KV memory, with no retrieval baseline. The Memorilla paper runs retrieval at a fixed passage count, mainly 50 passages, without matching memory. This test combines the two. It uses Memorilla’s retriever and places each arm on the Cartridges memory axis, using the retrieved token count measured per question. A stronger retriever could only raise retrieval’s score, so these numbers are a lower bound for retrieval.</p>
+<div class="table-wrap"><table><thead><tr><th>Arm</th><th>Tokens, mean (max)</th><th class="num">No thinking</th><th class="num">Thinking</th></tr></thead><tbody>
+<tr><td>1 passage of 256</td><td>233 (254)</td><td class="num">0.592</td><td class="num">0.600</td></tr>
+<tr><td>1 passage of 512</td><td>451 (506)</td><td class="num">0.600</td><td class="num">0.567</td></tr>
+<tr><td>2 passages of 256</td><td>457 (505)</td><td class="num">0.637</td><td class="num">0.604</td></tr>
+<tr><td>5 passages of 128</td><td>574 (616)</td><td class="num">0.633</td><td class="num">0.621</td></tr>
+<tr class="hl"><td>Native cartridge</td><td>506 to 644 slots</td><td class="num">0.571</td><td class="num">0.700</td></tr>
+<tr><td>10 passages of 128</td><td>1,139 (1,211)</td><td class="num">0.704</td><td class="num">0.725</td></tr>
+<tr><td>5 passages of 256</td><td>1,162 (1,239)</td><td class="num">0.662</td><td class="num">0.729</td></tr>
+<tr><td>3 passages of 512</td><td>1,351 (1,503)</td><td class="num">0.738</td><td class="num">0.779</td></tr>
+</tbody></table></div>
+<p>The decision rule was set before the run. If retrieval at a cartridge’s memory scores at or above the native cartridge, it matches trained cartridges with no training. If it scores more than 0.06 below, the cartridge earns its training cost. Without thinking, the three memory-matched arms score 0.03 to 0.07 above the cartridge. This is one to two sampling errors, so the claim is a match, not a win, and the margin comes mostly from patient 06 (cartridge 0.300, retrieval 0.68 to 0.82). With thinking, the matched arms score 0.08 to 0.13 below, and the cartridge leads on patients 01, 03 and 05. To reach the cartridge with thinking, retrieval needs about twice its memory.</p>
+<p>The two methods do not cost the same, and the table does not measure total cost. A cartridge costs training once per record, then one stored prefix serves every question about it. Retrieval needs no training, but it prefills about 450 to 600 new tokens per question.</p>
+<h3>Memorilla on the right five passages</h3>
+<p>If Memorilla failed because it reads about 50 passages at once, giving it only the five passages retrieval pastes as text should help. It does not. On the passages that score 0.662 and 0.729 as text, the released reader scores 0.417 and 0.179, and the 8-epoch reader scores 0.433 and 0.429. Each is within 0.02 of the same reader on the whole collection. Five passages into 16 slots means the slots were not full, so adding slots would not help either. The loss is in what a retrieval embedding keeps or in how the module reads it. This test cannot separate those two. Doing so would need a reader that sees passage tokens, which is a different method.</p>
+</section>
+
+<section id="thinking">
+<div class="eyebrow">06 / Why thinking helps a cartridge</div><h2>Not longer answers: a short chain of reasoning finds the right fact.</h2>
+<p>Thinking raises the native cartridge by 0.13 and does not raise retrieval at the same memory. The cause is not answer length. With thinking, the cartridge’s median answer is 507 tokens and 32% of answers exceed 1,024 tokens. Memory-matched retrieval has a median of 1,083 to 1,349 tokens, and 52% to 57% exceed 1,024. For retrieval, long answers are mostly wrong: they score 0.34 to 0.38, against 0.77 to 0.92 for answers of 1,024 tokens or fewer. A long retrieval answer usually means the passages lack the fact.</p>
+<p>The cartridge’s gain sits in a few questions. Thinking turns 14 of 80 questions from wrong to right for the cartridge, and 4 from right to wrong. For retrieval it gains 4 and loses 7 to 9. On those 14 questions:</p>
+<div class="table-wrap"><table><thead><tr><th>Arm</th><th class="num">No thinking</th><th class="num">Thinking</th></tr></thead><tbody>
+<tr><td>Native cartridge</td><td class="num">0.02</td><td class="num">0.86</td></tr>
+<tr><td>No record</td><td class="num">0.29</td><td class="num">0.45</td></tr>
+<tr><td>Retrieval, 5 passages of 128</td><td class="num">0.74</td><td class="num">0.67</td></tr>
+<tr><td>Full record</td><td class="num">0.74</td><td class="num">—</td></tr>
+</tbody></table></div>
+<p>Without thinking, the cartridge does worse than no record on these questions. It gives the same wrong option in all three runs, including three questions the bare model answers correctly. With thinking it answers them. Seven of the 14 are patient-06 questions, which is why patient 06 moves from 0.300 to 0.683. The bare model also answers 4 of the 14 when it thinks, so those may come from general medical knowledge. The other 10 need the record. In one inspected case, the wrong option was a nearby fact from the same record: the original tumor’s size instead of the metastasis’s. One reading is that a cartridge stores related facts without sharp boundaries, and reasoning separates them. It rests on a few examples and is not tested. The practical rule is to score cartridges with thinking on: without it they understate what they hold, and they can give confident wrong answers on questions the bare model gets right.</p>
+</section>
+
+<section id="limits">
+<div class="eyebrow">07 / Limits</div><h2>What these results do not show.</h2>
+<p>Four patients and 20 questions each, with one decoder. Each cartridge is one training seed. Earlier panels moved by up to about 0.17 per patient across seeds, and the cartridge side of the memory curve has one size per patient. Memorilla was fine-tuned with one seed and one learning rate. The authors’ cosine schedule was stretched over 8 epochs, because their trainer has no constant-rate option and their code was not changed. The retrieval arms use one retriever and the question alone as the query. The swap test measures record use on self-study conversations, not on panel questions. None of this says Memorilla fails in general: its paper reports wins on FactKG, TriviaQA, NarrativeQA and personalization, where joining weak clues across many documents matters more than recalling one exact value.</p>
+</section>
+
+<section id="reproduce">
+<div class="eyebrow">08 / Run it</div><h2>Scripts and inputs.</h2>
+<p>All scoring goes through <a href="https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_compare_vllm.py"><code>cas_compare_vllm.py</code></a>. It runs one arm per invocation (<code>ARM=none|full|rag|cart|memorilla</code>), uses the panel prompts and scoring from <code>cas_eval_table15.py</code>, and writes per-patient summaries plus every answer. <code>TOPK_DOCS</code> sets the retrieval passage count, <code>MEM_CONFIG</code> the passage size, <code>MEM_TOPK</code> restricts Memorilla to the top passages, and <code>THINK</code> and <code>MAX_COMPLETION</code> select the protocol. Each run records the retrieved token counts.</p>
+<pre><code># Retrieval: two passages of 256 tokens, no thinking
+ARM=rag THINK=0 MAX_COMPLETION=1024 MEM_CONFIG=longhealth_c256 TOPK_DOCS=2 \
+  MEM_SRC=/path/to/memorilla MEM_ROOT=/path/to/longhealth-collections \
+  RUNS=3 MAX_Q=20 SEED=0 OUT_JSON=rag_c256_k2.json \
+  python research/cartridges_cas/scripts/cas_compare_vllm.py
+
+# Memorilla reading only the top five passages, thinking on
+ARM=memorilla THINK=1 MAX_COMPLETION=4096 MEM_CONFIG=longhealth_c256 MEM_TOPK=5 \
+  MEM_CKPT=/path/to/reader MEM_SRC=/path/to/memorilla MEM_ROOT=/path/to/longhealth-collections \
+  RUNS=3 MAX_Q=20 SEED=0 OUT_JSON=mem_top5.json \
+  python research/cartridges_cas/scripts/cas_compare_vllm.py</code></pre>
+<p><a href="https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_memorilla_build.py"><code>cas_memorilla_build.py</code></a> builds the LongHealth collections and converts self-study conversations into Memorilla training data. <a href="https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_memorilla_swap_loss.py"><code>cas_memorilla_swap_loss.py</code></a> runs the own-against-wrong record test. Cartridges are trained with <a href="https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_train_isolated.py"><code>cas_train_isolated.py</code></a> from conversations made by the <code>cas_synth_*</code> scripts. The Memorilla reader is the authors’ <a href="https://huggingface.co/memorilla/Memorilla-Qwen3-8B">released checkpoint</a>, fine-tuned with their <a href="https://github.com/snap-stanford/memorilla">training code</a>.</p>
+<div class="notice"><p><strong>Not yet public:</strong> the cartridge arm needs a vLLM v0.33 branch with the cartridge KV connector, which is not published yet. The other arms use only text prompts and prompt embeddings. The self-study conversations and trained cartridges are not published.</p></div>
+</section>
+
+<section id="sources">
+<div class="eyebrow">09 / Primary sources</div><h2>Read the methods.</h2>
+<ol class="refs">
+<li><a href="https://arxiv.org/abs/2610.21375v1">Memorilla: Latent Semantic Memory for LLMs, v1</a>. Section 2 covers the reader and frozen-decoder interface, Appendix A the related work that cites Cartridges, Appendix E the memory-slot ablations, and Section 7 the limits. <a href="https://github.com/snap-stanford/memorilla">Author code</a>.</li>
+<li><a href="https://arxiv.org/abs/2506.06266v3">Cartridges: Lightweight and general-purpose long context representations via self-study, v3</a>. Section 5.1 and Figure 4 report LongHealth as accuracy against KV-cache memory.</li>
+<li><a href="https://github.com/kbressem/LongHealth">LongHealth benchmark</a>: 20 fictional patient records, 400 multiple-choice questions.</li>
+<li><a href="cartridges.html">Cartridges in knlp</a> and <a href="context-artifacts.html">context artifacts and Memorilla serving in knlp</a>.</li>
+</ol>
+</section>
+</main>
+<footer class="wrap">knlp · Memorilla and Cartridges on LongHealth · November 5, 2026. Paper claims and measured knlp results are stated separately.</footer>
+<script>
+(function(){var f=document.querySelector('.figure'),t=f.querySelector('.tip');
+function show(e){var m=e.target.closest('[data-tip]');if(!m)return;t.textContent=m.getAttribute('data-tip');t.style.display='block';var r=f.getBoundingClientRect(),b=m.getBoundingClientRect();var x=b.left-r.left+b.width/2,y=b.top-r.top-10;t.style.left=Math.max(4,Math.min(x-t.offsetWidth/2,r.width-t.offsetWidth-4))+'px';t.style.top=(y-t.offsetHeight)+'px';}
+function hide(){t.style.display='none';}
+f.addEventListener('mouseover',show);f.addEventListener('focusin',show);f.addEventListener('mouseout',hide);f.addEventListener('focusout',hide);})();
+</script>
+</body>
+</html>
