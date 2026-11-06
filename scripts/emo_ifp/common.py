@@ -91,6 +91,11 @@ def expert_tensor_name(layer, expert, mat):
     return f"model.layers.{layer}.mlp.experts.{expert}.{mat}.weight"
 
 
+def stacked_name(layer, which):
+    """Name of a packed layer's stacked routed weights (w13 or w2)."""
+    return f"model.layers.{layer}.mlp.routed_{which}"
+
+
 def load_model(model_dir, device="cuda", dtype=torch.bfloat16):
     """Load EMO with its pinned remote code onto one device."""
     from transformers import AutoModelForCausalLM, AutoTokenizer

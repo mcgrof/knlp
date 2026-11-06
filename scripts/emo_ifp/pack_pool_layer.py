@@ -10,9 +10,15 @@ file, then checks each written tensor against the BF16 manifest hash.
 The packed file is the I/O representation every reader then uses, so a
 comparison between readers is not affected by the packing.
 
+With --stacked the file instead holds the two tensors the fused MoE kernel
+(fused_moe.py) consumes: ``ROUTED_W13`` [experts, 2*inter, hidden] with
+each expert's gate rows then up rows, and ``ROUTED_W2`` [experts, hidden,
+inter], in pool order. The bytes are the same experts' weights; every
+slice is checked against the manifest hash.
+
 Usage:
     pack_pool_layer.py MODEL_DIR POOL.json BF16_MANIFEST.json OUT.safetensors \
-        [--layer 15]
+        [--layer 15] [--stacked]
 """
 
 import argparse
@@ -21,6 +27,7 @@ import os
 import sys
 import time
 
+import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -29,6 +36,7 @@ from common import (
     EXPERT_MATS,
     expert_tensor_name,
     file_sha256,
+    stacked_name,
     tensor_sha256,
     write_json,
 )  # noqa
@@ -41,6 +49,7 @@ def main():
     ap.add_argument("manifest")
     ap.add_argument("out")
     ap.add_argument("--layer", type=int, default=15)
+    ap.add_argument("--stacked", action="store_true")
     args = ap.parse_args()
 
     with open(args.pool) as f:
@@ -61,11 +70,34 @@ def main():
     bad = [n for n in names if tensor_sha256(out[n]) != man[n]["bf16_sha256"]]
     if bad:
         sys.exit(f"source tensors differ from manifest: {bad[:4]}")
-    save_file(out, args.out, metadata={"format": "pt", "layer": str(args.layer)})
+    meta = {"format": "pt", "layer": str(args.layer)}
+    if args.stacked:
+        g = lambda e, m: out[expert_tensor_name(args.layer, e, m)]  # noqa
+        stacked = {
+            stacked_name(args.layer, "w13"): torch.stack(
+                [torch.cat([g(e, "gate_proj"), g(e, "up_proj")], 0) for e in routed]
+            ).contiguous(),
+            stacked_name(args.layer, "w2"): torch.stack(
+                [g(e, "down_proj") for e in routed]
+            ).contiguous(),
+        }
+        meta["layout"] = "stacked"
+        save_file(stacked, args.out, metadata=meta)
+    else:
+        save_file(out, args.out, metadata=meta)
     with safe_open(args.out, framework="pt") as f:
-        bad = [
-            n for n in names if tensor_sha256(f.get_tensor(n)) != man[n]["bf16_sha256"]
-        ]
+        if args.stacked:
+            got = {}
+            w13 = f.get_tensor(stacked_name(args.layer, "w13"))
+            w2 = f.get_tensor(stacked_name(args.layer, "w2"))
+            inter = w13.shape[1] // 2
+            for i, e in enumerate(routed):
+                got[expert_tensor_name(args.layer, e, "gate_proj")] = w13[i, :inter]
+                got[expert_tensor_name(args.layer, e, "up_proj")] = w13[i, inter:]
+                got[expert_tensor_name(args.layer, e, "down_proj")] = w2[i]
+        else:
+            got = {n: f.get_tensor(n) for n in names}
+        bad = [n for n in names if tensor_sha256(got[n]) != man[n]["bf16_sha256"]]
     if bad:
         sys.exit(f"written tensors differ from manifest: {bad[:4]}")
     payload = sum(man[n]["nbytes"] for n in names)
@@ -75,6 +107,7 @@ def main():
         "tensors": len(names),
         "payload_bytes": payload,
         "file_bytes": os.path.getsize(args.out),
+        "layout": "stacked" if args.stacked else "per-expert",
         "file_sha256": file_sha256(args.out),
         "pool_file": os.path.abspath(args.pool),
         "seconds": round(time.time() - t0, 2),
