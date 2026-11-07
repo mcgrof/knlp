@@ -16,14 +16,22 @@ each expert's gate rows then up rows, and ``ROUTED_W2`` [experts, hidden,
 inter], in pool order. The bytes are the same experts' weights; every
 slice is checked against the manifest hash.
 
+With --align N the header is padded with spaces, which the safetensors
+format allows, so that the tensor data starts at a multiple of N bytes.
+A reader that loads the whole file into one page-aligned GPU buffer and
+uses the tensors in place (the DMA-BUF copier) then gets tensors at
+N-aligned addresses; without it they start wherever the header ends,
+which can slow kernels that read them. The tensor bytes are unchanged.
+
 Usage:
     pack_pool_layer.py MODEL_DIR POOL.json BF16_MANIFEST.json OUT.safetensors \
-        [--layer 15] [--stacked]
+        [--layer 15] [--stacked] [--align 4096]
 """
 
 import argparse
 import json
 import os
+import struct
 import sys
 import time
 
@@ -42,6 +50,26 @@ from common import (
 )  # noqa
 
 
+def data_offset(path):
+    with open(path, "rb") as f:
+        return 8 + struct.unpack("<Q", f.read(8))[0]
+
+
+def align_data(path, align):
+    """Pad the header with spaces so the tensor data starts N-aligned."""
+    with open(path, "rb") as f:
+        n = struct.unpack("<Q", f.read(8))[0]
+        header = f.read(n)
+        body = f.read()
+    pad = (-(8 + n)) % align
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(struct.pack("<Q", n + pad))
+        f.write(header + b" " * pad)
+        f.write(body)
+    os.replace(tmp, path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model_dir")
@@ -50,6 +78,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--layer", type=int, default=15)
     ap.add_argument("--stacked", action="store_true")
+    ap.add_argument("--align", type=int, default=0)
     args = ap.parse_args()
 
     with open(args.pool) as f:
@@ -85,6 +114,8 @@ def main():
         save_file(stacked, args.out, metadata=meta)
     else:
         save_file(out, args.out, metadata=meta)
+    if args.align:
+        align_data(args.out, args.align)
     with safe_open(args.out, framework="pt") as f:
         if args.stacked:
             got = {}
@@ -108,6 +139,7 @@ def main():
         "payload_bytes": payload,
         "file_bytes": os.path.getsize(args.out),
         "layout": "stacked" if args.stacked else "per-expert",
+        "data_offset": data_offset(args.out),
         "file_sha256": file_sha256(args.out),
         "pool_file": os.path.abspath(args.pool),
         "seconds": round(time.time() - t0, 2),
