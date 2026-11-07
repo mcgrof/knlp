@@ -19,6 +19,10 @@ and reports per file and per trial:
   total_s            the whole trial, all files
   release_sum_s      release_in_wait_s summed over the files
   read_sum_s         wait_s summed over the files, minus release_sum_s
+  submit_sum_s       time to submit the reads, summed over the files
+
+--gap-ms pauses after each file, which shows whether work the kernel
+does in the background after a release slows the next file's reads.
 
 Registration mode (--registration-file) times each step in the life of
 one registration for a range of buffer sizes: allocate GPU memory,
@@ -284,6 +288,8 @@ def model_mode(args, paths):
                     "copier": type(cp).__name__,
                 }
             )
+            if args.gap_ms:
+                time.sleep(args.gap_ms / 1e3)
         total = time.perf_counter() - t_all
         rsum = sum(f["release_in_wait_s"] for f in files)
         runs.append(
@@ -293,6 +299,8 @@ def model_mode(args, paths):
                 "bytes": sum(f["bytes"] for f in files),
                 "release_sum_s": rsum,
                 "read_sum_s": sum(f["wait_s"] for f in files) - rsum,
+                "submit_sum_s": sum(f["submit_s"] for f in files),
+                "gap_ms": args.gap_ms,
                 "release_fraction": rsum / total,
                 "fallback_files": sum(f["fallback"] for f in files),
                 "files": files,
@@ -314,6 +322,13 @@ def main():
     ap.add_argument("--model", help="directory of *.safetensors files to load")
     ap.add_argument("--files", nargs="*", default=[], help="files to load, in order")
     ap.add_argument("--model-trials", type=int, default=3)
+    ap.add_argument(
+        "--gap-ms",
+        type=float,
+        default=0.0,
+        help="pause after each file before loading the next; counted in "
+        "total_s but not in the per-file times",
+    )
     ap.add_argument(
         "--registration-file",
         help="large file for the per-step registration timing",
@@ -359,7 +374,7 @@ def main():
         runs = out["model"]
         out["model_median"] = {
             k: statistics.median(r[k] for r in runs)
-            for k in ("total_s", "read_sum_s", "release_sum_s")
+            for k in ("total_s", "read_sum_s", "release_sum_s", "submit_sum_s")
         }
         m = out["model_median"]
         print(
