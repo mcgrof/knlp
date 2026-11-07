@@ -22,6 +22,13 @@ at its new weights. The arms, per prompt length and trial:
                 for its own file
     hint-J      the load starts, J A requests run on pool A, then the B
                 request; layers still missing wait as in on-demand
+    delta-...   with --delta-dir, the on-demand and hint arms again, but
+                the load reads only the routed experts of B that A lacks
+                (pack_pool_layer.py on a pool file listing, per layer, B's
+                experts absent from A, in B's order); as each layer's file
+                arrives, the loader thread builds B's stacked weights in a
+                new buffer from A's resident copies of the shared experts
+                and the loaded ones, on the GPU
 
 Requests are batch one: a prompt of N tokens (layer_offload.build_requests)
 and greedy decode. For each switched B request the script records the
@@ -34,9 +41,10 @@ and every loaded layer against the resident copy of pool B.
 Usage:
     pool_switch.py MODEL_DIR POOL_A.json POOL_B.json PACKED_B_DIR \\
         REQUESTS_A.json REQUESTS_B.json OUT_DIR --configs TUNED.json \\
-        [--trials 10] [--lengths 128 1024] [--decode 32] [--hints 1 2 4]
+        [--trials 10] [--lengths 128 1024] [--decode 32] [--hints 1 2 4] \\
+        [--delta-dir DELTA_DIR]
 
-PACKED_B_DIR holds layerL.safetensors for L = 0..15.
+PACKED_B_DIR and DELTA_DIR hold layerL.safetensors for L = 0..15.
 """
 
 import argparse
@@ -63,7 +71,7 @@ from common import (  # noqa: E402
 from layer_offload import Load, block_device_of, build_requests  # noqa: E402
 from layer_offload import evict, sectors_read  # noqa: E402
 
-LOAD_ARMS = ("sync", "on-demand")
+LOAD_ARMS = ("sync", "on-demand", "delta-on-demand")
 
 
 class Pool:
@@ -88,9 +96,11 @@ def set_pool(model, pool):
 class PoolLoader:
     """Read one file per layer, in order, from a background thread."""
 
-    def __init__(self, files, inflight=2):
+    def __init__(self, files, inflight=2, post=None):
         self.files = files
         self.inflight = inflight
+        # post(i, tensors) -> tensors runs in the loader thread per layer
+        self.post = post
         n = len(files)
         self.events = [threading.Event() for _ in range(n)]
         self.tensors = [None] * n
@@ -119,7 +129,8 @@ class PoolLoader:
                 submit()
             while pending:
                 i, ld = pending.popleft()
-                self.tensors[i] = ld.wait()
+                ts = ld.wait()
+                self.tensors[i] = self.post(i, ts) if self.post else ts
                 self.loads[i] = ld
                 self.t_ready[i] = time.perf_counter()
                 self.events[i].set()
@@ -236,6 +247,7 @@ def main():
     ap.add_argument("--decode", type=int, default=32)
     ap.add_argument("--hints", type=int, nargs="+", default=[1, 2, 4])
     ap.add_argument("--inflight", type=int, default=2)
+    ap.add_argument("--delta-dir")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     if os.environ.get("FASTSAFETENSORS_DMABUF_STRICT") != "1":
@@ -299,6 +311,37 @@ def main():
         b = set(pool_b["layers"][str(li)]["routed"])
         overlap.append(len(a & b))
     res["routed_overlap_per_layer"] = overlap
+    delta_files, delta_idx = None, None
+    if args.delta_dir:
+        delta_files = [
+            os.path.join(args.delta_dir, f"layer{li}.safetensors") for li in range(nl)
+        ]
+        delta_idx = []
+        for li in range(nl):
+            ra = pool_a["layers"][str(li)]["routed"]
+            rb = pool_b["layers"][str(li)]["routed"]
+            pos_a = {e: k for k, e in enumerate(ra)}
+            ov = [k for k, e in enumerate(rb) if e in pos_a]
+            dl = [k for k, e in enumerate(rb) if e not in pos_a]
+            dev_i = lambda xs: torch.tensor(xs, device="cuda")  # noqa
+            delta_idx.append(
+                (dev_i(ov), dev_i([pos_a[rb[k]] for k in ov]), dev_i(dl), len(dl))
+            )
+        res["delta_file_bytes"] = [os.path.getsize(p) for p in delta_files]
+
+    def assemble(li, ts):
+        """B's stacked weights for layer li from A's copies and the delta."""
+        ov_b, ov_a, dl, n = delta_idx[li]
+        d13, d2 = ts[names[li][0]], ts[names[li][1]]
+        assert d13.shape[0] == n and d2.shape[0] == n
+        w13 = torch.empty_like(B.w13[li])
+        w2 = torch.empty_like(B.w2[li])
+        w13[ov_b] = A.w13[li][ov_a]
+        w2[ov_b] = A.w2[li][ov_a]
+        w13[dl] = d13
+        w2[dl] = d2
+        return {names[li][0]: w13, names[li][1]: w2}
+
     res["file_bytes"] = [os.path.getsize(p) for p in files]
     res["memory_after_setup"] = mem_snapshot()
     eos = tok.eos_token_id
@@ -307,12 +350,14 @@ def main():
 
     def do_load_arm(arm, b_ids, a_list):
         """Run one switched arm; return its record and the B logits."""
-        for p in files:
+        delta = arm.startswith("delta-")
+        arm_files = delta_files if delta else files
+        for p in arm_files:
             evict(p)
         s0, _ = sectors_read(dev)
         set_pool(model, A)
         torch.cuda.synchronize()
-        ld = PoolLoader(files, args.inflight)
+        ld = PoolLoader(arm_files, args.inflight, assemble if delta else None)
         rec = {"arm": arm}
         a_recs = []
         ld.start()
@@ -371,7 +416,7 @@ def main():
             elif arm in LOAD_ARMS:
                 out[arm] = do_load_arm(arm, b_ids, [])
             else:
-                j = int(arm.split("-")[1])
+                j = int(arm.rsplit("-", 1)[1])
                 out[arm] = do_load_arm(arm, b_ids, a_ids[:j])
         ref_b = out["resident-B"]
         ctrl = out["control-A"]
@@ -381,7 +426,7 @@ def main():
             if "b" in rec:
                 rec["b_tokens_match"] = rec["b"]["tokens"] == ref_b[0]["b"]["tokens"]
                 rec["b_logits_bitwise"] = bool(torch.equal(lg, ref_b[1]))
-            if arm.startswith("hint-"):
+            if "hint-" in arm:
                 j = len(rec["a"])
                 rec["a_tokens_match"] = all(
                     x["tokens"] == y["tokens"]
@@ -396,6 +441,8 @@ def main():
         return rows
 
     hint_arms = [f"hint-{j}" for j in args.hints]
+    if args.delta_dir:
+        hint_arms += ["delta-on-demand"] + [f"delta-hint-{j}" for j in args.hints]
     arms_all = ["control-A", "resident-B", "sync", "on-demand"] + hint_arms
     jmax = max(args.hints)
 
@@ -456,8 +503,8 @@ def main():
                     for t in rows[a]
                 ),
             }
-            if a.startswith("hint-"):
-                j = int(a.split("-")[1])
+            if "hint-" in a:
+                j = int(a.rsplit("-", 1)[1])
                 infl = []
                 for t, c in zip(rows[a], rows["control-A"]):
                     got = sum(x["total_s"] for x in t["a"])
@@ -482,8 +529,10 @@ def main():
         s["on_demand_minus_sync_ms"] = (
             s["on-demand"]["b_excess_ms"] - s["sync"]["b_excess_ms"]
         )
-        hidden = [a for a in hint_arms if s[a]["hidden"]]
-        s["smallest_hidden_hint"] = hidden[0] if hidden else None
+        for prefix in ("hint-", "delta-hint-"):
+            hidden = [a for a in hint_arms if a.startswith(prefix) and s[a]["hidden"]]
+            key = "smallest_hidden_" + prefix.rstrip("-").replace("-", "_")
+            s[key] = hidden[0] if hidden else None
         summ[str(n)] = s
     res["summary"] = summ
     res["memory_final"] = mem_snapshot()
