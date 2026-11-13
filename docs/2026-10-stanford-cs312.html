@@ -38,9 +38,30 @@
 <p>The exercise is precision. The attention keys and values that fill the KV cache are stored in low precision, and we measure how much validation loss rises. The lane sweeps three independent axes:</p>
 <ul>
 <li><strong>Bit width and format.</strong> 8-bit uses fp8 (e4m3). Four bits and below use a symmetric integer grid: int4 (15 levels), int3 (7 levels) and int2 (a ternary grid). Keys and values can be set independently, so an asymmetric split such as 16-bit keys with 4-bit values, or the reverse, is one setting.</li>
-<li><strong>Granularity.</strong> <em>per-token</em> gives every cached vector its own scale, which is the realistic serving case. <em>per-tensor</em> shares one scale across the whole tensor, which is harsher.</li>
+<li><strong>Granularity.</strong> This determines which values share a quantization scale. <em>per-token</em> gives each token’s vector within each head its own scale. <em>per-tensor</em> shares one scale across the entire K tensor, and a separate scale across the entire V tensor, at an attention call. <a href="#granularity-example">See the worked example below.</a></li>
 <li><strong>Query-key normalization.</strong> On or off. It normalizes the query and key vectors before their dot product.</li>
 </ul>
+
+<h3 id="granularity-example">Per-token versus per-tensor: which values share a scale?</h3>
+<p>A token has a key vector and a value vector for each attention head. Here, <strong>per-token means one scale per token, per head, separately for K and V</strong>; all components in that vector share it. <strong>Per-tensor means one scale for the whole K input to an attention call, and another for V</strong>, spanning the batch, heads, token positions and vector components. It does not mean one scale shared by every layer of the model.</p>
+<p>Consider two key vectors in one head, shortened to three components for this example: <strong>token A = [0.12, 0.24, 0.70]</strong> and <strong>token B = [1.00, 2.00, 7.00]</strong>. These are illustrative values, not measured model outputs. Use this study’s symmetric 4-bit integer grid, with codes from −7 to +7 (15 levels).</p>
+<p>The <strong>scale is the spacing between representable values</strong>: <code>scale = max(abs(values sharing the scale)) / 7</code>. Divide each value by the scale and round to get its integer code; multiply that code by the same scale to reconstruct the value used in attention.</p>
+<div class="table-wrap">
+<table>
+<caption>Same 4-bit codes, different scale sharing. Reconstructed values include the rounding error.</caption>
+<thead><tr><th scope="col">Mode</th><th scope="col">Token</th><th scope="col">Scale</th><th scope="col">Integer codes</th><th scope="col">Reconstructed vector</th></tr></thead>
+<tbody>
+<tr><th scope="row">per-token</th><td>A</td><td>0.10</td><td>[1, 2, 7]</td><td>[0.10, 0.20, 0.70]</td></tr>
+<tr><th scope="row">per-token</th><td>B</td><td>1.00</td><td>[1, 2, 7]</td><td>[1.00, 2.00, 7.00]</td></tr>
+<tr><th scope="row">per-tensor</th><td>A</td><td>1.00</td><td>[0, 0, 1]</td><td>[0.00, 0.00, 1.00]</td></tr>
+<tr><th scope="row">per-tensor</th><td>B</td><td>1.00</td><td>[1, 2, 7]</td><td>[1.00, 2.00, 7.00]</td></tr>
+</tbody>
+</table>
+</div>
+<p>For token A, per-token scaling uses its own maximum, 0.70, so the spacing is <strong>0.10</strong>. With per-tensor scaling, token B’s 7.00 sets the spacing to <strong>1.00</strong> for both tokens: A’s 0.12 and 0.24 round to zero, and 0.70 rounds to 1.00. The largest absolute reconstruction error in A rises from <strong>0.04 to 0.30 (Δ +0.26)</strong>. This is error in the vector components, not validation loss.</p>
+<p><strong>The tradeoff:</strong> per-token scaling prevents a large value in another token or head from setting this vector’s precision, but a large component within the same vector can still dominate its scale. It also requires more scales to compute and, in a stored quantized cache, retain. Per-tensor scaling needs fewer scales but lets a large value affect a much larger group. Both modes use the same number of bits for each quantized component; their scale metadata differs. Actual serving systems may also use per-head, per-channel or block scales.</p>
+<p class="scope">These definitions follow the lane’s <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/cs312/cs312_quant.py">fake-quantization implementation</a>: per-token takes the absolute maximum over the last (head-dimension) axis; per-tensor takes it over all axes. The example uses the integer branch; FP8 has a different numerical grid.</p>
+
 <p>Two methods are compared. <strong>Post-hoc</strong> quantization takes a finished baseline checkpoint and quantizes its cache only at evaluation; it trains nothing and is the curve to beat. <strong>Quantization-aware training</strong> (QAT) trains the model from scratch with the cache fake-quantized at every step through a straight-through estimator, so the optimizer learns to tolerate the coarse cache.</p>
 <p class="scope"><strong>Reading the deltas.</strong> Loss differences are in nats, not percentages, and are calculated from the four-decimal losses shown. “Δ vs baseline” means loss minus 2.9258: positive is worse, negative is better. “Loss recovered” means post-hoc minus QAT: positive is better. Each other comparison names its reference.</p>
 </section>
