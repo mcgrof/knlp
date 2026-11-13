@@ -478,113 +478,137 @@ depth of these bowls from one draw into an interval.</p>
 <section id="schedule">
 <h2>Part 3: the learning-rate schedule</h2>
 <p>The third part of the assignment asks how the other knobs interact with the
-learning-rate scheduler. This is one cell of that question. Start from the standard
-recipe, raise the peak learning rate to 0.009 and the weight decay to 1.0 — deliberately
-over-driven, three times the default rate and ten times the default decay — then change
-<em>only</em> the schedule and its warmup, and rank the three cells. The token budget is
-untouched, so all three stay compute matched with everything above.</p>
+learning-rate scheduler. Start from the standard recipe, set the weight decay to 1.0 —
+ten times the default — then change <em>only</em> the schedule and its warmup and rank
+three cells. Then run that whole ranking again at three peak learning rates, 0.009, 0.003
+and 0.001, to find out whether the ranking is a property of the schedule or of the rate it
+is driven at. Nine runs, all compute matched at the standard 600,000-sequence budget.</p>
 <p><code>wsd0.2</code> is warmup-stable-decay: hold the peak rate, then decay to zero over
 the last fifth of training. <code>linear</code> is the standard recipe's schedule: warm up,
-then decay to zero across the whole remaining run.</p>
+then decay to zero across the whole remaining run. Because the shapes are fixed, each
+cell's mean learning rate is a fixed fraction of its peak.</p>
 
 <div class="table-wrap">
 <table>
-<caption>The three cells, ranked best to worst. All use learning rate 0.009 and weight
-decay 1.0. Warmup steps are the percentage applied to the 9,375-step budget. Mean learning
-rate is the schedule's average over training. Δ is the loss minus the 2.9258 baseline.</caption>
-<thead><tr><th scope="col">run</th><th scope="col">schedule</th><th scope="col">warmup</th><th scope="col">warmup steps</th><th scope="col">mean lr</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<caption>Final validation loss for each schedule cell at each peak learning rate, weight
+decay 1.0 throughout. Best in each column in bold. Spread is worst minus best in that
+column; the noise floor is 0.008.</caption>
+<thead><tr><th scope="col">cell</th><th scope="col">schedule</th><th scope="col">warmup</th><th scope="col">mean lr (× peak)</th><th scope="col">peak 0.001</th><th scope="col">peak 0.003</th><th scope="col">peak 0.009</th></tr></thead>
 <tbody>
-<tr><th scope="row">C</th><td><code>linear</code></td><td>0.1</td><td>937</td><td>0.00450</td><td><strong>3.0579</strong></td><td>+0.1321</td></tr>
-<tr><th scope="row">B</th><td><code>wsd0.2</code></td><td>0.2</td><td>1,875</td><td>0.00720</td><td>3.2076</td><td>+0.2818</td></tr>
-<tr><th scope="row">A</th><td><code>wsd0.2</code></td><td>0.0</td><td>0</td><td>0.00810</td><td>3.2973</td><td>+0.3715</td></tr>
+<tr><th scope="row">C</th><td><code>linear</code></td><td>0.1</td><td>0.500</td><td><strong>2.9322</strong></td><td><strong>2.9658</strong></td><td><strong>3.0579</strong></td></tr>
+<tr><th scope="row">B</th><td><code>wsd0.2</code></td><td>0.2</td><td>0.800</td><td>2.9775</td><td>3.0559</td><td>3.2076</td></tr>
+<tr><th scope="row">A</th><td><code>wsd0.2</code></td><td>0.0</td><td>0.900</td><td>2.9841</td><td>3.1104</td><td>3.2973</td></tr>
+<tr><th scope="row">spread</th><td>—</td><td>—</td><td>—</td><td>0.0519</td><td>0.1446</td><td>0.2394</td></tr>
 </tbody>
 </table>
 </div>
 
-<div class="callout"><strong>The ranking is C &lt; B &lt; A.</strong> The gaps are 0.150 and
-0.090 nats, both far above the 0.008 noise floor, so the order is firm on one seed each.</div>
+<div class="callout"><strong>The ranking is C &lt; B &lt; A at every peak rate.</strong> The
+schedule that decays throughout beats warmup-stable-decay at 0.009, at 0.003 and at 0.001.
+What changes is the size of the gap, not the order.</div>
 
 <figure>
-<svg viewBox="0 0 900 450" width="100%" height="auto" role="img" aria-labelledby="figD-t figD-d" style="display:block">
-<title id="figD-t">The three learning-rate schedules and their final validation loss</title>
-<desc id="figD-d">Left: learning rate against training step for the three cells. A holds the peak rate from step zero then decays over the last fifth. B warms up over the first fifth, holds, then decays. C warms up for a tenth of training then decays linearly to zero. Right: final validation loss, best at the top. C scores 3.0579, B 3.2076 and A 3.2973; all three are well above the 2.9258 baseline shown as a dashed line.</desc>
-<rect width="900" height="450" fill="#101c17"/>
-<line x1="80" y1="40" x2="102" y2="40" stroke="#1fa87c" stroke-width="3"/>
-<text x="108" y="44" fill="#a5b9ac" font-size="12">A — wsd0.2, no warmup</text>
-<line x1="338" y1="40" x2="360" y2="40" stroke="#c77f32" stroke-width="3"/>
-<text x="366" y="44" fill="#a5b9ac" font-size="12">B — wsd0.2, 20% warmup</text>
-<line x1="596" y1="40" x2="618" y2="40" stroke="#8a6fd0" stroke-width="3"/>
-<text x="624" y="44" fill="#a5b9ac" font-size="12">C — linear, 10% warmup</text>
-<text x="80" y="76" fill="#e9f0eb" font-size="15" font-weight="650">The schedule shape</text>
-<line x1="80" y1="340.0" x2="440" y2="340.0" stroke="#293d32" stroke-width="1"/>
-<text x="70" y="344.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.000</text>
-<line x1="80" y1="265.3" x2="440" y2="265.3" stroke="#293d32" stroke-width="1"/>
-<text x="70" y="269.3" text-anchor="end" fill="#a5b9ac" font-size="11">0.003</text>
-<line x1="80" y1="190.6" x2="440" y2="190.6" stroke="#293d32" stroke-width="1"/>
-<text x="70" y="194.6" text-anchor="end" fill="#a5b9ac" font-size="11">0.006</text>
-<line x1="80" y1="115.9" x2="440" y2="115.9" stroke="#293d32" stroke-width="1"/>
-<text x="70" y="119.9" text-anchor="end" fill="#a5b9ac" font-size="11">0.009</text>
-<text x="80.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">0</text>
-<text x="260.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">4,687</text>
-<text x="440.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
-<text x="260.0" y="384" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (9,375 total)</text>
-<text x="26" y="218.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 26 218.0)" text-anchor="middle">Learning rate</text>
-<polyline points="80.0,115.9 368.0,115.9 440.0,340.0" fill="none" stroke="#1fa87c" stroke-width="6" stroke-linejoin="round" opacity="0.95"><title>A: wsd0.2, no warmup, mean lr 0.00810</title></polyline>
-<polyline points="80.0,340.0 152.0,115.9 368.0,115.9 440.0,340.0" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>B: wsd0.2, 20% warmup, mean lr 0.00720</title></polyline>
-<polyline points="80.0,340.0 116.0,115.9 440.0,340.0" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>C: linear, 10% warmup, mean lr 0.00450</title></polyline>
-<text x="106.9" y="103.9" text-anchor="middle" fill="#1fa87c" font-size="13" font-weight="650">A</text>
-<text x="256.6" y="135.9" text-anchor="middle" fill="#c77f32" font-size="13" font-weight="650">B</text>
-<text x="287.4" y="219.7" text-anchor="middle" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
-<text x="490" y="76" fill="#e9f0eb" font-size="15" font-weight="650">Final validation loss</text>
-<line x1="600.9" y1="100" x2="600.9" y2="322" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
-<text x="600.9" y="92" text-anchor="middle" fill="#a5b9ac" font-size="11">baseline 2.9258</text>
-<line x1="600.9" y1="138" x2="677.2" y2="138" stroke="#8a6fd0" stroke-width="2" opacity="0.55"/>
-<circle cx="677.2" cy="138" r="8" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C: 3.0579</title></circle>
-<text x="490" y="143" fill="#e9f0eb" font-size="13" font-weight="650">C</text>
-<text x="508" y="143" fill="#a5b9ac" font-size="12">linear, 10% warmup</text>
-<text x="691.2" y="143" fill="#e9f0eb" font-size="13" font-weight="650">3.0579</text>
-<line x1="600.9" y1="210" x2="763.7" y2="210" stroke="#c77f32" stroke-width="2" opacity="0.55"/>
-<circle cx="763.7" cy="210" r="8" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B: 3.2076</title></circle>
-<text x="490" y="215" fill="#e9f0eb" font-size="13" font-weight="650">B</text>
-<text x="508" y="215" fill="#a5b9ac" font-size="12">wsd0.2, 20% warmup</text>
-<text x="777.7" y="215" fill="#e9f0eb" font-size="13" font-weight="650">3.2076</text>
-<line x1="600.9" y1="282" x2="815.6" y2="282" stroke="#1fa87c" stroke-width="2" opacity="0.55"/>
-<circle cx="815.6" cy="282" r="8" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A: 3.2973</title></circle>
-<text x="490" y="287" fill="#e9f0eb" font-size="13" font-weight="650">A</text>
-<text x="508" y="287" fill="#a5b9ac" font-size="12">wsd0.2, no warmup</text>
-<text x="829.6" y="287" fill="#e9f0eb" font-size="13" font-weight="650">3.2973</text>
-<text x="586.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">2.9</text>
-<text x="643.8" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.0</text>
-<text x="701.6" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.1</text>
-<text x="759.3" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.2</text>
-<text x="817.1" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.3</text>
-<line x1="586" y1="332" x2="846" y2="332" stroke="#293d32" stroke-width="1"/>
-<text x="716.0" y="384" text-anchor="middle" fill="#a5b9ac" font-size="12">Validation loss (lower is better)</text>
+<svg viewBox="0 0 900 470" width="100%" height="auto" role="img" aria-labelledby="figE-t figE-d" style="display:block">
+<title id="figE-t">The three schedules and their loss at three peak learning rates</title>
+<desc id="figE-d">Left: learning rate against training step for the three cells, drawn at peak 0.009. A holds the peak from step zero, B warms up over the first fifth then holds, C warms up briefly then decays linearly throughout. Right: final validation loss against peak learning rate on a log axis. C is lowest at every rate, and the three curves converge as the peak rate falls: the spread is 0.239 at 0.009, 0.145 at 0.003 and 0.052 at 0.001. All three are still falling at 0.001, so the best peak rate at this weight decay is below the tested range.</desc>
+<rect width="900" height="470" fill="#101c17"/>
+<line x1="80" y1="44" x2="102" y2="44" stroke="#1fa87c" stroke-width="3"/>
+<text x="108" y="48" fill="#a5b9ac" font-size="12">A — wsd0.2, no warmup</text>
+<line x1="338" y1="44" x2="360" y2="44" stroke="#c77f32" stroke-width="3"/>
+<text x="366" y="48" fill="#a5b9ac" font-size="12">B — wsd0.2, 20% warmup</text>
+<line x1="596" y1="44" x2="618" y2="44" stroke="#8a6fd0" stroke-width="3"/>
+<text x="624" y="48" fill="#a5b9ac" font-size="12">C — linear, 10% warmup</text>
+<text x="80" y="88" fill="#e9f0eb" font-size="15" font-weight="650">The schedule shape</text>
+<text x="80" y="102" fill="#a5b9ac" font-size="11">drawn at peak 0.009</text>
+<line x1="80" y1="352.0" x2="398" y2="352.0" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="356.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.000</text>
+<line x1="80" y1="278.5" x2="398" y2="278.5" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="282.5" text-anchor="end" fill="#a5b9ac" font-size="11">0.003</text>
+<line x1="80" y1="205.1" x2="398" y2="205.1" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="209.1" text-anchor="end" fill="#a5b9ac" font-size="11">0.006</text>
+<line x1="80" y1="131.6" x2="398" y2="131.6" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="135.6" text-anchor="end" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="80.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">0</text>
+<text x="239.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">4,687</text>
+<text x="398.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
+<text x="239.0" y="398" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (9,375 total)</text>
+<text x="24" y="232.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 24 232.0)" text-anchor="middle">Learning rate</text>
+<polyline points="80.0,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#1fa87c" stroke-width="6" stroke-linejoin="round" opacity="0.95"><title>A: wsd0.2, no warmup</title></polyline>
+<polyline points="80.0,352.0 143.6,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>B: wsd0.2, 20% warmup</title></polyline>
+<polyline points="80.0,352.0 111.8,131.6 398.0,352.0" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>C: linear, 10% warmup</title></polyline>
+<text x="103.7" y="119.6" text-anchor="middle" fill="#1fa87c" font-size="13" font-weight="650">A</text>
+<text x="236.0" y="151.6" text-anchor="middle" fill="#c77f32" font-size="13" font-weight="650">B</text>
+<text x="263.2" y="233.5" text-anchor="middle" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="502" y="88" fill="#e9f0eb" font-size="15" font-weight="650">Loss at each peak rate</text>
+<text x="502" y="102" fill="#a5b9ac" font-size="11">weight decay 1.0 throughout</text>
+<line x1="568" y1="352.0" x2="856" y2="352.0" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="356.0" text-anchor="end" fill="#a5b9ac" font-size="11">2.9</text>
+<line x1="568" y1="298.7" x2="856" y2="298.7" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="302.7" text-anchor="end" fill="#a5b9ac" font-size="11">3.0</text>
+<line x1="568" y1="245.3" x2="856" y2="245.3" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="249.3" text-anchor="end" fill="#a5b9ac" font-size="11">3.1</text>
+<line x1="568" y1="192.0" x2="856" y2="192.0" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="196.0" text-anchor="end" fill="#a5b9ac" font-size="11">3.2</text>
+<line x1="568" y1="138.7" x2="856" y2="138.7" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="142.7" text-anchor="end" fill="#a5b9ac" font-size="11">3.3</text>
+<line x1="568" y1="338.2" x2="856" y2="338.2" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="5 4" opacity="0.9"/>
+<text x="856" y="331.2" text-anchor="end" fill="#a5b9ac" font-size="11">standard-recipe baseline 2.9258</text>
+<text x="582.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">0.001</text>
+<text x="703.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">0.003</text>
+<text x="824.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="703.0" y="414" text-anchor="middle" fill="#a5b9ac" font-size="12">Peak learning rate (log scale)</text>
+<text x="516" y="232.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 516 232.0)" text-anchor="middle">Validation loss</text>
+<polyline points="582.0,307.1 703.0,239.8 824.0,140.1" fill="none" stroke="#1fa87c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="582.0" cy="307.1" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.001: 2.9841</title></circle>
+<circle cx="703.0" cy="239.8" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.003: 3.1104</title></circle>
+<circle cx="824.0" cy="140.1" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.009: 3.2973</title></circle>
+<text x="837.0" y="145.1" fill="#1fa87c" font-size="13" font-weight="650">A</text>
+<polyline points="582.0,310.7 703.0,268.9 824.0,187.9" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="582.0" cy="310.7" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.001: 2.9775</title></circle>
+<circle cx="703.0" cy="268.9" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.003: 3.0559</title></circle>
+<circle cx="824.0" cy="187.9" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.009: 3.2076</title></circle>
+<text x="837.0" y="192.9" fill="#c77f32" font-size="13" font-weight="650">B</text>
+<polyline points="582.0,334.8 703.0,316.9 824.0,267.8" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="582.0" cy="334.8" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.001: 2.9322</title></circle>
+<circle cx="703.0" cy="316.9" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.003: 2.9658</title></circle>
+<circle cx="824.0" cy="267.8" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.009: 3.0579</title></circle>
+<text x="837.0" y="272.8" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="582.0" y="390" text-anchor="middle" fill="#a5b9ac" font-size="10">spread 0.052</text>
+<text x="703.0" y="390" text-anchor="middle" fill="#a5b9ac" font-size="10">spread 0.145</text>
+<text x="824.0" y="390" text-anchor="middle" fill="#a5b9ac" font-size="10">spread 0.239</text>
 </svg>
-<figcaption>Left: the three schedules, learning rate against training step. A and B share
-the same plateau and the same final decay, so A is drawn as a wider band beneath B where
-they coincide; A is distinct only at the start, where it jumps straight to the peak with no
-warmup. Right: the final validation loss of each cell, measured from the 2.9258
-baseline.</figcaption>
+<figcaption>Left: the three schedules, drawn at peak 0.009. A and B share the same plateau
+and final decay, so A is drawn as a wider band beneath B where they coincide; A is distinct
+only at the start, where it jumps straight to the peak with no warmup. Right: final
+validation loss against peak learning rate. The three curves converge as the peak falls,
+and the best cell at peak 0.001 lands on the standard-recipe baseline.</figcaption>
 </figure>
 
-<p>Two things explain the order.</p>
 <ul>
-<li><strong>The ranking follows the mean learning rate, inversely.</strong> A averages
-0.00810 and is worst, B averages 0.00720, C averages 0.00450 and is best. At a peak rate
-already three times the default, with ten times the default weight decay, the schedule that
-spends the least time near that peak wins. <code>wsd</code> loses here precisely because
-holding the peak is what it is for.</li>
-<li><strong>No warmup is the single worst choice.</strong> A jumps to 0.009 at step zero and
-finishes 0.090 behind B, which runs the same schedule with a 20% warmup. That is the same
-effect part 1 and part 2 found from the other direction: a raised learning rate needs a
-longer warmup, and the pair table rated learning rate × warmup the strongest co-varying
-pair in the study.</li>
+<li><strong>Schedule choice matters in proportion to how hard the peak drives the model.</strong>
+The spread falls from 0.239 at peak 0.009 to 0.145 at 0.003 and 0.052 at 0.001. At 0.001
+the gap between A and B is 0.0066, inside the noise floor, so warmup within
+<code>wsd</code> stops being measurable there at all.</li>
+<li><strong>A weight decay of 1.0 costs nothing measurable if the peak rate comes down.</strong>
+C at peak 0.001 reaches 2.9322, which is +0.0064 on the 2.9258 baseline and so inside the
+0.008 floor. Ten times the default weight decay is free, provided the peak rate drops by
+three times and the schedule decays throughout. This is the learning rate × weight decay
+co-variation from part 2 in its strongest form.</li>
 </ul>
-<p class="scope">All three cells land well above the 2.9258 baseline, by 0.13 to 0.37. The
-schedule choice softens an over-driven recipe but does not repair it; no schedule here
-recovers what the raised learning rate and weight decay cost. One seed per cell, so the
-ordering is read against the 0.008 floor but the exact depths are one draw each.</p>
+
+<div class="callout"><strong>A prediction that did not survive, and a test that did not run.</strong>
+Before the extra runs, the reading offered here was that C wins because its mean learning
+rate is the lowest, so at a peak that was too <em>low</em> the order should invert and A,
+with the highest mean rate, should win. It did not: C won at every rate. But the test never
+actually happened. Loss is still falling at peak 0.001 for all three cells, so the best peak
+rate at this weight decay is somewhere below 0.001 and every rate tested is still on the
+high side of it. The regime the prediction was about was never reached, so the mean-rate
+explanation is <em>untested</em> here rather than refuted. Settling it needs peaks of 0.0003
+and below, which is three more runs per rate.</div>
+<p class="scope">One seed per cell, nine runs. Column-to-column and cell-to-cell differences
+are read against the 0.008 floor from the three baseline seeds; the exact depths are one
+draw each. Everything here is at weight decay 1.0, which is not the standard recipe, so
+these rankings describe that corner and not the default configuration.</p>
 </section>
 
 <section id="precision">

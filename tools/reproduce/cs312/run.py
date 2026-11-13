@@ -386,34 +386,36 @@ def plan_p1c(cfg):
     report. The token budget is untouched, so the runs stay compute
     matched with every other problem in the lane.
     """
-    lr = float(cfg["P1C_LR"])
+    lrs = [float(x) for x in cfg["P1C_LR"].split(",") if x.strip()]
     wd = float(cfg["P1C_WD"])
     cells = [c.strip() for c in cfg["P1C_CELLS"].split(",") if c.strip()]
     runs = []
-    for i, cell in enumerate(cells):
-        schedule, _, warmup = cell.partition(":")
-        schedule = schedule.strip()
-        if not schedule or not warmup.strip():
-            raise SystemExit(f"P1C_CELLS entries look like 'wsd0.2:0.0', got {cell!r}")
-        warmup = float(warmup)
-        runs.append(
-            {
-                "index": i,
-                "axis": "schedule",
-                "label": chr(ord("A") + i),
-                "lr_schedule": schedule,
-                "warmup_percent": warmup,
-                "exponent": 0,
-                "overrides": {
+    for lr in lrs:
+        for i, cell in enumerate(cells):
+            schedule, _, warmup = cell.partition(":")
+            schedule = schedule.strip()
+            if not schedule or not warmup.strip():
+                raise SystemExit(f"P1C_CELLS entries look like 'wsd0.2:0.0', got {cell!r}")
+            warmup = float(warmup)
+            runs.append(
+                {
+                    "index": len(runs),
+                    "axis": "schedule",
+                    "label": chr(ord("A") + i),
                     "learning_rate": lr,
-                    "weight_decay": wd,
                     "lr_schedule": schedule,
                     "warmup_percent": warmup,
-                },
-                "suffix": cfg["RUN_SUFFIX"],
-            }
-        )
-    return {"learning_rate": lr, "weight_decay": wd, "runs": runs}
+                    "exponent": 0,
+                    "overrides": {
+                        "learning_rate": lr,
+                        "weight_decay": wd,
+                        "lr_schedule": schedule,
+                        "warmup_percent": warmup,
+                    },
+                    "suffix": cfg["RUN_SUFFIX"],
+                }
+            )
+    return {"learning_rates": lrs, "weight_decay": wd, "runs": runs}
 
 
 def plan_digest(problem, depth, num_train_sequences, runs):
@@ -1014,9 +1016,10 @@ def render_report_p1c(results):
         f"per run, {len(plan['runs'])} runs, backend `{results['backend']}`, "
         f"collected {results['collected_utc']}."
     )
+    lrs = plan.get("learning_rates") or [plan.get("learning_rate")]
     lines.append(
-        f"All cells use learning rate {plan.get('learning_rate')} and weight decay "
-        f"{plan.get('weight_decay')}; only the schedule and its warmup change."
+        f"Peak learning rates {', '.join(str(x) for x in lrs)} at weight decay "
+        f"{plan.get('weight_decay')}; within each rate only the schedule and its warmup change."
     )
     done = sum(1 for e in results["runs"] if e.get("state") == "finished")
     start, end, span = sweep_window(results)
@@ -1026,13 +1029,13 @@ def render_report_p1c(results):
         + (f" ({span:.1f} min)." if span is not None else ".")
     )
     lines.append("")
-    lines.append("| run | lr_schedule | warmup_percent | val loss | minutes | state |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| lr | run | lr_schedule | warmup_percent | val loss | minutes | state |")
+    lines.append("|---|---|---|---|---|---|---|")
     for r in results["runs"]:
         loss = r.get("val_loss")
         mins = r.get("total_seconds")
         lines.append(
-            f"| {r.get('label', '?')} | `{r.get('lr_schedule', '')}` | "
+            f"| {r.get('learning_rate', '')} | {r.get('label', '?')} | `{r.get('lr_schedule', '')}` | "
             f"{r.get('warmup_percent', '')} | "
             + (f"{loss:.4f}" if loss is not None else "-")
             + " | "
@@ -1040,20 +1043,25 @@ def render_report_p1c(results):
             + f" | {r.get('state', '-')} |"
         )
     lines.append("")
-    ranked = sorted(
-        (r for r in results["runs"] if r.get("val_loss") is not None),
-        key=lambda r: r["val_loss"],
-    )
-    if ranked:
+    for lr in lrs:
+        ranked = sorted(
+            (r for r in results["runs"]
+             if r.get("val_loss") is not None and r.get("learning_rate", lr) == lr),
+            key=lambda r: r["val_loss"],
+        )
+        if not ranked:
+            continue
         order = " < ".join(f"{r.get('label', '?')} ({r['val_loss']:.4f})" for r in ranked)
-        lines.append(f"Ranking, lowest (best) to highest (worst): **{order}**")
-        if len(ranked) > 1:
-            spread = ranked[-1]["val_loss"] - ranked[0]["val_loss"]
-            lines.append("")
-            lines.append(
-                f"Spread between best and worst: {spread:.4f} nats. The 1(b) three-seed "
-                f"noise floor is 0.008, so gaps below that are not separable."
-            )
+        spread = ranked[-1]["val_loss"] - ranked[0]["val_loss"]
+        lines.append(
+            f"- lr {lr}: **{order}**, spread {spread:.4f} nats"
+            + ("" if spread > 0.008 else " (inside the 0.008 noise floor)")
+        )
+    lines.append("")
+    lines.append(
+        "Ranking is lowest (best) to highest (worst). The 1(b) three-seed noise "
+        "floor is 0.008, so gaps below that are not separable."
+    )
     lines.append("")
     return "\n".join(lines)
 

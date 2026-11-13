@@ -182,3 +182,24 @@ class PlanP1cTest(unittest.TestCase):
     def test_a_malformed_cell_is_rejected(self):
         with self.assertRaises(SystemExit):
             cs312.build_plan(defaults(PROBLEM="p1c", P1C_CELLS="wsd0.2"))
+
+
+class PlanP1cMultiRateTest(unittest.TestCase):
+    def test_a_list_of_rates_repeats_the_cells_at_each_rate(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p1c", P1C_LR="0.009,0.003,0.001"))
+        self.assertEqual(len(plan["runs"]), 9)
+        self.assertEqual(plan["learning_rates"], [0.009, 0.003, 0.001])
+        self.assertEqual(
+            [r["label"] for r in plan["runs"]],
+            ["A", "B", "C"] * 3,
+        )
+        for rate in (0.009, 0.003, 0.001):
+            group = [r for r in plan["runs"] if r["learning_rate"] == rate]
+            self.assertEqual(len(group), 3)
+            for run in group:
+                self.assertEqual(run["overrides"]["learning_rate"], rate)
+                self.assertEqual(run["overrides"]["weight_decay"], 1.0)
+
+    def test_indices_stay_unique_across_rates(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p1c", P1C_LR="0.009,0.003"))
+        self.assertEqual([r["index"] for r in plan["runs"]], list(range(6)))
