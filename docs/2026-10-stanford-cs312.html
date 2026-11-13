@@ -42,6 +42,7 @@
 <li><strong>Query-key normalization.</strong> On or off. It normalizes the query and key vectors before their dot product.</li>
 </ul>
 <p>Two methods are compared. <strong>Post-hoc</strong> quantization takes a finished baseline checkpoint and quantizes its cache only at evaluation; it trains nothing and is the curve to beat. <strong>Quantization-aware training</strong> (QAT) trains the model from scratch with the cache fake-quantized at every step through a straight-through estimator, so the optimizer learns to tolerate the coarse cache.</p>
+<p class="scope"><strong>Reading the deltas.</strong> Loss differences are in nats, not percentages, and are calculated from the four-decimal losses shown. “Δ vs baseline” means loss minus 2.9258: positive is worse, negative is better. “Loss recovered” means post-hoc minus QAT: positive is better. Each other comparison names its reference.</p>
 </section>
 
 <section id="posthoc">
@@ -49,19 +50,19 @@
 <p>Quantizing the baseline checkpoint's cache at evaluation, with no retraining. 16-bit reproduces the baseline exactly (2.9258), which confirms the measurement path is an identity when it should be.</p>
 <div class="table-wrap">
 <table>
-<caption>Post-hoc validation loss by level and granularity. Lower is better; baseline is 2.9258.</caption>
-<thead><tr><th scope="col">Level (K / V bits)</th><th scope="col">per-token</th><th scope="col">per-tensor</th></tr></thead>
+<caption>Post-hoc validation loss by level and granularity. Lower is better; baseline is 2.9258. Each Δ is the adjacent loss minus baseline.</caption>
+<thead><tr><th scope="col">Level (K / V bits)</th><th scope="col">per-token loss</th><th scope="col">Δ vs baseline</th><th scope="col">per-tensor loss</th><th scope="col">Δ vs baseline</th></tr></thead>
 <tbody>
-<tr><th scope="row">K16 V16</th><td>2.9258</td><td>2.9258</td></tr>
-<tr><th scope="row">K16 V8</th><td>2.9259</td><td>2.9260</td></tr>
-<tr><th scope="row">K8 V8</th><td>2.9265</td><td>2.9268</td></tr>
-<tr><th scope="row">K16 V4</th><td>2.9290</td><td>2.9518</td></tr>
-<tr><th scope="row">K8 V4</th><td>2.9296</td><td>2.9525</td></tr>
-<tr><th scope="row">K4 V16</th><td>2.9341</td><td>2.9721</td></tr>
-<tr><th scope="row">K4 V4</th><td>2.9374</td><td>3.0003</td></tr>
-<tr><th scope="row">K4 V2</th><td>3.4084</td><td>7.9921</td></tr>
-<tr><th scope="row">K2 V16</th><td>4.7703</td><td>8.4953</td></tr>
-<tr><th scope="row">K2 V2</th><td>5.4665</td><td>8.9317</td></tr>
+<tr><th scope="row">K16 V16</th><td>2.9258</td><td>0.0000</td><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">K16 V8</th><td>2.9259</td><td>+0.0001</td><td>2.9260</td><td>+0.0002</td></tr>
+<tr><th scope="row">K8 V8</th><td>2.9265</td><td>+0.0007</td><td>2.9268</td><td>+0.0010</td></tr>
+<tr><th scope="row">K16 V4</th><td>2.9290</td><td>+0.0032</td><td>2.9518</td><td>+0.0260</td></tr>
+<tr><th scope="row">K8 V4</th><td>2.9296</td><td>+0.0038</td><td>2.9525</td><td>+0.0267</td></tr>
+<tr><th scope="row">K4 V16</th><td>2.9341</td><td>+0.0083</td><td>2.9721</td><td>+0.0463</td></tr>
+<tr><th scope="row">K4 V4</th><td>2.9374</td><td>+0.0116</td><td>3.0003</td><td>+0.0745</td></tr>
+<tr><th scope="row">K4 V2</th><td>3.4084</td><td>+0.4826</td><td>7.9921</td><td>+5.0663</td></tr>
+<tr><th scope="row">K2 V16</th><td>4.7703</td><td>+1.8445</td><td>8.4953</td><td>+5.5695</td></tr>
+<tr><th scope="row">K2 V2</th><td>5.4665</td><td>+2.5407</td><td>8.9317</td><td>+6.0059</td></tr>
 </tbody>
 </table>
 </div>
@@ -90,7 +91,7 @@
 <tr><th scope="row">K4 V4</th><td>per-tensor</td><td>on</td><td>2.9793</td><td>+0.0535</td></tr>
 <tr><th scope="row">K4 V4</th><td>per-tensor</td><td>off</td><td>3.1912</td><td>+0.2654</td></tr>
 <tr><th scope="row">K2 V2</th><td>per-token</td><td>on</td><td>3.1386</td><td>+0.2128</td></tr>
-<tr><th scope="row">K2 V2</th><td>per-token</td><td>off</td><td>4.1530</td><td>+1.2271</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-token</td><td>off</td><td>4.1530</td><td>+1.2272</td></tr>
 <tr><th scope="row">K2 V2</th><td>per-tensor</td><td>on</td><td>4.7897</td><td>+1.8639</td></tr>
 <tr><th scope="row">K2 V2</th><td>per-tensor</td><td>off</td><td>5.5000</td><td>+2.5742</td></tr>
 </tbody>
@@ -101,14 +102,14 @@
 <p>At every level and granularity, turning query-key normalization on lowers the trained loss, and the gain grows sharply with the quantization depth.</p>
 <div class="table-wrap">
 <table>
-<caption>How much query-key normalization lowers the trained loss at each cell.</caption>
-<thead><tr><th scope="col">Level</th><th scope="col">Granularity</th><th scope="col">QK-norm helps by</th></tr></thead>
+<caption>Loss reduction from query-key normalization: QAT loss with normalization off minus QAT loss with it on. Positive is better.</caption>
+<thead><tr><th scope="col">Level</th><th scope="col">Granularity</th><th scope="col">Loss reduction (off − on)</th></tr></thead>
 <tbody>
 <tr><th scope="row">K4 V16</th><td>per-token</td><td>+0.0278</td></tr>
 <tr><th scope="row">K4 V16</th><td>per-tensor</td><td>+0.1054</td></tr>
 <tr><th scope="row">K4 V4</th><td>per-token</td><td>+0.0293</td></tr>
 <tr><th scope="row">K4 V4</th><td>per-tensor</td><td>+0.2119</td></tr>
-<tr><th scope="row">K2 V2</th><td>per-token</td><td>+1.0143</td></tr>
+<tr><th scope="row">K2 V2</th><td>per-token</td><td>+1.0144</td></tr>
 <tr><th scope="row">K2 V2</th><td>per-tensor</td><td>+0.7103</td></tr>
 </tbody>
 </table>
@@ -119,22 +120,34 @@
 <p>Comparing trained loss (query-key normalization on, the model's native setting) against the post-hoc curve at the same cell shows where training the model to tolerate the cache actually pays.</p>
 <div class="table-wrap">
 <table>
-<caption>Trained loss against post-hoc loss at the same cell. "Recovers" is post-hoc minus QAT.</caption>
-<thead><tr><th scope="col">Cell</th><th scope="col">post-hoc</th><th scope="col">QAT</th><th scope="col">recovers</th></tr></thead>
+<caption>Trained loss against post-hoc loss at the same cell. Loss recovered = post-hoc − QAT (positive is better). Remaining Δ = QAT − baseline 2.9258 (positive is worse).</caption>
+<thead><tr><th scope="col">Cell</th><th scope="col">Post-hoc loss</th><th scope="col">QAT loss</th><th scope="col">Loss recovered</th><th scope="col">Remaining Δ vs baseline</th></tr></thead>
 <tbody>
-<tr><th scope="row">K4 V16 per-token</th><td>2.9341</td><td>2.9333</td><td>+0.0007</td></tr>
-<tr><th scope="row">K4 V16 per-tensor</th><td>2.9721</td><td>2.9450</td><td>+0.0271</td></tr>
-<tr><th scope="row">K4 V4 per-token</th><td>2.9374</td><td>2.9389</td><td>−0.0015</td></tr>
-<tr><th scope="row">K4 V4 per-tensor</th><td>3.0003</td><td>2.9793</td><td>+0.0210</td></tr>
-<tr><th scope="row">K2 V2 per-token</th><td>5.4665</td><td>3.1386</td><td>+2.3279</td></tr>
-<tr><th scope="row">K2 V2 per-tensor</th><td>8.9317</td><td>4.7897</td><td>+4.1420</td></tr>
+<tr><th scope="row">K4 V16 per-token</th><td>2.9341</td><td>2.9333</td><td>+0.0008</td><td>+0.0075</td></tr>
+<tr><th scope="row">K4 V16 per-tensor</th><td>2.9721</td><td>2.9450</td><td>+0.0271</td><td>+0.0192</td></tr>
+<tr><th scope="row">K4 V4 per-token</th><td>2.9374</td><td>2.9389</td><td>−0.0015</td><td>+0.0131</td></tr>
+<tr><th scope="row">K4 V4 per-tensor</th><td>3.0003</td><td>2.9793</td><td>+0.0210</td><td>+0.0535</td></tr>
+<tr><th scope="row">K2 V2 per-token</th><td>5.4665</td><td>3.1386</td><td>+2.3279</td><td>+0.2128</td></tr>
+<tr><th scope="row">K2 V2 per-tensor</th><td>8.9317</td><td>4.7897</td><td>+4.1420</td><td>+1.8639</td></tr>
 </tbody>
 </table>
 </div>
 <p>At 4-bit, post-hoc quantization is already within a few hundredths of the baseline, so training has almost nothing to recover and its benefit sits at or below the noise floor. At 2-bit, post-hoc collapses toward random and training recovers more than two nats (per-token) to more than four (per-tensor). If a deployment only ever reaches 4-bit, quantizing a finished checkpoint is enough on this model; training is the tool for the 2-bit regime, and even there it does not fully close the gap.</p>
 
 <h3>Granularity matters, and the gap widens with depth</h3>
-<p>Per-tensor is worse than per-token at every level: +0.012 at K4 V16, +0.040 at K4 V4, and +1.65 at K2 V2 (query-key normalization on). One shared scale cannot hold the key range that a per-vector scale absorbs, and the cost explodes once the grid is only four levels wide.</p>
+<p>Per-tensor is worse than per-token at every level. The table gives the exact gap from the displayed QAT losses, with query-key normalization on.</p>
+<div class="table-wrap">
+<table>
+<caption>Granularity cost: per-tensor loss minus per-token loss. Positive is worse.</caption>
+<thead><tr><th scope="col">Level</th><th scope="col">per-token loss</th><th scope="col">per-tensor loss</th><th scope="col">Δ tensor − token</th></tr></thead>
+<tbody>
+<tr><th scope="row">K4 V16</th><td>2.9333</td><td>2.9450</td><td>+0.0117</td></tr>
+<tr><th scope="row">K4 V4</th><td>2.9389</td><td>2.9793</td><td>+0.0404</td></tr>
+<tr><th scope="row">K2 V2</th><td>3.1386</td><td>4.7897</td><td>+1.6511</td></tr>
+</tbody>
+</table>
+</div>
+<p>One shared scale cannot hold the key range that a per-vector scale absorbs, and the cost grows sharply at 2-bit.</p>
 </section>
 
 <section id="sweep">
@@ -143,7 +156,7 @@
 <div class="callout"><strong>This cell is seed-unstable, so its noise floor is not 0.008.</strong> Three baseline-setting runs at different seeds give 5.50, 5.59 and 6.05: a standard deviation of 0.30, so two sigma is <strong>0.60 nats</strong>, about seventy-five times the clean floor. At 2-bit per-tensor with query-key normalization off, the seed alone moves the loss by half a nat. Read every row below against this 0.60 band.</div>
 <div class="table-wrap">
 <table>
-<caption>One hyperparameter moved at a time at the stress cell. Center is the baseline setting.</caption>
+<caption>One hyperparameter moved at a time at the stress cell. Δ vs center = loss − 5.5000. Positive is worse; negative is better.</caption>
 <thead><tr><th scope="col">Arm</th><th scope="col">value (× baseline)</th><th scope="col">val loss</th><th scope="col">Δ vs center</th></tr></thead>
 <tbody>
 <tr><th scope="row">center</th><td>lr 0.003, warmup 0.01, wd 0.1</td><td>5.5000</td><td>+0.0000</td></tr>
