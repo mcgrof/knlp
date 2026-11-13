@@ -619,6 +619,181 @@ rate at this weight decay is somewhere below 0.001 and every rate tested is stil
 high side of it. The regime the prediction was about was never reached, so the mean-rate
 explanation is <em>untested</em> here rather than refuted. Settling it needs peaks of 0.0003
 and below, which is three more runs per rate.</div>
+<h3>Follow-up: was it the schedule, or the weight decay?</h3>
+<p>Everything above runs at weight decay 1.0, ten times the standard recipe's 0.1. That is a
+confound. In AdamW the decay is decoupled, so each step shrinks the weights by
+<code>lr<sub>t</sub> · wd</code>: the <em>product</em> is the control, not either knob alone.
+Because the schedule fixes the mean learning rate — A averages 0.900 of its peak, B 0.800,
+C 0.500 — holding the peak is also what accumulates the most decay. Across these three cells
+"holds the peak longer" and "integrates more weight decay" are perfectly correlated, at
+1.80×, 1.60× and 1.00× of linear's. Both explanations predict the same result everywhere, so
+the earlier runs could not separate them.</p>
+<p>The separating test keeps the shapes identical and drops the weight decay to the default
+0.1, which cuts the integrated decay tenfold while leaving every ratio untouched. Nine more
+runs.</p>
+
+<figure>
+<svg viewBox="0 0 900 430" width="100%" height="auto" role="img" aria-labelledby="fw-t fw-d" style="display:block">
+<title id="fw-t">The three schedule cells at two weight decays</title>
+<desc id="fw-d">Two panels on one shared vertical scale, each plotting final validation loss against peak learning rate for cells A, B and C. At weight decay 1.0 the curves are spread wide and linear wins everywhere. At weight decay 0.1 they collapse together, and at peak 0.001 the order reverses so the warmup-stable-decay cells beat linear.</desc>
+<rect width="900" height="430" fill="#101c17"/>
+<line x1="78" y1="42" x2="100" y2="42" stroke="#1fa87c" stroke-width="3"/>
+<text x="106" y="46" fill="#a5b9ac" font-size="12">A — wsd0.2, no warmup</text>
+<line x1="336" y1="42" x2="358" y2="42" stroke="#c77f32" stroke-width="3"/>
+<text x="364" y="46" fill="#a5b9ac" font-size="12">B — wsd0.2, 20% warmup</text>
+<line x1="594" y1="42" x2="616" y2="42" stroke="#8a6fd0" stroke-width="3"/>
+<text x="622" y="46" fill="#a5b9ac" font-size="12">C — linear, 10% warmup</text>
+<text x="78" y="80" fill="#e9f0eb" font-size="15" font-weight="650">Weight decay 1.0</text>
+<text x="78" y="98" fill="#a5b9ac" font-size="11">the assignment's setting</text>
+<line x1="78" y1="330.0" x2="410" y2="330.0" stroke="#293d32" stroke-width="1"/>
+<text x="68" y="334.0" text-anchor="end" fill="#a5b9ac" font-size="11">2.9</text>
+<line x1="78" y1="277.1" x2="410" y2="277.1" stroke="#293d32" stroke-width="1"/>
+<text x="68" y="281.1" text-anchor="end" fill="#a5b9ac" font-size="11">3.0</text>
+<line x1="78" y1="224.3" x2="410" y2="224.3" stroke="#293d32" stroke-width="1"/>
+<text x="68" y="228.3" text-anchor="end" fill="#a5b9ac" font-size="11">3.1</text>
+<line x1="78" y1="171.4" x2="410" y2="171.4" stroke="#293d32" stroke-width="1"/>
+<text x="68" y="175.4" text-anchor="end" fill="#a5b9ac" font-size="11">3.2</text>
+<line x1="78" y1="118.6" x2="410" y2="118.6" stroke="#293d32" stroke-width="1"/>
+<text x="68" y="122.6" text-anchor="end" fill="#a5b9ac" font-size="11">3.3</text>
+<line x1="78" y1="316.4" x2="410" y2="316.4" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="5 4" opacity="0.9"/>
+<text x="84" y="309.4" fill="#a5b9ac" font-size="10">baseline 2.9258</text>
+<text x="78.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.001</text>
+<text x="233.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.003</text>
+<text x="388.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="233.0" y="374" text-anchor="middle" fill="#a5b9ac" font-size="12">Peak learning rate (log scale)</text>
+<polyline points="78.0,285.5 233.0,218.8 388.0,120.0" fill="none" stroke="#1fa87c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.0" cy="285.5" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.001, weight decay 1.0: 2.9841</title></circle>
+<circle cx="233.0" cy="218.8" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.003, weight decay 1.0: 3.1104</title></circle>
+<circle cx="388.0" cy="120.0" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.009, weight decay 1.0: 3.2973</title></circle>
+<text x="400.0" y="125.0" fill="#1fa87c" font-size="13" font-weight="650">A</text>
+<polyline points="78.0,289.0 233.0,247.6 388.0,167.4" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.0" cy="289.0" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.001, weight decay 1.0: 2.9775</title></circle>
+<circle cx="233.0" cy="247.6" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.003, weight decay 1.0: 3.0559</title></circle>
+<circle cx="388.0" cy="167.4" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.009, weight decay 1.0: 3.2076</title></circle>
+<text x="400.0" y="172.4" fill="#c77f32" font-size="13" font-weight="650">B</text>
+<polyline points="78.0,313.0 233.0,295.2 388.0,246.5" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.0" cy="313.0" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.001, weight decay 1.0: 2.9322</title></circle>
+<circle cx="233.0" cy="295.2" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.003, weight decay 1.0: 2.9658</title></circle>
+<circle cx="388.0" cy="246.5" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.009, weight decay 1.0: 3.0579</title></circle>
+<text x="400.0" y="251.5" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="520" y="80" fill="#e9f0eb" font-size="15" font-weight="650">Weight decay 0.1</text>
+<text x="520" y="98" fill="#a5b9ac" font-size="11">the standard recipe's default</text>
+<line x1="520" y1="330.0" x2="852" y2="330.0" stroke="#293d32" stroke-width="1"/>
+<text x="510" y="334.0" text-anchor="end" fill="#a5b9ac" font-size="11">2.9</text>
+<line x1="520" y1="277.1" x2="852" y2="277.1" stroke="#293d32" stroke-width="1"/>
+<text x="510" y="281.1" text-anchor="end" fill="#a5b9ac" font-size="11">3.0</text>
+<line x1="520" y1="224.3" x2="852" y2="224.3" stroke="#293d32" stroke-width="1"/>
+<text x="510" y="228.3" text-anchor="end" fill="#a5b9ac" font-size="11">3.1</text>
+<line x1="520" y1="171.4" x2="852" y2="171.4" stroke="#293d32" stroke-width="1"/>
+<text x="510" y="175.4" text-anchor="end" fill="#a5b9ac" font-size="11">3.2</text>
+<line x1="520" y1="118.6" x2="852" y2="118.6" stroke="#293d32" stroke-width="1"/>
+<text x="510" y="122.6" text-anchor="end" fill="#a5b9ac" font-size="11">3.3</text>
+<line x1="520" y1="316.4" x2="852" y2="316.4" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="5 4" opacity="0.9"/>
+<text x="526" y="309.4" fill="#a5b9ac" font-size="10">baseline 2.9258</text>
+<text x="520.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.001</text>
+<text x="675.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.003</text>
+<text x="830.0" y="350" text-anchor="middle" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="675.0" y="374" text-anchor="middle" fill="#a5b9ac" font-size="12">Peak learning rate (log scale)</text>
+<polyline points="520.0,296.9 675.0,267.6 830.0,255.3" fill="none" stroke="#1fa87c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="520.0" cy="296.9" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.001, weight decay 0.1: 2.9627</title></circle>
+<circle cx="675.0" cy="267.6" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.003, weight decay 0.1: 3.0180</title></circle>
+<circle cx="830.0" cy="255.3" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A, peak 0.009, weight decay 0.1: 3.0414</title></circle>
+<text x="842.0" y="260.3" fill="#1fa87c" font-size="13" font-weight="650">A</text>
+<polyline points="520.0,301.5 675.0,313.4 830.0,298.7" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="520.0" cy="301.5" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.001, weight decay 0.1: 2.9540</title></circle>
+<circle cx="675.0" cy="313.4" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.003, weight decay 0.1: 2.9314</title></circle>
+<circle cx="830.0" cy="298.7" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B, peak 0.009, weight decay 0.1: 2.9593</title></circle>
+<text x="842.0" y="303.7" fill="#c77f32" font-size="13" font-weight="650">B</text>
+<polyline points="520.0,294.1 675.0,318.8 830.0,322.6" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="520.0" cy="294.1" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.001, weight decay 0.1: 2.9679</title></circle>
+<circle cx="675.0" cy="318.8" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.003, weight decay 0.1: 2.9211</title></circle>
+<circle cx="830.0" cy="322.6" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C, peak 0.009, weight decay 0.1: 2.9140</title></circle>
+<text x="842.0" y="327.6" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="22" y="219.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 22 219.0)" text-anchor="middle">Validation loss</text>
+</svg>
+<figcaption>The same three cells at both weight decays, on one shared vertical scale. At 1.0
+the cells fan apart and linear wins at every peak. At 0.1 they collapse into a band near the
+baseline, and at peak 0.001 the order reverses.</figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+<caption>Validation loss at weight decay 0.1. Best in each column in bold; the noise floor
+is 0.008.</caption>
+<thead><tr><th scope="col">cell</th><th scope="col">peak 0.001</th><th scope="col">peak 0.003</th><th scope="col">peak 0.009</th></tr></thead>
+<tbody>
+<tr><th scope="row">C — linear, 10% warmup</th><td>2.9679</td><td><strong>2.9211</strong></td><td><strong>2.9140</strong></td></tr>
+<tr><th scope="row">B — wsd0.2, 20% warmup</th><td><strong>2.9540</strong></td><td>2.9314</td><td>2.9593</td></tr>
+<tr><th scope="row">A — wsd0.2, no warmup</th><td>2.9627</td><td>3.0180</td><td>3.0414</td></tr>
+<tr><th scope="row">spread</th><td>0.0139</td><td>0.0969</td><td>0.1274</td></tr>
+</tbody>
+</table>
+</div>
+
+<figure>
+<svg viewBox="0 0 760 400" width="100%" height="auto" role="img" aria-labelledby="fg-t fg-d" style="display:block">
+<title id="fg-t">How far linear beats the best warmup-stable-decay cell</title>
+<desc id="fg-d">The gap, best wsd cell minus linear, against peak learning rate. Positive means linear wins. At weight decay 1.0 the gap is 0.150, 0.090 and 0.045. At weight decay 0.1 it falls to 0.045, 0.010 and minus 0.014, crossing below zero at peak 0.001 where the warmup-stable-decay cell wins.</desc>
+<rect width="760" height="400" fill="#101c17"/>
+<text x="70" y="44" fill="#e9f0eb" font-size="15" font-weight="650">How far linear beats the best wsd cell</text>
+<text x="70" y="64" fill="#a5b9ac" font-size="11">positive = linear wins; below zero = warmup-stable-decay wins</text>
+<line x1="110" y1="300.0" x2="650" y2="300.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="304.0" text-anchor="end" fill="#a5b9ac" font-size="11">-0.04</text>
+<line x1="110" y1="260.0" x2="650" y2="260.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="264.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.00</text>
+<line x1="110" y1="220.0" x2="650" y2="220.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="224.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.04</text>
+<line x1="110" y1="180.0" x2="650" y2="180.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="184.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.08</text>
+<line x1="110" y1="140.0" x2="650" y2="140.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="144.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.12</text>
+<line x1="110" y1="100.0" x2="650" y2="100.0" stroke="#293d32" stroke-width="1"/>
+<text x="100" y="104.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.16</text>
+<rect x="110" y="252.0" width="540" height="16.0" fill="#a5b9ac" opacity="0.12"/>
+<text x="650" y="252.0" text-anchor="end" fill="#a5b9ac" font-size="10">±0.008 noise floor</text>
+<line x1="110" y1="260.0" x2="650" y2="260.0" stroke="#e9f0eb" stroke-width="1.5" opacity="0.8"/>
+<text x="110.0" y="322" text-anchor="middle" fill="#a5b9ac" font-size="11">0.001</text>
+<text x="365.0" y="322" text-anchor="middle" fill="#a5b9ac" font-size="11">0.003</text>
+<text x="620.0" y="322" text-anchor="middle" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="365.0" y="348" text-anchor="middle" fill="#a5b9ac" font-size="12">Peak learning rate (log scale)</text>
+<text x="30" y="195.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 30 195.0)" text-anchor="middle">Loss gap (nats)</text>
+<polyline points="110.0,214.7 365.0,169.9 620.0,110.3" fill="none" stroke="#c2566f" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="110.0" cy="214.7" r="6" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>weight decay 1.0, peak 0.001: +0.0453</title></circle>
+<circle cx="365.0" cy="169.9" r="6" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>weight decay 1.0, peak 0.003: +0.0901</title></circle>
+<circle cx="620.0" cy="110.3" r="6" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>weight decay 1.0, peak 0.009: +0.1497</title></circle>
+<text x="632.0" y="115.3" fill="#c2566f" font-size="12" font-weight="650">wd 1.0</text>
+<polyline points="110.0,273.9 365.0,249.7 620.0,214.7" fill="none" stroke="#3f8fc4" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="110.0" cy="273.9" r="6" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>weight decay 0.1, peak 0.001: -0.0139</title></circle>
+<circle cx="365.0" cy="249.7" r="6" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>weight decay 0.1, peak 0.003: +0.0103</title></circle>
+<circle cx="620.0" cy="214.7" r="6" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>weight decay 0.1, peak 0.009: +0.0453</title></circle>
+<text x="632.0" y="219.7" fill="#3f8fc4" font-size="12" font-weight="650">wd 0.1</text>
+<text x="126.0" y="278.9" fill="#3f8fc4" font-size="11" font-weight="650">wsd wins here</text>
+</svg>
+<figcaption>The quantity the follow-up is about: how far linear beats the best
+warmup-stable-decay cell, at each peak rate and each weight decay. The gap closes at every
+peak when the decay drops, and crosses below zero at peak 0.001.</figcaption>
+</figure>
+
+<div class="callout"><strong>It was the weight decay.</strong> Dropping it from 1.0 to 0.1
+closes the gap at every peak — from +0.150 to +0.045 at peak 0.009, from +0.090 to +0.010 at
+0.003, and from +0.045 to <strong>−0.014</strong> at 0.001, where the warmup-stable-decay cell
+wins outright. At peak 0.003 the remaining 0.010 is barely over the floor. Warmup-stable-decay
+was not losing on its shape; it was being charged for holding the peak under ten times the
+standard weight decay, which is precisely the regime its plateau is worst suited to.</div>
+
+<p>This also repairs the explanation offered earlier on this page. The mean learning rate is
+not a separate mechanism from the weight decay — it is one half of the product that sets how
+far the weights actually move. Reading the two sweeps together, the optimal product is around
+<code>mean lr × wd = 0.00015</code>, which is what the standard recipe sits at. Every cell at
+weight decay 1.0 is 3× to 54× above it, so there the ranking simply tracks whichever cell
+carries the smallest product, and linear always does. At weight decay 0.1 the cells straddle
+that optimum instead, so the ranking turns over: linear is closest at the two higher peaks,
+and at peak 0.001 it has undershot while the plateau cells have not.</p>
+<p class="scope">The inversion at peak 0.001 is real but small: B beats C by 0.0139 and A by
+0.0087, both just clear of the 0.008 floor, while A against C is 0.0052 and not separable.
+The whole column spans 0.0139, so at a low peak with default decay the schedule barely
+matters. One seed per cell throughout.</p>
+
 <p class="scope">One seed per cell, nine runs. Column-to-column and cell-to-cell differences
 are read against the 0.008 floor from the three baseline seeds; the exact depths are one
 draw each. Everything here is at weight decay 1.0, which is not the standard recipe, so
