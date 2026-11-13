@@ -789,7 +789,7 @@ weight decay 1.0 is 3× to 54× above it, so there the ranking simply tracks whi
 carries the smallest product, and linear always does. At weight decay 0.1 the cells straddle
 that optimum instead, so the ranking turns over: linear is closest at the two higher peaks,
 and at peak 0.001 it has undershot while the plateau cells have not.</p>
-<h3>Why no schedule with a plateau wins here: the gradient noise scale</h3>
+<h3>Why no schedule with a plateau wins at this batch size: the gradient noise scale</h3>
 <p>Both follow-ups leave one question open. Warmup-stable-decay holds the peak rate for most
 of the run and anneals at the end; linear decays throughout. Linear won every comparison. Is
 that a fact about this model, or about the setting it was run in?</p>
@@ -993,24 +993,141 @@ have a job to do.</p>
 to 64 and then breaks, at +0.031 for 128 and +0.095 for 256, which puts the critical batch
 size at roughly 32 to 64 — the default sits right on the knee, exactly where the noise-scale
 curve says the curvature-limited phase has already ended.</p>
-<p class="scope">Two limits worth stating. The noise scale was measured along a run trained
-with the <em>linear</em> schedule; a plateau would follow a different trajectory and so a
-slightly different curve, which makes this a first-order map rather than an exact one. And
-the estimator is noisy: ten checkpoints, four repeats each, with a heavy tail when the
-true-gradient term is small. The batch-size column is therefore a guide to the regime, not a
-precise threshold. Measuring B_noise along a <code>wsd</code> run, and testing a plateau at
-batch 512 directly, are the two checks that would close it.</p>
+<h3>Closing it: the two checks</h3>
+<p>The map above has two soft spots. It was measured along a run trained with the
+<em>linear</em> schedule, which is circular if holding the peak changes the gradient
+statistics. And its central claim — that a plateau starts to pay somewhere above batch 384 —
+was an extrapolation, never run. Both are cheap to test.</p>
 
-<p class="scope">The inversion at peak 0.001 is real but small: B beats C by 0.0139 and A by
-0.0087, both just clear of the 0.008 floor, while A against C is 0.0052 and not separable.
-The whole column spans 0.0139, so at a low peak with default decay the schedule barely
-matters. One seed per cell throughout.</p>
+<figure>
+<svg viewBox="0 0 940 450" width="100%" height="auto" role="img" aria-labelledby="fc-t fc-d" style="display:block">
+<title id="fc-t">The two checks that close the map</title>
+<desc id="fc-d">Left: the noise scale measured along a linear run and along a warmup-stable-decay run. Both pass the batch size of 64 within the first ten steps, so the map does not depend on which trajectory it was measured along. Right: the gap between the best plateau schedule and linear, at batch 64 and batch 512. The gap is positive at batch 64, where linear wins, and negative at batch 512 at both learning rates, where the plateau wins.</desc>
+<rect width="940" height="450" fill="#101c17"/>
+<text x="86" y="74" fill="#e9f0eb" font-size="15" font-weight="650">Check 1: does the trajectory matter?</text>
+<text x="86" y="102" fill="#a5b9ac" font-size="11">noise scale measured along each schedule</text>
+<line x1="86" y1="338.0" x2="436" y2="338.0" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="342.0" text-anchor="end" fill="#a5b9ac" font-size="11">30</text>
+<line x1="86" y1="264.2" x2="436" y2="264.2" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="268.2" text-anchor="end" fill="#a5b9ac" font-size="11">100</text>
+<line x1="86" y1="196.9" x2="436" y2="196.9" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="200.9" text-anchor="end" fill="#a5b9ac" font-size="11">300</text>
+<line x1="86" y1="123.2" x2="436" y2="123.2" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="127.2" text-anchor="end" fill="#a5b9ac" font-size="11">1000</text>
+<text x="97.1" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">10</text>
+<text x="211.1" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">100</text>
+<text x="325.1" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">1,000</text>
+<text x="436.0" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
+<text x="261.0" y="382" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (log)</text>
+<text x="26" y="225.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 26 225.0)" text-anchor="middle">B_noise (sequences)</text>
+<line x1="86" y1="291.6" x2="436" y2="291.6" stroke="#c2566f" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="434" y="307.6" text-anchor="end" fill="#c2566f" font-size="11" font-weight="650">batch 64</text>
+<polyline points="97.1,290.0 176.8,266.1 231.2,228.4 279.8,253.8 319.9,186.6 356.9,223.4 385.8,191.1 406.8,183.2 422.9,156.9" fill="none" stroke="#3f8fc4" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="97.1" cy="290.0" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 10: 66</title></circle>
+<circle cx="176.8" cy="266.1" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 50: 97</title></circle>
+<circle cx="231.2" cy="228.4" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 150: 180</title></circle>
+<circle cx="279.8" cy="253.8" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 400: 119</title></circle>
+<circle cx="319.9" cy="186.6" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 900: 355</title></circle>
+<circle cx="356.9" cy="223.4" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 1900: 195</title></circle>
+<circle cx="385.8" cy="191.1" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 3400: 330</title></circle>
+<circle cx="406.8" cy="183.2" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 5200: 375</title></circle>
+<circle cx="422.9" cy="156.9" r="4.5" fill="#3f8fc4" stroke="#101c17" stroke-width="1.5"><title>linear, step 7200: 577</title></circle>
+<text x="432.9" y="160.9" fill="#3f8fc4" font-size="12" font-weight="650">linear</text>
+<polyline points="97.1,290.5 176.8,256.9 231.2,209.0 279.8,234.7 319.9,159.4 356.9,214.0 385.8,160.8 406.8,220.4 422.9,195.0" fill="none" stroke="#1fa87c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="97.1" cy="290.5" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 10: 65</title></circle>
+<circle cx="176.8" cy="256.9" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 50: 113</title></circle>
+<circle cx="231.2" cy="209.0" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 150: 246</title></circle>
+<circle cx="279.8" cy="234.7" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 400: 162</title></circle>
+<circle cx="319.9" cy="159.4" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 900: 553</title></circle>
+<circle cx="356.9" cy="214.0" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 1900: 227</title></circle>
+<circle cx="385.8" cy="160.8" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 3400: 541</title></circle>
+<circle cx="406.8" cy="220.4" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 5200: 205</title></circle>
+<circle cx="422.9" cy="195.0" r="4.5" fill="#1fa87c" stroke="#101c17" stroke-width="1.5"><title>wsd0.2, step 7200: 310</title></circle>
+<text x="432.9" y="199.0" fill="#1fa87c" font-size="12" font-weight="650">wsd0.2</text>
+<text x="92" y="330" fill="#a5b9ac" font-size="11">both cross batch 64 by step 10</text>
+<text x="520" y="74" fill="#e9f0eb" font-size="15" font-weight="650">Check 2: a plateau at batch 512</text>
+<line x1="568" y1="315.4" x2="888" y2="315.4" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="319.4" text-anchor="end" fill="#a5b9ac" font-size="11">-0.04</text>
+<line x1="568" y1="270.2" x2="888" y2="270.2" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="274.2" text-anchor="end" fill="#a5b9ac" font-size="11">-0.02</text>
+<line x1="568" y1="225.0" x2="888" y2="225.0" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="229.0" text-anchor="end" fill="#a5b9ac" font-size="11">+0.00</text>
+<line x1="568" y1="179.8" x2="888" y2="179.8" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="183.8" text-anchor="end" fill="#a5b9ac" font-size="11">+0.02</text>
+<line x1="568" y1="134.6" x2="888" y2="134.6" stroke="#293d32" stroke-width="1"/>
+<text x="558" y="138.6" text-anchor="end" fill="#a5b9ac" font-size="11">+0.04</text>
+<rect x="568" y="206.9" width="320" height="36.2" fill="#a5b9ac" opacity="0.13"/>
+<line x1="568" y1="225.0" x2="888" y2="225.0" stroke="#e9f0eb" stroke-width="1.5" opacity="0.85"/>
+<text x="886" y="199.0" text-anchor="end" fill="#a5b9ac" font-size="10">linear wins</text>
+<text x="886" y="259.0" text-anchor="end" fill="#a5b9ac" font-size="10">plateau wins</text>
+<line x1="520" y1="84" x2="540" y2="84" stroke="#c77f32" stroke-width="3"/>
+<text x="546" y="88" fill="#a5b9ac" font-size="11">peak 0.009</text>
+<line x1="632" y1="84" x2="652" y2="84" stroke="#8a6fd0" stroke-width="3"/>
+<text x="658" y="88" fill="#a5b9ac" font-size="11">peak 0.003</text>
+<polyline points="598.0,197.0 858.0,270.9" fill="none" stroke="#c77f32" stroke-width="2.5"/>
+<circle cx="598.0" cy="197.0" r="6.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>peak 0.009, batch 64: +0.0124</title></circle>
+<text x="598.0" y="183.0" text-anchor="middle" fill="#e9f0eb" font-size="11" font-weight="650">+0.0124</text>
+<circle cx="858.0" cy="270.9" r="6.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>peak 0.009, batch 512: -0.0203</title></circle>
+<text x="858.0" y="294.9" text-anchor="middle" fill="#e9f0eb" font-size="11" font-weight="650">-0.0203</text>
+<circle cx="858.0" cy="309.3" r="6.5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>peak 0.003, batch 512: -0.0373</title></circle>
+<text x="858.0" y="333.3" text-anchor="middle" fill="#e9f0eb" font-size="11" font-weight="650">-0.0373</text>
+<text x="598.0" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">batch 64</text>
+<text x="858.0" y="358" text-anchor="middle" fill="#a5b9ac" font-size="11">batch 512</text>
+<text x="728.0" y="382" text-anchor="middle" fill="#a5b9ac" font-size="12">Batch size</text>
+<text x="490" y="225.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 490 225.0)" text-anchor="middle">Loss gap (nats)</text>
+</svg>
+<figcaption>Left: the noise scale measured along a linear run and along a warmup-stable-decay
+run, identical in every other respect. Both pass batch 64 within the first ten steps. Right:
+the gap between the best plateau cell and linear at batch 64 and batch 512, at two peak
+learning rates. Positive means linear wins; the shaded band is the 0.008 noise floor.</figcaption>
+</figure>
 
-<p class="scope">One seed per cell, nine runs. Column-to-column and cell-to-cell differences
-are read against the 0.008 floor from the three baseline seeds; the exact depths are one
-draw each. Everything here is at weight decay 1.0, which is not the standard recipe, so
-these rankings describe that corner and not the default configuration.</p>
-</section>
+<p><strong>Check 1: the map does not depend on the trajectory it was measured along.</strong>
+A second checkpointed run, identical except <code>lr_schedule=wsd0.2</code>, gives a noise
+scale that passes batch 64 just as immediately — 65.2 sequences by step 10 against the linear
+run's 65.7 — so the implied decay fraction is 1.00 on both. The differences that do appear
+run the right way and at the right time: through the plateau the warmup-stable-decay curve
+sits 1.2 to 1.6 times higher, because holding the peak keeps the model bouncing and
+<code>tr(S)</code> large, and then at steps 5,200 and 7,200 it falls to 0.54 times the linear
+curve, because by then linear has been annealing while the plateau has not. Holding the peak
+does raise the noise scale; it does not raise it anywhere near the factor of nine that would
+be needed to give a plateau a job at batch 64.</p>
+
+<div class="table-wrap">
+<table>
+<caption>Check 2: schedules at batch 512, compute matched at 600,000 sequences, warmup 0.1 and
+weight decay 0.1. Two peak rates, because the best rate at this batch is unknown and a single
+badly chosen one would confound the comparison. Best in each column in bold.</caption>
+<thead><tr><th scope="col">schedule</th><th scope="col">peak 0.009</th><th scope="col">peak 0.003</th></tr></thead>
+<tbody>
+<tr><th scope="row">wsd0.5</th><td><strong>3.0053</strong></td><td>3.0133</td></tr>
+<tr><th scope="row">wsd0.2</th><td>3.0058</td><td><strong>3.0062</strong></td></tr>
+<tr><th scope="row">linear (wsd1.0)</th><td>3.0256</td><td>3.0435</td></tr>
+<tr><th scope="row">plateau's margin over linear</th><td>0.0203</td><td>0.0373</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>Check 2: the plateau wins at batch 512, at both learning rates.</strong>
+This is the first time any schedule with a plateau beats linear anywhere in this study. The
+margins are 0.0203 and 0.0373, two and a half to nearly five times the noise floor, and the
+result holds at both peak rates, so it is not an artefact of the rate. Against batch 64, where
+the same comparison gave linear a 0.0124 advantage, <strong>the sign has flipped</strong> —
+which is what the noise scale predicted, from a gradient measurement, before these runs were
+launched.</div>
+
+<p>The map said the decay fraction wanted at batch 512 is about 0.29. Both plateau cells
+bracket that: <code>wsd0.2</code> and <code>wsd0.5</code> finish 0.0005 apart at peak 0.009 and
+0.0071 apart at peak 0.003, in each case inside the noise floor, so the data cannot resolve
+which of them is better — only that both are clearly better than decaying throughout. That is
+the predicted optimum located to within the resolution this grid has.</p>
+<p class="scope">What stands and what does not. The regime claim is now tested at both ends:
+noise-limited at batch 64 where decaying throughout wins, curvature-limited enough at batch
+512 for a plateau to win, with the crossover where the measurement put it. The precise
+threshold is not pinned — batch 384 and 256 were never run, so "somewhere between 256 and
+512" is as sharp as this says — and every cell is one seed. All of it is at this model, this
+horizon and a 1,024-token context; the noise scale is a property of the loss surface being
+trained, so the numbers transfer no further than that.</p></section>
 
 <section id="precision">
 <h2>Part 4: how far the KV cache can be quantized</h2>

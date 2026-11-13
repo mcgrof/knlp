@@ -45,6 +45,8 @@ DEFAULTS = {
     "P1C_LR": "0.009",
     "P1C_WD": "1.0",
     "P1C_CELLS": "wsd0.2:0.0,wsd0.2:0.2,linear:0.1",
+    "P1C_BATCH": "",
+    "P1C_MICRO": "",
     "REFERENCE_OUTPUT": "",
     "DEPTH": "8",
     "NUM_TRAIN_SEQUENCES": "600000",
@@ -397,6 +399,19 @@ def plan_p1c(cfg):
             if not schedule or not warmup.strip():
                 raise SystemExit(f"P1C_CELLS entries look like 'wsd0.2:0.0', got {cell!r}")
             warmup = float(warmup)
+            overrides = {
+                "learning_rate": lr,
+                "weight_decay": wd,
+                "lr_schedule": schedule,
+                "warmup_percent": warmup,
+            }
+            # A batch above 256 does not fit in one pass on an 80 GiB card,
+            # so it is split into micro-batches; that also turns torch.compile
+            # off, which costs wall clock but changes no arithmetic.
+            if cfg["P1C_BATCH"]:
+                overrides["batch_size"] = int(cfg["P1C_BATCH"])
+            if cfg["P1C_MICRO"]:
+                overrides["num_micro_batches"] = int(cfg["P1C_MICRO"])
             runs.append(
                 {
                     "index": len(runs),
@@ -405,13 +420,9 @@ def plan_p1c(cfg):
                     "learning_rate": lr,
                     "lr_schedule": schedule,
                     "warmup_percent": warmup,
+                    "batch_size": int(cfg["P1C_BATCH"]) if cfg["P1C_BATCH"] else 64,
                     "exponent": 0,
-                    "overrides": {
-                        "learning_rate": lr,
-                        "weight_decay": wd,
-                        "lr_schedule": schedule,
-                        "warmup_percent": warmup,
-                    },
+                    "overrides": overrides,
                     "suffix": cfg["RUN_SUFFIX"],
                 }
             )
