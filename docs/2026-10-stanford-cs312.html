@@ -789,6 +789,218 @@ weight decay 1.0 is 3× to 54× above it, so there the ranking simply tracks whi
 carries the smallest product, and linear always does. At weight decay 0.1 the cells straddle
 that optimum instead, so the ranking turns over: linear is closest at the two higher peaks,
 and at peak 0.001 it has undershot while the plateau cells have not.</p>
+<h3>Why no schedule with a plateau wins here: the gradient noise scale</h3>
+<p>Both follow-ups leave one question open. Warmup-stable-decay holds the peak rate for most
+of the run and anneals at the end; linear decays throughout. Linear won every comparison. Is
+that a fact about this model, or about the setting it was run in?</p>
+<p>There is a standard answer, and it is measurable. Write the expected change in loss from
+one step with learning rate <em>e</em> and batch <em>B</em> on a locally quadratic loss, with
+gradient <em>G</em>, Hessian <em>H</em> and per-example gradient covariance <em>S</em>:</p>
+<pre class="kbd" style="display:block;padding:14px;overflow:auto;">dL  ~  - e |G|^2  +  (e^2 / 2) ( G' H G  +  tr(H S) / B )</pre>
+<p>The first penalty is curvature: step too far and you climb the valley wall, which limits
+you early while the gradient is large. The second is gradient noise, which controls you late,
+once the gradient has shrunk but the per-example variance has not. They are equal at the
+<strong>noise scale</strong>, <code>B_noise = tr(S) / |G|^2</code> — the batch size at which
+the two barriers cost the same. Below it a run is noise limited; above it, curvature limited.
+Because the loss falls faster than the variance does, <strong>B_noise rises through
+training</strong>.</p>
+<p>That gives schedules a crisp rule. The excess loss from noise goes as <code>e/B</code>, so
+holding a high rate is cheap exactly while the run is curvature limited and expensive once it
+is not. Call <em>t*</em> the step where B_noise passes the training batch size. A plateau is
+right up to <em>t*</em> and wrong after it, so the decay fraction a run actually wants is
+about <strong>1 - t*/T</strong>.</p>
+
+<figure>
+<svg viewBox="0 0 940 440" width="100%" height="auto" role="img" aria-labelledby="fn-t fn-d" style="display:block">
+<title id="fn-t">The gradient noise scale through training, and the schedule it implies</title>
+<desc id="fn-d">Left: the measured gradient noise scale rising through training on a log-log scale, from about 44 sequences at initialisation to about 577 by step 7200, with dashed lines marking candidate batch sizes. The default batch of 64 is crossed almost immediately, so the run is noise limited throughout. Right: the decay fraction each batch size implies, falling from 1.0 at batch 64 to below 0.23 above batch 768, where warmup-stable-decay becomes the right schedule.</desc>
+<rect width="940" height="440" fill="#101c17"/>
+<text x="86" y="74" fill="#e9f0eb" font-size="15" font-weight="650">The noise scale rises through training</text>
+<text x="86" y="98" fill="#a5b9ac" font-size="11">standard d8 recipe; bars span 4 repeats, marker is the median</text>
+<line x1="86" y1="336.0" x2="452" y2="336.0" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="340.0" text-anchor="end" fill="#a5b9ac" font-size="11">30</text>
+<line x1="86" y1="282.3" x2="452" y2="282.3" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="286.3" text-anchor="end" fill="#a5b9ac" font-size="11">100</text>
+<line x1="86" y1="233.4" x2="452" y2="233.4" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="237.4" text-anchor="end" fill="#a5b9ac" font-size="11">300</text>
+<line x1="86" y1="179.7" x2="452" y2="179.7" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="183.7" text-anchor="end" fill="#a5b9ac" font-size="11">1000</text>
+<line x1="86" y1="130.8" x2="452" y2="130.8" stroke="#293d32" stroke-width="1"/>
+<text x="76" y="134.8" text-anchor="end" fill="#a5b9ac" font-size="11">3000</text>
+<text x="97.6" y="356" text-anchor="middle" fill="#a5b9ac" font-size="11">10</text>
+<text x="216.8" y="356" text-anchor="middle" fill="#a5b9ac" font-size="11">100</text>
+<text x="336.1" y="356" text-anchor="middle" fill="#a5b9ac" font-size="11">1,000</text>
+<text x="452.0" y="356" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
+<text x="269.0" y="380" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (log)</text>
+<text x="26" y="222.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 26 222.0)" text-anchor="middle">B_noise (sequences)</text>
+<line x1="86" y1="302.2" x2="452" y2="302.2" stroke="#c2566f" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.95"/>
+<text x="182" y="296.2" fill="#c2566f" font-size="11" font-weight="650">batch 64</text>
+<line x1="86" y1="240.5" x2="452" y2="240.5" stroke="#c77f32" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.95"/>
+<text x="90" y="234.5" fill="#c77f32" font-size="11" font-weight="650">batch 256</text>
+<line x1="86" y1="209.6" x2="452" y2="209.6" stroke="#8a6fd0" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.95"/>
+<text x="90" y="203.6" fill="#8a6fd0" font-size="11" font-weight="650">batch 512</text>
+<polyline points="97.6,301.1 180.9,283.7 237.8,256.2 288.6,274.8 330.6,225.8 369.3,252.6 399.5,229.1 421.5,223.4 438.3,204.3" fill="none" stroke="#1fa87c" stroke-width="2.5" stroke-linejoin="round"/>
+<line x1="97.6" y1="316.0" x2="97.6" y2="298.5" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="97.6" cy="301.1" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 10: B_noise 66 sequences</title></circle>
+<line x1="180.9" y1="295.0" x2="180.9" y2="283.7" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="180.9" cy="283.7" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 50: B_noise 97 sequences</title></circle>
+<line x1="237.8" y1="290.9" x2="237.8" y2="249.6" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="237.8" cy="256.2" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 150: B_noise 180 sequences</title></circle>
+<line x1="288.6" y1="282.6" x2="288.6" y2="163.3" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="288.6" cy="274.8" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 400: B_noise 119 sequences</title></circle>
+<line x1="330.6" y1="255.3" x2="330.6" y2="197.6" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="330.6" cy="225.8" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 900: B_noise 355 sequences</title></circle>
+<line x1="369.3" y1="258.4" x2="369.3" y2="243.1" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="369.3" cy="252.6" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 1900: B_noise 195 sequences</title></circle>
+<line x1="399.5" y1="245.6" x2="399.5" y2="112.0" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="399.5" cy="229.1" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 3400: B_noise 330 sequences</title></circle>
+<line x1="421.5" y1="234.0" x2="421.5" y2="214.3" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="421.5" cy="223.4" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 5200: B_noise 375 sequences</title></circle>
+<line x1="438.3" y1="214.3" x2="438.3" y2="203.9" stroke="#1fa87c" stroke-width="1.5" opacity="0.65"/>
+<circle cx="438.3" cy="204.3" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>step 7200: B_noise 577 sequences</title></circle>
+<circle cx="92.1" cy="302.2" r="9" fill="none" stroke="#c2566f" stroke-width="2"/>
+<text x="106.1" y="324.2" fill="#c2566f" font-size="11" font-weight="650">batch 64 crossed by step ~9</text>
+<text x="520" y="74" fill="#e9f0eb" font-size="15" font-weight="650">The decay fraction it implies</text>
+<text x="520" y="98" fill="#a5b9ac" font-size="11">optimal decay fraction = 1 - t*/T</text>
+<line x1="586" y1="336.0" x2="918" y2="336.0" stroke="#293d32" stroke-width="1"/>
+<text x="576" y="340.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.00</text>
+<line x1="586" y1="279.0" x2="918" y2="279.0" stroke="#293d32" stroke-width="1"/>
+<text x="576" y="283.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.25</text>
+<line x1="586" y1="222.0" x2="918" y2="222.0" stroke="#293d32" stroke-width="1"/>
+<text x="576" y="226.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.50</text>
+<line x1="586" y1="165.0" x2="918" y2="165.0" stroke="#293d32" stroke-width="1"/>
+<text x="576" y="169.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.75</text>
+<line x1="586" y1="108.0" x2="918" y2="108.0" stroke="#293d32" stroke-width="1"/>
+<text x="576" y="112.0" text-anchor="end" fill="#a5b9ac" font-size="11">1.00</text>
+<rect x="586" y="267.6" width="332" height="68.4" fill="#8a6fd0" opacity="0.14"/>
+<text x="594" y="285.6" fill="#8a6fd0" font-size="11" font-weight="650">WSD territory</text>
+<polyline points="586.0,108.0 595.9,108.5 605.9,108.7 615.8,109.0 625.8,109.4 635.7,109.8 645.6,110.3 655.6,110.7 665.5,111.2 675.5,111.6 685.4,123.5 695.3,124.7 705.3,126.0 715.2,127.2 725.2,128.5 735.1,129.7 745.1,239.5 755.0,252.3 764.9,265.2 774.9,278.0 784.8,283.6 794.8,283.6 804.7,283.6 814.6,283.6 824.6,283.6 834.5,283.6 844.5,283.6 854.4,283.6 864.3,283.6 874.3,283.6 884.2,283.6" fill="none" stroke="#3f8fc4" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="586.0" cy="108.0" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 64: optimal decay fraction 1.00</title></circle>
+<text x="586.0" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">64</text>
+<circle cx="646.8" cy="110.3" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 128: optimal decay fraction 0.99</title></circle>
+<text x="646.8" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">128</text>
+<circle cx="707.6" cy="126.3" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 256: optimal decay fraction 0.92</title></circle>
+<text x="707.6" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">256</text>
+<circle cx="768.4" cy="269.6" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 512: optimal decay fraction 0.29</title></circle>
+<text x="768.4" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">512</text>
+<circle cx="829.2" cy="283.6" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 1024: optimal decay fraction 0.23</title></circle>
+<text x="829.2" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">1024</text>
+<circle cx="890.0" cy="283.6" r="5" fill="#3f8fc4" stroke="#101c17" stroke-width="2"><title>batch 2048: optimal decay fraction 0.23</title></circle>
+<text x="890.0" y="356" text-anchor="middle" fill="#a5b9ac" font-size="10">2048</text>
+<text x="738.0" y="380" text-anchor="middle" fill="#a5b9ac" font-size="12">Batch size (sequences, log)</text>
+<circle cx="586.0" cy="108.0" r="9" fill="none" stroke="#c2566f" stroke-width="2"/>
+<text x="600.0" y="134.0" fill="#c2566f" font-size="11" font-weight="650">d8 default</text>
+</svg>
+<figcaption>Left: the measured noise scale on the standard d8 recipe, at ten checkpoints
+across one run. It climbs from about 44 sequences at initialisation to about 577 by step
+7,200. Bars span four repeats and the marker is the median; the estimator is heavy-tailed,
+and two of thirty-six repeats ran away when the true-gradient term landed near zero, which is
+why the median is used. Right: the decay fraction that the measured curve implies at each
+batch size.</figcaption>
+</figure>
+
+<p><strong>At batch 64 the run is noise limited almost immediately.</strong> B_noise passes 64
+by step 9, about 0.1% of training, so there is essentially no curvature-limited phase for a
+plateau to exploit. The rule then predicts an optimal decay fraction of <strong>1.00</strong>:
+decay throughout, which is linear.</p>
+<p>That prediction is testable, because the decay fraction is the one knob that defines the
+family and we had never swept it. It is also the knob that makes the two schedules one
+family: at fraction 1.0 the stable phase vanishes and <code>wsd</code> becomes linear, so
+"does WSD beat linear" is really "is the best decay fraction below 1.0?"</p>
+
+<figure>
+<svg viewBox="0 0 760 400" width="100%" height="auto" role="img" aria-labelledby="fs-t fs-d" style="display:block">
+<title id="fs-t">Validation loss against the WSD decay fraction</title>
+<desc id="fs-d">Validation loss falls monotonically as the decay fraction rises from 0.1 to 1.0, where the schedule becomes linear. The noise-scale measurement predicted an optimum at 1.0, and the last two points differ by less than the noise floor.</desc>
+<rect width="760" height="400" fill="#101c17"/>
+<text x="38" y="46" fill="#e9f0eb" font-size="15" font-weight="650">Loss against the WSD decay fraction</text>
+<text x="38" y="66" fill="#a5b9ac" font-size="11">batch 64, peak 0.009, warmup 0.1, weight decay 0.1 &#183; fraction 1.0 is linear</text>
+<line x1="108" y1="292.0" x2="670" y2="292.0" stroke="#293d32" stroke-width="1"/>
+<text x="98" y="296.0" text-anchor="end" fill="#a5b9ac" font-size="11">2.90</text>
+<line x1="108" y1="237.5" x2="670" y2="237.5" stroke="#293d32" stroke-width="1"/>
+<text x="98" y="241.5" text-anchor="end" fill="#a5b9ac" font-size="11">2.93</text>
+<line x1="108" y1="182.9" x2="670" y2="182.9" stroke="#293d32" stroke-width="1"/>
+<text x="98" y="186.9" text-anchor="end" fill="#a5b9ac" font-size="11">2.96</text>
+<line x1="108" y1="128.4" x2="670" y2="128.4" stroke="#293d32" stroke-width="1"/>
+<text x="98" y="132.4" text-anchor="end" fill="#a5b9ac" font-size="11">2.99</text>
+<rect x="108" y="252.0" width="562" height="14.5" fill="#a5b9ac" opacity="0.15"/>
+<text x="116" y="246.0" fill="#a5b9ac" font-size="10">band: within the 0.008 noise floor of the best</text>
+<polyline points="108.0,120.8 166.0,179.7 340.0,243.9 514.0,264.1 630.0,266.5" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="108.0" cy="120.8" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>wsd0.1: 2.9942</title></circle>
+<text x="108.0" y="312" text-anchor="middle" fill="#a5b9ac" font-size="11">0.1</text>
+<circle cx="166.0" cy="179.7" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>wsd0.2: 2.9618</title></circle>
+<text x="166.0" y="312" text-anchor="middle" fill="#a5b9ac" font-size="11">0.2</text>
+<circle cx="340.0" cy="243.9" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>wsd0.5: 2.9264</title></circle>
+<text x="340.0" y="312" text-anchor="middle" fill="#a5b9ac" font-size="11">0.5</text>
+<circle cx="514.0" cy="264.1" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>wsd0.8: 2.9154</title></circle>
+<text x="514.0" y="312" text-anchor="middle" fill="#a5b9ac" font-size="11">0.8</text>
+<circle cx="630.0" cy="266.5" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>wsd1.0: 2.9140</title></circle>
+<text x="630.0" y="312" text-anchor="middle" fill="#a5b9ac" font-size="11">1.0</text>
+<text x="630.0" y="250.5" text-anchor="end" fill="#e9f0eb" font-size="11" font-weight="650">linear</text>
+<line x1="630.0" y1="88" x2="630.0" y2="292" stroke="#3f8fc4" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="620.0" y="102" text-anchor="end" fill="#3f8fc4" font-size="11" font-weight="650">predicted optimum from B_noise</text>
+<text x="369.0" y="338" text-anchor="middle" fill="#a5b9ac" font-size="12">Decay fraction (share of the run spent annealing)</text>
+<text x="28" y="192.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 28 192.0)" text-anchor="middle">Validation loss</text>
+</svg>
+<figcaption>Validation loss against the decay fraction, at batch 64, peak 0.009, warmup 0.1
+and weight decay 0.1. Loss falls monotonically all the way to 1.0, where the schedule is
+linear. The dashed line is where the noise-scale measurement predicted the optimum before
+these runs were launched.</figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+<caption>The decay-fraction sweep. Fraction 1.0 is the linear schedule.</caption>
+<thead><tr><th scope="col">decay fraction</th><th scope="col">0.1</th><th scope="col">0.2</th><th scope="col">0.5</th><th scope="col">0.8</th><th scope="col">1.0 (linear)</th></tr></thead>
+<tbody>
+<tr><th scope="row">val loss</th><td>2.9942</td><td>2.9618</td><td>2.9265</td><td>2.9154</td><td><strong>2.9140</strong></td></tr>
+<tr><th scope="row">&#916; vs best</th><td>+0.0802</td><td>+0.0478</td><td>+0.0124</td><td>+0.0014</td><td>0.0000</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>Predicted 1.00, measured 1.00.</strong> Loss falls monotonically
+as the decay fraction rises, and the last two points differ by 0.0014, inside the 0.008 floor.
+So warmup-stable-decay never lost on its merits here: at this batch size, <em>decay
+throughout</em> is the best setting of warmup-stable-decay, and that setting is linear.</div>
+
+<h3>Where a plateau would pay</h3>
+<p>The same measurement says where the answer flips. Reading the batch size off the measured
+curve at each point in training gives the fraction of the run that would be curvature limited,
+and so the decay fraction that batch size wants.</p>
+<div class="table-wrap">
+<table>
+<caption>Implied schedule at each batch size, from the measured noise-scale curve. Tokens per
+step use the 1,024-token context.</caption>
+<thead><tr><th scope="col">batch (sequences)</th><th scope="col">tokens / step</th><th scope="col">curvature-limited for</th><th scope="col">implied decay fraction</th><th scope="col">verdict</th></tr></thead>
+<tbody>
+<tr><th scope="row">64 (d8 default)</th><td>65,536</td><td>0%</td><td>1.00</td><td>linear; a plateau has nothing to exploit</td></tr>
+<tr><th scope="row">128</th><td>131,072</td><td>1%</td><td>0.99</td><td>linear</td></tr>
+<tr><th scope="row">256</th><td>262,144</td><td>8%</td><td>0.92</td><td>linear</td></tr>
+<tr><th scope="row">384</th><td>393,216</td><td>57%</td><td>0.43</td><td>a plateau starts to pay</td></tr>
+<tr><th scope="row">512</th><td>524,288</td><td>71%</td><td>0.29</td><td>warmup-stable-decay</td></tr>
+<tr><th scope="row">768 and above</th><td>786,432+</td><td>&gt;77%</td><td>&lt;0.23</td><td>warmup-stable-decay, clearly</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The textbook <code>wsd0.2</code> becomes the right schedule at a batch of roughly
+577 sequences, about 0.6M tokens per step — nine times this model's default.</strong> That is
+the regime production pretraining runs actually live in, where the batch is scaled with the
+critical batch size and a short cooldown is enough. The assignment's cells were not wrong
+about warmup-stable-decay; they were applied at a batch size nine times too small for it to
+have a job to do.</p>
+<p>This also agrees with evidence already on this page. The 1(a) batch sweep is flat from 16
+to 64 and then breaks, at +0.031 for 128 and +0.095 for 256, which puts the critical batch
+size at roughly 32 to 64 — the default sits right on the knee, exactly where the noise-scale
+curve says the curvature-limited phase has already ended.</p>
+<p class="scope">Two limits worth stating. The noise scale was measured along a run trained
+with the <em>linear</em> schedule; a plateau would follow a different trajectory and so a
+slightly different curve, which makes this a first-order map rather than an exact one. And
+the estimator is noisy: ten checkpoints, four repeats each, with a heavy tail when the
+true-gradient term is small. The batch-size column is therefore a guide to the regime, not a
+precise threshold. Measuring B_noise along a <code>wsd</code> run, and testing a plateau at
+batch 512 directly, are the two checks that would close it.</p>
+
 <p class="scope">The inversion at peak 0.001 is real but small: B beats C by 0.0139 and A by
 0.0087, both just clear of the 0.008 floor, while A against C is 0.0052 and not separable.
 The whole column spans 0.0139, so at a low peak with default decay the schedule barely
@@ -974,9 +1186,12 @@ these rankings describe that corner and not the default configuration.</p>
 <pre class="kbd" style="display:block;padding:12px;overflow:auto;">make defconfig-cs312-problem-1      # part 1: one knob at a time (17 runs)
 make defconfig-cs312-problem-1b     # part 2: pairs that co-vary
 make defconfig-cs312-problem-1c     # part 3: the learning-rate schedule
+CS312_P1C_CELLS=wsd0.1:0.1,wsd0.2:0.1,wsd0.5:0.1,wsd0.8:0.1 \
+  make defconfig-cs312-problem-1c   # part 3: the decay-fraction sweep
 make defconfig-cs312-kv-quant       # part 4: post-hoc curve + trained frontier
 make defconfig-cs312-kv-quant-sweep # part 4: stress-cell sweep
 make</pre>
+<p>The gradient noise scale is measured separately by <code>tools/reproduce/cs312/cs312_noise_scale.py</code>, which trains nothing: it loads the model at each kept checkpoint of a run and estimates the two gradient terms from independent batches. Keep checkpoints with <code>keep_checkpoint_steps</code> on the run you want to measure.</p>
 <p>The fake-quant hook quantizes keys and values at the attention input with a straight-through estimator, so the same code path serves both post-hoc evaluation and quantization-aware training. The post-hoc curve runs as an evaluation-only pass over a trained checkpoint; the frontier and the sweep train each cell from scratch. All runs evaluate on the same 1,000 validation sequences, and each training cell takes roughly ten to fifteen minutes on one H100.</p>
 <p class="scope">All numbers here are for the d8 course model at the course training horizon, on the course validation set, with one seed per cell outside the three baseline repeats. They are a clean study on one small decoder, not a claim about every model scale or every serving stack. The hyperparameter conclusions are tied to this fixed token budget in particular: the batch-size penalty is a step-count penalty, and it would read differently at a fixed step count. The KV-quantization results (keys more fragile than values, the granularity gap, and the value of query-key normalization) agree with the larger-model work elsewhere on this site, but each remains model-specific until measured again.</p>
 <div class="detail-links">
