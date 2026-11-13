@@ -519,7 +519,7 @@ What changes is the size of the gap, not the order.</div>
 <line x1="596" y1="44" x2="618" y2="44" stroke="#8a6fd0" stroke-width="3"/>
 <text x="624" y="48" fill="#a5b9ac" font-size="12">C — linear, 10% warmup</text>
 <text x="80" y="88" fill="#e9f0eb" font-size="15" font-weight="650">The schedule shape</text>
-<text x="80" y="102" fill="#a5b9ac" font-size="11">drawn at peak 0.009</text>
+<text x="80" y="102" fill="#a5b9ac" font-size="11">each shape at all three peaks</text>
 <line x1="80" y1="352.0" x2="398" y2="352.0" stroke="#293d32" stroke-width="1"/>
 <text x="70" y="356.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.000</text>
 <line x1="80" y1="278.5" x2="398" y2="278.5" stroke="#293d32" stroke-width="1"/>
@@ -533,12 +533,24 @@ What changes is the size of the gap, not the order.</div>
 <text x="398.0" y="372" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
 <text x="239.0" y="398" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (9,375 total)</text>
 <text x="24" y="232.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 24 232.0)" text-anchor="middle">Learning rate</text>
-<polyline points="80.0,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#1fa87c" stroke-width="6" stroke-linejoin="round" opacity="0.95"><title>A: wsd0.2, no warmup</title></polyline>
-<polyline points="80.0,352.0 143.6,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>B: wsd0.2, 20% warmup</title></polyline>
-<polyline points="80.0,352.0 111.8,131.6 398.0,352.0" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>C: linear, 10% warmup</title></polyline>
+<line x1="80" y1="327.5" x2="398" y2="327.5" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+<line x1="80" y1="278.5" x2="398" y2="278.5" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+<line x1="80" y1="131.6" x2="398" y2="131.6" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+<polyline points="80.0,327.5 334.4,327.5 398.0,352.0" fill="none" stroke="#1fa87c" stroke-width="4.5" stroke-linejoin="round" opacity="0.42"><title>A at peak 0.001: wsd0.2, no warmup</title></polyline>
+<polyline points="80.0,352.0 143.6,327.5 334.4,327.5 398.0,352.0" fill="none" stroke="#c77f32" stroke-width="1.9" stroke-linejoin="round" opacity="0.42"><title>B at peak 0.001: wsd0.2, 20% warmup</title></polyline>
+<polyline points="80.0,352.0 111.8,327.5 398.0,352.0" fill="none" stroke="#8a6fd0" stroke-width="1.9" stroke-linejoin="round" opacity="0.42"><title>C at peak 0.001: linear, 10% warmup</title></polyline>
+<polyline points="80.0,278.5 334.4,278.5 398.0,352.0" fill="none" stroke="#1fa87c" stroke-width="5.4" stroke-linejoin="round" opacity="0.65"><title>A at peak 0.003: wsd0.2, no warmup</title></polyline>
+<polyline points="80.0,352.0 143.6,278.5 334.4,278.5 398.0,352.0" fill="none" stroke="#c77f32" stroke-width="2.2" stroke-linejoin="round" opacity="0.65"><title>B at peak 0.003: wsd0.2, 20% warmup</title></polyline>
+<polyline points="80.0,352.0 111.8,278.5 398.0,352.0" fill="none" stroke="#8a6fd0" stroke-width="2.2" stroke-linejoin="round" opacity="0.65"><title>C at peak 0.003: linear, 10% warmup</title></polyline>
+<polyline points="80.0,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#1fa87c" stroke-width="6.0" stroke-linejoin="round" opacity="1.0"><title>A at peak 0.009: wsd0.2, no warmup</title></polyline>
+<polyline points="80.0,352.0 143.6,131.6 334.4,131.6 398.0,352.0" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round" opacity="1.0"><title>B at peak 0.009: wsd0.2, 20% warmup</title></polyline>
+<polyline points="80.0,352.0 111.8,131.6 398.0,352.0" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round" opacity="1.0"><title>C at peak 0.009: linear, 10% warmup</title></polyline>
 <text x="103.7" y="119.6" text-anchor="middle" fill="#1fa87c" font-size="13" font-weight="650">A</text>
 <text x="236.0" y="151.6" text-anchor="middle" fill="#c77f32" font-size="13" font-weight="650">B</text>
 <text x="263.2" y="233.5" text-anchor="middle" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="404" y="331.5" fill="#a5b9ac" font-size="10">0.001</text>
+<text x="404" y="282.5" fill="#a5b9ac" font-size="10">0.003</text>
+<text x="404" y="135.6" fill="#a5b9ac" font-size="10">0.009</text>
 <text x="502" y="88" fill="#e9f0eb" font-size="15" font-weight="650">Loss at each peak rate</text>
 <text x="502" y="102" fill="#a5b9ac" font-size="11">weight decay 1.0 throughout</text>
 <line x1="568" y1="352.0" x2="856" y2="352.0" stroke="#293d32" stroke-width="1"/>
@@ -577,11 +589,13 @@ What changes is the size of the gap, not the order.</div>
 <text x="703.0" y="390" text-anchor="middle" fill="#a5b9ac" font-size="10">spread 0.145</text>
 <text x="824.0" y="390" text-anchor="middle" fill="#a5b9ac" font-size="10">spread 0.239</text>
 </svg>
-<figcaption>Left: the three schedules, drawn at peak 0.009. A and B share the same plateau
-and final decay, so A is drawn as a wider band beneath B where they coincide; A is distinct
-only at the start, where it jumps straight to the peak with no warmup. Right: final
-validation loss against peak learning rate. The three curves converge as the peak falls,
-and the best cell at peak 0.001 lands on the standard-recipe baseline.</figcaption>
+<figcaption>Left: the three schedules, each drawn at all three peak rates that were run.
+The shapes are identical up to scaling, so the lower peaks are the same curves compressed
+toward the axis. A and B share the same plateau and final decay, so A is drawn as a wider
+band beneath B where they coincide; A is distinct only at the start, where it jumps
+straight to the peak with no warmup. Right: final validation loss against peak learning
+rate. The three curves converge as the peak falls, and the best cell at peak 0.001 lands on
+the standard-recipe baseline.</figcaption>
 </figure>
 
 <ul>
