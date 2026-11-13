@@ -3,39 +3,176 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CS312 Deep Learning Alchemy: a KV-cache precision lane | knlp</title>
-<meta name="description" content="An addendum to Stanford CS312 Deep Learning Alchemy: a reproducible KV-cache quantization lane on the d8 model organism. Post-hoc and quantization-aware training across fp8, int4, int3 and int2, per-token and per-tensor, with and without query-key normalization. Query-key normalization is the dominant defense; quantization-aware training earns its cost only at 2-bit; a lower learning rate is the one optimizer knob that helps at the hardest cell.">
+<title>CS312 Deep Learning Alchemy: findings on a small decoder | knlp</title>
+<meta name="description" content="Findings from the Stanford CS312 Deep Learning Alchemy assignments run as a reproducible knlp lane on the d8 model organism: which hyperparameters matter alone, which must be tuned together, and how far the KV cache can be quantized. Learning rate dominates the single-axis sweep; learning rate and warmup co-vary strongly and beat the default recipe; query-key normalization is the dominant defense against KV quantization.">
 <link rel="canonical" href="https://knlp.io/2026-10-stanford-cs312.html">
 <link rel="stylesheet" href="assets/asymmetric-guide.css?v=20261019b">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header>
-<a class="brand" href="./">knlp <span>/ CS312 precision lane</span></a>
+<a class="brand" href="./">knlp <span>/ CS312 findings</span></a>
 <nav aria-label="Main navigation">
-<a href="#goal">The goal</a>
-<a href="#posthoc">Post-hoc curve</a>
-<a href="#frontier">Trained frontier</a>
-<a href="#sweep">Stress sweep</a>
-<a href="cs312-tutorial.html">Tutorial lane</a>
+<a href="#single">One knob at a time</a>
+<a href="#pairs">Pairs that co-vary</a>
+<a href="#precision">KV precision</a>
+<a href="#reproduce">Reproduce</a>
 </nav>
 </header>
 <main id="main">
 <div class="hero">
-<p class="eyebrow">Course lane · precision addendum · d8 model organism</p>
-<h1>How far can you quantize a KV cache<br>before training notices?</h1>
-<p class="lead">This page is an addendum to Stanford CS312 "Deep Learning Alchemy". It adds a reproducible KV-cache precision lane to the course decoder and reports the findings. The result in one line: <strong>query-key normalization is the single strongest defense against KV quantization, and its value grows as the cache shrinks</strong>. Training the model to tolerate a quantized cache pays off only at 2-bit; at 4-bit, quantizing a finished checkpoint is already almost free.</p>
-<p class="scope">The lane and its reproduction steps are described on the <a href="cs312-tutorial.html">CS312 tutorial page</a>. This page covers the precision addendum: what it measures, and what it found.</p>
+<p class="eyebrow">Course lane · findings · d8 model organism</p>
+<h1>What actually moves the loss<br>on a 35M-parameter decoder</h1>
+<p class="lead">The Stanford CS312 "Deep Learning Alchemy" assignments run as a reproducible knlp lane on the course decoder. This page reports what the sweeps found, in three parts: which hyperparameters matter <strong>alone</strong>, which ones must be tuned <strong>together</strong>, and how far the <strong>KV cache</strong> can be quantized before training notices.</p>
+<p class="scope">Three headline results: the learning rate dominates every single-axis sweep and the default is already near its optimum; learning rate and warmup co-vary so strongly that raising both <em>beats</em> the default recipe; and query-key normalization is the single strongest defense against KV-cache quantization. The lane's design and reproduction steps are in the <a href="https://github.com/mcgrof/knlp/blob/main/docs/cs312-tutorial.md">CS312 tutorial document</a>.</p>
 <div class="hero-actions">
-<a class="button" href="#frontier">Read the findings <span aria-hidden="true">→</span></a>
+<a class="button" href="#single">Read the findings <span aria-hidden="true">→</span></a>
 <a href="#reproduce">How to reproduce</a>
 </div>
 </div>
 
-<section id="goal">
-<h2>The goal</h2>
-<p>The course decoder, d8, is a small Llama-style model: 8 blocks, hidden size 512, 8 heads of dimension 64, rotary positions, RMSNorm, query-key normalization and a SwiGLU MLP, about 35M parameters. Its baseline validation loss is <strong>2.9258</strong> on 1,000 held-out sequences. A clean three-seed repeat of the baseline training gives a standard deviation of 0.0040, so a change below <strong>0.008</strong> (two sigma) is noise.</p>
-<p>The exercise is precision. The attention keys and values that fill the KV cache are stored in low precision, and we measure how much validation loss rises. The lane sweeps three independent axes:</p>
+<section id="setup">
+<h2>The setup</h2>
+<p>The course decoder, d8, is a small Llama-style model: 8 blocks, hidden size 512, 8 heads of dimension 64, rotary positions, RMSNorm, query-key normalization and a SwiGLU MLP, about 35M parameters. The course recipe trains it on 600,000 sequences of 1,024 tokens with AdamW, peak learning rate 0.003, 1% linear warmup, batch size 64, weight decay 0.1 and gradient clipping at 1.0. One run takes roughly ten to fifteen minutes on one H100.</p>
+<p>Its baseline validation loss is <strong>2.9258</strong> on 1,000 held-out sequences, against the course handout's quoted 2.926. Repeating that exact recipe at three paired model and data seeds gives 2.9258, 2.9284 and 2.9338: mean 2.9293 and a sample standard deviation of <strong>0.0040</strong>. Two sigma is <strong>0.008</strong>, so any difference below that is not distinguishable from seed noise. Every claim on this page is read against that floor.</p>
+<div class="table-wrap">
+<table>
+<caption>The noise floor: the baseline recipe repeated at three paired model and data seeds. Δ is each loss minus the seed-42 loss.</caption>
+<thead><tr><th scope="col">seed</th><th scope="col">val loss</th><th scope="col">Δ vs seed 42</th></tr></thead>
+<tbody>
+<tr><th scope="row">42</th><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">43</th><td>2.9284</td><td>+0.0026</td></tr>
+<tr><th scope="row">44</th><td>2.9338</td><td>+0.0080</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="single">
+<h2>Part 1: one knob at a time</h2>
+<p>Each of warmup, peak learning rate, batch size and weight decay moves alone along a log axis around the defaults, while the token budget stays fixed so every run is compute matched. Four axes sharing the default point give seventeen unique runs. Each Δ is the row's loss minus the 2.9258 baseline: positive is worse.</p>
+
+<div class="table-wrap">
+<table>
+<caption>Peak learning rate. Base 3, five points. Lower loss is better.</caption>
+<thead><tr><th scope="col">value</th><th scope="col">× default</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">0.000333</th><td>⅑×</td><td>3.1265</td><td>+0.2007</td></tr>
+<tr><th scope="row">0.001</th><td>⅓×</td><td>2.9766</td><td>+0.0508</td></tr>
+<tr><th scope="row">0.003</th><td>1× (default)</td><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">0.009</th><td>3×</td><td>2.9531</td><td>+0.0273</td></tr>
+<tr><th scope="row">0.027</th><td>9×</td><td>3.0034</td><td>+0.0776</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<caption>Batch size. Base 2; the token budget is fixed, so steps scale inversely.</caption>
+<thead><tr><th scope="col">value</th><th scope="col">× default</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">16</th><td>¼×</td><td>2.9277</td><td>+0.0019</td></tr>
+<tr><th scope="row">32</th><td>½×</td><td>2.9197</td><td>−0.0061</td></tr>
+<tr><th scope="row">64</th><td>1× (default)</td><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">128</th><td>2×</td><td>2.9504</td><td>+0.0246</td></tr>
+<tr><th scope="row">256</th><td>4×</td><td>3.0150</td><td>+0.0892</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<caption>Warmup fraction. Base 3, five points.</caption>
+<thead><tr><th scope="col">value</th><th scope="col">× default</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">0.00111</th><td>⅑×</td><td>2.9889</td><td>+0.0631</td></tr>
+<tr><th scope="row">0.00333</th><td>⅓×</td><td>2.9388</td><td>+0.0130</td></tr>
+<tr><th scope="row">0.01</th><td>1× (default)</td><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">0.03</th><td>3×</td><td>2.9254</td><td>−0.0004</td></tr>
+<tr><th scope="row">0.09</th><td>9×</td><td>2.9212</td><td>−0.0046</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<caption>Weight decay. Base 3, five points.</caption>
+<thead><tr><th scope="col">value</th><th scope="col">× default</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">0.0111</th><td>⅑×</td><td>2.9464</td><td>+0.0206</td></tr>
+<tr><th scope="row">0.0333</th><td>⅓×</td><td>2.9403</td><td>+0.0145</td></tr>
+<tr><th scope="row">0.1</th><td>1× (default)</td><td>2.9258</td><td>0.0000</td></tr>
+<tr><th scope="row">0.3</th><td>3×</td><td>2.9189</td><td>−0.0069</td></tr>
+<tr><th scope="row">0.9</th><td>9×</td><td>2.9551</td><td>+0.0293</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Reading the four axes:</p>
+<ul>
+<li><strong>The learning rate matters most, and it is the only axis with a sharp optimum at the default.</strong> Dividing it by nine costs 0.20 nats; multiplying by nine costs 0.08. Too low hurts more than too high at this horizon.</li>
+<li><strong>Warmup is flat once it is at least 1%</strong> and only hurts when shortened. Both longer warmups land within noise of the baseline, slightly better.</li>
+<li><strong>Weight decay has a shallow bowl</strong> over 0.1 to 0.3, with 0.3 the best cell, and both ends of the grid worse.</li>
+<li><strong>Batch size has a shallow optimum at 32 to 64</strong> when tokens are fixed. Batch 16 (37,500 steps) lands within 0.002 of the baseline, while batch 256 (2,344 steps) is 0.09 worse — at this token budget the penalty is for taking too few steps, not too many.</li>
+</ul>
+<p class="scope">One seed per cell in this part. The noise floor above was measured separately, so single-axis differences under about 0.008 carry no significance claim.</p>
+</section>
+
+<section id="pairs">
+<h2>Part 2: which knobs must move together</h2>
+<p>A single-axis sweep cannot say whether two knobs compensate for each other. This part fills the 2×2 corners around the baseline for every pair. A pair is called co-varying when moving both knobs recovers most of what moving one alone cost, by more than the 0.008 floor.</p>
+<div class="table-wrap">
+<table>
+<caption>Verdict per pair, with the evidence that decides it. Every Δ quoted is against the 2.9258 baseline.</caption>
+<thead><tr><th scope="col">pair</th><th scope="col">verdict</th><th scope="col">evidence</th></tr></thead>
+<tbody>
+<tr><th scope="row">learning rate × warmup</th><td><strong>co-vary, strongly</strong></td><td>lr 0.009 alone costs +0.027; with 3% warmup −0.005, with 9% <strong>−0.011</strong>. lr 0.027 alone +0.078, with 9% warmup +0.030. A higher peak rate needs a longer warmup, and then beats the default.</td></tr>
+<tr><th scope="row">batch size × warmup</th><td><strong>co-vary</strong></td><td>batch 256 alone +0.089; with 3% warmup +0.057, with 9% +0.053. The default 1% warmup is only 23 steps at that batch: warmup <em>steps</em>, not the fraction, is the real knob.</td></tr>
+<tr><th scope="row">batch size × weight decay</th><td><strong>co-vary</strong></td><td>batch 128 alone +0.025, with wd 0.3 +0.006; batch 32 with wd 0.033 is +0.006 against −0.006 alone. Fewer steps integrate less decay, so a larger batch wants a larger weight decay.</td></tr>
+<tr><th scope="row">learning rate × weight decay</th><td>one-sided</td><td>lr 0.001 alone +0.051, with wd 0.3 +0.024, recovering 0.027 — consistent with the lr×wd product setting decoupled-decay strength. But lowering weight decay does not rescue lr 0.009: both high-rate corners (+0.043, +0.050) are worse than lr 0.009 alone (+0.027).</td></tr>
+<tr><th scope="row">learning rate × batch size</th><td>one-sided, against folklore</td><td>A lower rate with a smaller batch recovers 0.033 (lr 0.001 at batch 32 is +0.018 against +0.051). But a higher rate does <em>not</em> rescue batch 256: +0.178 and +0.195, against +0.089 for batch 256 alone.</td></tr>
+<tr><th scope="row">weight decay × warmup</th><td>independent</td><td>Both corners sit where the single-axis effects simply add: (0.3, 0.03) gives −0.007, the same as wd 0.3 alone; (0.033, 0.0033) gives +0.033 against +0.014 and +0.013 separately.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>The best cell in the whole study beats the course default.</strong> Learning rate 0.009 with 9% warmup reaches <strong>2.9153</strong>, which is 0.011 below the baseline and the only cell more than two standard deviations better than the default recipe. Raising the learning rate alone is a mistake (+0.027); raising it together with warmup is a win.</div>
+
+<div class="table-wrap">
+<table>
+<caption>Learning rate × warmup. Baseline cell in bold; parentheses give the loss minus the 2.9258 baseline. A dash means the cell was not run.</caption>
+<thead><tr><th scope="col">lr \ warmup</th><th scope="col">0.00111</th><th scope="col">0.00333</th><th scope="col">0.01</th><th scope="col">0.03</th><th scope="col">0.09</th></tr></thead>
+<tbody>
+<tr><th scope="row">0.000333</th><td>—</td><td>—</td><td>3.1265 (+0.201)</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">0.001</th><td>—</td><td>2.9752 (+0.049)</td><td>2.9766 (+0.051)</td><td>—</td><td>—</td></tr>
+<tr><th scope="row"><strong>0.003</strong></th><td>2.9889 (+0.063)</td><td>2.9388 (+0.013)</td><td><strong>2.9258 (0.000)</strong></td><td>2.9254 (−0.000)</td><td>2.9212 (−0.005)</td></tr>
+<tr><th scope="row">0.009</th><td>—</td><td>—</td><td>2.9531 (+0.027)</td><td>2.9207 (−0.005)</td><td><strong>2.9153 (−0.011)</strong></td></tr>
+<tr><th scope="row">0.027</th><td>—</td><td>—</td><td>3.0034 (+0.078)</td><td>—</td><td>2.9553 (+0.030)</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<caption>Learning rate × batch size. A higher rate does not rescue the large batch.</caption>
+<thead><tr><th scope="col">lr \ batch</th><th scope="col">16</th><th scope="col">32</th><th scope="col">64</th><th scope="col">128</th><th scope="col">256</th></tr></thead>
+<tbody>
+<tr><th scope="row">0.000333</th><td>—</td><td>—</td><td>3.1265 (+0.201)</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">0.001</th><td>—</td><td>2.9434 (+0.018)</td><td>2.9766 (+0.051)</td><td>3.0251 (+0.099)</td><td>—</td></tr>
+<tr><th scope="row"><strong>0.003</strong></th><td>2.9277 (+0.002)</td><td>2.9197 (−0.006)</td><td><strong>2.9258 (0.000)</strong></td><td>2.9504 (+0.025)</td><td>3.0150 (+0.089)</td></tr>
+<tr><th scope="row">0.009</th><td>—</td><td>2.9514 (+0.026)</td><td>2.9531 (+0.027)</td><td>2.9852 (+0.059)</td><td>3.1035 (+0.178)</td></tr>
+<tr><th scope="row">0.027</th><td>—</td><td>—</td><td>3.0034 (+0.078)</td><td>—</td><td>3.1212 (+0.195)</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The practical list that falls out: <strong>retune warmup whenever the peak learning rate or the batch size moves; retune weight decay with batch size and partly with learning rate; warmup and weight decay can be tuned independently of each other.</strong></p>
+<p class="scope">One seed per pair cell. The floor comes from the three baseline seeds only, so cell-to-cell differences under 0.008 are not read as real.</p>
+</section>
+
+<section id="precision">
+<h2>Part 3: how far the KV cache can be quantized</h2>
+<p>The third exercise is precision. The attention keys and values that fill the KV cache are stored in low precision, and we measure how much validation loss rises. The lane sweeps three independent axes:</p>
 <ul>
 <li><strong>Bit width and format.</strong> 8-bit uses fp8 (e4m3). Four bits and below use a symmetric integer grid: int4 (15 levels), int3 (7 levels) and int2 (a ternary grid). Keys and values can be set independently, so an asymmetric split such as 16-bit keys with 4-bit values, or the reverse, is one setting.</li>
 <li><strong>Granularity.</strong> This determines which values share a quantization scale. <em>per-token</em> gives each token’s vector within each head its own scale. <em>per-tensor</em> shares one scale across the entire K tensor, and a separate scale across the entire V tensor, at an attention call. <a href="#granularity-example">See the worked example below.</a></li>
@@ -203,19 +340,21 @@
 
 <section id="reproduce">
 <h2>Reproduce</h2>
-<p>The lane ships as two defconfigs in knlp. The trained frontier and the post-hoc curve come from one, the stress sweep from the other:</p>
-<pre class="kbd" style="display:block;padding:12px;overflow:auto;">make defconfig-cs312-kv-quant       # 12-cell trained frontier + post-hoc curve
-make defconfig-cs312-kv-quant-sweep # stress-cell hyperparameter sweep
+<p>Each part of this page is one defconfig in knlp:</p>
+<pre class="kbd" style="display:block;padding:12px;overflow:auto;">make defconfig-cs312-problem-1      # part 1: one knob at a time (17 runs)
+make defconfig-cs312-problem-1b     # part 2: pairs that co-vary
+make defconfig-cs312-kv-quant       # part 3: post-hoc curve + trained frontier
+make defconfig-cs312-kv-quant-sweep # part 3: stress-cell sweep
 make</pre>
 <p>The fake-quant hook quantizes keys and values at the attention input with a straight-through estimator, so the same code path serves both post-hoc evaluation and quantization-aware training. The post-hoc curve runs as an evaluation-only pass over a trained checkpoint; the frontier and the sweep train each cell from scratch. All runs evaluate on the same 1,000 validation sequences, and each training cell takes roughly ten to fifteen minutes on one H100.</p>
-<p class="scope">All numbers here are for the d8 course model at the course training horizon, on the course validation set. They are a clean study on one small decoder, not a claim about every model or every serving stack. The asymmetric thesis (keys more fragile than values), the granularity gap, and the value of query-key normalization are consistent with the larger-model KV-quantization work elsewhere on this site, but each remains model-specific until measured again.</p>
+<p class="scope">All numbers here are for the d8 course model at the course training horizon, on the course validation set, with one seed per cell outside the three baseline repeats. They are a clean study on one small decoder, not a claim about every model scale or every serving stack. The hyperparameter conclusions are tied to this fixed token budget in particular: the batch-size penalty is a step-count penalty, and it would read differently at a fixed step count. The KV-quantization results (keys more fragile than values, the granularity gap, and the value of query-key normalization) agree with the larger-model work elsewhere on this site, but each remains model-specific until measured again.</p>
 <div class="detail-links">
-<a href="cs312-tutorial.html"><span>The CS312 tutorial lane: model organism and workflow</span><span aria-hidden="true">→</span></a>
+<a href="https://github.com/mcgrof/knlp/blob/main/docs/cs312-tutorial.md"><span>The CS312 tutorial lane: model organism, grid design and workflow</span><span aria-hidden="true">→</span></a>
 <a href="asymmetric-quantization.html"><span>Asymmetric KV quantization on production models</span><span aria-hidden="true">→</span></a>
 <a href="fp8-kv-failure-atlas.html"><span>FP8 KV-cache failure mechanisms and model probes</span><span aria-hidden="true">→</span></a>
 </div>
 </section>
 </main>
-<footer>knlp · CS312 Deep Learning Alchemy precision addendum · d8 model organism · query-key normalization is the dominant KV-quantization defense.</footer>
+<footer>knlp · CS312 Deep Learning Alchemy findings · d8 model organism · learning rate dominates alone, learning rate and warmup co-vary, query-key normalization defends the KV cache.</footer>
 </body>
 </html>
