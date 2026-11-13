@@ -333,7 +333,8 @@ def mode_collect(args, plan):
             "started_utc": None,
             "finished_utc": None,
         }
-        for _k in ("level", "granularity", "qk_norm", "suffix"):
+        for _k in ("level", "granularity", "qk_norm", "suffix",
+                   "label", "lr_schedule", "warmup_percent"):
             if _k in run:
                 entry[_k] = run[_k]
         receipt_path = args.output / "runs" / name / "receipt.json"

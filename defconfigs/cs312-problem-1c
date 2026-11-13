@@ -1,0 +1,20 @@
+# CS312 problem 1(c): the scheduler question.
+# From the standard d8 recipe, raise the peak learning rate to 0.009 and
+# the weight decay to 1.0, then change only the schedule and its warmup.
+# A = wsd0.2 with no warmup, B = wsd0.2 with 20% warmup, C = linear with
+# 10% warmup. Compute matched: the 600,000-sequence budget is unchanged.
+CONFIG_KNLP_CS312=y
+CONFIG_KNLP_CS312_PROBLEM_P1C=y
+CONFIG_KNLP_CS312_P1C_LR="0.009"
+CONFIG_KNLP_CS312_P1C_WD="1.0"
+CONFIG_KNLP_CS312_P1C_CELLS="wsd0.2:0.0,wsd0.2:0.2,linear:0.1"
+CONFIG_KNLP_CS312_DEPTH=8
+CONFIG_KNLP_CS312_NUM_TRAIN_SEQUENCES=600000
+CONFIG_KNLP_CS312_BACKEND_MODAL=y
+CONFIG_KNLP_CS312_MODAL_GPU="H100"
+CONFIG_KNLP_CS312_MODAL_ENVIRONMENT="main"
+CONFIG_KNLP_CS312_MODAL_MAX_PARALLEL=0
+CONFIG_KNLP_CS312_MODAL_EXTRA_SECRETS="cs312-torch-alloc"
+CONFIG_KNLP_CS312_WANDB_ONLINE=y
+CONFIG_KNLP_CS312_WANDB_PROJECT="cs312"
+CONFIG_KNLP_CS312_OUTPUT="results/cs312-problem-1c"

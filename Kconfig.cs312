@@ -54,6 +54,14 @@ config KNLP_CS312_PROBLEM_P1B
 	  (KNLP_CS312_REFERENCE_OUTPUT) instead of being rerun. Two baseline
 	  repeats at new paired seeds give the noise floor.
 
+config KNLP_CS312_PROBLEM_P1C
+	bool "1(c) scheduler: rank schedule and warmup cells"
+	help
+	  Answer the scheduler question: from the standard d8 recipe with a
+	  raised peak learning rate and weight decay, change only the
+	  learning-rate schedule and its warmup, then rank the cells by
+	  final validation loss. Compute matched, like every other problem.
+
 config KNLP_CS312_PROBLEM_KVQ
 	bool "KV-cache quantization-aware training (precision lane)"
 	help
@@ -301,3 +309,21 @@ config KNLP_CS312_OUTPUT
 
 endif
 endmenu
+
+if KNLP_CS312_PROBLEM_P1C
+
+config KNLP_CS312_P1C_LR
+	string "1(c) peak learning rate"
+	default "0.009"
+
+config KNLP_CS312_P1C_WD
+	string "1(c) weight decay"
+	default "1.0"
+
+config KNLP_CS312_P1C_CELLS
+	string "1(c) cells, comma separated <lr_schedule>:<warmup_percent>"
+	default "wsd0.2:0.0,wsd0.2:0.2,linear:0.1"
+	help
+	  Each cell is one run, labelled A, B, C in the order given.
+
+endif

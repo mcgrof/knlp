@@ -42,6 +42,9 @@ DEFAULTS = {
     ),
     "P1B_FULL_CORNERS": "n",
     "P1B_SEED_REPEATS": "2",
+    "P1C_LR": "0.009",
+    "P1C_WD": "1.0",
+    "P1C_CELLS": "wsd0.2:0.0,wsd0.2:0.2,linear:0.1",
     "REFERENCE_OUTPUT": "",
     "DEPTH": "8",
     "NUM_TRAIN_SEQUENCES": "600000",
@@ -372,6 +375,47 @@ def plan_kvq(cfg):
     }
 
 
+def plan_p1c(cfg):
+    """Scheduler question: rank schedule and warmup cells at a raised
+    learning rate and weight decay.
+
+    From the standard d8 recipe, set the peak learning rate and the weight
+    decay to the question's values, then change only the schedule and its
+    warmup. A cell is "<lr_schedule>:<warmup_percent>". Cells are labelled
+    A, B, C in the order given, so the ranking reads straight off the
+    report. The token budget is untouched, so the runs stay compute
+    matched with every other problem in the lane.
+    """
+    lr = float(cfg["P1C_LR"])
+    wd = float(cfg["P1C_WD"])
+    cells = [c.strip() for c in cfg["P1C_CELLS"].split(",") if c.strip()]
+    runs = []
+    for i, cell in enumerate(cells):
+        schedule, _, warmup = cell.partition(":")
+        schedule = schedule.strip()
+        if not schedule or not warmup.strip():
+            raise SystemExit(f"P1C_CELLS entries look like 'wsd0.2:0.0', got {cell!r}")
+        warmup = float(warmup)
+        runs.append(
+            {
+                "index": i,
+                "axis": "schedule",
+                "label": chr(ord("A") + i),
+                "lr_schedule": schedule,
+                "warmup_percent": warmup,
+                "exponent": 0,
+                "overrides": {
+                    "learning_rate": lr,
+                    "weight_decay": wd,
+                    "lr_schedule": schedule,
+                    "warmup_percent": warmup,
+                },
+                "suffix": cfg["RUN_SUFFIX"],
+            }
+        )
+    return {"learning_rate": lr, "weight_decay": wd, "runs": runs}
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -385,7 +429,7 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
-    planners = {"p1a": plan_p1a, "p1b": plan_p1b, "kvq": plan_kvq}
+    planners = {"p1a": plan_p1a, "p1b": plan_p1b, "p1c": plan_p1c, "kvq": plan_kvq}
     if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
@@ -961,6 +1005,59 @@ def render_report_p1b(results):
     return "\n".join(lines) + "\n"
 
 
+def render_report_p1c(results):
+    """Rank the schedule cells from lowest (best) to highest validation loss."""
+    plan = results["plan"]
+    lines = [f"# CS312 problem {plan['problem']} report", ""]
+    lines.append(
+        f"Plan `{plan['digest']}`: d{plan['depth']}, {plan['num_train_sequences']:,} sequences "
+        f"per run, {len(plan['runs'])} runs, backend `{results['backend']}`, "
+        f"collected {results['collected_utc']}."
+    )
+    lines.append(
+        f"All cells use learning rate {plan.get('learning_rate')} and weight decay "
+        f"{plan.get('weight_decay')}; only the schedule and its warmup change."
+    )
+    done = sum(1 for e in results["runs"] if e.get("state") == "finished")
+    start, end, span = sweep_window(results)
+    lines.append(
+        f"Finished runs: {done}/{len(results['runs'])}. Sweep window: {start or '-'} to "
+        + (end or "-")
+        + (f" ({span:.1f} min)." if span is not None else ".")
+    )
+    lines.append("")
+    lines.append("| run | lr_schedule | warmup_percent | val loss | minutes | state |")
+    lines.append("|---|---|---|---|---|---|")
+    for r in results["runs"]:
+        loss = r.get("val_loss")
+        mins = r.get("total_seconds")
+        lines.append(
+            f"| {r.get('label', '?')} | `{r.get('lr_schedule', '')}` | "
+            f"{r.get('warmup_percent', '')} | "
+            + (f"{loss:.4f}" if loss is not None else "-")
+            + " | "
+            + (f"{mins / 60:.1f}" if mins else "-")
+            + f" | {r.get('state', '-')} |"
+        )
+    lines.append("")
+    ranked = sorted(
+        (r for r in results["runs"] if r.get("val_loss") is not None),
+        key=lambda r: r["val_loss"],
+    )
+    if ranked:
+        order = " < ".join(f"{r.get('label', '?')} ({r['val_loss']:.4f})" for r in ranked)
+        lines.append(f"Ranking, lowest (best) to highest (worst): **{order}**")
+        if len(ranked) > 1:
+            spread = ranked[-1]["val_loss"] - ranked[0]["val_loss"]
+            lines.append("")
+            lines.append(
+                f"Spread between best and worst: {spread:.4f} nats. The 1(b) three-seed "
+                f"noise floor is 0.008, so gaps below that are not separable."
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_report_kvq(results, posthoc=None, baseline=2.9258):
     plan = results["plan"]
     posthoc = posthoc or {}
@@ -1110,6 +1207,8 @@ def cmd_report(cfg, args):
         text = render_report_kvq(results, posthoc)
     elif problem == "p1b":
         text = render_report_p1b(results)
+    elif problem == "p1c":
+        text = render_report_p1c(results)
     else:
         text = render_report(results, against)
     (out / "report.md").write_text(text)

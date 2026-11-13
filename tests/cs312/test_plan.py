@@ -158,3 +158,27 @@ class KvqPlanTest(unittest.TestCase):
         self.assertFalse(center["qk_norm"])
         self.assertEqual(center["granularity"], "per_tensor")
         self.assertEqual(center["overrides"]["model_builder_kwargs"]["k_bits"], 4)
+
+
+class PlanP1cTest(unittest.TestCase):
+    def test_cells_become_labelled_runs_at_the_raised_lr_and_wd(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p1c"))
+        self.assertEqual([r["label"] for r in plan["runs"]], ["A", "B", "C"])
+        self.assertEqual(
+            [(r["lr_schedule"], r["warmup_percent"]) for r in plan["runs"]],
+            [("wsd0.2", 0.0), ("wsd0.2", 0.2), ("linear", 0.1)],
+        )
+        for run in plan["runs"]:
+            self.assertEqual(run["overrides"]["learning_rate"], 0.009)
+            self.assertEqual(run["overrides"]["weight_decay"], 1.0)
+            # the token budget stays standard, so the cells are compute matched
+            self.assertNotIn("num_train_sequences", run["overrides"])
+
+    def test_every_cell_gets_its_own_run_name(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p1c"))
+        names = {cs312.json.dumps(r["train_config"], sort_keys=True) for r in plan["runs"]}
+        self.assertEqual(len(names), 3)
+
+    def test_a_malformed_cell_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            cs312.build_plan(defaults(PROBLEM="p1c", P1C_CELLS="wsd0.2"))
