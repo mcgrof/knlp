@@ -15,6 +15,7 @@
 <nav aria-label="Main navigation">
 <a href="#single">One knob at a time</a>
 <a href="#pairs">Pairs that co-vary</a>
+<a href="#schedule">The schedule</a>
 <a href="#precision">KV precision</a>
 <a href="#reproduce">Reproduce</a>
 </nav>
@@ -23,7 +24,7 @@
 <div class="hero">
 <p class="eyebrow">Course lane · findings · d8 model organism</p>
 <h1>What actually moves the loss<br>on a 35M-parameter decoder</h1>
-<p class="lead">The Stanford CS312 "Deep Learning Alchemy" assignments run as a reproducible knlp lane on the course decoder. This page reports what the sweeps found, in three parts: which hyperparameters matter <strong>alone</strong>, which ones must be tuned <strong>together</strong>, and how far the <strong>KV cache</strong> can be quantized before training notices.</p>
+<p class="lead">The Stanford CS312 "Deep Learning Alchemy" assignments run as a reproducible knlp lane on the course decoder. This page reports what the sweeps found, in four parts: which hyperparameters matter <strong>alone</strong>, which ones must be tuned <strong>together</strong>, how the <strong>learning-rate schedule</strong> changes the answer, and how far the <strong>KV cache</strong> can be quantized before training notices.</p>
 <p class="scope">Three headline results: the learning rate dominates every single-axis sweep and the default is already near its optimum; learning rate and warmup co-vary so strongly that raising both <em>beats</em> the default recipe; and query-key normalization is the single strongest defense against KV-cache quantization. The lane's design and reproduction steps are in the <a href="https://github.com/mcgrof/knlp/blob/main/docs/cs312-tutorial.md">CS312 tutorial document</a>.</p>
 <div class="hero-actions">
 <a class="button" href="#single">Read the findings <span aria-hidden="true">→</span></a>
@@ -474,8 +475,120 @@ depth of these bowls from one draw into an interval.</p>
 <p class="scope">One seed per pair cell. The floor comes from the three baseline seeds only, so cell-to-cell differences under 0.008 are not read as real.</p>
 </section>
 
+<section id="schedule">
+<h2>Part 3: the learning-rate schedule</h2>
+<p>The third part of the assignment asks how the other knobs interact with the
+learning-rate scheduler. This is one cell of that question. Start from the standard
+recipe, raise the peak learning rate to 0.009 and the weight decay to 1.0 — deliberately
+over-driven, three times the default rate and ten times the default decay — then change
+<em>only</em> the schedule and its warmup, and rank the three cells. The token budget is
+untouched, so all three stay compute matched with everything above.</p>
+<p><code>wsd0.2</code> is warmup-stable-decay: hold the peak rate, then decay to zero over
+the last fifth of training. <code>linear</code> is the standard recipe's schedule: warm up,
+then decay to zero across the whole remaining run.</p>
+
+<div class="table-wrap">
+<table>
+<caption>The three cells, ranked best to worst. All use learning rate 0.009 and weight
+decay 1.0. Warmup steps are the percentage applied to the 9,375-step budget. Mean learning
+rate is the schedule's average over training. Δ is the loss minus the 2.9258 baseline.</caption>
+<thead><tr><th scope="col">run</th><th scope="col">schedule</th><th scope="col">warmup</th><th scope="col">warmup steps</th><th scope="col">mean lr</th><th scope="col">val loss</th><th scope="col">Δ vs baseline</th></tr></thead>
+<tbody>
+<tr><th scope="row">C</th><td><code>linear</code></td><td>0.1</td><td>937</td><td>0.00450</td><td><strong>3.0579</strong></td><td>+0.1321</td></tr>
+<tr><th scope="row">B</th><td><code>wsd0.2</code></td><td>0.2</td><td>1,875</td><td>0.00720</td><td>3.2076</td><td>+0.2818</td></tr>
+<tr><th scope="row">A</th><td><code>wsd0.2</code></td><td>0.0</td><td>0</td><td>0.00810</td><td>3.2973</td><td>+0.3715</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>The ranking is C &lt; B &lt; A.</strong> The gaps are 0.150 and
+0.090 nats, both far above the 0.008 noise floor, so the order is firm on one seed each.</div>
+
+<figure>
+<svg viewBox="0 0 900 450" width="100%" height="auto" role="img" aria-labelledby="figD-t figD-d" style="display:block">
+<title id="figD-t">The three learning-rate schedules and their final validation loss</title>
+<desc id="figD-d">Left: learning rate against training step for the three cells. A holds the peak rate from step zero then decays over the last fifth. B warms up over the first fifth, holds, then decays. C warms up for a tenth of training then decays linearly to zero. Right: final validation loss, best at the top. C scores 3.0579, B 3.2076 and A 3.2973; all three are well above the 2.9258 baseline shown as a dashed line.</desc>
+<rect width="900" height="450" fill="#101c17"/>
+<line x1="80" y1="40" x2="102" y2="40" stroke="#1fa87c" stroke-width="3"/>
+<text x="108" y="44" fill="#a5b9ac" font-size="12">A — wsd0.2, no warmup</text>
+<line x1="338" y1="40" x2="360" y2="40" stroke="#c77f32" stroke-width="3"/>
+<text x="366" y="44" fill="#a5b9ac" font-size="12">B — wsd0.2, 20% warmup</text>
+<line x1="596" y1="40" x2="618" y2="40" stroke="#8a6fd0" stroke-width="3"/>
+<text x="624" y="44" fill="#a5b9ac" font-size="12">C — linear, 10% warmup</text>
+<text x="80" y="76" fill="#e9f0eb" font-size="15" font-weight="650">The schedule shape</text>
+<line x1="80" y1="340.0" x2="440" y2="340.0" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="344.0" text-anchor="end" fill="#a5b9ac" font-size="11">0.000</text>
+<line x1="80" y1="265.3" x2="440" y2="265.3" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="269.3" text-anchor="end" fill="#a5b9ac" font-size="11">0.003</text>
+<line x1="80" y1="190.6" x2="440" y2="190.6" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="194.6" text-anchor="end" fill="#a5b9ac" font-size="11">0.006</text>
+<line x1="80" y1="115.9" x2="440" y2="115.9" stroke="#293d32" stroke-width="1"/>
+<text x="70" y="119.9" text-anchor="end" fill="#a5b9ac" font-size="11">0.009</text>
+<text x="80.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">0</text>
+<text x="260.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">4,687</text>
+<text x="440.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">9,375</text>
+<text x="260.0" y="384" text-anchor="middle" fill="#a5b9ac" font-size="12">Training step (9,375 total)</text>
+<text x="26" y="218.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 26 218.0)" text-anchor="middle">Learning rate</text>
+<polyline points="80.0,115.9 368.0,115.9 440.0,340.0" fill="none" stroke="#1fa87c" stroke-width="6" stroke-linejoin="round" opacity="0.95"><title>A: wsd0.2, no warmup, mean lr 0.00810</title></polyline>
+<polyline points="80.0,340.0 152.0,115.9 368.0,115.9 440.0,340.0" fill="none" stroke="#c77f32" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>B: wsd0.2, 20% warmup, mean lr 0.00720</title></polyline>
+<polyline points="80.0,340.0 116.0,115.9 440.0,340.0" fill="none" stroke="#8a6fd0" stroke-width="2.5" stroke-linejoin="round" opacity="0.95"><title>C: linear, 10% warmup, mean lr 0.00450</title></polyline>
+<text x="106.9" y="103.9" text-anchor="middle" fill="#1fa87c" font-size="13" font-weight="650">A</text>
+<text x="256.6" y="135.9" text-anchor="middle" fill="#c77f32" font-size="13" font-weight="650">B</text>
+<text x="287.4" y="219.7" text-anchor="middle" fill="#8a6fd0" font-size="13" font-weight="650">C</text>
+<text x="490" y="76" fill="#e9f0eb" font-size="15" font-weight="650">Final validation loss</text>
+<line x1="600.9" y1="100" x2="600.9" y2="322" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+<text x="600.9" y="92" text-anchor="middle" fill="#a5b9ac" font-size="11">baseline 2.9258</text>
+<line x1="600.9" y1="138" x2="677.2" y2="138" stroke="#8a6fd0" stroke-width="2" opacity="0.55"/>
+<circle cx="677.2" cy="138" r="8" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>C: 3.0579</title></circle>
+<text x="490" y="143" fill="#e9f0eb" font-size="13" font-weight="650">C</text>
+<text x="508" y="143" fill="#a5b9ac" font-size="12">linear, 10% warmup</text>
+<text x="691.2" y="143" fill="#e9f0eb" font-size="13" font-weight="650">3.0579</text>
+<line x1="600.9" y1="210" x2="763.7" y2="210" stroke="#c77f32" stroke-width="2" opacity="0.55"/>
+<circle cx="763.7" cy="210" r="8" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>B: 3.2076</title></circle>
+<text x="490" y="215" fill="#e9f0eb" font-size="13" font-weight="650">B</text>
+<text x="508" y="215" fill="#a5b9ac" font-size="12">wsd0.2, 20% warmup</text>
+<text x="777.7" y="215" fill="#e9f0eb" font-size="13" font-weight="650">3.2076</text>
+<line x1="600.9" y1="282" x2="815.6" y2="282" stroke="#1fa87c" stroke-width="2" opacity="0.55"/>
+<circle cx="815.6" cy="282" r="8" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>A: 3.2973</title></circle>
+<text x="490" y="287" fill="#e9f0eb" font-size="13" font-weight="650">A</text>
+<text x="508" y="287" fill="#a5b9ac" font-size="12">wsd0.2, no warmup</text>
+<text x="829.6" y="287" fill="#e9f0eb" font-size="13" font-weight="650">3.2973</text>
+<text x="586.0" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">2.9</text>
+<text x="643.8" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.0</text>
+<text x="701.6" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.1</text>
+<text x="759.3" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.2</text>
+<text x="817.1" y="360" text-anchor="middle" fill="#a5b9ac" font-size="11">3.3</text>
+<line x1="586" y1="332" x2="846" y2="332" stroke="#293d32" stroke-width="1"/>
+<text x="716.0" y="384" text-anchor="middle" fill="#a5b9ac" font-size="12">Validation loss (lower is better)</text>
+</svg>
+<figcaption>Left: the three schedules, learning rate against training step. A and B share
+the same plateau and the same final decay, so A is drawn as a wider band beneath B where
+they coincide; A is distinct only at the start, where it jumps straight to the peak with no
+warmup. Right: the final validation loss of each cell, measured from the 2.9258
+baseline.</figcaption>
+</figure>
+
+<p>Two things explain the order.</p>
+<ul>
+<li><strong>The ranking follows the mean learning rate, inversely.</strong> A averages
+0.00810 and is worst, B averages 0.00720, C averages 0.00450 and is best. At a peak rate
+already three times the default, with ten times the default weight decay, the schedule that
+spends the least time near that peak wins. <code>wsd</code> loses here precisely because
+holding the peak is what it is for.</li>
+<li><strong>No warmup is the single worst choice.</strong> A jumps to 0.009 at step zero and
+finishes 0.090 behind B, which runs the same schedule with a 20% warmup. That is the same
+effect part 1 and part 2 found from the other direction: a raised learning rate needs a
+longer warmup, and the pair table rated learning rate × warmup the strongest co-varying
+pair in the study.</li>
+</ul>
+<p class="scope">All three cells land well above the 2.9258 baseline, by 0.13 to 0.37. The
+schedule choice softens an over-driven recipe but does not repair it; no schedule here
+recovers what the raised learning rate and weight decay cost. One seed per cell, so the
+ordering is read against the 0.008 floor but the exact depths are one draw each.</p>
+</section>
+
 <section id="precision">
-<h2>Part 3: how far the KV cache can be quantized</h2>
+<h2>Part 4: how far the KV cache can be quantized</h2>
 <p>The third exercise is precision. The attention keys and values that fill the KV cache are stored in low precision, and we measure how much validation loss rises. The lane sweeps three independent axes:</p>
 <ul>
 <li><strong>Bit width and format.</strong> 8-bit uses fp8 (e4m3). Four bits and below use a symmetric integer grid: int4 (15 levels), int3 (7 levels) and int2 (a ternary grid). Keys and values can be set independently, so an asymmetric split such as 16-bit keys with 4-bit values, or the reverse, is one setting.</li>
@@ -647,8 +760,9 @@ depth of these bowls from one draw into an interval.</p>
 <p>Each part of this page is one defconfig in knlp:</p>
 <pre class="kbd" style="display:block;padding:12px;overflow:auto;">make defconfig-cs312-problem-1      # part 1: one knob at a time (17 runs)
 make defconfig-cs312-problem-1b     # part 2: pairs that co-vary
-make defconfig-cs312-kv-quant       # part 3: post-hoc curve + trained frontier
-make defconfig-cs312-kv-quant-sweep # part 3: stress-cell sweep
+make defconfig-cs312-problem-1c     # part 3: the learning-rate schedule
+make defconfig-cs312-kv-quant       # part 4: post-hoc curve + trained frontier
+make defconfig-cs312-kv-quant-sweep # part 4: stress-cell sweep
 make</pre>
 <p>The fake-quant hook quantizes keys and values at the attention input with a straight-through estimator, so the same code path serves both post-hoc evaluation and quantization-aware training. The post-hoc curve runs as an evaluation-only pass over a trained checkpoint; the frontier and the sweep train each cell from scratch. All runs evaluate on the same 1,000 validation sequences, and each training cell takes roughly ten to fifteen minutes on one H100.</p>
 <p class="scope">All numbers here are for the d8 course model at the course training horizon, on the course validation set, with one seed per cell outside the three baseline repeats. They are a clean study on one small decoder, not a claim about every model scale or every serving stack. The hyperparameter conclusions are tied to this fixed token budget in particular: the batch-size penalty is a step-count penalty, and it would read differently at a fixed step count. The KV-quantization results (keys more fragile than values, the granularity gap, and the value of query-key normalization) agree with the larger-model work elsewhere on this site, but each remains model-specific until measured again.</p>
