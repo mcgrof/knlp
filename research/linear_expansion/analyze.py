@@ -139,13 +139,63 @@ def freeze(out, source, data_sha):
     return frozen
 
 
+def plot(out, path):
+    """Curve CE of each arm's selected setting versus tokens and time."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    tuning = json.loads((out / "TUNING.json").read_text())
+    colors = {"D": "#0072B2", "F1": "#E69F00", "F2": "#D55E00", "A4": "#009E73"}
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
+    target = screen(out)["target_ce"]
+    for arm, s in tuning["selected"].items():
+        curve, times = tuned_record(out / "tuning", s["trial"])
+        ups = sorted(u for u in curve if u >= 64)
+        label = f"{arm} (LR {s['lr']:g}, x{s['multiplier']:g})"
+        axes[0].plot(
+            [u * 2048 / 1e6 for u in ups],
+            [curve[u] for u in ups],
+            marker="o",
+            ms=3,
+            lw=2,
+            color=colors[arm],
+            label=label,
+        )
+        axes[1].plot(
+            [times[u] for u in ups],
+            [curve[u] for u in ups],
+            marker="o",
+            ms=3,
+            lw=2,
+            color=colors[arm],
+            label=label,
+        )
+    for ax in axes:
+        ax.axhline(target, color="#888888", lw=1, ls="--")
+        ax.grid(alpha=0.3)
+    axes[0].set_xlabel("continuation tokens (millions)")
+    axes[1].set_xlabel("training-work seconds")
+    axes[0].set_ylabel("curve CE (nat/token)")
+    axes[0].legend(frameon=False)
+    fig.suptitle(
+        "Tuned continuation from one warm checkpoint, seed 75201 (dashed: target)"
+    )
+    fig.tight_layout()
+    fig.savefig(path, dpi=300)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("what", choices=["screen", "paired", "freeze"])
+    p.add_argument("what", choices=["screen", "paired", "freeze", "plot"])
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--source")
     p.add_argument("--data-sha")
     a = p.parse_args()
+    if a.what == "plot":
+        plot(a.out, a.out / "tuning-curves.png")
+        return
     if a.what == "freeze":
         result = freeze(a.out, a.source, a.data_sha)
     else:
