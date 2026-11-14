@@ -48,7 +48,11 @@ Env:
 
 Set CARTRIDGES_GRAD_CKPT=1 and LOAD_BF16=1 on a 24 GiB card, as for
 training. Prints one ``GNS,<name>,<B_simple>,<se>,<B_keys>,<B_values>,
-<loss>`` line per checkpoint and ``GNS_DONE`` at the end.
+<loss>,adam=<B_adam>,adam_k=,adam_v=`` line per checkpoint and
+``GNS_DONE`` at the end. B_adam is the Adam-preconditioned scale (see
+``adam_scale``): it weights each coordinate by 1/sqrt(E[g^2]), so a few
+layers with a large persistent gradient no longer collapse the estimate
+the way they do in the raw B_simple.
 """
 
 import json
@@ -136,6 +140,36 @@ def noise_scale(gsum, sq, groups):
     return {"G2": g2, "trSigma": s, "B_simple": b, "B_se": se}
 
 
+def adam_scale(total, ss, n, eps=1e-12):
+    """Adam-preconditioned noise scale over a set of coordinates.
+
+    B_simple = tr(Sigma)/|G|^2 is derived for plain gradient descent, so a
+    layer with a very large mean gradient dominates it even though Adam caps
+    that layer's step near the learning rate. The preconditioned noise scale
+    of McCandlish et al. (their per-coordinate generalization) is
+    tr(P Sigma)/(G^T P G); with Adam the preconditioner is
+    P = diag(1/sqrt(v)), v the second moment of the per-sequence gradient.
+    We estimate v_i = E[g_i^2] = ss_i/n and form the paper's unbiased G_i^2
+    and Sigma_ii per coordinate, then weight both by 1/sqrt(v_i). This is the
+    batch the problem wants as Adam actually sees it. No jackknife SE: the
+    per-group coordinate sums are not kept.
+
+    total: [P] sum of the per-sequence gradients over n sequences.
+    ss:    [P] sum of the per-sequence squared gradients over n sequences.
+    """
+    total = total.double()
+    ss = ss.double()
+    mean = total / n
+    second = ss / n  # E[g_i^2] ~ Adam's v_i
+    msq = mean.square()
+    g2 = (n * msq - second) / (n - 1)  # unbiased G_i^2
+    var = (second - msq) * n / (n - 1)  # unbiased Sigma_ii
+    w = 1.0 / (second.sqrt() + eps)  # Adam preconditioner 1/sqrt(v_i)
+    den = float((w * g2).sum())
+    num = float((w * var).sum())
+    return num / den if den > 0 else float("inf")
+
+
 def measure(model, dataset, picks, cache, n_layers):
     params_k = list(cache.trainable_keys)
     params_v = list(cache.trainable_values)
@@ -149,6 +183,10 @@ def measure(model, dataset, picks, cache, n_layers):
     sq_v = torch.zeros(K, n_layers, dtype=torch.float64)
     acc_k = torch.zeros(sum(shape_k), dtype=torch.float32, device=DEVICE)
     acc_v = torch.zeros(sum(shape_v), dtype=torch.float32, device=DEVICE)
+    # Per-coordinate sum of squared gradients over all K sequences, for the
+    # Adam-preconditioned scale. These never reset across groups.
+    ssk = torch.zeros(sum(shape_k), dtype=torch.float32, device=DEVICE)
+    ssv = torch.zeros(sum(shape_v), dtype=torch.float32, device=DEVICE)
     losses, secs = [], []
     for i, b in enumerate(picks):
         t0 = time.time()
@@ -187,6 +225,8 @@ def measure(model, dataset, picks, cache, n_layers):
         )
         acc_k += fk
         acc_v += fv
+        ssk += fk.square()
+        ssv += fv.square()
         if (i + 1) % per == 0:
             g = (i + 1) // per - 1
             gk[g] = acc_k.cpu()
@@ -202,6 +242,10 @@ def measure(model, dataset, picks, cache, n_layers):
                 f"{secs[-1]:.2f}s/seq peak={torch.cuda.max_memory_allocated() / 2**30:.1f}GiB",
                 flush=True,
             )
+    ssk = ssk.cpu()
+    ssv = ssv.cpu()
+    tot_k = gk.sum(0)
+    tot_v = gv.sum(0)
     res = {
         "loss_mean": float(np.mean(losses)),
         "sec_per_seq_median": float(np.median(secs[1:] or secs)),
@@ -211,14 +255,20 @@ def measure(model, dataset, picks, cache, n_layers):
         "values": noise_scale(gv, sq_v.sum(1), GROUPS),
         "per_layer": {"keys": [], "values": []},
     }
-    for kind, gs, sq, sizes in (
-        ("keys", gk, sq_k, shape_k),
-        ("values", gv, sq_v, shape_v),
+    res["all"]["B_adam"] = adam_scale(torch.cat([tot_k, tot_v]), torch.cat([ssk, ssv]), K)
+    res["keys"]["B_adam"] = adam_scale(tot_k, ssk, K)
+    res["values"]["B_adam"] = adam_scale(tot_v, ssv, K)
+    for kind, gs, sq, sizes, ss in (
+        ("keys", gk, sq_k, shape_k, ssk),
+        ("values", gv, sq_v, shape_v, ssv),
     ):
         off = 0
         for layer, n in enumerate(sizes):
             r = noise_scale(gs[:, off : off + n], sq[:, layer], GROUPS)
-            res["per_layer"][kind].append({"B_simple": r["B_simple"], "G2": r["G2"]})
+            ba = adam_scale(gs[:, off : off + n].sum(0), ss[off : off + n], K)
+            res["per_layer"][kind].append(
+                {"B_simple": r["B_simple"], "G2": r["G2"], "B_adam": ba}
+            )
             off += n
     return res
 
@@ -278,7 +328,8 @@ def main():
         a, k_, v_ = r["all"], r["keys"], r["values"]
         print(
             f"GNS,{name},{a['B_simple']:.1f},{a['B_se']:.1f},"
-            f"{k_['B_simple']:.1f},{v_['B_simple']:.1f},{r['loss_mean']:.6f}",
+            f"{k_['B_simple']:.1f},{v_['B_simple']:.1f},{r['loss_mean']:.6f},"
+            f"adam={a['B_adam']:.1f},adam_k={k_['B_adam']:.1f},adam_v={v_['B_adam']:.1f}",
             flush=True,
         )
         Path(OUT_JSON).parent.mkdir(parents=True, exist_ok=True)
