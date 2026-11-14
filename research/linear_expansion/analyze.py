@@ -29,6 +29,8 @@ def crossing(curve, times, target):
 
 
 def tuned_record(tuning_dir, trial):
+    # Continuations to 512 share the directory of their 128-update trial.
+    trial = trial.removesuffix("-to512")
     record = json.loads((tuning_dir / trial / "RECORD.json").read_text())
     curve = {c["update"]: c["ce"] for c in record["curve"]}
     times = {c["update"]: c["training_seconds"] for c in record["curve"]}

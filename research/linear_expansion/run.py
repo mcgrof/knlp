@@ -635,8 +635,8 @@ def profile(data, out):
     return result
 
 
-def tune(data, checkpoints, out):
-    """Same nine settings per arm; two survive 128 updates, run to 512."""
+def tune(data, checkpoints, out, lrs=LRS, multipliers=MULTIPLIERS):
+    """Same settings per arm; two survive 128 updates, run to 512."""
     warm_info = warm_start(data, checkpoints, TUNE_SEED, out)
     warm = load_warm(checkpoints, TUNE_SEED)
     arrays = Arrays(data, TUNE_SEED)
@@ -646,9 +646,10 @@ def tune(data, checkpoints, out):
     path = out / "TUNING.json"
     if path.exists():
         summary = json.loads(path.read_text())
+    summary["grid"] = {"lrs": list(lrs), "multipliers": list(multipliers)}
     for arm in ARMS:
-        for lr in LRS:
-            for mult in MULTIPLIERS:
+        for lr in lrs:
+            for mult in multipliers:
                 jid = f"tune-{arm}-lr{lr:g}-m{mult:g}"
                 if jid in summary["trials"]:
                     continue
@@ -681,7 +682,10 @@ def tune(data, checkpoints, out):
         trials = [
             (t["score128"], t["training_seconds"], k)
             for k, t in summary["trials"].items()
-            if t["arm"] == arm and t["score128"] is not None
+            if t["arm"] == arm
+            and t.get("score128") is not None
+            and t["lr"] in lrs
+            and t["multiplier"] in multipliers
         ]
         keep = [k for _, _, k in sorted(trials)[:2]]
         for jid in keep:
@@ -718,9 +722,13 @@ def tune(data, checkpoints, out):
             }
             write(path, summary)
         finals = [
-            (t["score512"], t["training_seconds"], k)
-            for k, t in summary["trials"].items()
-            if t["arm"] == arm and t.get("score512") is not None
+            (
+                summary["trials"][k + "-to512"]["score512"],
+                summary["trials"][k + "-to512"]["training_seconds"],
+                k + "-to512",
+            )
+            for k in keep
+            if summary["trials"][k + "-to512"].get("score512") is not None
         ]
         finals.sort()
         best = finals[0]
@@ -733,8 +741,9 @@ def tune(data, checkpoints, out):
             "lr": chosen["lr"],
             "multiplier": chosen["multiplier"],
             "score512": chosen["score512"],
-            "boundary_limited": chosen["lr"] in (LRS[0], LRS[-1])
-            or chosen["multiplier"] in (MULTIPLIERS[0], MULTIPLIERS[-1]),
+            "boundary_limited": chosen["lr"] in (min(lrs), max(lrs))
+            or chosen["multiplier"] in (min(multipliers), max(multipliers)),
+            "shortlist": keep,
         }
         write(path, summary)
     return summary
@@ -875,6 +884,8 @@ def main():
     p.add_argument("--checkpoints", type=Path)
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--frozen", type=Path)
+    p.add_argument("--lrs", type=float, nargs="+", default=list(LRS))
+    p.add_argument("--multipliers", type=float, nargs="+", default=list(MULTIPLIERS))
     a = p.parse_args()
     setup()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -886,7 +897,7 @@ def main():
     if a.phase == "profile":
         profile(a.data, a.out)
     elif a.phase == "tune":
-        tune(a.data, a.checkpoints, a.out)
+        tune(a.data, a.checkpoints, a.out, tuple(a.lrs), tuple(a.multipliers))
     elif a.phase == "confirm":
         confirm(a.data, a.checkpoints, a.out, a.frozen)
     elif a.phase == "smoke":
