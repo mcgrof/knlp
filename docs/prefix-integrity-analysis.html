@@ -687,8 +687,10 @@
           compression), so this isolates each method's intrinsic quality loss;
           the query-dependence that drives the contract verdict is a design
           property, measured separately. Four-probe needle set, one budget;
-          KL is the robust signal. PyramidKV and Ada-KV hit KVPress API mismatches
-          on this build and are design-classified only. Data in
+          KL is the robust signal. PyramidKV failed on this KVPress build, and
+          the runner built Ada-KV without the scorer press it wraps, so both
+          are design-classified only here; the runner now wraps Ada-KV around
+          SnapKV. Data in
           <code class="inline">prefix-integrity-20260630/kvpress_drift/</code>.
         </p>
       </div>
@@ -1062,6 +1064,28 @@
   --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
   --target-tokens <span class="num">4096</span> --out-dir <span class="str">cart</span>
 <span class="nm">bash</span> experiments/pia_codec_table.sh   <span class="cm"># none/int8/fp8 + k16v8, k8v16, k16v4, ...</span></pre>
+        </div>
+        <p class="text-slate-300 leading-8 mb-3">
+          The measured-drift table runs the real KVPress presses through
+          <a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/prefix_integrity/kvpress_drift.py"><code class="inline">kvpress_drift.py</code></a>.
+          <code class="inline">--compression-ratio 0.75</code> removes about 75%
+          of the context cache. <code class="inline">--presses</code> takes a
+          comma-separated subset; without it, every press in the installed
+          KVPress runs. The default eager attention matches the table and is
+          required by H2O; AdaKV in KVPress 0.5.5 refuses eager attention, so
+          run it separately with <code class="inline">--attn-implementation sdpa</code>.
+          The output records the KVPress, Transformers and PyTorch versions and
+          the attention backend, because press behavior changes between releases.
+        </p>
+        <div class="code-block">
+          <div class="code-title">KVPress measured drift &mdash; GPU</div>
+<pre><span class="nm">pip</span> install kvpress transformers accelerate
+<span class="nm">python</span> -m routing.prefix_integrity.kvpress_drift \
+  --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
+  --compression-ratio <span class="num">0.75</span> --out <span class="str">kvpress.json</span>
+<span class="nm">python</span> -m routing.prefix_integrity.kvpress_drift \
+  --presses <span class="str">adakv</span> --attn-implementation <span class="str">sdpa</span> \
+  --out <span class="str">kvpress_adakv.json</span>   <span class="cm"># AdaKV needs sdpa in KVPress 0.5.5</span></pre>
         </div>
         <p class="text-slate-300 leading-8 mb-3">
           The decisive same-prefix, many-query reuse replay picks its
