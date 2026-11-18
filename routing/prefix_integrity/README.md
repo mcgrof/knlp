@@ -107,6 +107,26 @@ python -m routing.prefix_integrity.kvpress_drift \
   --out kvpress.json
 ```
 
+`--presses adakv,snapkv` runs only the named presses; without it, every press
+in the installed KVPress runs. The output records the KVPress, Transformers,
+PyTorch and Accelerate versions and the attention implementation, because
+press behavior changes between KVPress releases.
+
+AdaKV is not a scorer. KVPress's `AdaKVPress` wraps a scorer press and moves
+its budget between heads, so the runner builds it around SnapKV. AdaKV masks
+evicted keys at attention time and keeps them in the cache, so the cache
+length after an AdaKV press is still the full context.
+
+The default `--attn-implementation eager` matches the published table, and
+H2O needs it because it reads attention weights. AdaKV in KVPress 0.5.5
+refuses eager attention, so run it on its own:
+
+```bash
+python -m routing.prefix_integrity.kvpress_drift \
+  --presses adakv --attn-implementation sdpa \
+  --out kvpress_adakv.json
+```
+
 `--compression-ratio 0.75` removes about 75% of the context cache. Compression
 happens before each question is appended, so this measures query-independent
 quality loss. Cross-query prefix reuse needs a separate cache-contract replay.

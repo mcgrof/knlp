@@ -18,8 +18,13 @@ import json
 import os
 
 
-def build_context(n_filler=180, needle_pos=90):
-    """A long distractor context with one needle fact and a magic number."""
+def build_context(n_filler=180, needle_pos=None):
+    """A long distractor context with one needle fact and a magic number.
+
+    The needle goes in the middle of the filler unless needle_pos is given.
+    """
+    if needle_pos is None:
+        needle_pos = n_filler // 2
     filler = [
         f"Record {i}: routine log entry with no salient facts, item code "
         f"{1000 + i}, status nominal, reviewed by desk {i % 7}."
@@ -128,7 +133,17 @@ def run(model, tok, press_ctor, context, device, compression_ratio):
 
 
 def load_presses():
-    """Import the KVPress presses that exist in this install."""
+    """Return press factories, keyed by name, for presses in this install.
+
+    Each factory takes ``compression_ratio`` and returns a press. AdaKV is
+    not a scorer: KVPress's ``AdaKVPress`` wraps a scorer press and moves
+    its budget between heads. It takes no ``compression_ratio`` itself, so
+    it is built around SnapKV, as in the Ada-KV paper's Ada-SnapKV.
+
+    AdaKV keeps every key in the cache and masks evicted keys at attention
+    time, so the cache length does not shrink. A kept-token count read from
+    the cache length is therefore always the full context for AdaKV.
+    """
     import kvpress
 
     names = [
@@ -139,13 +154,34 @@ def load_presses():
         ("tova", "TOVAPress"),
         ("h2o", "ObservedAttentionPress"),
         ("pyramidkv", "PyramidKVPress"),
-        ("adakv", "AdaKVPress"),
     ]
     out = {}
     for key, cls in names:
         p = getattr(kvpress, cls, None)
         if p is not None:
             out[key] = p
+
+    ada = getattr(kvpress, "AdaKVPress", None)
+    snap = getattr(kvpress, "SnapKVPress", None)
+    if ada is not None and snap is not None:
+
+        def adakv(compression_ratio):
+            return ada(snap(compression_ratio=compression_ratio))
+
+        out["adakv"] = adakv
+    return out
+
+
+def library_versions():
+    """Record the library versions that set each press's behavior."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {}
+    for name in ("kvpress", "transformers", "torch", "accelerate"):
+        try:
+            out[name] = version(name)
+        except PackageNotFoundError:
+            out[name] = None
     return out
 
 
@@ -154,8 +190,27 @@ def main():
     ap.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     ap.add_argument("--compression-ratio", type=float, default=0.75)
     ap.add_argument("--n-filler", type=int, default=180)
+    ap.add_argument(
+        "--presses",
+        default="",
+        help="comma-separated press names to run (default: all available)",
+    )
+    ap.add_argument(
+        "--attn-implementation",
+        default="eager",
+        help="Transformers attention backend; eager matches the published "
+        "table and H2O needs it, while AdaKV in KVPress 0.5.5 needs sdpa",
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+
+    presses = load_presses()
+    if args.presses:
+        wanted = [p.strip() for p in args.presses.split(",") if p.strip()]
+        unknown = sorted(set(wanted) - set(presses))
+        if unknown:
+            ap.error(f"unknown or unavailable presses: {unknown}")
+        presses = {k: presses[k] for k in wanted}
 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -164,13 +219,14 @@ def main():
     print(f"loading {args.model} on {device}", flush=True)
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, torch_dtype=torch.bfloat16, attn_implementation="eager"
+        args.model,
+        torch_dtype=torch.bfloat16,
+        attn_implementation=args.attn_implementation,
     ).to(device)
     model.eval()
 
     context = build_context(n_filler=args.n_filler)
     ctx_len = tok(context, return_tensors="pt").input_ids.shape[1]
-    presses = load_presses()
     print(
         f"context {ctx_len} tokens; presses: {sorted(presses)}; "
         f"compression_ratio={args.compression_ratio}",
@@ -179,6 +235,8 @@ def main():
 
     out = {
         "model": args.model,
+        "attn_implementation": model.config._attn_implementation,
+        "versions": library_versions(),
         "context_tokens": int(ctx_len),
         "compression_ratio": args.compression_ratio,
         "methods": {},
