@@ -111,6 +111,72 @@ def qk_prefix_scores(model, full_ids, prefix_len, obs, device):
 
 
 @torch.no_grad()
+def qk_block_mass(model, full_ids, prefix_len, row_lo, blocks, device):
+    """Block-level twin of the kill-test's attention_block_mass(), without
+    output_attentions. Scores attention FROM rows [row_lo, T) onto each prefix
+    block: per layer, softmax over the causal support, mean over the scoring
+    rows, max over heads, sum over the block's tokens; then max across layers.
+    Returns a CPU [len(blocks)] tensor. Only [Hq, rows, T] is ever resident,
+    which is what lets the kill-test run on a 40GB card."""
+    layers = model.model.layers
+    cfg = model.config
+    Hq = cfg.num_attention_heads
+    Hkv = getattr(cfg, "num_key_value_heads", Hq)
+    D = getattr(cfg, "head_dim", None) or cfg.hidden_size // Hq
+    scale = D**-0.5
+    T = full_ids.shape[1]
+    nb = len(blocks)
+    lo_idx = torch.tensor([lo for lo, _ in blocks], device=device)
+    hi_idx = torch.tensor([hi for _, hi in blocks], device=device)
+    contribs = {}
+
+    def layer_hook(idx):
+        attn = model.model.layers[idx].self_attn
+
+        def hook(mod, args, kwargs):
+            x = (args[0] if args else kwargs["hidden_states"])[0].float()
+            pe = kwargs["position_embeddings"]
+            cos, sin = pe[0][0].float(), pe[1][0].float()
+            q = x @ attn.q_proj.weight.float().t()
+            if attn.q_proj.bias is not None:
+                q = q + attn.q_proj.bias.float()
+            k = x @ attn.k_proj.weight.float().t()
+            if attn.k_proj.bias is not None:
+                k = k + attn.k_proj.bias.float()
+            q = _apply_rope(q.view(T, Hq, D).transpose(0, 1), cos, sin)
+            k = _apply_rope(k.view(T, Hkv, D).transpose(0, 1), cos, sin)
+            q_rows = q[:, row_lo:, :]  # [Hq, rows, D]
+            k_rep = k.repeat_interleave(Hq // Hkv, dim=0)  # [Hq, T, D]
+            logits = torch.einsum("hod,htd->hot", q_rows, k_rep) * scale
+            row_pos = torch.arange(row_lo, T, device=logits.device)
+            key_idx = torch.arange(T, device=logits.device)
+            future = key_idx.unsqueeze(0) > row_pos.unsqueeze(1)
+            logits = logits.masked_fill(future.unsqueeze(0), float("-inf"))
+            w = torch.softmax(logits, dim=-1)
+            col = w[:, :, :prefix_len].mean(dim=1).max(dim=0).values  # [prefix]
+            cs = torch.cat([torch.zeros(1, device=col.device), col.cumsum(0)])
+            contribs[idx] = (cs[hi_idx] - cs[lo_idx]).cpu()  # block sums, [nb]
+
+        return hook
+
+    handles = [
+        model.model.layers[i].self_attn.register_forward_pre_hook(
+            layer_hook(i), with_kwargs=True
+        )
+        for i in range(len(layers))
+    ]
+    try:
+        model(full_ids, use_cache=False)
+    finally:
+        for h in handles:
+            h.remove()
+    score = torch.zeros(nb)
+    for idx in contribs:
+        score = torch.maximum(score, contribs[idx])
+    return score
+
+
+@torch.no_grad()
 def qk_top_tokens(model, full_ids, prefix_len, keep_tokens, obs, device):
     """Top-`keep_tokens` prefix positions by qk_prefix_scores (a set)."""
     s = qk_prefix_scores(model, full_ids, prefix_len, obs, device)

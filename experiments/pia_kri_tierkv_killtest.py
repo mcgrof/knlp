@@ -213,6 +213,7 @@ def eval_prefix(
     seeds,
     obs,
     pidx,
+    selector="attn",
 ):
     ctx_text, qa = build_context(tok, needles, context_len)
     ctx_ids = tok(ctx_text, return_tensors="pt").input_ids.to(device)
@@ -244,33 +245,49 @@ def eval_prefix(
             a_full, return_tensors="pt", add_special_tokens=False
         ).input_ids.to(device)
 
-        # query-aware attention (last obs query rows -> blocks). Free the
-        # big [H,T,T] attention tensor before allocating the oracle's, so
-        # only one such tensor is ever resident (output_attentions is ~26GB
-        # at 4K; two at once OOMs an 80GB card).
         full = torch.cat([ctx_ids, q_ids], dim=1)
-        with torch.no_grad():
-            o = model(full, output_attentions=True, use_cache=False)
-        quest = attention_block_mass(
-            o.attentions,
-            blocks,
-            prefix_len,
-            prefix_len + q_ids.shape[1] - obs,
-            prefix_len + q_ids.shape[1],
-        )
-        del o, full
-        torch.cuda.empty_cache()
-
-        # oracle: attention from the generated answer rows
         fao = torch.cat([ctx_ids, q_ids, ans_ids], dim=1)
-        with torch.no_grad():
-            oo = model(fao, output_attentions=True, use_cache=False)
         arow_lo = prefix_len + q_ids.shape[1]
-        oracle = attention_block_mass(
-            oo.attentions, blocks, prefix_len, arow_lo, fao.shape[1]
-        )
-        del oo, fao
-        torch.cuda.empty_cache()
+        if selector == "qk":
+            # cheap q.k path: same reduction as attention_block_mass, computed
+            # per layer in a pre-hook so [layers, H, T, T] is never resident.
+            from pia_qk_selector import qk_block_mass
+
+            quest = qk_block_mass(
+                model,
+                full,
+                prefix_len,
+                prefix_len + q_ids.shape[1] - obs,
+                blocks,
+                device,
+            )
+            oracle = qk_block_mass(model, fao, prefix_len, arow_lo, blocks, device)
+            del full, fao
+        else:
+            # query-aware attention (last obs query rows -> blocks). Free the
+            # big [H,T,T] attention tensor before allocating the oracle's, so
+            # only one such tensor is ever resident (output_attentions is ~26GB
+            # at 4K; two at once OOMs an 80GB card).
+            with torch.no_grad():
+                o = model(full, output_attentions=True, use_cache=False)
+            quest = attention_block_mass(
+                o.attentions,
+                blocks,
+                prefix_len,
+                prefix_len + q_ids.shape[1] - obs,
+                prefix_len + q_ids.shape[1],
+            )
+            del o, full
+            torch.cuda.empty_cache()
+
+            # oracle: attention from the generated answer rows
+            with torch.no_grad():
+                oo = model(fao, output_attentions=True, use_cache=False)
+            oracle = attention_block_mass(
+                oo.attentions, blocks, prefix_len, arow_lo, fao.shape[1]
+            )
+            del oo, fao
+            torch.cuda.empty_cache()
 
         methods = {}
         methods["fifo_old"] = choose_blocks(
@@ -342,7 +359,11 @@ def run(args):
     tok = AutoTokenizer.from_pretrained(args.model)
     model = (
         AutoModelForCausalLM.from_pretrained(
-            args.model, torch_dtype=torch.bfloat16, attn_implementation="eager"
+            args.model,
+            torch_dtype=torch.bfloat16,
+            # qk recomputes its own scores in a pre-hook and never needs the
+            # attention weights, so sdpa avoids the [H, T, T] score matrix too.
+            attn_implementation="eager" if args.selector == "attn" else "sdpa",
         )
         .to(device)
         .eval()
@@ -369,6 +390,7 @@ def run(args):
             seeds,
             args.obs,
             p,
+            selector=args.selector,
         )
         all_rows.extend(rows)
 
@@ -444,6 +466,13 @@ def main():
     ap.add_argument("--repeats", type=int, default=6)
     ap.add_argument("--n-random-seeds", type=int, default=4)
     ap.add_argument("--obs", type=int, default=10)
+    ap.add_argument(
+        "--selector",
+        choices=["attn", "qk"],
+        default="attn",
+        help="quest/oracle scorer: attn=output_attentions (needs ~2x26GB at 4K), "
+        "qk=cheap q.k pre-hook path (fits a 40GB card)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--output-dir", required=True)
     run(ap.parse_args())
