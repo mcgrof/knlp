@@ -10,11 +10,15 @@ format: five fixed demonstrations from the train split, then
 
 Calibration examples come from the validation split and screening examples
 from the test split, so the two sets share no question. Each set is a seeded
-permutation prefix. Calibration texts are the prompt plus the correct
-answer, matching how EMO computes router statistics for expert selection.
+permutation prefix, so a larger --n-screen keeps the smaller set as its
+first items. Calibration texts are the prompt plus the correct answer,
+matching how EMO computes router statistics for expert selection. With
+--n-train, labelled examples for fitting a domain selector are taken from
+the train split, excluding the demonstrations, and written to train.json.
 
 Usage:
     arc_data.py OUT_DIR [--revision REV] [--n-cal 8] [--n-screen 64]
+        [--n-train 0]
 """
 
 import argparse
@@ -61,6 +65,7 @@ def main():
     ap.add_argument("--revision", default=None)
     ap.add_argument("--n-cal", type=int, default=8)
     ap.add_argument("--n-screen", type=int, default=64)
+    ap.add_argument("--n-train", type=int, default=0)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -76,14 +81,20 @@ def main():
     shots = [ds["train"][i] for i in tr[:N_SHOTS]]
     prefix = build_prefix(shots)
 
+    shot_ids = {s["id"] for s in shots}
+
     def take(split, n):
         idx = list(range(len(ds[split])))
         random.Random(args.seed).shuffle(idx)
         out = []
         for i in idx:
+            if n == 0:
+                break
             ex = ds[split][i]
             # Keep four- and five-choice items with a resolvable answer key.
             if ex["answerKey"] not in ex["choices"]["label"]:
+                continue
+            if ex["id"] in shot_ids:
                 continue
             out.append(to_item(ex, prefix))
             if len(out) == n:
@@ -92,11 +103,14 @@ def main():
 
     cal = take("validation", args.n_cal)
     screen = take("test", args.n_screen)
+    train = take("train", args.n_train)
     shot_q = {s["question"] for s in shots}
     cal_q = {c["context"] for c in cal}
     scr_q = {c["context"] for c in screen}
+    trn_q = {c["context"] for c in train}
     assert not (cal_q & scr_q), "calibration and screen overlap"
-    for s in cal + screen:
+    assert not (trn_q & (cal_q | scr_q)), "train overlaps calibration or screen"
+    for s in cal + screen + train:
         assert not any(q in s["context"].split(prefix, 1)[1] for q in shot_q)
 
     cal_texts = [c["context"] + c["choices"][c["gold"]] for c in cal]
@@ -105,6 +119,8 @@ def main():
         "calibration.json": {"items": cal, "texts": cal_texts},
         "screen.json": {"items": screen},
     }
+    if train:
+        files["train.json"] = {"items": train}
     hashes = {}
     for fn, obj in files.items():
         p = os.path.join(args.out_dir, fn)
@@ -120,6 +136,7 @@ def main():
         "shot_ids": [s["id"] for s in shots],
         "calibration": {"split": "validation", "ids": [c["id"] for c in cal]},
         "screen": {"split": "test", "ids": [c["id"] for c in screen]},
+        "train": {"split": "train", "ids": [c["id"] for c in train]},
         "file_sha256": hashes,
         "split_sizes": {k: len(v) for k, v in ds.items()},
     }
