@@ -147,7 +147,8 @@ def main():
     ap.add_argument("--max-net-losses", type=int, default=4)
     args = ap.parse_args()
 
-    F = torch.load(args.features)
+    # Our own features file; it holds the runtime identity, not only tensors.
+    F = torch.load(args.features, weights_only=False)
     with open(args.matrix) as f:
         M = json.load(f)
     classes = [m for m in M["models"] if m != "full"]
