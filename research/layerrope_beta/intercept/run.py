@@ -104,7 +104,7 @@ def wave(root, checkpoints, jobs, workers, max_seconds):
                     "--checkpoints",
                     checkpoints,
                     "--max-seconds",
-                    max_seconds,
+                    str(max_seconds),
                 ],
                 cwd=REPO,
                 env={**os.environ, "OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"},
