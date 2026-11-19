@@ -33,13 +33,16 @@ def _apply_rope(t, cos, sin):
 
 
 @torch.no_grad()
-def qk_prefix_scores(model, full_ids, prefix_len, obs, device):
-    """Per-prefix-token attention score from the last `obs` query rows.
+def _row_prefix_attention(model, full_ids, prefix_len, row_lo, reduce):
+    """Run one forward and reduce each layer's attention onto the prefix.
 
-    full_ids is [1, T] = prefix tokens then query tokens. Returns a
-    [prefix_len] float tensor: for each prefix position, the max over layers of
-    (max over heads of the mean over the observation-window rows of the
-    softmax-normalized q.k attention onto that position).
+    A pre-hook on every attention module recomputes that layer's q for rows
+    [row_lo, T) and k for all T positions, applies RoPE, and takes the softmax
+    over the full causal support. That matches the model's post-softmax
+    attention[:, rows, :] exactly, but only materializes [Hq, rows, T], never
+    [Hq, T, T]. The hook then slices the prefix, takes the mean over the rows
+    and the max over heads, and passes the [prefix_len] vector to `reduce`.
+    Returns the elementwise max of the reduced vectors across layers.
     """
     layers = model.model.layers
     cfg = model.config
@@ -48,95 +51,15 @@ def qk_prefix_scores(model, full_ids, prefix_len, obs, device):
     D = getattr(cfg, "head_dim", None) or cfg.hidden_size // Hq
     scale = D**-0.5
     T = full_ids.shape[1]
-    q_lo = T - obs  # observation-window rows (last obs positions, all in query)
-    score = torch.zeros(prefix_len, device=device)
-
-    # one forward, a pre-hook on every layer, each computing its own contribution
-    # into `contribs` and keeping only a [prefix] vector resident.
     contribs = {}
 
     def layer_hook(idx):
-        attn = model.model.layers[idx].self_attn
+        attn = layers[idx].self_attn
 
         def hook(mod, args, kwargs):
             x = (args[0] if args else kwargs["hidden_states"])[0].float()  # [T, d]
             pe = kwargs["position_embeddings"]
             cos, sin = pe[0][0].float(), pe[1][0].float()  # [T, D]
-            Wq, Wk = attn.q_proj.weight.float(), attn.k_proj.weight.float()
-            bq = attn.q_proj.bias
-            bk = attn.k_proj.bias
-            q = x @ Wq.t()
-            if bq is not None:
-                q = q + bq.float()
-            k = x @ Wk.t()
-            if bk is not None:
-                k = k + bk.float()
-            q = q.view(T, Hq, D).transpose(0, 1)  # [Hq, T, D]
-            k = k.view(T, Hkv, D).transpose(0, 1)  # [Hkv, T, D]
-            q = _apply_rope(q, cos, sin)
-            k = _apply_rope(k, cos, sin)
-            q_obs = q[:, q_lo:, :]  # [Hq, obs, D]  (only the obs rows are scored)
-            rep = Hq // Hkv
-            k_rep = k.repeat_interleave(rep, dim=0)  # [Hq, T, D]
-            # attention FROM the obs rows over ALL keys, then softmax over the
-            # full causal support and slice the prefix -- matches the model's
-            # post-softmax attention[:, obs_rows, :prefix_len] exactly, but only
-            # materializes [Hq, obs, T] (cheap at 16-32K), never [Hq, T, T].
-            logits = torch.einsum("hod,htd->hot", q_obs, k_rep) * scale
-            obs_pos = torch.arange(q_lo, T, device=logits.device)  # abs positions
-            key_idx = torch.arange(T, device=logits.device)
-            future = key_idx.unsqueeze(0) > obs_pos.unsqueeze(1)  # [obs, T]
-            logits = logits.masked_fill(future.unsqueeze(0), float("-inf"))
-            w = torch.softmax(logits, dim=-1)  # over the full causal support
-            col = w[:, :, :prefix_len].mean(dim=1)  # [Hq, prefix] mean over obs
-            contribs[idx] = col.max(dim=0).values  # [prefix] max over heads
-
-        return hook
-
-    handles = [
-        model.model.layers[i].self_attn.register_forward_pre_hook(
-            layer_hook(i), with_kwargs=True
-        )
-        for i in range(len(layers))
-    ]
-    try:
-        model(full_ids, use_cache=False)
-    finally:
-        for h in handles:
-            h.remove()
-
-    for idx in contribs:
-        score = torch.maximum(score, contribs[idx])
-    return score
-
-
-@torch.no_grad()
-def qk_block_mass(model, full_ids, prefix_len, row_lo, blocks, device):
-    """Block-level twin of the kill-test's attention_block_mass(), without
-    output_attentions. Scores attention FROM rows [row_lo, T) onto each prefix
-    block: per layer, softmax over the causal support, mean over the scoring
-    rows, max over heads, sum over the block's tokens; then max across layers.
-    Returns a CPU [len(blocks)] tensor. Only [Hq, rows, T] is ever resident,
-    which is what lets the kill-test run on a 40GB card."""
-    layers = model.model.layers
-    cfg = model.config
-    Hq = cfg.num_attention_heads
-    Hkv = getattr(cfg, "num_key_value_heads", Hq)
-    D = getattr(cfg, "head_dim", None) or cfg.hidden_size // Hq
-    scale = D**-0.5
-    T = full_ids.shape[1]
-    nb = len(blocks)
-    lo_idx = torch.tensor([lo for lo, _ in blocks], device=device)
-    hi_idx = torch.tensor([hi for _, hi in blocks], device=device)
-    contribs = {}
-
-    def layer_hook(idx):
-        attn = model.model.layers[idx].self_attn
-
-        def hook(mod, args, kwargs):
-            x = (args[0] if args else kwargs["hidden_states"])[0].float()
-            pe = kwargs["position_embeddings"]
-            cos, sin = pe[0][0].float(), pe[1][0].float()
             q = x @ attn.q_proj.weight.float().t()
             if attn.q_proj.bias is not None:
                 q = q + attn.q_proj.bias.float()
@@ -150,19 +73,16 @@ def qk_block_mass(model, full_ids, prefix_len, row_lo, blocks, device):
             logits = torch.einsum("hod,htd->hot", q_rows, k_rep) * scale
             row_pos = torch.arange(row_lo, T, device=logits.device)
             key_idx = torch.arange(T, device=logits.device)
-            future = key_idx.unsqueeze(0) > row_pos.unsqueeze(1)
+            future = key_idx.unsqueeze(0) > row_pos.unsqueeze(1)  # [rows, T]
             logits = logits.masked_fill(future.unsqueeze(0), float("-inf"))
-            w = torch.softmax(logits, dim=-1)
+            w = torch.softmax(logits, dim=-1)  # over the full causal support
             col = w[:, :, :prefix_len].mean(dim=1).max(dim=0).values  # [prefix]
-            cs = torch.cat([torch.zeros(1, device=col.device), col.cumsum(0)])
-            contribs[idx] = (cs[hi_idx] - cs[lo_idx]).cpu()  # block sums, [nb]
+            contribs[idx] = reduce(col)
 
         return hook
 
     handles = [
-        model.model.layers[i].self_attn.register_forward_pre_hook(
-            layer_hook(i), with_kwargs=True
-        )
+        layers[i].self_attn.register_forward_pre_hook(layer_hook(i), with_kwargs=True)
         for i in range(len(layers))
     ]
     try:
@@ -170,10 +90,43 @@ def qk_block_mass(model, full_ids, prefix_len, row_lo, blocks, device):
     finally:
         for h in handles:
             h.remove()
-    score = torch.zeros(nb)
-    for idx in contribs:
-        score = torch.maximum(score, contribs[idx])
+
+    score = None
+    for idx in sorted(contribs):
+        c = contribs[idx]
+        score = c if score is None else torch.maximum(score, c)
     return score
+
+
+@torch.no_grad()
+def qk_prefix_scores(model, full_ids, prefix_len, obs, device):
+    """Per-prefix-token attention score from the last `obs` query rows.
+
+    full_ids is [1, T] = prefix tokens then query tokens. Returns a
+    [prefix_len] float tensor: for each prefix position, the max over layers of
+    (max over heads of the mean over the observation-window rows of the
+    softmax-normalized q.k attention onto that position).
+    """
+    T = full_ids.shape[1]
+    return _row_prefix_attention(model, full_ids, prefix_len, T - obs, lambda c: c)
+
+
+@torch.no_grad()
+def qk_block_mass(model, full_ids, prefix_len, row_lo, blocks, device):
+    """Block-level twin of the kill-test's attention_block_mass(), without
+    output_attentions. Scores attention FROM rows [row_lo, T) onto each prefix
+    block: per layer, softmax over the causal support, mean over the scoring
+    rows, max over heads, sum over the block's tokens; then max across layers.
+    Returns a CPU [len(blocks)] tensor. Only [Hq, rows, T] is ever resident,
+    which is what lets the kill-test run on a 40GB card."""
+    lo_idx = torch.tensor([lo for lo, _ in blocks], device=device)
+    hi_idx = torch.tensor([hi for _, hi in blocks], device=device)
+
+    def block_sums(col):
+        cs = torch.cat([torch.zeros(1, device=col.device), col.cumsum(0)])
+        return (cs[hi_idx] - cs[lo_idx]).cpu()  # [len(blocks)]
+
+    return _row_prefix_attention(model, full_ids, prefix_len, row_lo, block_sums)
 
 
 @torch.no_grad()
