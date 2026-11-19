@@ -90,6 +90,20 @@ policy gets its own resident and switch passes:
                 a pool go to --unpooled-pool. A bound, not a policy a
                 server could run.
 
+Full-model fallback. A pool named "full" (full_pool.py, every expert)
+is the full model as one more target. With --abstain-domain D the
+selector gets one more centroid, from D's training questions, and a
+request nearest to it is sent to "full" (abstain_eval.py's known-other
+rule). A delta switch into "full" releases each layer's delta buffers
+as soon as the layer is built, so the resident pool, the full model
+being built and two layers in flight fit in GPU memory. A switch out of
+"full" reads nothing: every pool is a subset of the full model, so a
+background thread gathers the new pool from the resident weights. The
+resident pass cannot hold the four pools and the full model at once;
+it runs in two parts, the pools' requests with the pools resident and
+the full model's requests with it resident, and its wall time is the
+sum.
+
 The offline record of every stream holds all three sequences' switch
 counts and served quality.
 
@@ -100,7 +114,9 @@ Usage:
         --domain arc TEST.json --domain health TEST.json ... \\
         [--run-lengths 1 4 16] [--lookahead 0 2] [--decode 16] \\
         [--modes full delta --delta-root DIR] \\
-        [--policies selector debounce oracle]
+        [--policies selector debounce oracle] \\
+        [--pool full FULL.json DIR --abstain-domain politics \\
+         --unpooled-pool full]
 """
 
 import argparse
@@ -126,6 +142,7 @@ from common import (  # noqa: E402
 from domain_selector import question  # noqa: E402
 from layer_offload import block_device_of, evict, sectors_read  # noqa: E402
 from pool_switch import (  # noqa: E402
+    GatherLoader,
     Pool,
     PoolLoader,
     run_request,
@@ -135,6 +152,7 @@ from pool_switch import (  # noqa: E402
 )
 
 KEY = "correct_per_char"
+FULL = "full"
 # PyTorch allocator counters read after each request.
 ALLOC_KEYS = ("num_device_alloc", "num_device_free", "num_alloc_retries")
 
@@ -199,6 +217,10 @@ def main():
     ap.add_argument("--seed", type=int, default=20261119)
     ap.add_argument("--unpooled-pool", default="history")
     ap.add_argument(
+        "--abstain-domain",
+        help="unpooled domain whose centroid sends requests to the 'full' pool",
+    )
+    ap.add_argument(
         "--policies",
         nargs="+",
         default=["selector", "debounce"],
@@ -240,9 +262,19 @@ def main():
         m: {d: {r["id"]: r[KEY] for r in M[m][d]["rows"]} for d in domains} for m in M
     }
 
-    # Selector: cosine-nearest centroid of the mean input embedding.
+    # Selector: cosine-nearest centroid of the mean input embedding. The
+    # full model, if it is a target, is picked only through the centroid of
+    # --abstain-domain.
+    if FULL in classes:
+        assert args.abstain_domain, "pool 'full' needs --abstain-domain"
+    labels = [c for c in classes if c != FULL]
+    cdoms = list(labels)
+    if args.abstain_domain:
+        assert FULL in classes, "--abstain-domain needs a pool named 'full'"
+        labels.append(FULL)
+        cdoms.append(args.abstain_domain)
     C = []
-    for c in classes:
+    for c in cdoms:
         X = F["domains"][c]["train"]["emb"][: args.n_train].double()
         assert len(X) == args.n_train, (c, len(X))
         X = X / X.norm(dim=1, keepdim=True)
@@ -252,7 +284,7 @@ def main():
 
     def pick_of(emb):
         e = emb.double()
-        return classes[int((C @ (e / e.norm())).argmax())]
+        return labels[int((C @ (e / e.norm())).argmax())]
 
     offline = {}
     for d in domains:
@@ -274,14 +306,24 @@ def main():
     model, tok = load_model(args.model_dir)
     nl = len(model.model.layers)
     full_gate = [x.mlp.gate.weight.data.clone() for x in model.model.layers]
-    emb_w = model.model.embed_tokens.weight
     with open(pools[classes[0]][0]) as f:
         apply_pool(model, json.load(f))
     res["fused_configs"] = install_fused(model, ConfigTable(args.configs)).source
     gc.collect()
     torch.cuda.empty_cache()
+    # The pruned model's weights are scattered over the allocator segments
+    # of the full model's load, which then stay reserved (about 27 GB).
+    # A round trip through host memory packs them into new segments.
+    res["reserved_before_compact"] = torch.cuda.memory_reserved()
+    model.to("cpu")
+    gc.collect()
+    torch.cuda.empty_cache()
+    model.to("cuda")
+    torch.cuda.synchronize()
+    res["reserved_after_compact"] = torch.cuda.memory_reserved()
+    emb_w = model.model.embed_tokens.weight
     names = [(stacked_name(li, "w13"), stacked_name(li, "w2")) for li in range(nl)]
-    files, refs, pjs = {}, {}, {}
+    files, refs, pjs, host = {}, {}, {}, {}
     for c in classes:
         with open(pools[c][0]) as f:
             pj = json.load(f)
@@ -299,29 +341,26 @@ def main():
             w13.append(t[names[li][0]])
             w2.append(t[names[li][1]])
         gates = [full_gate[li][keep[li], :].contiguous() for li in range(nl)]
-        refs[c] = Pool(gates, w13, w2)
-    # The applied first pool must equal its packed copy.
-    for li, layer in enumerate(model.model.layers):
-        r = refs[classes[0]]
-        assert torch.equal(layer.mlp.w13.data, r.w13[li]), li
-        assert torch.equal(layer.mlp.w2.data, r.w2[li]), li
-        assert torch.equal(layer.mlp.gate.weight.data, r.gate[li]), li
-    # Drop setup names that still hold GPU copies of two pools.
-    del full_gate, r, w13, w2, t, gates
-    # The reference pools wait in pinned host memory. They move to the GPU
-    # only for the resident passes, so switch passes run with the memory a
-    # one-pool server would have. Router rows are small and stay on the GPU.
-    host = {
-        c: Pool(
-            refs[c].gate,
-            [t.cpu().pin_memory() for t in refs[c].w13],
-            [t.cpu().pin_memory() for t in refs[c].w2],
-        )
-        for c in classes
-    }
+        if c == classes[0]:
+            # The applied first pool must equal its packed copy.
+            for li, layer in enumerate(model.model.layers):
+                assert torch.equal(layer.mlp.w13.data, w13[li]), li
+                assert torch.equal(layer.mlp.w2.data, w2[li]), li
+                assert torch.equal(layer.mlp.gate.weight.data, gates[li]), li
+        # The reference pools wait in host memory (pinned, except the full
+        # model's, which is only read by the excluded byte check). They move
+        # to the GPU only for the resident passes, so switch passes run with
+        # the memory a one-pool server would have. Router rows are small and
+        # stay on the GPU.
+        pin = (lambda x: x.pin_memory()) if c != FULL else (lambda x: x)
+        host[c] = Pool(gates, [pin(x.cpu()) for x in w13], [pin(x.cpu()) for x in w2])
+        del w13, w2, t, gates
+        torch.cuda.empty_cache()
+    del full_gate
+    refs.update(host)
 
-    def refs_to_gpu():
-        for c in classes:
+    def refs_to_gpu(group=None):
+        for c in group or classes:
             h = host[c]
             refs[c] = Pool(
                 h.gate,
@@ -352,12 +391,13 @@ def main():
             for y in classes:
                 if x == y:
                     continue
-                dfiles[x, y] = [
-                    os.path.join(
-                        args.delta_root, f"{x}-to-{y}", f"layer{li}.safetensors"
-                    )
-                    for li in range(nl)
-                ]
+                if x != FULL:  # out of the full model nothing is read
+                    dfiles[x, y] = [
+                        os.path.join(
+                            args.delta_root, f"{x}-to-{y}", f"layer{li}.safetensors"
+                        )
+                        for li in range(nl)
+                    ]
                 maps = []
                 for li in range(nl):
                     rx = pjs[x]["layers"][str(li)]["routed"]
@@ -386,15 +426,18 @@ def main():
         def post(li, ts):
             ov_y, ov_x, dl, n = didx[x, y][li]
             n13, n2 = names[li]
-            d13, d2 = ts[n13], ts[n2]
-            assert d13.shape[0] == n and d2.shape[0] == n, (x, y, li)
             hy = host[y]
             w13 = torch.empty(hy.w13[li].shape, dtype=hy.w13[li].dtype, device="cuda")
             w2 = torch.empty(hy.w2[li].shape, dtype=hy.w2[li].dtype, device="cuda")
             w13[ov_y] = src[li][n13][ov_x]
             w2[ov_y] = src[li][n2][ov_x]
-            w13[dl] = d13
-            w2[dl] = d2
+            if ts is None:  # a gather: the new pool is a subset of the old
+                assert n == 0, (x, y, li)
+            else:
+                d13, d2 = ts[n13], ts[n2]
+                assert d13.shape[0] == n and d2.shape[0] == n, (x, y, li)
+                w13[dl] = d13
+                w2[dl] = d2
             return {n13: w13, n2: w2}
 
         return post
@@ -438,13 +481,20 @@ def main():
             out[d] = o
         return out
 
-    def run_pass(stream, assign, look, ref, mode="full", gc_mode="collect"):
-        """look None = resident pass. ref: resident records, for checks."""
+    def run_pass(stream, assign, look, ref, mode="full", gc_mode="collect", only=None):
+        """look None = resident pass. ref: resident records, for checks.
+
+        only: for a resident pass, run only the requests assigned to these
+        pools (the others are left out of the records).
+        """
         recs, loads = [], []
         evicted_before = sectors_read(dev)[0]
         cur_name = assign[0]
+        if only is not None:
+            cur_name = next(a for a in assign if a in only)
         cur_loader = None
         if look is not None:
+            mem_point(f"switch pass start, first target {cur_name}")
             for p in files[cur_name]:
                 evict(p)
             cur_loader = PoolLoader(files[cur_name], args.inflight)
@@ -517,6 +567,8 @@ def main():
         auto["on"] = True
         t_pass0 = clock()
         for i, (d, k) in enumerate(stream):
+            if only is not None and assign[i] not in only:
+                continue
             rq = reqs[d][k]
             want = assign[i]
             rec = {"i": i, "domain": d, "id": rq["id"], "pool": want}
@@ -529,7 +581,11 @@ def main():
                     for j in range(i, min(i + look + 1, len(stream))):
                         nxt = assign[j]
                         if nxt != cur_name:
-                            if mode == "delta":
+                            gather = mode == "delta" and cur_name == FULL
+                            if gather:
+                                fl = []
+                                post = assembler(cur_name, nxt, cur_loader.tensors)
+                            elif mode == "delta":
                                 fl = dfiles[cur_name, nxt]
                                 post = assembler(cur_name, nxt, cur_loader.tensors)
                             else:
@@ -539,8 +595,18 @@ def main():
                                 for p in fl:
                                     evict(p)
 
-                            def start(fl=fl, post=post):
-                                ld = PoolLoader(fl, args.inflight, post)
+                            def start(fl=fl, post=post, gather=gather, nxt=nxt):
+                                if gather:
+                                    ld = GatherLoader(nl, post)
+                                else:
+                                    # Into the full model, free each delta
+                                    # layer once built (GPU memory).
+                                    ld = PoolLoader(
+                                        fl,
+                                        args.inflight,
+                                        post,
+                                        release_after_post=nxt == FULL,
+                                    )
                                 ld.start()
                                 return ld
 
@@ -578,9 +644,11 @@ def main():
                                 bad.append(li)
                         fb = [
                             li
-                            for li, x in enumerate(ld.loads)
-                            if x.fallback
-                            or not x.copier_class.lower().startswith("dmab")
+                            for li, x in enumerate(ld.load_info)
+                            if x["fallback"]
+                            or not x["copier_class"]
+                            .lower()
+                            .startswith(("dmab", "gath"))
                         ]
                         torch.cuda.synchronize()
                         return bad, fb
@@ -603,7 +671,8 @@ def main():
                         if mode == "delta":
                             # The delta buffers are no longer needed.
                             for x in new.loads:
-                                x.close()
+                                if x is not None:
+                                    x.close()
                             new.loads = [None] * len(new.loads)
                         # The assembler holds the old pool's tensors.
                         new.post = None
@@ -697,13 +766,52 @@ def main():
             "memory": mem_snapshot(),
         }
 
+    def mem_point(tag):
+        """Record and print GPU memory at a stage (a diagnostic)."""
+        free, total = torch.cuda.mem_get_info()
+        m = mem_snapshot()
+        m["free"], m["outside"] = free, total - free - m["reserved"]
+        res.setdefault("memory_points", []).append([tag, m])
+        print(
+            f"mem {tag}: allocated {m['allocated'] / 1e9:.2f} reserved "
+            f"{m['reserved'] / 1e9:.2f} outside {m['outside'] / 1e9:.2f} "
+            f"free {free / 1e9:.2f} GB",
+            flush=True,
+        )
+
+    def run_resident(stream, assign):
+        """The resident pass. The four pools and the full model do not fit
+        in GPU memory together, so with the full model as a target the pass
+        runs in two parts, each with its targets resident, and its records
+        are merged in request order; the wall time is the sum."""
+        groups = [[c for c in classes if c != FULL]]
+        if FULL in set(assign):
+            groups.append([FULL])
+        recs, infos = [], []
+        for g in groups:
+            if not any(a in g for a in assign):
+                continue
+            refs_to_gpu(g)
+            mem_point(f"resident {'+'.join(g)} loaded")
+            r, info = run_pass(stream, assign, None, None, only=set(g))
+            refs_to_host()
+            mem_point(f"resident {'+'.join(g)} released")
+            recs += r
+            infos.append(info)
+        recs.sort(key=lambda r: r["i"])
+        assert [r["i"] for r in recs] == list(range(len(stream)))
+        info = dict(infos[0])
+        for k in ("wall_s", "wall_with_harness_s", "check_s", "between_s"):
+            info[k] = sum(x[k] for x in infos)
+        info["parts"] = infos
+        return recs, info
+
     # Warm-up: untimed, a short stream through every pass type.
     n_items = {d: len(reqs[d]) for d in domains}
     warm = make_stream(domains, n_items, 1, args.seed - 1)[:12]
     wa = [reqs[d][k]["pick"] for d, k in warm]
-    refs_to_gpu()
-    wref, _ = run_pass(warm, wa, None, None)
-    refs_to_host()
+    mem_point("setup done")
+    wref, _ = run_resident(warm, wa)
     for mode in args.modes:
         for g in args.gc:
             run_pass(warm, wa, max(args.lookahead), wref, mode, g)
@@ -738,9 +846,7 @@ def main():
             key = lambda m, q, g: (  # noqa: E731
                 f"{pol}/{m}-Q{q}" + ("-nogc" if g == "none" else "")
             )
-            refs_to_gpu()
-            ref, info = run_pass(stream, seq, None, None)
-            refs_to_host()
+            ref, info = run_resident(stream, seq)
             st["passes"][f"{pol}/resident"] = {"info": info, "rows": ref}
             combos = [
                 (m, q, g) for m in args.modes for q in args.lookahead for g in args.gc
