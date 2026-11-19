@@ -61,10 +61,11 @@ def main():
     from fused_moe import ConfigTable, install_fused
 
     model, tok = load_model(args.model_dir)
+    # Read the expert counts before the fused block replaces the MoE.
+    moe0 = model.model.layers[0].mlp
+    routed = moe0.num_experts - moe0.num_shared_experts
     install_fused(model, ConfigTable(args.configs))
     layers = model.model.layers
-    moe0 = layers[0].mlp
-    routed = moe0.num_experts - moe0.num_shared_experts
     emb_w = model.model.embed_tokens.weight
     cap = {}
     stop_at = [None]
