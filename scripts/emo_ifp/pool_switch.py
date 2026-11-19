@@ -96,15 +96,20 @@ def set_pool(model, pool):
 class PoolLoader:
     """Read one file per layer, in order, from a background thread."""
 
-    def __init__(self, files, inflight=2, post=None):
+    def __init__(self, files, inflight=2, post=None, release_after_post=False):
         self.files = files
         self.inflight = inflight
         # post(i, tensors) -> tensors runs in the loader thread per layer
         self.post = post
+        # With a post step, close each file's load as soon as its layer is
+        # built, so its buffers do not wait for the whole switch.
+        self.release_after_post = release_after_post and post is not None
         n = len(files)
         self.events = [threading.Event() for _ in range(n)]
         self.tensors = [None] * n
         self.loads = [None] * n
+        # Per layer: did the copier fall back, and which copier ran.
+        self.load_info = [None] * n
         self.t_ready = [None] * n
         self.err = None
 
@@ -131,6 +136,13 @@ class PoolLoader:
                 i, ld = pending.popleft()
                 ts = ld.wait()
                 self.tensors[i] = self.post(i, ts) if self.post else ts
+                self.load_info[i] = {
+                    "fallback": ld.fallback,
+                    "copier_class": ld.copier_class,
+                }
+                if self.release_after_post:
+                    ld.close()
+                    ld = ts = None
                 self.loads[i] = ld
                 self.t_ready[i] = time.perf_counter()
                 self.events[i].set()
@@ -155,6 +167,47 @@ class PoolLoader:
         for ld in self.loads:
             if ld is not None:
                 ld.close()
+        self.tensors = None
+        self.loads = None
+
+
+class GatherLoader:
+    """PoolLoader's interface for a switch that reads nothing.
+
+    When the new pool is a subset of the resident one, a background
+    thread builds each layer with post(i, {}) from the resident weights
+    alone, as a delta switch with an empty delta would.
+    """
+
+    def __init__(self, n, post):
+        self.post = post
+        self.events = [threading.Event() for _ in range(n)]
+        self.tensors = [None] * n
+        self.loads = [None] * n
+        self.load_info = [{"fallback": False, "copier_class": "gather"}] * n
+        self.t_ready = [None] * n
+        self.err = None
+
+    def start(self):
+        self.t0 = time.perf_counter()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        try:
+            for i in range(len(self.events)):
+                self.tensors[i] = self.post(i, None)
+                self.t_ready[i] = time.perf_counter()
+                self.events[i].set()
+        except Exception as exc:  # surfaced to the waiting request
+            self.err = exc
+            for e in self.events:
+                e.set()
+
+    wait_layer = PoolLoader.wait_layer
+    join = PoolLoader.join
+
+    def close(self):
         self.tensors = None
         self.loads = None
 
