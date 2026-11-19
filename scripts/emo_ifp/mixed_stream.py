@@ -27,15 +27,28 @@ Passes, for each stream:
 
     resident    all pools stay in GPU memory; a request runs on its
                 pool with no I/O (the reference)
-    switch-QJ   one pool is resident. Before each request the scheduler
+    MODE-QJ     one pool is resident. Before each request the scheduler
                 looks at that request and the next J; if no load is in
                 flight and one of them needs another pool, it starts
-                loading the first such pool from its packed per-layer
-                files through the fastsafetensors io_uring DMA-BUF
-                copier, from a background thread, two files in flight.
-                A request whose pool is still loading waits, layer by
-                layer, for each file. When it finishes, its pool becomes
-                the resident one and the previous pool is released.
+                loading the first such pool through the fastsafetensors
+                io_uring DMA-BUF copier, from a background thread, two
+                files in flight. A request whose pool is still loading
+                waits, layer by layer, for each file. When it finishes,
+                its pool becomes the resident one and the previous pool
+                is released.
+
+Load modes (--modes):
+
+    full        read the new pool's packed per-layer files
+    delta       read only the routed experts of the new pool that the
+                resident pool lacks, from per-pair delta files
+                (--delta-root/FROM-to-TO/layerL.safetensors, packed from
+                delta_pool.py); as each layer arrives the loader thread
+                builds the new pool's stacked weights on the GPU from
+                the resident pool's copies and the loaded experts. The
+                delta buffers are released once the switch is done.
+
+The first pool of every switch pass is read in full before timing.
 
 The stream is saturated: requests run back to back, so a request J
 positions ahead is visible J requests early.
@@ -46,9 +59,17 @@ layer's loaded bytes equal the resident copy and no layer fell back to
 another reader. Device bytes read are recorded per pass.
 
 Measures: per request, the time to first token (TTFT) and total time,
-paired with the resident pass; per pass, the wall time of the stream
-(excluding the byte checks), the number of pool switches and, for
-switched requests, the lead time and the TTFT excess. Served quality is
+paired with the resident pass; per pass, the wall time of the stream,
+the number of pool switches and, for switched requests, the lead time
+and the TTFT excess. Three steps exist only for the test and are timed
+but left out of the wall time: the byte check of each load, the page
+cache eviction of the files about to be read (it guarantees a cold
+read) and a Python garbage-collection pass after each switch. The
+reference pools wait in pinned host memory during switch passes, so
+those passes run with the GPU memory of a one-pool server; the byte
+check copies each reference layer to the GPU to compare. The
+other steps between requests are timed one by one: starting a load,
+joining the loader thread and closing the released pool's loads. Served quality is
 read from the pool-by-domain matrix (pool_matrix.py) for the pool each
 request ran on; it is the same in every pass because the outputs are.
 
@@ -59,17 +80,21 @@ policy gets its own resident and switch passes:
     debounce    the resident pool, unless this request and the next one
                 both pick the same other pool; then that pool. This
                 needs one more request of visibility than the lookahead.
+    oracle      each request's own pool; requests from a domain without
+                a pool go to --unpooled-pool. A bound, not a policy a
+                server could run.
 
-The oracle sequence (each request's own pool; requests from a domain
-without a pool go to --unpooled-pool) is reported offline only: its
-switch count and served quality.
+The offline record of every stream holds all three sequences' switch
+counts and served quality.
 
 Usage:
     mixed_stream.py MODEL_DIR FEATURES.pt POOL_MATRIX.json OUT_DIR \\
         --configs TUNED.json \\
         --pool arc POOL.json PACKED_DIR --pool health ... \\
         --domain arc TEST.json --domain health TEST.json ... \\
-        [--run-lengths 1 4 16] [--lookahead 0 2] [--decode 16]
+        [--run-lengths 1 4 16] [--lookahead 0 2] [--decode 16] \\
+        [--modes full delta --delta-root DIR] \\
+        [--policies selector debounce oracle]
 """
 
 import argparse
@@ -97,7 +122,6 @@ from layer_offload import block_device_of, evict, sectors_read  # noqa: E402
 from pool_switch import (  # noqa: E402
     Pool,
     PoolLoader,
-    check_loaded,
     run_request,
     set_layer,
     set_pool,
@@ -157,7 +181,14 @@ def main():
     ap.add_argument("--inflight", type=int, default=2)
     ap.add_argument("--seed", type=int, default=20261119)
     ap.add_argument("--unpooled-pool", default="history")
-    ap.add_argument("--policies", nargs="+", default=["selector", "debounce"])
+    ap.add_argument(
+        "--policies",
+        nargs="+",
+        default=["selector", "debounce"],
+        choices=["selector", "debounce", "oracle"],
+    )
+    ap.add_argument("--modes", nargs="+", default=["full"], choices=["full", "delta"])
+    ap.add_argument("--delta-root")
     ap.add_argument("--limit", type=int, help="first N requests per stream (smoke)")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -168,6 +199,8 @@ def main():
 
     from fused_moe import ConfigTable, install_fused
 
+    if "delta" in args.modes and not args.delta_root:
+        sys.exit("--modes delta needs --delta-root")
     out_path = os.path.join(args.out_dir, "mixed-stream.json")
     pools = {name: (pj, pdir) for name, pj, pdir in args.pool}
     classes = list(pools)
@@ -224,10 +257,11 @@ def main():
     gc.collect()
     torch.cuda.empty_cache()
     names = [(stacked_name(li, "w13"), stacked_name(li, "w2")) for li in range(nl)]
-    files, refs = {}, {}
+    files, refs, pjs = {}, {}, {}
     for c in classes:
         with open(pools[c][0]) as f:
             pj = json.load(f)
+        pjs[c] = pj
         keep = [
             pj["layers"][str(li)]["routed"] + pj["layers"][str(li)]["shared"]
             for li in range(nl)
@@ -248,13 +282,98 @@ def main():
         assert torch.equal(layer.mlp.w13.data, r.w13[li]), li
         assert torch.equal(layer.mlp.w2.data, r.w2[li]), li
         assert torch.equal(layer.mlp.gate.weight.data, r.gate[li]), li
-    set_pool(model, refs[classes[0]])
-    del full_gate
-    gc.collect()
-    torch.cuda.empty_cache()
+    # Drop setup names that still hold GPU copies of two pools.
+    del full_gate, r, w13, w2, t, gates
+    # The reference pools wait in pinned host memory. They move to the GPU
+    # only for the resident passes, so switch passes run with the memory a
+    # one-pool server would have. Router rows are small and stay on the GPU.
+    host = {
+        c: Pool(
+            refs[c].gate,
+            [t.cpu().pin_memory() for t in refs[c].w13],
+            [t.cpu().pin_memory() for t in refs[c].w2],
+        )
+        for c in classes
+    }
+
+    def refs_to_gpu():
+        for c in classes:
+            h = host[c]
+            refs[c] = Pool(
+                h.gate,
+                [t.to("cuda") for t in h.w13],
+                [t.to("cuda") for t in h.w2],
+            )
+        torch.cuda.synchronize()
+
+    def refs_to_host():
+        # The model points at host tensors until a pass sets its pool; any
+        # stray use fails on the device check instead of reading freed memory.
+        for c in classes:
+            refs[c] = host[c]
+        set_pool(model, host[classes[0]])
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    refs_to_host()
     res["memory_after_setup"] = mem_snapshot()
+    res["free_after_setup"] = torch.cuda.mem_get_info()[0]
     dev = block_device_of(files[classes[0]][0])
     eos = tok.eos_token_id
+
+    # Delta files and index maps for every ordered pair of pools.
+    dfiles, didx = {}, {}
+    if "delta" in args.modes:
+        for x in classes:
+            for y in classes:
+                if x == y:
+                    continue
+                dfiles[x, y] = [
+                    os.path.join(
+                        args.delta_root, f"{x}-to-{y}", f"layer{li}.safetensors"
+                    )
+                    for li in range(nl)
+                ]
+                maps = []
+                for li in range(nl):
+                    rx = pjs[x]["layers"][str(li)]["routed"]
+                    ry = pjs[y]["layers"][str(li)]["routed"]
+                    pos_x = {e: k for k, e in enumerate(rx)}
+                    ov = [k for k, e in enumerate(ry) if e in pos_x]
+                    dl = [k for k, e in enumerate(ry) if e not in pos_x]
+                    dev_i = lambda v: torch.tensor(v, device="cuda")  # noqa: E731
+                    maps.append(
+                        (
+                            dev_i(ov),
+                            dev_i([pos_x[ry[k]] for k in ov]),
+                            dev_i(dl),
+                            len(dl),
+                        )
+                    )
+                didx[x, y] = maps
+        res["delta_file_bytes"] = {
+            f"{x}-to-{y}": sum(os.path.getsize(p) for p in v)
+            for (x, y), v in dfiles.items()
+        }
+
+    def assembler(x, y, src):
+        """Loader post-step: pool y's layer from pool x's tensors and a delta."""
+
+        def post(li, ts):
+            ov_y, ov_x, dl, n = didx[x, y][li]
+            n13, n2 = names[li]
+            d13, d2 = ts[n13], ts[n2]
+            assert d13.shape[0] == n and d2.shape[0] == n, (x, y, li)
+            hy = host[y]
+            w13 = torch.empty(hy.w13[li].shape, dtype=hy.w13[li].dtype, device="cuda")
+            w2 = torch.empty(hy.w2[li].shape, dtype=hy.w2[li].dtype, device="cuda")
+            w13[ov_y] = src[li][n13][ov_x]
+            w2[ov_y] = src[li][n2][ov_x]
+            w13[dl] = d13
+            w2[dl] = d2
+            return {n13: w13, n2: w2}
+
+        return post
 
     # Requests and live picks.
     reqs = {}
@@ -295,7 +414,7 @@ def main():
             out[d] = o
         return out
 
-    def run_pass(stream, assign, look, ref):
+    def run_pass(stream, assign, look, ref, mode="full"):
         """look None = resident pass. ref: resident records, for checks."""
         recs, loads = [], []
         evicted_before = sectors_read(dev)[0]
@@ -321,8 +440,24 @@ def main():
         torch.cuda.synchronize()
         s0 = sectors_read(dev)[0]
         inflight = None  # (name, loader)
-        check_s = 0.0
-        t_pass0 = time.perf_counter()
+        steps = dict.fromkeys(
+            ("check", "evict", "gc", "start", "join", "close", "record"), 0.0
+        )
+        clock = time.perf_counter
+        free_min = [torch.cuda.mem_get_info()[0]]
+
+        def timed(key, fn, *a):
+            t = clock()
+            try:
+                return fn(*a)
+            finally:
+                dt = clock() - t
+                steps[key] += dt
+                rec.setdefault("steps", {})[key] = (
+                    rec.get("steps", {}).get(key, 0.0) + dt
+                )
+
+        t_pass0 = clock()
         for i, (d, k) in enumerate(stream):
             rq = reqs[d][k]
             want = assign[i]
@@ -334,12 +469,30 @@ def main():
             else:
                 if inflight is None:
                     for j in range(i, min(i + look + 1, len(stream))):
-                        if assign[j] != cur_name:
-                            for p in files[assign[j]]:
-                                evict(p)
-                            ld = PoolLoader(files[assign[j]], args.inflight)
-                            ld.start()
-                            inflight = (assign[j], ld)
+                        nxt = assign[j]
+                        if nxt != cur_name:
+                            if mode == "delta":
+                                fl = dfiles[cur_name, nxt]
+                                post = assembler(cur_name, nxt, cur_loader.tensors)
+                            else:
+                                fl, post = files[nxt], None
+
+                            def evict_all(fl=fl):
+                                for p in fl:
+                                    evict(p)
+
+                            def start(fl=fl, post=post):
+                                ld = PoolLoader(fl, args.inflight, post)
+                                ld.start()
+                                return ld
+
+                            timed("evict", evict_all)
+                            ld = timed("start", start)
+                            # Only the loader may hold the assembler (and
+                            # through it the resident pool's tensors).
+                            post = start = None
+                            inflight = (nxt, ld)
+                            rec["load_started_for"] = j
                             break
                 if want != cur_name:
                     nm, ld = inflight
@@ -351,20 +504,60 @@ def main():
                         eos,
                         wait_hooks(model, ld, refs[want].gate, names),
                     )
-                    ld.join()
+                    timed("join", ld.join)
                     rec["lead_s"] = r["t_start"] - ld.t0
                     rec["load_s"] = ld.t_ready[-1] - ld.t0
-                    t0 = time.perf_counter()
-                    bad, fb = check_loaded(ld, refs[want], names)
-                    torch.cuda.synchronize()
-                    check_s += time.perf_counter() - t0
+
+                    def check(ld=ld):
+                        # Layer by layer against the host copy of the pool.
+                        h, bad = host[want], []
+                        for li, (n13, n2) in enumerate(names):
+                            ts = ld.tensors[li]
+                            if not (
+                                torch.equal(ts[n13], h.w13[li].to("cuda"))
+                                and torch.equal(ts[n2], h.w2[li].to("cuda"))
+                            ):
+                                bad.append(li)
+                        fb = [
+                            li
+                            for li, x in enumerate(ld.loads)
+                            if x.fallback
+                            or not x.copier_class.lower().startswith("dmab")
+                        ]
+                        torch.cuda.synchronize()
+                        return bad, fb
+
+                    bad, fb = timed("check", check)
                     loads.append(
-                        {"i": i, "pool": want, "bad_layers": bad, "fallback": fb}
+                        {
+                            "i": i,
+                            "pool": want,
+                            "source": cur_name,
+                            "mode": mode,
+                            "bad_layers": bad,
+                            "fallback": fb,
+                        }
                     )
-                    if cur_loader is not None:
-                        cur_loader.close()
+
+                    def close(old=cur_loader, new=ld):
+                        if old is not None:
+                            old.close()
+                        if mode == "delta":
+                            # The delta buffers are no longer needed.
+                            for x in new.loads:
+                                x.close()
+                            new.loads = [None] * len(new.loads)
+                        # The assembler holds the old pool's tensors.
+                        new.post = None
+
+                    timed("close", close)
                     cur_loader, cur_name, inflight = ld, want, None
-                    gc.collect()
+
+                    def collect():
+                        gc.collect()
+                        free_min[0] = min(free_min[0], torch.cuda.mem_get_info()[0])
+
+                    timed("gc", collect)
                 else:
                     r, lg = run_request(model, rq["ids"], args.decode, eos)
             rec.update(
@@ -374,14 +567,17 @@ def main():
                     "tokens": r["tokens"],
                 }
             )
+            t = clock()
             if ref is None:
                 rec["logits"] = lg.cpu()
             else:
                 rec["tokens_match"] = r["tokens"] == ref[i]["tokens"]
                 rec["logits_bitwise"] = bool(torch.equal(lg.cpu(), ref[i]["logits"]))
+            steps["record"] += clock() - t
             recs.append(rec)
         torch.cuda.synchronize()
-        wall = time.perf_counter() - t_pass0 - check_s
+        elapsed = clock() - t_pass0
+        harness = steps["check"] + steps["evict"] + steps["gc"]
         s1 = sectors_read(dev)[0]
         if inflight is not None:  # a load started for a request past the end
             inflight[1].join()
@@ -392,19 +588,29 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
         return recs, {
-            "wall_s": wall,
-            "check_s": check_s,
+            "wall_s": elapsed - harness,
+            "wall_with_harness_s": elapsed,
+            "check_s": steps["check"],
+            "steps_s": steps,
+            "between_s": elapsed - sum(r["total_s"] for r in recs),
             "device_bytes_read": (s1 - s0) * 512,
             "initial_load_bytes": (s0 - evicted_before) * 512,
             "loads": loads,
+            "mode": mode,
+            "lookahead": look,
+            "min_free_after_switch": free_min[0],
+            "memory": mem_snapshot(),
         }
 
     # Warm-up: untimed, a short stream through every pass type.
     n_items = {d: len(reqs[d]) for d in domains}
     warm = make_stream(domains, n_items, 1, args.seed - 1)[:12]
     wa = [reqs[d][k]["pick"] for d, k in warm]
+    refs_to_gpu()
     wref, _ = run_pass(warm, wa, None, None)
-    run_pass(warm, wa, max(args.lookahead), wref)
+    refs_to_host()
+    for mode in args.modes:
+        run_pass(warm, wa, max(args.lookahead), wref, mode)
 
     res["streams"] = {}
     for R in args.run_lengths:
@@ -429,23 +635,28 @@ def main():
             "passes": {},
         }
         res["streams"][str(R)] = st
-        assigns = {"selector": picks, "debounce": deb}
+        assigns = {"selector": picks, "debounce": deb, "oracle": oracle}
         med = statistics.median
         for pol in args.policies:
             seq = assigns[pol]
-            key = lambda q: f"{pol}/switch-Q{q}"  # noqa: E731
+            key = lambda m, q: f"{pol}/{m}-Q{q}"  # noqa: E731
+            refs_to_gpu()
             ref, info = run_pass(stream, seq, None, None)
+            refs_to_host()
             st["passes"][f"{pol}/resident"] = {"info": info, "rows": ref}
-            order = list(args.lookahead)
-            if args.run_lengths.index(R) % 2:
-                order = order[::-1]
-            for q in order:
-                rows, info = run_pass(stream, seq, q, ref)
-                st["passes"][key(q)] = {"info": info, "rows": rows}
+            combos = [(m, q) for m in args.modes for q in args.lookahead]
+            # Rotate the pass order across streams and policies.
+            rot = (args.run_lengths.index(R) + args.policies.index(pol)) % len(combos)
+            for m, q in combos[rot:] + combos[:rot]:
+                rows, info = run_pass(stream, seq, q, ref, m)
+                st["passes"][key(m, q)] = {"info": info, "rows": rows}
                 print(
-                    f"R={R} {pol} Q={q}: wall {info['wall_s']:.1f} s vs resident "
-                    f"{st['passes'][pol + '/resident']['info']['wall_s']:.1f} s, "
-                    f"{len(info['loads'])} loads",
+                    f"R={R} {pol} {m} Q={q}: wall {info['wall_s']:.1f} s "
+                    f"(with test steps {info['wall_with_harness_s']:.1f} s) vs "
+                    f"resident {st['passes'][pol + '/resident']['info']['wall_s']:.1f}"
+                    f" s, {len(info['loads'])} loads, min free "
+                    f"{info['min_free_after_switch'] / 1e9:.1f} GB, steps "
+                    + " ".join(f"{a}={b:.1f}" for a, b in info["steps_s"].items()),
                     flush=True,
                 )
             summ = {
@@ -455,8 +666,8 @@ def main():
                 "resident_ttft_ms_median": med(r["ttft_s"] for r in ref) * 1e3,
                 "quality": st["offline"][pol]["quality"],
             }
-            for q in args.lookahead:
-                p = st["passes"][key(q)]
+            for m, q in combos:
+                p = st["passes"][key(m, q)]
                 rows = p["rows"]
                 ex = [(a["ttft_s"] - b["ttft_s"]) * 1e3 for a, b in zip(rows, ref)]
                 sw = [e for e, r in zip(ex, rows) if r["switched"]]
@@ -480,6 +691,9 @@ def main():
                     "lead_ms_median": med(leads) if leads else None,
                     "load_ms_median": med(loads) if loads else None,
                     "device_bytes_read": p["info"]["device_bytes_read"],
+                    "wall_with_harness_s": p["info"]["wall_with_harness_s"],
+                    "steps_s": p["info"]["steps_s"],
+                    "between_s": p["info"]["between_s"],
                     "correct": all(
                         r["tokens_match"] and r["logits_bitwise"] for r in rows
                     )
@@ -493,7 +707,7 @@ def main():
                     and s_["throughput_loss"] <= 0.05
                     and (s_["switched_excess_ms_median"] or 0.0) <= limit
                 )
-                summ[f"switch-Q{q}"] = s_
+                summ[f"{m}-Q{q}"] = s_
             st.setdefault("summary", {})[pol] = summ
             print(json.dumps({R: {pol: summ}}, indent=1), flush=True)
             for r in ref:
