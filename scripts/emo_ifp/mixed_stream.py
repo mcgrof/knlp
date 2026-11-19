@@ -89,6 +89,8 @@ policy gets its own resident and switch passes:
     oracle      each request's own pool; requests from a domain without
                 a pool go to --unpooled-pool. A bound, not a policy a
                 server could run.
+    full        every request on the "full" pool: a server that keeps
+                the full model resident and never switches.
 
 Full-model fallback. A pool named "full" (full_pool.py, every expert)
 is the full model as one more target. With --abstain-domain D the
@@ -224,7 +226,7 @@ def main():
         "--policies",
         nargs="+",
         default=["selector", "debounce"],
-        choices=["selector", "debounce", "oracle"],
+        choices=["selector", "debounce", "oracle", "full"],
     )
     ap.add_argument("--modes", nargs="+", default=["full"], choices=["full", "delta"])
     ap.add_argument("--delta-root")
@@ -267,6 +269,8 @@ def main():
     # --abstain-domain.
     if FULL in classes:
         assert args.abstain_domain, "pool 'full' needs --abstain-domain"
+    if "full" in args.policies:
+        assert FULL in classes, "policy 'full' needs a pool named 'full'"
     labels = [c for c in classes if c != FULL]
     cdoms = list(labels)
     if args.abstain_domain:
@@ -824,6 +828,7 @@ def main():
         picks = [reqs[d][k]["pick"] for d, k in stream]
         oracle = [d if d in classes else args.unpooled_pool for d, _ in stream]
         deb = debounce(picks, picks[0])
+        allfull = [FULL] * len(stream)
         st = {
             "n": len(stream),
             "domain_switches": switches([d for d, _ in stream]),
@@ -835,11 +840,17 @@ def main():
                     ("oracle", oracle),
                     ("debounce", deb),
                 )
+                + ((("full", allfull),) if FULL in classes else ())
             },
             "passes": {},
         }
         res["streams"][str(R)] = st
-        assigns = {"selector": picks, "debounce": deb, "oracle": oracle}
+        assigns = {
+            "selector": picks,
+            "debounce": deb,
+            "oracle": oracle,
+            "full": allfull,
+        }
         med = statistics.median
         for pol in args.policies:
             seq = assigns[pol]
