@@ -79,3 +79,40 @@ than on a fast local GPU, because the containers' host CPUs limit kernel
 launches, so the gain is in wall time only. Upload the prepared run
 directory to the `knlp-runs` volume first; the app's docstring gives the
 commands.
+
+## Learning-rate bracketing
+
+The screen and confirmation hold each method's rate fixed, and both
+LayerRoPE arms use 0.01, the top of the earlier pilot grid. The LayerRoPE
+author's procedure tunes `a` and beta at a fixed rate, then brackets the
+rate of the chosen configuration and of every compared method.
+[bracket.py](bracket.py) does that second step for six rows: residual,
+mHC, and each LayerRoPE arm's `a = 0` row and screen winner.
+
+The ladder is `rate = start * 2**k`, starting from each row's earlier rate,
+with first `k` in {-1, 0, 1} on seed 77911 at the full 2,000 updates. The
+search extends one step past whichever edge is best, at most three times.
+A rate is bracketed only when both neighbours ran and are worse; a
+diverged or incomplete run counts as worse. Every row then trains seeds
+77912–77914 at its own best rate with the full confirmation measurements.
+A predecessor check reruns residual at 0.003 and LayerRoPE `a = 0` at 0.01
+on the earlier study's seeds 77311–77313.
+
+The rule, frozen in `PLAN.json` before training, is the same as above but
+compares each row at its own best rate. `analyze` writes `REPORT.json` with
+the bracket table, the confirmed rows, the paired contrasts and the
+predecessor check. The results are on the
+[LayerRoPE and mHC page](https://knlp.io/layerrope-mhc-quantization.html#learning-rate).
+
+```sh
+python -m research.layerrope_beta.intercept.bracket prepare \
+  --root /path/to/run --prepared /path/to/tinystories-prepared \
+  --checkpoints /path/to/checkpoints
+python -m research.layerrope_beta.intercept.bracket run \
+  --root /path/to/run --checkpoints /path/to/checkpoints --stage all
+python -m research.layerrope_beta.intercept.bracket analyze --root /path/to/run
+```
+
+`--stage` runs `predecessor`, `bracket` or `confirm` alone. The six
+brackets, three confirmation seeds and predecessor check took 47 runs and
+about 4.5 hours on one GPU.
