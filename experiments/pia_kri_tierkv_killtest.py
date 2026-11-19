@@ -361,9 +361,7 @@ def run(args):
         AutoModelForCausalLM.from_pretrained(
             args.model,
             torch_dtype=torch.bfloat16,
-            # qk recomputes its own scores in a pre-hook and never needs the
-            # attention weights, so sdpa avoids the [H, T, T] score matrix too.
-            attn_implementation="eager" if args.selector == "attn" else "sdpa",
+            attn_implementation=args.attn_implementation,
         )
         .to(device)
         .eval()
@@ -425,6 +423,8 @@ def run(args):
 
     result = {
         "model": args.model,
+        "selector": args.selector,
+        "attn_implementation": model.config._attn_implementation,
         "context_len": args.context_len,
         "block_size": args.block_size,
         "n_blocks": nb,
@@ -473,9 +473,19 @@ def main():
         help="quest/oracle scorer: attn=output_attentions (needs ~2x26GB at 4K), "
         "qk=cheap q.k pre-hook path (fits a 40GB card)",
     )
+    ap.add_argument(
+        "--attn-implementation",
+        choices=["eager", "sdpa"],
+        default="eager",
+        help="attention backend for the whole run, including the answers; "
+        "eager matches the published runs, and --selector attn needs it",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--output-dir", required=True)
-    run(ap.parse_args())
+    args = ap.parse_args()
+    if args.selector == "attn" and args.attn_implementation != "eager":
+        ap.error("--selector attn reads output_attentions and needs eager")
+    run(args)
 
 
 if __name__ == "__main__":
