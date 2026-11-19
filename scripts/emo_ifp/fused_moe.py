@@ -306,7 +306,10 @@ class FusedEmoMoe(nn.Module):
 
     @property
     def num_routed(self):
-        return self.num_experts - self.num_shared
+        # From the weights in place, so a pool switch that changes the
+        # number of routed experts (for example to the full model) picks
+        # the matching tile configuration.
+        return self.w13.size(0)
 
     def route(self, x):
         logits = self.gate(x)
