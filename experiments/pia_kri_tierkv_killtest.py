@@ -132,8 +132,9 @@ def magnitude_scores(cache, blocks):
 
 
 def attention_block_mass(attentions, blocks, prefix_len, row_lo, row_hi):
-    """Sum of attention from rows [row_lo,row_hi) onto each prefix block,
-    max over heads, summed over layers. Used for quest_lite and oracle."""
+    """Attention from rows [row_lo,row_hi) onto each prefix block: mean over
+    the rows, max over heads, sum over the block's tokens, then max over
+    layers. Used for quest_lite and oracle."""
     nb = len(blocks)
     score = torch.zeros(nb)
     for aw in attentions:
