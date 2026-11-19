@@ -64,7 +64,13 @@ the number of pool switches and, for switched requests, the lead time
 and the TTFT excess. Three steps exist only for the test and are timed
 but left out of the wall time: the byte check of each load, the page
 cache eviction of the files about to be read (it guarantees a cold
-read) and a Python garbage-collection pass after each switch. The
+read) and a Python garbage-collection pass after each switch. With
+--gc none a switch pass makes no collection call, so the released
+pool must be freed when its last reference drops; Python's automatic
+collections still run, inside the wall time, and are timed. Every
+switch pass reads the GPU memory allocated right after each switch
+(left out of the wall time), which shows whether the released pool
+was freed. The
 reference pools wait in pinned host memory during switch passes, so
 those passes run with the GPU memory of a one-pool server; the byte
 check copies each reference layer to the GPU to compare. The
@@ -129,6 +135,17 @@ from pool_switch import (  # noqa: E402
 )
 
 KEY = "correct_per_char"
+# PyTorch allocator counters read after each request.
+ALLOC_KEYS = ("num_device_alloc", "num_device_free", "num_alloc_retries")
+
+
+def allocator_counters():
+    s = torch.cuda.memory_stats()
+    return {k: s.get(k, 0) for k in ALLOC_KEYS}
+
+
+# Steps that exist only for the test; left out of the wall time.
+HARNESS = ("check", "evict", "gc", "mem")
 
 
 def make_stream(domains, n_items, mean_run, seed):
@@ -189,6 +206,13 @@ def main():
     )
     ap.add_argument("--modes", nargs="+", default=["full"], choices=["full", "delta"])
     ap.add_argument("--delta-root")
+    ap.add_argument(
+        "--gc",
+        nargs="+",
+        default=["collect"],
+        choices=["collect", "none"],
+        help="per-switch garbage collection: a full pass, or none",
+    )
     ap.add_argument("--limit", type=int, help="first N requests per stream (smoke)")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -414,7 +438,7 @@ def main():
             out[d] = o
         return out
 
-    def run_pass(stream, assign, look, ref, mode="full"):
+    def run_pass(stream, assign, look, ref, mode="full", gc_mode="collect"):
         """look None = resident pass. ref: resident records, for checks."""
         recs, loads = [], []
         evicted_before = sectors_read(dev)[0]
@@ -441,22 +465,56 @@ def main():
         s0 = sectors_read(dev)[0]
         inflight = None  # (name, loader)
         steps = dict.fromkeys(
-            ("check", "evict", "gc", "start", "join", "close", "record"), 0.0
+            ("check", "evict", "gc", "mem", "start", "join", "close", "record"),
+            0.0,
         )
         clock = time.perf_counter
         free_min = [torch.cuda.mem_get_info()[0]]
+        alloc_after, other_after = [], []
+        dev_ctr = [allocator_counters()]
+
+        def count_device_calls():
+            # Device allocations, frees and allocator retries during the
+            # request just served; only nonzero changes are recorded.
+            now = allocator_counters()
+            for k, v in now.items():
+                if v != dev_ctr[0][k]:
+                    rec.setdefault("allocator", {})[k] = v - dev_ctr[0][k]
+            dev_ctr[0] = now
+
+        # Python's automatic collections, timed per generation.
+        auto = {"n": [0, 0, 0], "s": [0.0, 0.0, 0.0], "t": None, "on": False}
+
+        def gc_cb(phase, info):
+            if not auto["on"]:
+                return
+            if phase == "start":
+                auto["t"] = clock()
+            elif auto["t"] is not None:
+                g = info["generation"]
+                auto["n"][g] += 1
+                auto["s"][g] += clock() - auto["t"]
+                auto["t"] = None
 
         def timed(key, fn, *a):
+            # Automatic collections inside a test step are not counted:
+            # that step is left out of the wall time already.
+            on = auto["on"]
+            if key in HARNESS:
+                auto["on"] = False
             t = clock()
             try:
                 return fn(*a)
             finally:
                 dt = clock() - t
+                auto["on"] = on
                 steps[key] += dt
                 rec.setdefault("steps", {})[key] = (
                     rec.get("steps", {}).get(key, 0.0) + dt
                 )
 
+        gc.callbacks.append(gc_cb)
+        auto["on"] = True
         t_pass0 = clock()
         for i, (d, k) in enumerate(stream):
             rq = reqs[d][k]
@@ -553,13 +611,26 @@ def main():
                     timed("close", close)
                     cur_loader, cur_name, inflight = ld, want, None
 
-                    def collect():
-                        gc.collect()
-                        free_min[0] = min(free_min[0], torch.cuda.mem_get_info()[0])
+                    if gc_mode == "collect":
+                        timed("gc", gc.collect)
 
-                    timed("gc", collect)
+                    def mem():
+                        # Live PyTorch tensors, and device memory held
+                        # outside PyTorch's allocator (the copier's buffers
+                        # for a whole-pool load).
+                        a = torch.cuda.memory_allocated()
+                        free, total = torch.cuda.mem_get_info()
+                        o = total - free - torch.cuda.memory_reserved()
+                        alloc_after.append(a)
+                        other_after.append(o)
+                        rec["alloc_after_switch"] = a
+                        rec["other_after_switch"] = o
+                        free_min[0] = min(free_min[0], free)
+
+                    timed("mem", mem)
                 else:
                     r, lg = run_request(model, rq["ids"], args.decode, eos)
+            timed("mem", count_device_calls)
             rec.update(
                 {
                     "ttft_s": r["ttft_s"],
@@ -577,7 +648,9 @@ def main():
             recs.append(rec)
         torch.cuda.synchronize()
         elapsed = clock() - t_pass0
-        harness = steps["check"] + steps["evict"] + steps["gc"]
+        auto["on"] = False
+        gc.callbacks.remove(gc_cb)
+        harness = sum(steps[x] for x in HARNESS)
         s1 = sectors_read(dev)[0]
         if inflight is not None:  # a load started for a request past the end
             inflight[1].join()
@@ -599,6 +672,28 @@ def main():
             "mode": mode,
             "lookahead": look,
             "min_free_after_switch": free_min[0],
+            "gc_mode": gc_mode,
+            "alloc_after_switch": (
+                {
+                    "min": min(alloc_after),
+                    "median": statistics.median(alloc_after),
+                    "max": max(alloc_after),
+                    "first": alloc_after[0],
+                    "last": alloc_after[-1],
+                }
+                if alloc_after
+                else None
+            ),
+            "other_after_switch": (
+                {
+                    "min": min(other_after),
+                    "median": statistics.median(other_after),
+                    "max": max(other_after),
+                }
+                if other_after
+                else None
+            ),
+            "auto_gc": {"count": auto["n"], "seconds": auto["s"]},
             "memory": mem_snapshot(),
         }
 
@@ -610,7 +705,8 @@ def main():
     wref, _ = run_pass(warm, wa, None, None)
     refs_to_host()
     for mode in args.modes:
-        run_pass(warm, wa, max(args.lookahead), wref, mode)
+        for g in args.gc:
+            run_pass(warm, wa, max(args.lookahead), wref, mode, g)
 
     res["streams"] = {}
     for R in args.run_lengths:
@@ -639,23 +735,32 @@ def main():
         med = statistics.median
         for pol in args.policies:
             seq = assigns[pol]
-            key = lambda m, q: f"{pol}/{m}-Q{q}"  # noqa: E731
+            key = lambda m, q, g: (  # noqa: E731
+                f"{pol}/{m}-Q{q}" + ("-nogc" if g == "none" else "")
+            )
             refs_to_gpu()
             ref, info = run_pass(stream, seq, None, None)
             refs_to_host()
             st["passes"][f"{pol}/resident"] = {"info": info, "rows": ref}
-            combos = [(m, q) for m in args.modes for q in args.lookahead]
+            combos = [
+                (m, q, g) for m in args.modes for q in args.lookahead for g in args.gc
+            ]
             # Rotate the pass order across streams and policies.
             rot = (args.run_lengths.index(R) + args.policies.index(pol)) % len(combos)
-            for m, q in combos[rot:] + combos[:rot]:
-                rows, info = run_pass(stream, seq, q, ref, m)
-                st["passes"][key(m, q)] = {"info": info, "rows": rows}
+            for m, q, g in combos[rot:] + combos[:rot]:
+                rows, info = run_pass(stream, seq, q, ref, m, g)
+                st["passes"][key(m, q, g)] = {"info": info, "rows": rows}
+                aa = info["alloc_after_switch"] or {}
                 print(
-                    f"R={R} {pol} {m} Q={q}: wall {info['wall_s']:.1f} s "
+                    f"R={R} {pol} {m} Q={q} gc={g}: wall {info['wall_s']:.1f} s "
                     f"(with test steps {info['wall_with_harness_s']:.1f} s) vs "
                     f"resident {st['passes'][pol + '/resident']['info']['wall_s']:.1f}"
                     f" s, {len(info['loads'])} loads, min free "
-                    f"{info['min_free_after_switch'] / 1e9:.1f} GB, steps "
+                    f"{info['min_free_after_switch'] / 1e9:.1f} GB, allocated "
+                    f"after switch {aa.get('min', 0) / 1e9:.2f}-"
+                    f"{aa.get('max', 0) / 1e9:.2f} GB, auto gc "
+                    f"{sum(info['auto_gc']['seconds']):.2f} s "
+                    f"{info['auto_gc']['count']}, steps "
                     + " ".join(f"{a}={b:.1f}" for a, b in info["steps_s"].items()),
                     flush=True,
                 )
@@ -666,8 +771,8 @@ def main():
                 "resident_ttft_ms_median": med(r["ttft_s"] for r in ref) * 1e3,
                 "quality": st["offline"][pol]["quality"],
             }
-            for m, q in combos:
-                p = st["passes"][key(m, q)]
+            for m, q, g in combos:
+                p = st["passes"][key(m, q, g)]
                 rows = p["rows"]
                 ex = [(a["ttft_s"] - b["ttft_s"]) * 1e3 for a, b in zip(rows, ref)]
                 sw = [e for e, r in zip(ex, rows) if r["switched"]]
@@ -707,7 +812,9 @@ def main():
                     and s_["throughput_loss"] <= 0.05
                     and (s_["switched_excess_ms_median"] or 0.0) <= limit
                 )
-                summ[f"{m}-Q{q}"] = s_
+                s_["alloc_after_switch"] = p["info"]["alloc_after_switch"]
+                s_["auto_gc"] = p["info"]["auto_gc"]
+                summ[key(m, q, g).split("/", 1)[1]] = s_
             st.setdefault("summary", {})[pol] = summ
             print(json.dumps({R: {pol: summ}}, indent=1), flush=True)
             for r in ref:
