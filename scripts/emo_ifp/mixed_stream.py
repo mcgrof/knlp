@@ -40,6 +40,13 @@ Passes, for each stream:
 Load modes (--modes):
 
     full        read the new pool's packed per-layer files
+    slots       keep, per layer, one GPU buffer of expert slots registered
+                once (slot_store.py), with room for the resident pool and
+                the largest switch; read only the experts the new pool
+                lacks from the single-copy layer files (--single-dir,
+                pack_single_copy.py) straight into free slots, and run
+                the layer through a slot map. Nothing is copied on the
+                GPU and nothing is allocated per switch. Pools only.
     delta       read only the routed experts of the new pool that the
                 resident pool lacks, from per-pair delta files
                 (--delta-root/FROM-to-TO/layerL.safetensors, packed from
@@ -143,6 +150,13 @@ from common import (  # noqa: E402
 )
 from domain_selector import question  # noqa: E402
 from layer_offload import block_device_of, evict, sectors_read  # noqa: E402
+from slot_store import (  # noqa: E402
+    SlotLoader,
+    SlotStore,
+    clear_slots,
+    set_slot_layer,
+    slot_wait_hooks,
+)
 from pool_switch import (  # noqa: E402
     GatherLoader,
     Pool,
@@ -228,8 +242,11 @@ def main():
         default=["selector", "debounce"],
         choices=["selector", "debounce", "oracle", "full"],
     )
-    ap.add_argument("--modes", nargs="+", default=["full"], choices=["full", "delta"])
+    ap.add_argument(
+        "--modes", nargs="+", default=["full"], choices=["full", "delta", "slots"]
+    )
     ap.add_argument("--delta-root")
+    ap.add_argument("--single-dir", help="single-copy layout for --modes slots")
     ap.add_argument(
         "--gc",
         nargs="+",
@@ -249,6 +266,8 @@ def main():
 
     if "delta" in args.modes and not args.delta_root:
         sys.exit("--modes delta needs --delta-root")
+    if "slots" in args.modes and not args.single_dir:
+        sys.exit("--modes slots needs --single-dir")
     out_path = os.path.join(args.out_dir, "mixed-stream.json")
     pools = {name: (pj, pdir) for name, pj, pdir in args.pool}
     classes = list(pools)
@@ -492,12 +511,35 @@ def main():
         pools (the others are left out of the records).
         """
         recs, loads = [], []
+        clear_slots(model)
         evicted_before = sectors_read(dev)[0]
         cur_name = assign[0]
         if only is not None:
             cur_name = next(a for a in assign if a in only)
         cur_loader = None
-        if look is not None:
+        store = None
+        if look is not None and mode == "slots":
+            # The slot buffers are allocated and registered once per pass,
+            # before the clock, as a server would at start-up.
+            assert FULL not in classes, "slots mode serves pools only"
+            h0 = host[classes[0]]
+            store = SlotStore(
+                args.single_dir,
+                {c: pjs[c] for c in classes},
+                tuple(h0.w13[0].shape[1:]),
+                tuple(h0.w2[0].shape[1:]),
+            )
+            res["slot_store"] = {"slots": store.slots(), "bytes": store.bytes}
+            mem_point(f"slot store ready, first target {cur_name}")
+            cur_loader = SlotLoader(store, cur_name)
+            cur_loader.start()
+            cur_loader.join()
+            for li in range(nl):
+                set_slot_layer(
+                    model, store, li, refs[cur_name].gate[li], cur_loader.maps[li]
+                )
+            store.commit(cur_name, cur_loader.plan)
+        elif look is not None:
             mem_point(f"switch pass start, first target {cur_name}")
             for p in files[cur_name]:
                 evict(p)
@@ -586,7 +628,11 @@ def main():
                         nxt = assign[j]
                         if nxt != cur_name:
                             gather = mode == "delta" and cur_name == FULL
-                            if gather:
+                            if mode == "slots":
+                                # O_DIRECT reads of the single copy; no
+                                # page cache to evict.
+                                fl, post = [], None
+                            elif gather:
                                 fl = []
                                 post = assembler(cur_name, nxt, cur_loader.tensors)
                             elif mode == "delta":
@@ -600,6 +646,10 @@ def main():
                                     evict(p)
 
                             def start(fl=fl, post=post, gather=gather, nxt=nxt):
+                                if mode == "slots":
+                                    ld = SlotLoader(store, nxt)
+                                    ld.start()
+                                    return ld
                                 if gather:
                                     ld = GatherLoader(nl, post)
                                 else:
@@ -625,13 +675,11 @@ def main():
                 if want != cur_name:
                     nm, ld = inflight
                     assert nm == want, (nm, want, i)
-                    r, lg = run_request(
-                        model,
-                        rq["ids"],
-                        args.decode,
-                        eos,
-                        wait_hooks(model, ld, refs[want].gate, names),
-                    )
+                    if mode == "slots":
+                        hooks = slot_wait_hooks(model, store, ld, refs[want].gate)
+                    else:
+                        hooks = wait_hooks(model, ld, refs[want].gate, names)
+                    r, lg = run_request(model, rq["ids"], args.decode, eos, hooks)
                     timed("join", ld.join)
                     rec["lead_s"] = r["t_start"] - ld.t0
                     rec["load_s"] = ld.t_ready[-1] - ld.t0
@@ -640,7 +688,12 @@ def main():
                         # Layer by layer against the host copy of the pool.
                         h, bad = host[want], []
                         for li, (n13, n2) in enumerate(names):
-                            ts = ld.tensors[li]
+                            if mode == "slots":
+                                mp = ld.maps[li]
+                                L = store.layers[li]
+                                ts = {n13: L["w13"][mp], n2: L["w2"][mp]}
+                            else:
+                                ts = ld.tensors[li]
                             if not (
                                 torch.equal(ts[n13], h.w13[li].to("cuda"))
                                 and torch.equal(ts[n2], h.w2[li].to("cuda"))
@@ -652,7 +705,7 @@ def main():
                             if x["fallback"]
                             or not x["copier_class"]
                             .lower()
-                            .startswith(("dmab", "gath"))
+                            .startswith(("dmab", "gath", "slot"))
                         ]
                         torch.cuda.synchronize()
                         return bad, fb
@@ -668,8 +721,15 @@ def main():
                             "fallback": fb,
                         }
                     )
+                    if mode == "slots":
+                        loads[-1]["experts_read"] = sum(ld.entering)
+                        loads[-1]["reads"] = sum(ld.reads)
 
                     def close(old=cur_loader, new=ld):
+                        if mode == "slots":
+                            # The old pool's slots that the new pool does
+                            # not use become free.
+                            store.commit(want, new.plan)
                         if old is not None:
                             old.close()
                         if mode == "delta":
@@ -729,8 +789,12 @@ def main():
             inflight[1].join()
             inflight[1].close()
         if cur_loader is not None:
+            clear_slots(model)
             set_pool(model, refs[cur_name])
             cur_loader.close()
+        if store is not None:
+            cur_loader = inflight = None
+            store.close()
         gc.collect()
         torch.cuda.empty_cache()
         return recs, {

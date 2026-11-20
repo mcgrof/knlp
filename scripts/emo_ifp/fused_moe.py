@@ -232,18 +232,21 @@ def _invoke(A, B, C, topk_weights, sorted_ids, expert_ids, ntpp, mul_w, top_k, c
     )
 
 
-def fused_experts(x, w13, w2, topk_weights, topk_ids, cfg):
+def fused_experts(x, w13, w2, topk_weights, topk_ids, cfg, n_active=None):
     """Routed expert output for BF16 ``x`` [T, H].
 
     ``w13`` is [E, 2I, H] (gate rows, then up rows), ``w2`` is [E, H, I],
     ``topk_weights`` is float32 [T, k] and ``topk_ids`` is int [T, k].
+    ``n_active`` is the number of experts the router chooses among when
+    ``w13`` holds more slots than that (a slot buffer); it decides the
+    path as E does otherwise, so both give the same kernels.
     """
     T, H = x.shape
     E, N2, _ = w13.shape
     I = N2 // 2
     k = topk_ids.size(1)
     assert x.is_contiguous() and topk_weights.is_contiguous()
-    if T * k * 4 <= E:
+    if T * k * 4 <= (n_active or E):
         # vLLM's low-latency path: one block per token slot, no sorting.
         sorted_ids = None
         expert_ids = topk_ids.reshape(-1).to(torch.int32)
@@ -303,6 +306,9 @@ class FusedEmoMoe(nn.Module):
         self.s13 = nn.Parameter(s13, requires_grad=False)
         self.s2 = nn.Parameter(s2, requires_grad=False)
         self.configs = configs
+        # Optional slot map (slot_store.py): expert k of the pool lives in
+        # slot slot_map[k] of w13/w2, which hold more slots than experts.
+        self.slot_map = None
 
     @property
     def num_routed(self):
@@ -321,8 +327,12 @@ class FusedEmoMoe(nn.Module):
         b, s, h = hidden_states.shape
         x = hidden_states.reshape(-1, h).contiguous()
         logits, w, ids = self.route(x)
+        n = self.num_routed
+        if self.slot_map is not None:
+            ids = self.slot_map[ids]
+            n = self.slot_map.numel()
         out = fused_experts(
-            x, self.w13, self.w2, w, ids, self.configs(x.size(0), self.num_routed)
+            x, self.w13, self.w2, w, ids, self.configs(x.size(0), n), n_active=n
         )
         inter = self.s13.size(1) // 2
         for j in range(self.num_shared):
