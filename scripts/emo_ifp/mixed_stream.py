@@ -116,6 +116,25 @@ sum.
 The offline record of every stream holds all three sequences' switch
 counts and served quality.
 
+Selectors (--selector). emb-centroid is the selector above. emb-logreg
+is logistic regression on the same mean input embedding (selector_eval's
+LogReg, lam by four-fold cross-validation on the training questions).
+router-logreg reads the routers of the first --selector-depth layers,
+which run on whichever pool is loaded, so its pick depends on that pool.
+It is fitted once per pool, on the training questions' router features
+computed with that pool loaded (selector_features.py --resident; the
+features file must hold them). Its pick for request j is made just
+before request j - V is served, with V = max(--lookahead) + 1 (the
+visibility the debounce policy needs), on the pool that served request
+j - V - 1; picks for the first V + 1 requests are made before the stream
+on the first pool. This fixes every pass's pool sequence in advance. In
+every pass, resident and switch alike, the server runs that pick live
+at that point: the question tokens through the loaded pool's first
+layers, stopped at layer depth - 1's router, then the pool's logistic
+regression. Its time counts in the wall time and is reported, and each
+live pick must equal the precomputed one. For the emb selectors the
+live pick is computed once, at setup, as for emb-centroid.
+
 Usage:
     mixed_stream.py MODEL_DIR FEATURES.pt POOL_MATRIX.json OUT_DIR \\
         --configs TUNED.json \\
@@ -126,6 +145,7 @@ Usage:
         [--policies selector debounce oracle] \\
         [--pool full FULL.json DIR --abstain-domain politics \\
          --unpooled-pool full]
+        [--selector emb-centroid|emb-logreg|router-logreg]
 """
 
 import argparse
@@ -138,6 +158,7 @@ import sys
 import time
 
 import torch
+import torch.nn.functional as TF
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (  # noqa: E402
@@ -149,6 +170,7 @@ from common import (  # noqa: E402
     write_json,
 )
 from domain_selector import question  # noqa: E402
+from selector_eval import LogReg  # noqa: E402
 from layer_offload import block_device_of, evict, sectors_read  # noqa: E402
 from slot_store import (  # noqa: E402
     SlotLoader,
@@ -255,6 +277,15 @@ def main():
         help="per-switch garbage collection: a full pass, or none",
     )
     ap.add_argument("--limit", type=int, help="first N requests per stream (smoke)")
+    ap.add_argument(
+        "--selector",
+        default="emb-centroid",
+        choices=["emb-centroid", "emb-logreg", "router-logreg"],
+    )
+    ap.add_argument("--selector-depth", type=int, default=4)
+    ap.add_argument(
+        "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
+    )
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     if os.environ.get("FASTSAFETENSORS_DMABUF_STRICT") != "1":
@@ -304,20 +335,67 @@ def main():
         m = X.mean(0)
         C.append(m / m.norm())
     C = torch.stack(C)
+    router_sel = args.selector == "router-logreg"
+    if args.selector != "emb-centroid":
+        assert not args.abstain_domain, "--abstain-domain needs emb-centroid"
+        assert FULL not in classes, "a 'full' target needs emb-centroid"
+    sel_info = {"name": args.selector}
+
+    def train_set(get):
+        Xs, ys = [], []
+        for ci, c in enumerate(labels):
+            x = get(c)[: args.n_train]
+            assert len(x) == args.n_train, (c, len(x))
+            Xs.append(x)
+            ys += [ci] * len(x)
+        return torch.cat(Xs), torch.tensor(ys)
+
+    depth = args.selector_depth
+
+    def router_vec(r):
+        return r[..., :depth, :].reshape(*r.shape[:-2], -1).double()
+
+    if args.selector == "emb-logreg":
+        X, y = train_set(lambda c: F["domains"][c]["train"]["emb"].double())
+        emb_lr = LogReg(X, y, labels, args.lams)
+        sel_info.update(lam=emb_lr.lam, cv=emb_lr.cv)
+    router_lr = {}
+    if router_sel:
+        for R in labels:
+            X, y = train_set(
+                lambda c, R=R: router_vec(
+                    F["resident"][R]["domains"][c]["train"]["router"]
+                )
+            )
+            router_lr[R] = LogReg(X, y, labels, args.lams)
+        sel_info.update(
+            depth=depth,
+            lam={R: m.lam for R, m in router_lr.items()},
+            first_pool=labels[0],
+        )
 
     def pick_of(emb):
         e = emb.double()
+        if args.selector == "emb-logreg":
+            return labels[emb_lr.predict(e)]
         return labels[int((C @ (e / e.norm())).argmax())]
 
-    offline = {}
+    def router_pick(r, R):
+        return labels[router_lr[R].predict(router_vec(r))]
+
+    offline, offline_r = {}, {R: {} for R in router_lr}
     for d in domains:
         fd = F["domains"][d]["test"]
         assert fd["ids"] == [it["id"] for it in items[d]], d
         offline[d] = [pick_of(e) for e in fd["emb"]]
+        for R in router_lr:
+            rr = F["resident"][R]["domains"][d]["test"]["router"]
+            offline_r[R][d] = [router_pick(r, R) for r in rr]
 
     res = {
         "runtime": runtime_identity(),
         "args": vars(args),
+        "selector": sel_info,
         "classes": classes,
         "env": {
             k: v
@@ -379,8 +457,47 @@ def main():
         host[c] = Pool(gates, [pin(x.cpu()) for x in w13], [pin(x.cpu()) for x in w2])
         del w13, w2, t, gates
         torch.cuda.empty_cache()
+    # The live router pick computes the full router's logits, as the
+    # features do, for the first layers.
+    pick_gate = [full_gate[li] for li in range(depth)] if router_sel else []
     del full_gate
     refs.update(host)
+
+    class StopPick(Exception):
+        pass
+
+    pick_on, pcap = [False], {}
+
+    def make_pick_hook(li):
+        def pre(mod, inp):
+            if pick_on[0]:
+                pcap[li] = TF.linear(inp[0].reshape(-1, inp[0].size(-1)), pick_gate[li])
+                if li == depth - 1:
+                    raise StopPick()
+
+        return pre
+
+    for li in range(len(pick_gate)):
+        model.model.layers[li].mlp.register_forward_pre_hook(make_pick_hook(li))
+    routed_n = F["routed"]
+
+    @torch.no_grad()
+    def live_router_pick(q, R):
+        pcap.clear()
+        pick_on[0] = True
+        try:
+            model(input_ids=torch.tensor([q], device="cuda"), use_cache=False)
+        except StopPick:
+            pass
+        finally:
+            pick_on[0] = False
+        r = torch.stack(
+            [
+                torch.softmax(pcap[li][1:, :routed_n].float(), dim=-1).mean(0)
+                for li in range(depth)
+            ]
+        ).cpu()
+        return router_pick(r, R)
 
     def refs_to_gpu(group=None):
         for c in group or classes:
@@ -478,11 +595,46 @@ def main():
             p = pick_of(e)
             if p != offline[d][k]:
                 pick_mismatch.append((d, it["id"]))
-            reqs[d].append({"id": it["id"], "ids": ids, "pick": p})
+            if router_sel:
+                # Checked live in the passes, on the pool then loaded.
+                p = offline_r[labels[0]][d][k]
+            reqs[d].append({"id": it["id"], "ids": ids, "q": q, "pick": p})
     res["live_pick_mismatches"] = pick_mismatch
     if pick_mismatch:
         write_json(out_path, res)
         sys.exit(f"live picks differ from the features file: {pick_mismatch[:5]}")
+
+    V = max(args.lookahead) + 1
+
+    def router_seqs(stream):
+        """Picks, pool sequence and pick-time pool for each policy."""
+        n = len(stream)
+
+        def pk(j, R):
+            d, k = stream[j]
+            return offline_r[R][d][k]
+
+        out = {}
+        for pol in ("selector", "debounce"):
+            picks, assign, on = [None] * n, [None] * n, [None] * n
+            for j in range(min(V + 1, n)):
+                picks[j], on[j] = pk(j, labels[0]), labels[0]
+            cur = None
+            for i in range(n):
+                if i >= 1 and i + V < n:
+                    picks[i + V] = pk(i + V, assign[i - 1])
+                    on[i + V] = assign[i - 1]
+                if pol == "selector":
+                    assign[i] = picks[i]
+                    continue
+                if i == 0:
+                    cur = picks[0]
+                p = picks[i]
+                if p != cur and i + 1 < n and picks[i + 1] == p:
+                    cur = p
+                assign[i] = cur
+            out[pol] = {"picks": picks, "assign": assign, "on": on}
+        return out
 
     def quality(stream, assign):
         """Served correct answers per domain for one pool assignment."""
@@ -504,11 +656,22 @@ def main():
             out[d] = o
         return out
 
-    def run_pass(stream, assign, look, ref, mode="full", gc_mode="collect", only=None):
+    def run_pass(
+        stream,
+        assign,
+        look,
+        ref,
+        mode="full",
+        gc_mode="collect",
+        only=None,
+        picks=None,
+    ):
         """look None = resident pass. ref: resident records, for checks.
 
         only: for a resident pass, run only the requests assigned to these
-        pools (the others are left out of the records).
+        pools (the others are left out of the records). picks: the router
+        selector's precomputed picks; before request i the pass makes the
+        live pick of request i + V on the loaded pool and checks it.
         """
         recs, loads = [], []
         clear_slots(model)
@@ -564,6 +727,8 @@ def main():
             ("check", "evict", "gc", "mem", "start", "join", "close", "record"),
             0.0,
         )
+        steps["pick"] = 0.0
+        pick_bad, n_picks = [], [0]
         clock = time.perf_counter
         free_min = [torch.cuda.mem_get_info()[0]]
         alloc_after, other_after = [], []
@@ -619,6 +784,12 @@ def main():
             want = assign[i]
             rec = {"i": i, "domain": d, "id": rq["id"], "pool": want}
             rec["switched"] = i > 0 and want != assign[i - 1]
+            if picks is not None and i >= 1 and i + V < len(stream):
+                dj, kj = stream[i + V]
+                got = timed("pick", live_router_pick, reqs[dj][kj]["q"], assign[i - 1])
+                n_picks[0] += 1
+                if got != picks[i + V]:
+                    pick_bad.append(i + V)
             if look is None:
                 set_pool(model, refs[want])
                 r, lg = run_request(model, rq["ids"], args.decode, eos)
@@ -798,6 +969,9 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
         return recs, {
+            "pick_s": steps["pick"],
+            "live_picks": n_picks[0],
+            "pick_mismatches": pick_bad,
             "wall_s": elapsed - harness,
             "wall_with_harness_s": elapsed,
             "check_s": steps["check"],
@@ -847,7 +1021,7 @@ def main():
             flush=True,
         )
 
-    def run_resident(stream, assign):
+    def run_resident(stream, assign, picks=None):
         """The resident pass. The four pools and the full model do not fit
         in GPU memory together, so with the full model as a target the pass
         runs in two parts, each with its targets resident, and its records
@@ -861,7 +1035,7 @@ def main():
                 continue
             refs_to_gpu(g)
             mem_point(f"resident {'+'.join(g)} loaded")
-            r, info = run_pass(stream, assign, None, None, only=set(g))
+            r, info = run_pass(stream, assign, None, None, only=set(g), picks=picks)
             refs_to_host()
             mem_point(f"resident {'+'.join(g)} released")
             recs += r
@@ -869,7 +1043,7 @@ def main():
         recs.sort(key=lambda r: r["i"])
         assert [r["i"] for r in recs] == list(range(len(stream)))
         info = dict(infos[0])
-        for k in ("wall_s", "wall_with_harness_s", "check_s", "between_s"):
+        for k in ("wall_s", "wall_with_harness_s", "check_s", "between_s", "pick_s"):
             info[k] = sum(x[k] for x in infos)
         info["parts"] = infos
         return recs, info
@@ -878,11 +1052,15 @@ def main():
     n_items = {d: len(reqs[d]) for d in domains}
     warm = make_stream(domains, n_items, 1, args.seed - 1)[:12]
     wa = [reqs[d][k]["pick"] for d, k in warm]
+    wp = None
+    if router_sel:
+        ws = router_seqs(warm)["selector"]
+        wa, wp = ws["assign"], ws["picks"]
     mem_point("setup done")
-    wref, _ = run_resident(warm, wa)
+    wref, _ = run_resident(warm, wa, wp)
     for mode in args.modes:
         for g in args.gc:
-            run_pass(warm, wa, max(args.lookahead), wref, mode, g)
+            run_pass(warm, wa, max(args.lookahead), wref, mode, g, picks=wp)
 
     res["streams"] = {}
     for R in args.run_lengths:
@@ -892,6 +1070,11 @@ def main():
         picks = [reqs[d][k]["pick"] for d, k in stream]
         oracle = [d if d in classes else args.unpooled_pool for d, _ in stream]
         deb = debounce(picks, picks[0])
+        pol_picks = {}
+        if router_sel:
+            rs = router_seqs(stream)
+            picks, deb = rs["selector"]["assign"], rs["debounce"]["assign"]
+            pol_picks = {p: rs[p]["picks"] for p in rs}
         allfull = [FULL] * len(stream)
         st = {
             "n": len(stream),
@@ -908,6 +1091,8 @@ def main():
             },
             "passes": {},
         }
+        if router_sel:
+            st["router_picks"] = rs
         res["streams"][str(R)] = st
         assigns = {
             "selector": picks,
@@ -921,7 +1106,8 @@ def main():
             key = lambda m, q, g: (  # noqa: E731
                 f"{pol}/{m}-Q{q}" + ("-nogc" if g == "none" else "")
             )
-            ref, info = run_resident(stream, seq)
+            pp = pol_picks.get(pol)
+            ref, info = run_resident(stream, seq, pp)
             st["passes"][f"{pol}/resident"] = {"info": info, "rows": ref}
             combos = [
                 (m, q, g) for m in args.modes for q in args.lookahead for g in args.gc
@@ -929,7 +1115,7 @@ def main():
             # Rotate the pass order across streams and policies.
             rot = (args.run_lengths.index(R) + args.policies.index(pol)) % len(combos)
             for m, q, g in combos[rot:] + combos[:rot]:
-                rows, info = run_pass(stream, seq, q, ref, m, g)
+                rows, info = run_pass(stream, seq, q, ref, m, g, picks=pp)
                 st["passes"][key(m, q, g)] = {"info": info, "rows": rows}
                 aa = info["alloc_after_switch"] or {}
                 print(
@@ -950,6 +1136,10 @@ def main():
                 "domain_switches": st["domain_switches"],
                 "resident_wall_s": st["passes"][f"{pol}/resident"]["info"]["wall_s"],
                 "resident_ttft_ms_median": med(r["ttft_s"] for r in ref) * 1e3,
+                "resident_pick_s": st["passes"][f"{pol}/resident"]["info"]["pick_s"],
+                "resident_pick_mismatches": len(
+                    st["passes"][f"{pol}/resident"]["info"]["pick_mismatches"]
+                ),
                 "quality": st["offline"][pol]["quality"],
             }
             for m, q, g in combos:
@@ -980,6 +1170,9 @@ def main():
                     "wall_with_harness_s": p["info"]["wall_with_harness_s"],
                     "steps_s": p["info"]["steps_s"],
                     "between_s": p["info"]["between_s"],
+                    "pick_s": p["info"]["pick_s"],
+                    "live_picks": p["info"]["live_picks"],
+                    "pick_mismatches": len(p["info"]["pick_mismatches"]),
                     "correct": all(
                         r["tokens_match"] and r["logits_bitwise"] for r in rows
                     )
@@ -988,6 +1181,13 @@ def main():
                         for ld in p["info"]["loads"]
                     ),
                 }
+                # A live pick that differs from the precomputed one would
+                # serve another pool than the sequence assumes.
+                s_["correct"] = (
+                    s_["correct"]
+                    and s_["pick_mismatches"] == 0
+                    and summ["resident_pick_mismatches"] == 0
+                )
                 s_["keeps_up"] = (
                     s_["correct"]
                     and s_["throughput_loss"] <= 0.05
