@@ -156,6 +156,11 @@ as a fraction of the resident server's capacity. The server then:
     one that this rule predicts for the visible requests up to Q ahead;
     a prefetch for a pool the request then does not need is completed
     and dropped (its slots stay free);
+    with --arrival-rule hold, switches instead only when two picks in a
+    row agree on the new pool: this request's and the next visible
+    one's, or this request's and the previous one's. A request whose
+    pick has no such support runs on the loaded pool, and the server
+    starts prefetching its picked pool for the requests that follow;
     waits, when no request has arrived, until the next one does; a load
     in flight continues meanwhile.
 
@@ -323,6 +328,7 @@ def main():
         help="offered loads (fraction of resident capacity) for random arrivals",
     )
     ap.add_argument("--arrival-seed", type=int, default=20261120)
+    ap.add_argument("--arrival-rule", choices=["switch", "hold"], default="switch")
     ap.add_argument(
         "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
     )
@@ -1100,7 +1106,7 @@ def main():
         clear_slots(model)
         cur = classes[0]
         store = None
-        info = {"resident": resident, "lookahead": look}
+        info = {"resident": resident, "lookahead": look, "rule": args.arrival_rule}
         if resident:
             set_pool(model, refs[cur])
         else:
@@ -1145,11 +1151,20 @@ def main():
                 picks[j] = p
                 state["seen"] += 1
 
+        hold = args.arrival_rule == "hold"
+
         def plan(i, c):
             out = []
             for j in range(i, state["seen"]):
                 p = picks[j]
-                if p != c and (j + 1 >= state["seen"] or picks[j + 1] == p):
+                nxt_vis = j + 1 < state["seen"]
+                if hold:
+                    agree = (nxt_vis and picks[j + 1] == p) or (
+                        j >= 1 and picks[j - 1] == p
+                    )
+                else:
+                    agree = not nxt_vis or picks[j + 1] == p
+                if p != c and agree:
                     c = p
                 out.append(c)
             return out
@@ -1174,6 +1189,18 @@ def main():
                 set_pool(model, refs[want])
                 r, lg = run_request(model, rq["ids"], args.decode, eos)
             else:
+                if (
+                    inflight is not None
+                    and want == cur
+                    and not inflight[1].thread.is_alive()
+                    and inflight[0] != picks[i]
+                    and inflight[0] not in plan(i, cur)[: look + 1]
+                ):
+                    # A finished prefetch nothing visible needs any more:
+                    # drop it so another can start (its slots stay free).
+                    inflight[1].join()
+                    loads[-1]["dropped"] = True
+                    inflight = None
                 if inflight is not None and want != cur and inflight[0] != want:
                     # A prefetch for a pool this request does not use.
                     inflight[1].join()
@@ -1183,6 +1210,10 @@ def main():
                     nxt = next((p for p in plan(i, cur)[: look + 1] if p != cur), None)
                     if want != cur:
                         nxt = want
+                    elif nxt is None and hold and picks[i] != cur:
+                        # Speculative: this request runs on the loaded
+                        # pool; the next may confirm its pick.
+                        nxt = picks[i]
                     if nxt is not None:
                         inflight = start_load(nxt, i)
                 if want != cur:
