@@ -161,6 +161,12 @@ as a fraction of the resident server's capacity. The server then:
     one's, or this request's and the previous one's. A request whose
     pick has no such support runs on the loaded pool, and the server
     starts prefetching its picked pool for the requests that follow;
+    with --arrival-rule confident, as hold, except that a pick whose
+    selector confidence (the logistic regression's largest class
+    probability) is at least a threshold switches at once. The threshold
+    is the smallest confidence at which the selector's out-of-fold picks
+    on the training questions (the folds and penalty of its own fit) are
+    right at least --confident-precision of the time;
     waits, when no request has arrived, until the next one does; a load
     in flight continues meanwhile.
 
@@ -207,7 +213,7 @@ from common import (  # noqa: E402
     write_json,
 )
 from domain_selector import question  # noqa: E402
-from selector_eval import LogReg  # noqa: E402
+from selector_eval import LogReg, _fit_lr  # noqa: E402
 from layer_offload import block_device_of, evict, sectors_read  # noqa: E402
 from slot_store import (  # noqa: E402
     SlotLoader,
@@ -328,7 +334,10 @@ def main():
         help="offered loads (fraction of resident capacity) for random arrivals",
     )
     ap.add_argument("--arrival-seed", type=int, default=20261120)
-    ap.add_argument("--arrival-rule", choices=["switch", "hold"], default="switch")
+    ap.add_argument(
+        "--arrival-rule", choices=["switch", "hold", "confident"], default="switch"
+    )
+    ap.add_argument("--confident-precision", type=float, default=0.95)
     ap.add_argument(
         "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
     )
@@ -405,6 +414,33 @@ def main():
         X, y = train_set(lambda c: F["domains"][c]["train"]["emb"].double())
         emb_lr = LogReg(X, y, labels, args.lams)
         sel_info.update(lam=emb_lr.lam, cv=emb_lr.cv)
+        # Out-of-fold confidence on the training questions, for the
+        # confident switch rule: the same folds and penalty as the fit.
+        nc = len(labels)
+        fold = torch.zeros(len(y), dtype=torch.long)
+        for c in range(nc):
+            idx = (y == c).nonzero().flatten()
+            fold[idx] = torch.arange(len(idx)) % 4
+        oof = []
+        for f in range(4):
+            tr, te = fold != f, fold == f
+            mu, sd = X[tr].mean(0), X[tr].std(0).clamp_min(1e-6)
+            W, b = _fit_lr((X[tr] - mu) / sd, y[tr], nc, emb_lr.lam)
+            pr = torch.softmax(((X[te] - mu) / sd) @ W + b, -1)
+            conf, arg = pr.max(-1)
+            oof += list(zip(conf.tolist(), (arg == y[te]).tolist()))
+        oof.sort(reverse=True)
+        tau, right = float("inf"), 0
+        for k, (cf, ok_) in enumerate(oof, 1):
+            right += ok_
+            if right / k >= args.confident_precision:
+                tau = cf
+        sel_info["confident"] = {
+            "precision_target": args.confident_precision,
+            "threshold": tau,
+            "train_coverage": sum(cf >= tau for cf, _ in oof) / len(oof),
+            "train_oof_accuracy": sum(ok_ for _, ok_ in oof) / len(oof),
+        }
     router_lr = {}
     if router_sel:
         for R in labels:
@@ -419,6 +455,11 @@ def main():
             lam={R: m.lam for R, m in router_lr.items()},
             first_pool=labels[0],
         )
+
+    def conf_of(emb):
+        """The embedding logistic regression's largest class probability."""
+        z = (emb.double() - emb_lr.mu) / emb_lr.sd
+        return float(torch.softmax(z @ emb_lr.W + emb_lr.b, -1).max())
 
     def pick_of(emb):
         e = emb.double()
@@ -1101,6 +1142,8 @@ def main():
         then the switch pass's per-request pools, replayed.
         """
         assert not router_sel, "arrival passes use an embedding selector"
+        confident = args.arrival_rule == "confident"
+        assert not confident or args.selector == "emb-logreg"
         n = len(stream)
         clock = time.perf_counter
         clear_slots(model)
@@ -1126,7 +1169,7 @@ def main():
             store.commit(cur, ld.plan)
             info["startup_load_s"] = clock() - t
         torch.cuda.synchronize()
-        picks, mism = [None] * n, []
+        picks, mism, confs = [None] * n, [], [0.0] * n
         state = {"seen": 0, "pick_s": 0.0}
         recs, assign, loads = [], [], []
         inflight = None  # (pool, loader, started_for)
@@ -1145,13 +1188,16 @@ def main():
                     q = torch.tensor(rq["q"], device="cuda")
                     e = emb_w[q].float().mean(0).cpu()
                 p = pick_of(e)
+                if confident:
+                    confs[j] = conf_of(e)
                 state["pick_s"] += clock() - ts
                 if p != rq["pick"]:
                     mism.append(j)
                 picks[j] = p
                 state["seen"] += 1
 
-        hold = args.arrival_rule == "hold"
+        hold = args.arrival_rule in ("hold", "confident")
+        tau = sel_info.get("confident", {}).get("threshold", float("inf"))
 
         def plan(i, c):
             out = []
@@ -1159,8 +1205,10 @@ def main():
                 p = picks[j]
                 nxt_vis = j + 1 < state["seen"]
                 if hold:
-                    agree = (nxt_vis and picks[j + 1] == p) or (
-                        j >= 1 and picks[j - 1] == p
+                    agree = (
+                        (nxt_vis and picks[j + 1] == p)
+                        or (j >= 1 and picks[j - 1] == p)
+                        or (confident and confs[j] >= tau)
                     )
                 else:
                     agree = not nxt_vis or picks[j + 1] == p
