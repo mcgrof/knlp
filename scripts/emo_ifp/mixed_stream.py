@@ -135,6 +135,38 @@ regression. Its time counts in the wall time and is reported, and each
 live pick must equal the precomputed one. For the emb selectors the
 live pick is computed once, at setup, as for emb-centroid.
 
+Random arrivals (--arrival-loads). The passes above are saturated: all
+requests wait from the start, so the lookahead always sees Q requests
+ahead and the first pool is read before the clock. With --arrival-loads
+RHO..., each stream is also served with requests arriving at random
+(exponential gaps, mean s / RHO, where s is the mean request time of the
+saturated resident pass of the first policy), so RHO is the offered load
+as a fraction of the resident server's capacity. The server then:
+
+    starts with the first pool loaded at start-up (its load time is
+    recorded, outside the request timeline), so the first request pays
+    a switch if it needs another pool;
+    sees only requests that have arrived; it computes each one's pick
+    live when it first sees it (the embedding selector's gather and
+    head, timed) and checks it against the precomputed pick;
+    decides each request's pool when the request starts, by the debounce
+    rule on the picks it can see: it switches to another pool if the
+    next request also picks it, or if no next request has arrived yet;
+    prefetches, between requests, the first pool other than the loaded
+    one that this rule predicts for the visible requests up to Q ahead;
+    a prefetch for a pool the request then does not need is completed
+    and dropped (its slots stay free);
+    waits, when no request has arrived, until the next one does; a load
+    in flight continues meanwhile.
+
+Arrival passes use slot switches only and make no per-switch byte check
+or collection call; correctness is checked bitwise against a resident
+pass that serves the same arrivals with every pool resident and the
+same per-request pools. Measures, per request: queueing (start minus
+arrival), time to first token, first-token latency (their sum); per
+pass: their median, p90 and p99, overall and for switched requests,
+switches, served quality and pick time.
+
 Usage:
     mixed_stream.py MODEL_DIR FEATURES.pt POOL_MATRIX.json OUT_DIR \\
         --configs TUNED.json \\
@@ -283,6 +315,14 @@ def main():
         choices=["emb-centroid", "emb-logreg", "router-logreg"],
     )
     ap.add_argument("--selector-depth", type=int, default=4)
+    ap.add_argument(
+        "--arrival-loads",
+        type=float,
+        nargs="+",
+        default=[],
+        help="offered loads (fraction of resident capacity) for random arrivals",
+    )
+    ap.add_argument("--arrival-seed", type=int, default=20261120)
     ap.add_argument(
         "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
     )
@@ -1048,6 +1088,172 @@ def main():
         info["parts"] = infos
         return recs, info
 
+    def run_arrival_pass(stream, arrivals, look, resident=False, forced=None):
+        """Serve a stream whose requests arrive at the given offsets (s).
+
+        resident: every pool resident (set_pool per request); forced is
+        then the switch pass's per-request pools, replayed.
+        """
+        assert not router_sel, "arrival passes use an embedding selector"
+        n = len(stream)
+        clock = time.perf_counter
+        clear_slots(model)
+        cur = classes[0]
+        store = None
+        info = {"resident": resident, "lookahead": look}
+        if resident:
+            set_pool(model, refs[cur])
+        else:
+            h0 = host[classes[0]]
+            store = SlotStore(
+                args.single_dir,
+                {c: pjs[c] for c in classes},
+                tuple(h0.w13[0].shape[1:]),
+                tuple(h0.w2[0].shape[1:]),
+            )
+            t = clock()
+            ld = SlotLoader(store, cur)
+            ld.start()
+            ld.join()
+            for li in range(nl):
+                set_slot_layer(model, store, li, refs[cur].gate[li], ld.maps[li])
+            store.commit(cur, ld.plan)
+            info["startup_load_s"] = clock() - t
+        torch.cuda.synchronize()
+        picks, mism = [None] * n, []
+        state = {"seen": 0, "pick_s": 0.0}
+        recs, assign, loads = [], [], []
+        inflight = None  # (pool, loader, started_for)
+        t0 = clock()
+
+        def now():
+            return clock() - t0
+
+        def make_visible():
+            while state["seen"] < n and arrivals[state["seen"]] <= now():
+                j = state["seen"]
+                d, k = stream[j]
+                rq = reqs[d][k]
+                ts = clock()
+                with torch.no_grad():
+                    q = torch.tensor(rq["q"], device="cuda")
+                    e = emb_w[q].float().mean(0).cpu()
+                p = pick_of(e)
+                state["pick_s"] += clock() - ts
+                if p != rq["pick"]:
+                    mism.append(j)
+                picks[j] = p
+                state["seen"] += 1
+
+        def plan(i, c):
+            out = []
+            for j in range(i, state["seen"]):
+                p = picks[j]
+                if p != c and (j + 1 >= state["seen"] or picks[j + 1] == p):
+                    c = p
+                out.append(c)
+            return out
+
+        def start_load(pool, i):
+            ld = SlotLoader(store, pool)
+            ld.start()
+            loads.append({"pool": pool, "started_before": i, "t": now()})
+            return (pool, ld, i)
+
+        for i, (d, k) in enumerate(stream):
+            make_visible()
+            if state["seen"] <= i:
+                time.sleep(max(0.0, arrivals[i] - now()))
+                make_visible()
+            want = forced[i] if forced is not None else plan(i, cur)[0]
+            rq = reqs[d][k]
+            rec = {"i": i, "domain": d, "id": rq["id"], "pool": want}
+            rec["arrival_s"] = arrivals[i]
+            rec["switched"] = want != cur
+            if resident:
+                set_pool(model, refs[want])
+                r, lg = run_request(model, rq["ids"], args.decode, eos)
+            else:
+                if inflight is not None and want != cur and inflight[0] != want:
+                    # A prefetch for a pool this request does not use.
+                    inflight[1].join()
+                    loads[-1]["dropped"] = True
+                    inflight = None
+                if inflight is None:
+                    nxt = next((p for p in plan(i, cur)[: look + 1] if p != cur), None)
+                    if want != cur:
+                        nxt = want
+                    if nxt is not None:
+                        inflight = start_load(nxt, i)
+                if want != cur:
+                    pool, ld, _ = inflight
+                    hooks = slot_wait_hooks(model, store, ld, refs[want].gate)
+                    r, lg = run_request(model, rq["ids"], args.decode, eos, hooks)
+                    ld.join()
+                    rec["lead_s"] = r["t_start"] - ld.t0
+                    rec["load_s"] = ld.t_ready[-1] - ld.t0
+                    loads[-1]["used_by"] = i
+                    store.commit(want, ld.plan)
+                    inflight = None
+                else:
+                    r, lg = run_request(model, rq["ids"], args.decode, eos)
+            cur = want
+            assign.append(want)
+            rec.update(
+                {
+                    "start_s": r["t_start"] - t0,
+                    "queue_s": r["t_start"] - t0 - arrivals[i],
+                    "ttft_s": r["ttft_s"],
+                    "total_s": r["total_s"],
+                    "latency_s": r["t_start"] - t0 - arrivals[i] + r["ttft_s"],
+                    "tokens": r["tokens"],
+                    "logits": lg.cpu(),
+                }
+            )
+            recs.append(rec)
+        torch.cuda.synchronize()
+        info["elapsed_s"] = now()
+        if inflight is not None:
+            inflight[1].join()
+        if store is not None:
+            clear_slots(model)
+            set_pool(model, refs[classes[0]] if resident else host[classes[0]])
+            store.close()
+        gc.collect()
+        torch.cuda.empty_cache()
+        info.update(
+            {
+                "assign": assign,
+                "pick_s": state["pick_s"],
+                "pick_mismatches": mism,
+                "loads": loads,
+                "switches": sum(r["switched"] for r in recs),
+            }
+        )
+        return recs, info
+
+    def latency_summary(rows):
+        def q(v, f):
+            v = sorted(v)
+            return v[min(len(v) - 1, int(f * len(v)))] * 1e3 if v else None
+
+        out = {}
+        for name, sel in (
+            ("all", rows),
+            ("switched", [r for r in rows if r["switched"]]),
+            ("first", rows[:1]),
+        ):
+            lat = [r["latency_s"] for r in sel]
+            out[name] = {
+                "n": len(sel),
+                "latency_ms_median": q(lat, 0.5),
+                "latency_ms_p90": q(lat, 0.9),
+                "latency_ms_p99": q(lat, 0.99),
+                "queue_ms_median": q([r["queue_s"] for r in sel], 0.5),
+                "ttft_ms_median": q([r["ttft_s"] for r in sel], 0.5),
+            }
+        return out
+
     # Warm-up: untimed, a short stream through every pass type.
     n_items = {d: len(reqs[d]) for d in domains}
     warm = make_stream(domains, n_items, 1, args.seed - 1)[:12]
@@ -1200,6 +1406,52 @@ def main():
             print(json.dumps({R: {pol: summ}}, indent=1), flush=True)
             for r in ref:
                 r.pop("logits", None)
+        if args.arrival_loads:
+            assert args.modes == ["slots"], "arrival passes use slot switches"
+            p0 = args.policies[0]
+            s_mean = st["passes"][f"{p0}/resident"]["info"]["wall_s"] / len(stream)
+            st["arrivals"] = {"mean_service_s": s_mean, "loads": {}}
+            look = max(args.lookahead)
+            for rho in args.arrival_loads:
+                rng = random.Random(args.arrival_seed + int(rho * 1000) + R)
+                arr, t = [], 0.0
+                for _ in stream:
+                    arr.append(t)
+                    t += rng.expovariate(rho / s_mean)
+                sw, sw_info = run_arrival_pass(stream, arr, look)
+                refs_to_gpu()
+                rs, rs_info = run_arrival_pass(
+                    stream, arr, look, resident=True, forced=sw_info["assign"]
+                )
+                refs_to_host()
+                ok_rows = all(
+                    a["tokens"] == b["tokens"] and torch.equal(a["logits"], b["logits"])
+                    for a, b in zip(sw, rs)
+                )
+                for r_ in sw + rs:
+                    r_.pop("logits", None)
+                summ = {
+                    "offered_load": rho,
+                    "switch": latency_summary(sw),
+                    "resident": latency_summary(rs),
+                    "switches": sw_info["switches"],
+                    "dropped_prefetches": sum(
+                        1 for x in sw_info["loads"] if x.get("dropped")
+                    ),
+                    "startup_load_s": sw_info["startup_load_s"],
+                    "pick_ms_per_request": sw_info["pick_s"] / len(stream) * 1e3,
+                    "pick_mismatches": len(sw_info["pick_mismatches"])
+                    + len(rs_info["pick_mismatches"]),
+                    "correct": ok_rows,
+                    "elapsed_s": [sw_info["elapsed_s"], rs_info["elapsed_s"]],
+                    "quality": quality(stream, sw_info["assign"]),
+                }
+                st["arrivals"]["loads"][str(rho)] = {
+                    "summary": summ,
+                    "switch": {"info": sw_info, "rows": sw},
+                    "resident": {"info": rs_info, "rows": rs},
+                }
+                print(json.dumps({R: {f"arrivals@{rho}": summ}}, indent=1), flush=True)
         write_json(out_path, res)
     res["memory_final"] = mem_snapshot()
     write_json(out_path, res)
