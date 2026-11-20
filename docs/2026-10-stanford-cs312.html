@@ -1563,6 +1563,299 @@ range for the baseline at d20 is about 2.52 to 2.66, weighted to the upper end.
 One seed per cell.</p>
 </section>
 
+<section id="architectures">
+<h2>Part 6: residual architectures on the same ladder</h2>
+<p>Everything above changes the recipe. This part changes the model. Three
+published modifications were ported onto the course decoder and trained with
+the standard recipe, so the only thing that differs from the earlier curves is
+the architecture: <strong>hyper-connections</strong> (HC), which carry four
+parallel residual streams and learn how to read and write them;
+<strong>manifold hyper-connections</strong> (mHC), the same with the carry
+matrix pushed onto the doubly-stochastic manifold by Sinkhorn normalisation;
+and <strong>LayerRoPE</strong>, a learned depth-wise complex gain that replaces
+the RMSNorm affine weight. The LayerRoPE settings are the ones our own
+bracketed study chose: intercept a = -0.5 alone, and a = 0 together with mHC.</p>
+<p>The arithmetic is not reimplemented. It is vendored from the reference and
+checked bit for bit against it before any training was allowed to start.</p>
+
+<figure>
+<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px">
+<label for="arch-depth" style="font-size:14px;color:#a5b9ac">Show models up to</label>
+<input type="range" id="arch-depth" min="4" max="7" step="1" value="4"
+       style="flex:1 1 200px;min-width:170px;accent-color:#55e6b0" aria-describedby="arch-depth-out">
+<output id="arch-depth-out" for="arch-depth"
+        style="font-size:13px;color:#e9f0eb;font-weight:650;min-width:10ch"></output>
+<button type="button" id="arch-old-btn" class="button" aria-pressed="false"
+        style="font-size:13px;padding:8px 16px">Overlay earlier variants</button>
+</div>
+<svg viewBox="0 0 940 540" width="100%" height="auto" role="img" aria-labelledby="ar-t ar-d" style="display:block">
+<title id="ar-t">Residual architectures across the depth ladder</title>
+<desc id="ar-d">Validation loss against non-embedding parameters on log-log axes for hyper-connections, manifold hyper-connections, LayerRoPE and their combination, each trained at the standard recipe. A slider reveals greater depths and a toggle overlays the four earlier recipe variants in grey for comparison.</desc>
+<rect width="940" height="540" fill="#101c17"/>
+<line x1="96" y1="48" x2="118" y2="48" stroke="#1fa87c" stroke-width="3"/>
+<text x="124" y="52" fill="#a5b9ac" font-size="12">HC</text>
+<line x1="271" y1="48" x2="293" y2="48" stroke="#c77f32" stroke-width="3"/>
+<text x="299" y="52" fill="#a5b9ac" font-size="12">mHC</text>
+<line x1="446" y1="48" x2="468" y2="48" stroke="#8a6fd0" stroke-width="3"/>
+<text x="474" y="52" fill="#a5b9ac" font-size="12">LayerRoPE a=-0.5</text>
+<line x1="621" y1="48" x2="643" y2="48" stroke="#c2566f" stroke-width="3"/>
+<text x="649" y="52" fill="#a5b9ac" font-size="12">mHC + LayerRoPE</text>
+<text x="96" y="90" fill="#e9f0eb" font-size="15" font-weight="650">Residual architectures at the standard recipe</text>
+<g class="arch-old" data-on="1" style="display:none"><line x1="96" y1="70" x2="118" y2="70" stroke="#8ba49a" stroke-width="2" stroke-dasharray="6 4"/><text x="124" y="74" fill="#a5b9ac" font-size="12">earlier recipe variants</text></g>
+<line x1="96" y1="397.5" x2="790" y2="397.5" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="401.5" text-anchor="end" fill="#a5b9ac" font-size="11">2.90</text>
+<line x1="96" y1="372.2" x2="790" y2="372.2" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="376.2" text-anchor="end" fill="#a5b9ac" font-size="11">2.95</text>
+<line x1="96" y1="347.4" x2="790" y2="347.4" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="351.4" text-anchor="end" fill="#a5b9ac" font-size="11">3.00</text>
+<line x1="96" y1="322.9" x2="790" y2="322.9" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="326.9" text-anchor="end" fill="#a5b9ac" font-size="11">3.05</text>
+<line x1="96" y1="298.9" x2="790" y2="298.9" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="302.9" text-anchor="end" fill="#a5b9ac" font-size="11">3.10</text>
+<line x1="96" y1="275.2" x2="790" y2="275.2" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="279.2" text-anchor="end" fill="#a5b9ac" font-size="11">3.15</text>
+<line x1="96" y1="251.9" x2="790" y2="251.9" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="255.9" text-anchor="end" fill="#a5b9ac" font-size="11">3.20</text>
+<line x1="96" y1="229.0" x2="790" y2="229.0" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="233.0" text-anchor="end" fill="#a5b9ac" font-size="11">3.25</text>
+<line x1="96" y1="206.4" x2="790" y2="206.4" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="210.4" text-anchor="end" fill="#a5b9ac" font-size="11">3.30</text>
+<line x1="96" y1="184.2" x2="790" y2="184.2" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="188.2" text-anchor="end" fill="#a5b9ac" font-size="11">3.35</text>
+<line x1="96" y1="162.3" x2="790" y2="162.3" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="166.3" text-anchor="end" fill="#a5b9ac" font-size="11">3.40</text>
+<line x1="96" y1="140.7" x2="790" y2="140.7" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="144.7" text-anchor="end" fill="#a5b9ac" font-size="11">3.45</text>
+<text x="178.6" y="420" text-anchor="middle" fill="#a5b9ac" font-size="11">d4</text>
+<text x="389.5" y="420" text-anchor="middle" fill="#a5b9ac" font-size="11">d5</text>
+<text x="561.7" y="420" text-anchor="middle" fill="#a5b9ac" font-size="11">d6</text>
+<text x="707.4" y="420" text-anchor="middle" fill="#a5b9ac" font-size="11">d7</text>
+<text x="443.0" y="446" text-anchor="middle" fill="#a5b9ac" font-size="12">Non-embedding parameters (log scale)</text>
+<text x="30" y="260.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 30 260.0)" text-anchor="middle">Validation loss (log scale)</text>
+<g class="arch-dep" data-d="5" style="display:none">
+<line x1="178.6" y1="239.8" x2="389.5" y2="298.8" stroke="#1fa87c" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<line x1="389.5" y1="298.8" x2="561.7" y2="342.0" stroke="#1fa87c" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<line x1="561.7" y1="342.0" x2="707.4" y2="377.7" stroke="#1fa87c" stroke-width="2.5"/>
+</g>
+<g>
+<circle cx="178.6" cy="239.8" r="5.5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>HC d4: 3.2264</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<circle cx="389.5" cy="298.8" r="5.5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>HC d5: 3.1001</title></circle>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<circle cx="561.7" cy="342.0" r="5.5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>HC d6: 3.0109</title></circle>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<circle cx="707.4" cy="377.7" r="5.5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>HC d7: 2.9392</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<line x1="178.6" y1="217.7" x2="389.5" y2="282.7" stroke="#c77f32" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<line x1="389.5" y1="282.7" x2="561.7" y2="334.4" stroke="#c77f32" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<line x1="561.7" y1="334.4" x2="707.4" y2="367.7" stroke="#c77f32" stroke-width="2.5"/>
+</g>
+<g>
+<circle cx="178.6" cy="217.7" r="5.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>mHC d4: 3.2748</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<circle cx="389.5" cy="282.7" r="5.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>mHC d5: 3.1340</title></circle>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<circle cx="561.7" cy="334.4" r="5.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>mHC d6: 3.0265</title></circle>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<circle cx="707.4" cy="367.7" r="5.5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>mHC d7: 2.9590</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<line x1="178.6" y1="212.4" x2="389.5" y2="268.5" stroke="#8a6fd0" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<line x1="389.5" y1="268.5" x2="561.7" y2="317.8" stroke="#8a6fd0" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<line x1="561.7" y1="317.8" x2="707.4" y2="354.6" stroke="#8a6fd0" stroke-width="2.5"/>
+</g>
+<g>
+<circle cx="178.6" cy="212.4" r="5.5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>LayerRoPE a=-0.5 d4: 3.2867</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<circle cx="389.5" cy="268.5" r="5.5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>LayerRoPE a=-0.5 d5: 3.1643</title></circle>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<circle cx="561.7" cy="317.8" r="5.5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>LayerRoPE a=-0.5 d6: 3.0605</title></circle>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<circle cx="707.4" cy="354.6" r="5.5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>LayerRoPE a=-0.5 d7: 2.9853</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<line x1="178.6" y1="223.0" x2="389.5" y2="279.2" stroke="#c2566f" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<line x1="389.5" y1="279.2" x2="561.7" y2="331.2" stroke="#c2566f" stroke-width="2.5"/>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<line x1="561.7" y1="331.2" x2="707.4" y2="365.2" stroke="#c2566f" stroke-width="2.5"/>
+</g>
+<g>
+<circle cx="178.6" cy="223.0" r="5.5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>mHC + LayerRoPE d4: 3.2631</title></circle>
+</g>
+<g class="arch-dep" data-d="5" style="display:none">
+<circle cx="389.5" cy="279.2" r="5.5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>mHC + LayerRoPE d5: 3.1414</title></circle>
+</g>
+<g class="arch-dep" data-d="6" style="display:none">
+<circle cx="561.7" cy="331.2" r="5.5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>mHC + LayerRoPE d6: 3.0330</title></circle>
+</g>
+<g class="arch-dep" data-d="7" style="display:none">
+<circle cx="707.4" cy="365.2" r="5.5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>mHC + LayerRoPE d7: 2.9640</title></circle>
+</g>
+<g class="arch-old" data-d="5" style="display:none">
+<line x1="178.6" y1="210.9" x2="389.5" y2="274.0" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<line x1="389.5" y1="274.0" x2="561.7" y2="320.3" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<line x1="561.7" y1="320.3" x2="707.4" y2="354.3" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="4" style="display:none">
+<circle cx="178.6" cy="210.9" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>baseline d4: 3.2901</title></circle>
+</g>
+<g class="arch-old" data-d="5" style="display:none">
+<circle cx="389.5" cy="274.0" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>baseline d5: 3.1526</title></circle>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<circle cx="561.7" cy="320.3" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>baseline d6: 3.0553</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<circle cx="707.4" cy="354.3" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>baseline d7: 2.9859</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<text x="717.4" y="358.3" fill="#8ba49a" font-size="11" font-weight="650">baseline</text></g>
+<g class="arch-old" data-d="5" style="display:none">
+<line x1="178.6" y1="153.4" x2="389.5" y2="193.3" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<line x1="389.5" y1="193.3" x2="561.7" y2="229.7" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<line x1="561.7" y1="229.7" x2="707.4" y2="246.2" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="4" style="display:none">
+<circle cx="178.6" cy="153.4" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>constant LR d4: 3.4204</title></circle>
+</g>
+<g class="arch-old" data-d="5" style="display:none">
+<circle cx="389.5" cy="193.3" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>constant LR d5: 3.3295</title></circle>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<circle cx="561.7" cy="229.7" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>constant LR d6: 3.2485</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<circle cx="707.4" cy="246.2" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>constant LR d7: 3.2124</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<text x="717.4" y="250.2" fill="#8ba49a" font-size="11" font-weight="650">constant LR</text></g>
+<g class="arch-old" data-d="5" style="display:none">
+<line x1="178.6" y1="142.0" x2="389.5" y2="195.4" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<line x1="389.5" y1="195.4" x2="561.7" y2="244.5" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<line x1="561.7" y1="244.5" x2="707.4" y2="285.2" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="4" style="display:none">
+<circle cx="178.6" cy="142.0" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d4: 3.4469</title></circle>
+</g>
+<g class="arch-old" data-d="5" style="display:none">
+<circle cx="389.5" cy="195.4" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d5: 3.3246</title></circle>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<circle cx="561.7" cy="244.5" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d6: 3.2160</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<circle cx="707.4" cy="285.2" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d7: 3.1288</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<text x="717.4" y="289.2" fill="#8ba49a" font-size="11" font-weight="650">dropout 0.2</text></g>
+<g class="arch-old" data-d="5" style="display:none">
+<line x1="178.6" y1="197.5" x2="389.5" y2="246.3" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<line x1="389.5" y1="246.3" x2="561.7" y2="295.8" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<line x1="561.7" y1="295.8" x2="707.4" y2="311.2" stroke="#8ba49a" stroke-width="1.8" stroke-dasharray="6 4"/>
+</g>
+<g class="arch-old" data-d="4" style="display:none">
+<circle cx="178.6" cy="197.5" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>lr 0.03 d4: 3.3200</title></circle>
+</g>
+<g class="arch-old" data-d="5" style="display:none">
+<circle cx="389.5" cy="246.3" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>lr 0.03 d5: 3.2121</title></circle>
+</g>
+<g class="arch-old" data-d="6" style="display:none">
+<circle cx="561.7" cy="295.8" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>lr 0.03 d6: 3.1064</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<circle cx="707.4" cy="311.2" r="4.5" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>lr 0.03 d7: 3.0743</title></circle>
+</g>
+<g class="arch-old" data-d="7" style="display:none">
+<text x="717.4" y="315.2" fill="#8ba49a" font-size="11" font-weight="650">lr 0.03</text></g>
+</svg>
+<figcaption>Validation loss against non-embedding parameters, log-log, at the
+standard recipe. The slider reveals greater depths; the button overlays the four
+earlier recipe variants in grey for comparison. Every point is measured: no
+curve here is extrapolated.</figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+<caption>Measured loss by depth, and the gap to the baseline at d7. The slope is
+the fitted power-law exponent on these four depths.</caption>
+<thead><tr><th scope="col">variant</th><th scope="col">d4</th><th scope="col">d5</th><th scope="col">d6</th><th scope="col">d7</th><th scope="col">vs baseline at d7</th><th scope="col">slope</th></tr></thead>
+<tbody>
+<tr><th scope="row">HC</th><td>3.2264</td><td>3.1001</td><td>3.0109</td><td><strong>2.9392</strong></td><td><strong>-0.0467</strong></td><td>-0.0555</td></tr>
+<tr><th scope="row">mHC</th><td>3.2748</td><td>3.1340</td><td>3.0265</td><td>2.9590</td><td>-0.0269</td><td>-0.0610</td></tr>
+<tr><th scope="row">mHC + LayerRoPE (a=0)</th><td>3.2631</td><td>3.1414</td><td>3.0330</td><td>2.9640</td><td>-0.0219</td><td>-0.0580</td></tr>
+<tr><th scope="row">LayerRoPE (a=-0.5)</th><td>3.2867</td><td>3.1643</td><td>3.0605</td><td>2.9853</td><td>-0.0006</td><td>-0.0577</td></tr>
+<tr><th scope="row">baseline</th><td>3.2901</td><td>3.1526</td><td>3.0553</td><td>2.9859</td><td>0.0000</td><td>-0.0580</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>Plain hyper-connections win here, and the ordering
+does not match the study these settings came from.</strong> At d7 the ranking is
+HC &lt; mHC &lt; mHC + LayerRoPE &lt; LayerRoPE &#8776; baseline. On the
+32-layer TinyStories backbone where these were tuned, mHC + LayerRoPE was the
+best row and beat the residual model by 0.077 nats; here the unconstrained HC is
+best and the combination is third. LayerRoPE alone is indistinguishable from the
+baseline at d7 (-0.0006).</div>
+
+<p>The learning rate does not explain it. LayerRoPE's bracketed optimum on the
+other backbone was 0.005, so it was also run at that rate across the ladder: the
+differences are -0.011, -0.005, +0.003 and +0.001 nats at d4 to d7. The tuned
+rate helps slightly at the smallest model and does nothing by d7, so the flat
+result for LayerRoPE here is not a mis-set learning rate.</p>
+
+<p class="scope">Four depths, one seed per cell, one dataset, one horizon. The
+slopes separate by less than the spread of the four fits, so this says which
+architecture is ahead over d4 to d7, not that the ordering holds at larger
+scale, and the earlier parts of this page are a standing warning against reading
+four points as a trend. Two further caveats are worth stating plainly: the
+tuning that produced the LayerRoPE intercepts was done on a different model,
+dataset and horizon, which is exactly the kind of transfer this page keeps
+finding does not hold; and mHC costs about six times the baseline per run here,
+because Sinkhorn runs twenty fp32 iterations per site per layer, so its deeper
+cells were not affordable in this pass.</p>
+</section>
+
 <section id="reproduce">
 <h2>Reproduce</h2>
 <p>Each part of this page is one defconfig in knlp:</p>
@@ -1602,6 +1895,35 @@ make</pre>
                 : 'd4 to d' + v + ', nothing past d12 was trained');
   }
   slider.addEventListener('input', apply);
+  apply();
+})();
+</script>
+<script>
+(function () {
+  var slider = document.getElementById('arch-depth');
+  var out = document.getElementById('arch-depth-out');
+  var btn = document.getElementById('arch-old-btn');
+  if (!slider) return;
+  var deps = document.querySelectorAll('.arch-dep');
+  var olds = document.querySelectorAll('.arch-old');
+  var showOld = false;
+  function apply() {
+    var v = parseInt(slider.value, 10);
+    for (var i = 0; i < deps.length; i++) {
+      var d = parseInt(deps[i].getAttribute('data-d'), 10);
+      deps[i].style.display = d <= v ? '' : 'none';
+    }
+    for (var j = 0; j < olds.length; j++) {
+      var od = parseInt(olds[j].getAttribute('data-d'), 10);
+      var within = isNaN(od) || od <= v;
+      olds[j].style.display = (showOld && within) ? '' : 'none';
+    }
+    out.textContent = 'd4 to d' + v;
+    btn.setAttribute('aria-pressed', showOld ? 'true' : 'false');
+    btn.textContent = showOld ? 'Hide earlier variants' : 'Overlay earlier variants';
+  }
+  slider.addEventListener('input', apply);
+  btn.addEventListener('click', function () { showOld = !showOld; apply(); });
   apply();
 })();
 </script>
