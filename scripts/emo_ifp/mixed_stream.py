@@ -167,6 +167,10 @@ as a fraction of the resident server's capacity. The server then:
     is the smallest confidence at which the selector's out-of-fold picks
     on the training questions (the folds and penalty of its own fit) are
     right at least --confident-precision of the time;
+    with --arrival-rule queue, the switch rule's debounce when the next
+    request is visible (switch only if it agrees), and the confident
+    rule when it is not (switch if the previous request agrees or the
+    pick is confident; otherwise run on the loaded pool and prefetch);
     waits, when no request has arrived, until the next one does; a load
     in flight continues meanwhile.
 
@@ -335,7 +339,9 @@ def main():
     )
     ap.add_argument("--arrival-seed", type=int, default=20261120)
     ap.add_argument(
-        "--arrival-rule", choices=["switch", "hold", "confident"], default="switch"
+        "--arrival-rule",
+        choices=["switch", "hold", "confident", "queue"],
+        default="switch",
     )
     ap.add_argument("--confident-precision", type=float, default=0.95)
     ap.add_argument(
@@ -1142,7 +1148,7 @@ def main():
         then the switch pass's per-request pools, replayed.
         """
         assert not router_sel, "arrival passes use an embedding selector"
-        confident = args.arrival_rule == "confident"
+        confident = args.arrival_rule in ("confident", "queue")
         assert not confident or args.selector == "emb-logreg"
         n = len(stream)
         clock = time.perf_counter
@@ -1196,7 +1202,8 @@ def main():
                 picks[j] = p
                 state["seen"] += 1
 
-        hold = args.arrival_rule in ("hold", "confident")
+        hold = args.arrival_rule in ("hold", "confident", "queue")
+        queue_rule = args.arrival_rule == "queue"
         tau = sel_info.get("confident", {}).get("threshold", float("inf"))
 
         def plan(i, c):
@@ -1204,7 +1211,12 @@ def main():
             for j in range(i, state["seen"]):
                 p = picks[j]
                 nxt_vis = j + 1 < state["seen"]
-                if hold:
+                if queue_rule:
+                    if nxt_vis:
+                        agree = picks[j + 1] == p
+                    else:
+                        agree = (j >= 1 and picks[j - 1] == p) or confs[j] >= tau
+                elif hold:
                     agree = (
                         (nxt_vis and picks[j + 1] == p)
                         or (j >= 1 and picks[j - 1] == p)
