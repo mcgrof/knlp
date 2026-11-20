@@ -1304,12 +1304,12 @@ outside the range it was fitted on. Four recipe variants were trained across a
 depth ladder at a fixed 600,000-sequence budget, so each curve is loss against
 model size at constant data: the baseline, a constant learning-rate schedule,
 dropout 0.2, and a ten-times learning rate. Each curve was fitted as a power
-law on <strong>d4 to d7 only</strong>, the predictions for d8 and d9 were
-written down, and only then were those two depths trained.</p>
+law on <strong>d4 to d7 only</strong>, the predictions were written down, and
+only then were the deeper models trained.</p>
 <p>The figure starts at the fitted range. Move the slider to reveal deeper
-models. d8 and d9 are measured, drawn as diamonds joined to the fit by a short
-line whose length is the prediction error; past d9 nothing was trained, so only
-the fitted curve continues.</p>
+models. d8 through d12 are measured, drawn as diamonds joined to the fit by a short line
+whose length is the prediction error; past d12 nothing was trained, so only the
+fitted curve continues.</p>
 
 <figure>
 <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px">
@@ -1407,22 +1407,46 @@ the fitted curve continues.</p>
 <g class="cs312-dep" data-d="10" style="display:none">
 <text x="509.6" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d10</text>
 <line x1="465.6" y1="275.5" x2="509.6" y2="288.5" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="288.5" x2="509.6" y2="276.3" stroke="#1fa87c" stroke-width="1.5" opacity="0.85"/>
+<rect x="505.1" y="271.8" width="9" height="9" fill="#1fa87c" stroke="#101c17" stroke-width="2" transform="rotate(45 509.6 276.3)"><title>baseline d10: measured 2.8488, fit predicted 2.8002</title></rect>
 <line x1="465.6" y1="213.9" x2="509.6" y2="222.5" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="222.5" x2="509.6" y2="216.1" stroke="#c77f32" stroke-width="1.5" opacity="0.85"/>
+<rect x="505.1" y="211.6" width="9" height="9" fill="#c77f32" stroke="#101c17" stroke-width="2" transform="rotate(45 509.6 216.1)"><title>constant LR d10: measured 3.1006, fit predicted 3.0728</title></rect>
 <line x1="465.6" y1="240.7" x2="509.6" y2="253.7" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="253.7" x2="509.6" y2="250.5" stroke="#8a6fd0" stroke-width="1.5" opacity="0.85"/>
+<rect x="505.1" y="246.0" width="9" height="9" fill="#8a6fd0" stroke="#101c17" stroke-width="2" transform="rotate(45 509.6 250.5)"><title>dropout 0.2 d10: measured 2.9539, fit predicted 2.9407</title></rect>
 <line x1="465.6" y1="250.9" x2="509.6" y2="261.6" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="261.6" x2="509.6" y2="253.4" stroke="#c2566f" stroke-width="1.5" opacity="0.85"/>
+<rect x="505.1" y="248.9" width="9" height="9" fill="#c2566f" stroke="#101c17" stroke-width="2" transform="rotate(45 509.6 253.4)"><title>lr 0.03 d10: measured 2.9422, fit predicted 2.9081</title></rect>
 </g>
 <g class="cs312-dep" data-d="11" style="display:none">
 <line x1="509.6" y1="288.5" x2="549.4" y2="300.3" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="300.3" x2="549.4" y2="285.5" stroke="#1fa87c" stroke-width="1.5" opacity="0.85"/>
+<rect x="544.9" y="281.0" width="9" height="9" fill="#1fa87c" stroke="#101c17" stroke-width="2" transform="rotate(45 549.4 285.5)"><title>baseline d11: measured 2.8119, fit predicted 2.7542</title></rect>
 <line x1="509.6" y1="222.5" x2="549.4" y2="230.3" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="230.3" x2="549.4" y2="222.2" stroke="#c77f32" stroke-width="1.5" opacity="0.85"/>
+<rect x="544.9" y="217.7" width="9" height="9" fill="#c77f32" stroke="#101c17" stroke-width="2" transform="rotate(45 549.4 222.2)"><title>constant LR d11: measured 3.0739, fit predicted 3.0392</title></rect>
 <line x1="509.6" y1="253.7" x2="549.4" y2="265.5" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="265.5" x2="549.4" y2="259.9" stroke="#8a6fd0" stroke-width="1.5" opacity="0.85"/>
+<rect x="544.9" y="255.4" width="9" height="9" fill="#8a6fd0" stroke="#101c17" stroke-width="2" transform="rotate(45 549.4 259.9)"><title>dropout 0.2 d11: measured 2.9152, fit predicted 2.8924</title></rect>
 <line x1="509.6" y1="261.6" x2="549.4" y2="271.3" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="271.3" x2="549.4" y2="256.2" stroke="#c2566f" stroke-width="1.5" opacity="0.85"/>
+<rect x="544.9" y="251.7" width="9" height="9" fill="#c2566f" stroke="#101c17" stroke-width="2" transform="rotate(45 549.4 256.2)"><title>lr 0.03 d11: measured 2.9305, fit predicted 2.8687</title></rect>
 </g>
 <g class="cs312-dep" data-d="12" style="display:none">
 <text x="585.7" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d12</text>
 <line x1="549.4" y1="300.3" x2="585.7" y2="311.0" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="311.0" x2="585.7" y2="289.9" stroke="#1fa87c" stroke-width="1.5" opacity="0.85"/>
+<rect x="581.2" y="285.4" width="9" height="9" fill="#1fa87c" stroke="#101c17" stroke-width="2" transform="rotate(45 585.7 289.9)"><title>baseline d12: measured 2.7945, fit predicted 2.7128</title></rect>
 <line x1="549.4" y1="230.3" x2="585.7" y2="237.4" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="237.4" x2="585.7" y2="229.8" stroke="#c77f32" stroke-width="1.5" opacity="0.85"/>
+<rect x="581.2" y="225.3" width="9" height="9" fill="#c77f32" stroke="#101c17" stroke-width="2" transform="rotate(45 585.7 229.8)"><title>constant LR d12: measured 3.0415, fit predicted 3.0089</title></rect>
 <line x1="549.4" y1="265.5" x2="585.7" y2="276.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="276.2" x2="585.7" y2="268.2" stroke="#8a6fd0" stroke-width="1.5" opacity="0.85"/>
+<rect x="581.2" y="263.7" width="9" height="9" fill="#8a6fd0" stroke="#101c17" stroke-width="2" transform="rotate(45 585.7 268.2)"><title>dropout 0.2 d12: measured 2.8815, fit predicted 2.8491</title></rect>
 <line x1="549.4" y1="271.3" x2="585.7" y2="280.2" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="280.2" x2="585.7" y2="262.0" stroke="#c2566f" stroke-width="1.5" opacity="0.85"/>
+<rect x="581.2" y="257.5" width="9" height="9" fill="#c2566f" stroke="#101c17" stroke-width="2" transform="rotate(45 585.7 262.0)"><title>lr 0.03 d12: measured 2.9067, fit predicted 2.8332</title></rect>
 </g>
 <g class="cs312-dep" data-d="13" style="display:none">
 <line x1="585.7" y1="311.0" x2="619.1" y2="320.9" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
@@ -1483,8 +1507,8 @@ the fitted curve continues.</p>
 <g class="cs312-note" data-d="8" style="display:none">
 <text x="830" y="144" text-anchor="end" fill="#e9f0eb" font-size="12" font-weight="650">every measured point sits above its own fit</text>
 </g>
-<g class="cs312-note" data-d="10" style="display:none">
-<text x="830" y="164" text-anchor="end" fill="#f4c27d" font-size="11">beyond d9 nothing was trained: these are fitted curves only</text>
+<g class="cs312-note" data-d="13" style="display:none">
+<text x="830" y="164" text-anchor="end" fill="#f4c27d" font-size="11">beyond d12 nothing was trained: these are fitted curves only</text>
 </g>
 </svg>
 <figcaption>Loss against non-embedding parameters, log-log, for the four
@@ -1500,32 +1524,40 @@ that fit's predicted loss there.</figcaption>
 held-out depths actually measured. Rows appear as the slider reveals them.</caption>
 <thead><tr><th scope="col">variant</th><th scope="col">depth</th><th scope="col">predicted</th><th scope="col">measured</th><th scope="col">error</th></tr></thead>
 <tbody>
-<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">baseline</th><td>d8</td><td>2.9112</td><td>2.9258</td><td><strong>+0.0146</strong></td></tr>
-<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">baseline</th><td>d9</td><td>2.8522</td><td>2.8830</td><td><strong>+0.0308</strong></td></tr>
-<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">constant LR</th><td>d8</td><td>3.1546</td><td>3.1713</td><td><strong>+0.0167</strong></td></tr>
-<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">constant LR</th><td>d9</td><td>3.1121</td><td>3.1182</td><td><strong>+0.0061</strong></td></tr>
-<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">dropout 0.2</th><td>d8</td><td>3.0592</td><td>3.0613</td><td><strong>+0.0021</strong></td></tr>
-<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">dropout 0.2</th><td>d9</td><td>2.9973</td><td>3.0025</td><td><strong>+0.0052</strong></td></tr>
-<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">lr 0.03</th><td>d8</td><td>3.0016</td><td>3.0278</td><td><strong>+0.0262</strong></td></tr>
-<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">lr 0.03</th><td>d9</td><td>2.9515</td><td>2.9969</td><td><strong>+0.0454</strong></td></tr>
-<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">all eight cells</th><td>—</td><td>—</td><td>—</td><td><strong>every error positive</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">baseline</th><td>d8</td><td>2.9111</td><td>2.9258</td><td><strong>+0.0147</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">baseline</th><td>d9</td><td>2.8520</td><td>2.8830</td><td><strong>+0.0310</strong></td></tr>
+<tr class="cs312-row" data-d="10" style="display:none"><th scope="row">baseline</th><td>d10</td><td>2.8002</td><td>2.8488</td><td><strong>+0.0486</strong></td></tr>
+<tr class="cs312-row" data-d="11" style="display:none"><th scope="row">baseline</th><td>d11</td><td>2.7542</td><td>2.8119</td><td><strong>+0.0578</strong></td></tr>
+<tr class="cs312-row" data-d="12" style="display:none"><th scope="row">baseline</th><td>d12</td><td>2.7128</td><td>2.7945</td><td><strong>+0.0817</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">constant LR</th><td>d8</td><td>3.1528</td><td>3.1713</td><td><strong>+0.0185</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">constant LR</th><td>d9</td><td>3.1103</td><td>3.1182</td><td><strong>+0.0079</strong></td></tr>
+<tr class="cs312-row" data-d="10" style="display:none"><th scope="row">constant LR</th><td>d10</td><td>3.0728</td><td>3.1006</td><td><strong>+0.0278</strong></td></tr>
+<tr class="cs312-row" data-d="11" style="display:none"><th scope="row">constant LR</th><td>d11</td><td>3.0392</td><td>3.0739</td><td><strong>+0.0347</strong></td></tr>
+<tr class="cs312-row" data-d="12" style="display:none"><th scope="row">constant LR</th><td>d12</td><td>3.0089</td><td>3.0415</td><td><strong>+0.0325</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">dropout 0.2</th><td>d8</td><td>3.0570</td><td>3.0613</td><td><strong>+0.0044</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">dropout 0.2</th><td>d9</td><td>2.9950</td><td>3.0025</td><td><strong>+0.0074</strong></td></tr>
+<tr class="cs312-row" data-d="10" style="display:none"><th scope="row">dropout 0.2</th><td>d10</td><td>2.9407</td><td>2.9539</td><td><strong>+0.0132</strong></td></tr>
+<tr class="cs312-row" data-d="11" style="display:none"><th scope="row">dropout 0.2</th><td>d11</td><td>2.8924</td><td>2.9152</td><td><strong>+0.0227</strong></td></tr>
+<tr class="cs312-row" data-d="12" style="display:none"><th scope="row">dropout 0.2</th><td>d12</td><td>2.8491</td><td>2.8815</td><td><strong>+0.0324</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">lr 0.03</th><td>d8</td><td>3.0025</td><td>3.0278</td><td><strong>+0.0253</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">lr 0.03</th><td>d9</td><td>2.9523</td><td>2.9969</td><td><strong>+0.0446</strong></td></tr>
+<tr class="cs312-row" data-d="10" style="display:none"><th scope="row">lr 0.03</th><td>d10</td><td>2.9081</td><td>2.9422</td><td><strong>+0.0341</strong></td></tr>
+<tr class="cs312-row" data-d="11" style="display:none"><th scope="row">lr 0.03</th><td>d11</td><td>2.8687</td><td>2.9305</td><td><strong>+0.0617</strong></td></tr>
+<tr class="cs312-row" data-d="12" style="display:none"><th scope="row">lr 0.03</th><td>d12</td><td>2.8332</td><td>2.9067</td><td><strong>+0.0734</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">all twenty cells</th><td>—</td><td>—</td><td>—</td><td><strong>every error positive</strong></td></tr>
 </tbody>
 </table>
 </div>
 
-<div class="callout cs312-note" data-d="8" style="display:none"><strong>All eight
-extrapolations were optimistic.</strong> Every measured point sits above its own
-fit, mean error +0.0184 nats. If the signs were random that is a one-in-256
-coincidence, so this is systematic bias rather than noise. The errors also grow
-with distance: the baseline misses d8 by +0.0146 and d9 by +0.0308.</div>
+<div class="callout cs312-note" data-d="8" style="display:none"><strong>All twenty extrapolations were optimistic.</strong> Every measured point sits above its own fit, and the error grows with distance: averaged over the four variants it is +0.016 nats one step out, +0.023 at two, +0.031 at three, +0.044 at four and +0.055 at five. Twenty cells all erring the same way is a one-in-a-million coincidence if the signs were random, so this is systematic bias, not noise. The baseline at d12 was predicted at 2.7128 and measured 2.7945, off by +0.0817 &#8212; about fourteen times its own in-sample residual.</div>
 
 <p class="scope">The in-sample fits look immaculate and say nothing useful about
 this: the baseline's residual is 0.00194 in log space, yet it misses d9 by 5.5
 times that. The residuals are U-shaped, which is the signature of a missing
 irreducible-loss term; adding one cuts the baseline's residual eightfold.
 Dropout 0.2 is the exception, a genuinely clean power law, and it is also the
-variant that extrapolated best. Beyond d9 the curves are fitted continuations
-only: no model deeper than d9 was trained, and on this evidence a bare d20 point
+variant that extrapolated best. Beyond d12 the curves are fitted continuations
+only: no model deeper than d12 was trained, and on this evidence a bare d20 point
 estimate would be exactly the overconfidence the problem is about. The honest
 range for the baseline at d20 is about 2.52 to 2.66, weighted to the upper end.
 One seed per cell.</p>
@@ -1566,8 +1598,8 @@ make</pre>
       items[i].style.display = d <= v ? '' : 'none';
     }
     out.textContent = v <= 7 ? 'd4 to d7, the fitted range'
-      : (v <= 9 ? 'd4 to d' + v + ', held-out measurements'
-                : 'd4 to d' + v + ', nothing past d9 was trained');
+      : (v <= 12 ? 'd4 to d' + v + ', held-out measurements'
+                : 'd4 to d' + v + ', nothing past d12 was trained');
   }
   slider.addEventListener('input', apply);
   apply();

@@ -62,6 +62,13 @@ config KNLP_CS312_PROBLEM_P1C
 	  learning-rate schedule and its warmup, then rank the cells by
 	  final validation loss. Compute matched, like every other problem.
 
+config KNLP_CS312_PROBLEM_P2
+	bool "2 scaling-law reliability: variants across a depth ladder"
+	help
+	  Train several recipe variants across the depth ladder at a fixed
+	  token budget and test whether each curve's power-law fit predicts
+	  the held-out large depths.
+
 config KNLP_CS312_PROBLEM_KVQ
 	bool "KV-cache quantization-aware training (precision lane)"
 	help
@@ -325,5 +332,17 @@ config KNLP_CS312_P1C_CELLS
 	default "wsd0.2:0.0,wsd0.2:0.2,linear:0.1"
 	help
 	  Each cell is one run, labelled A, B, C in the order given.
+
+endif
+
+if KNLP_CS312_PROBLEM_P2
+
+config KNLP_CS312_P2_DEPTHS
+	string "2 depths to train, comma separated"
+	default "4,5,6,7"
+
+config KNLP_CS312_P2_VARIANTS
+	string "2 variants, comma separated name=<lr>:<schedule>:<dropout>"
+	default "baseline=0.003:linear:0.0,constant=0.003:constant:0.0,dropout0.2=0.003:linear:0.2,lr0.03=0.03:linear:0.0"
 
 endif

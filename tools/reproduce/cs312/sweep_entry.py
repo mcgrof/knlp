@@ -335,7 +335,9 @@ def mode_collect(args, plan):
         }
         for _k in ("level", "granularity", "qk_norm", "suffix",
                    "label", "lr_schedule", "warmup_percent",
-                   "learning_rate", "batch_size"):
+                   "learning_rate", "batch_size",
+                   "variant", "depth", "params",
+                   "params_embedding_free"):
             if _k in run:
                 entry[_k] = run[_k]
         receipt_path = args.output / "runs" / name / "receipt.json"
@@ -393,8 +395,13 @@ def mode_collect(args, plan):
             "runs": runs,
         },
     )
-    finished = sum(1 for r in runs if r["val_loss"] is not None)
-    print(f"collected {finished}/{len(runs)} finished runs")
+    # A run reports intermediate validation losses to W&B while it trains, so
+    # "has a loss" is not "has finished". Counting the former made a sweep look
+    # complete minutes after launch, with mid-training numbers. Count the state.
+    finished = sum(1 for r in runs if r.get("state") == "finished")
+    with_values = sum(1 for r in runs if r["val_loss"] is not None)
+    note = "" if with_values == finished else f" ({with_values} have a value so far)"
+    print(f"collected {finished}/{len(runs)} finished runs{note}")
 
 
 def main():

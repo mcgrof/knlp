@@ -45,6 +45,9 @@ DEFAULTS = {
     "P1C_LR": "0.009",
     "P1C_WD": "1.0",
     "P1C_CELLS": "wsd0.2:0.0,wsd0.2:0.2,linear:0.1",
+    "P2_DEPTHS": "4,5,6,7",
+    "P2_VARIANTS": ("baseline=0.003:linear:0.0,constant=0.003:constant:0.0,"
+                    "dropout0.2=0.003:linear:0.2,lr0.03=0.03:linear:0.0"),
     "P1C_BATCH": "",
     "P1C_MICRO": "",
     "REFERENCE_OUTPUT": "",
@@ -429,6 +432,94 @@ def plan_p1c(cfg):
     return {"learning_rates": lrs, "weight_decay": wd, "runs": runs}
 
 
+def _p2_variants(spec):
+    """Parse variant entries into (name, lr, schedule, dropout, arch, alpha).
+
+    An entry is "name=lr:schedule:dropout", optionally extended with a
+    residual architecture and a LayerRoPE intercept:
+    "name=lr:schedule:dropout:arch" or "...:arch:alpha". Architecture names
+    are those in cs312_arch.VARIANTS.
+    """
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        name, _, body = item.partition("=")
+        if not body:
+            name, body = "", name
+        parts = body.split(":")
+        if len(parts) not in (3, 4, 5):
+            raise SystemExit(
+                f"P2_VARIANTS entries look like 'name=0.003:linear:0.0' with an "
+                f"optional ':arch[:alpha]', got {item!r}"
+            )
+        lr, schedule, dropout = float(parts[0]), parts[1].strip(), float(parts[2])
+        arch = parts[3].strip() if len(parts) >= 4 and parts[3].strip() else ""
+        alpha = float(parts[4]) if len(parts) == 5 else 0.0
+        out.append((name or f"lr{lr}-{schedule}-do{dropout}", lr, schedule,
+                    dropout, arch, alpha))
+    return out
+
+
+def plan_p2(cfg):
+    """Scaling-law reliability: one recipe variant per curve, across depths.
+
+    Each variant is trained at every depth in P2_DEPTHS, with the token
+    budget held fixed, so a curve is loss against model size at constant
+    data. Splitting the depths across two runs of this problem is the
+    point: fit the small depths, write the predictions down, and only
+    then train the held-out ones.
+    """
+    depths = [int(x) for x in cfg["P2_DEPTHS"].split(",") if x.strip()]
+    variants = _p2_variants(cfg["P2_VARIANTS"])
+    runs = []
+    for depth in depths:
+        for name, lr, schedule, dropout, arch, alpha in variants:
+            overrides = {
+                "model_name": f"d{depth}",
+                "learning_rate": lr,
+                "lr_schedule": schedule,
+                "dropout": dropout,
+            }
+            # The course run name is built from TrainConfig fields and ignores
+            # model_builder, so two architectures sharing a recipe would land on
+            # one name and the second would be skipped as already trained. The
+            # variant name goes into the suffix to keep them apart.
+            suffix = cfg["RUN_SUFFIX"]
+            if arch:
+                overrides["model_builder"] = "cs312_arch:build_arch_model"
+                overrides["model_builder_kwargs"] = {
+                    "variant": arch,
+                    "layerrope_alpha": alpha,
+                    "layerrope_beta": 0.0,
+                }
+                suffix = f"{name}-{suffix}" if suffix else name
+            runs.append(
+                {
+                    "index": len(runs),
+                    "axis": "scaling",
+                    "variant": name,
+                    "arch": arch,
+                    "depth": depth,
+                    "params": _d_params(depth),
+                    "params_embedding_free": _d_params(depth, embedding_free=True),
+                    "exponent": 0,
+                    "overrides": overrides,
+                    "suffix": suffix,
+                }
+            )
+    return {"depths": depths, "variants": [v[0] for v in variants], "runs": runs}
+
+
+def _d_params(depth, vocab=4096, embedding_free=False):
+    """Parameter count for the course's depth ladder: hidden 64*depth, MLP 3.5x."""
+    hidden = 64 * depth
+    inter = int(hidden * 3.5)
+    body = depth * (4 * hidden * hidden + 3 * hidden * inter)
+    return body if embedding_free else body + 2 * vocab * hidden
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -442,7 +533,8 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
-    planners = {"p1a": plan_p1a, "p1b": plan_p1b, "p1c": plan_p1c, "kvq": plan_kvq}
+    planners = {"p1a": plan_p1a, "p1b": plan_p1b, "p1c": plan_p1c,
+                "p2": plan_p2, "kvq": plan_kvq}
     if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
@@ -576,14 +668,16 @@ def stage_quant_hook(cfg):
     env; staging it this way keeps the pinned commit unchanged (untracked
     files do not move HEAD).
     """
-    src = HERE / "cs312_quant.py"
-    if not src.exists():
-        return
-    dst = assignments_dir(cfg) / "cs312_quant.py"
     import shutil as _sh
 
-    _sh.copyfile(src, dst)
-    print(f"staged KV-quant hook at {dst} (untracked)")
+    for name, label in (("cs312_quant.py", "KV-quant hook"),
+                        ("cs312_arch.py", "residual-architecture builder")):
+        src = HERE / name
+        if not src.exists():
+            continue
+        dst = assignments_dir(cfg) / name
+        _sh.copyfile(src, dst)
+        print(f"staged {label} at {dst} (untracked)")
 
 
 def cmd_fetch(cfg, _args):
@@ -1077,6 +1171,73 @@ def render_report_p1c(results):
     return "\n".join(lines)
 
 
+def render_report_p2(results):
+    """Per-variant loss against model size, with a power-law fit where possible."""
+    import math
+
+    plan = results["plan"]
+    lines = [f"# CS312 problem {plan['problem']} report", ""]
+    lines.append(
+        f"Plan `{plan['digest']}`: {plan['num_train_sequences']:,} sequences per run, "
+        f"{len(plan['runs'])} runs, depths {plan.get('depths')}, backend "
+        f"`{results['backend']}`, collected {results['collected_utc']}."
+    )
+    done = sum(1 for e in results["runs"] if e.get("state") == "finished")
+    start, end, span = sweep_window(results)
+    lines.append(
+        f"Finished runs: {done}/{len(results['runs'])}. Sweep window: {start or '-'} to "
+        + (end or "-") + (f" ({span:.1f} min)." if span is not None else ".")
+    )
+    lines.append("")
+    by_variant = {}
+    for r in results["runs"]:
+        if r.get("val_loss") is None:
+            continue
+        by_variant.setdefault(r.get("variant", "?"), []).append(r)
+    for name in plan.get("variants", sorted(by_variant)):
+        rows = sorted(by_variant.get(name, []), key=lambda r: r.get("depth", 0))
+        if not rows:
+            continue
+        lines.append(f"## {name}")
+        lines.append("")
+        lines.append("| depth | params | non-embed params | val loss | minutes |")
+        lines.append("|---|---|---|---|---|")
+        for r in rows:
+            mins = r.get("total_seconds")
+            lines.append(
+                f"| d{r.get('depth')} | {r.get('params', 0)/1e6:.2f}M | "
+                f"{r.get('params_embedding_free', 0)/1e6:.2f}M | {r['val_loss']:.4f} | "
+                + (f"{mins/60:.1f}" if mins else "-") + " |"
+            )
+        lines.append("")
+        # power law on non-embedding params: loss = a * N^b, fitted in log-log
+        pts = [(r["params_embedding_free"], r["val_loss"]) for r in rows
+               if r.get("params_embedding_free")]
+        if len(pts) >= 3:
+            xs = [math.log(n) for n, _ in pts]
+            ys = [math.log(l) for _, l in pts]
+            k = len(xs)
+            mx, my = sum(xs) / k, sum(ys) / k
+            sxx = sum((x - mx) ** 2 for x in xs)
+            sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            b = sxy / sxx
+            a = math.exp(my - b * mx)
+            resid = [y - (math.log(a) + b * x) for x, y in zip(xs, ys)]
+            rms = math.sqrt(sum(r * r for r in resid) / k)
+            lines.append(
+                f"Power-law fit on non-embedding params: "
+                f"**loss = {a:.4g} * N^({b:.4f})**, rms residual {rms:.5f} in log loss."
+            )
+            lines.append("")
+            preds = []
+            for d in (8, 9, 10, 12, 16, 20):
+                n = _d_params(d, embedding_free=True)
+                preds.append(f"d{d} {a * n ** b:.4f}")
+            lines.append("Extrapolation: " + ", ".join(preds))
+            lines.append("")
+    return "\n".join(lines)
+
+
 def render_report_kvq(results, posthoc=None, baseline=2.9258):
     plan = results["plan"]
     posthoc = posthoc or {}
@@ -1228,6 +1389,8 @@ def cmd_report(cfg, args):
         text = render_report_p1b(results)
     elif problem == "p1c":
         text = render_report_p1c(results)
+    elif problem == "p2":
+        text = render_report_p2(results)
     else:
         text = render_report(results, against)
     (out / "report.md").write_text(text)

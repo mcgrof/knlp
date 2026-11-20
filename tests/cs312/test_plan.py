@@ -203,3 +203,64 @@ class PlanP1cMultiRateTest(unittest.TestCase):
     def test_indices_stay_unique_across_rates(self):
         plan = cs312.build_plan(defaults(PROBLEM="p1c", P1C_LR="0.009,0.003"))
         self.assertEqual([r["index"] for r in plan["runs"]], list(range(6)))
+
+
+class PlanP2Test(unittest.TestCase):
+    def test_every_variant_is_trained_at_every_depth(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="4,5"))
+        self.assertEqual(len(plan["runs"]), 8)
+        self.assertEqual(plan["depths"], [4, 5])
+        for run in plan["runs"]:
+            self.assertEqual(run["overrides"]["model_name"], f"d{run['depth']}")
+
+    def test_variants_carry_their_recipe(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="8"))
+        by = {r["variant"]: r["overrides"] for r in plan["runs"]}
+        self.assertEqual(by["baseline"]["lr_schedule"], "linear")
+        self.assertEqual(by["constant"]["lr_schedule"], "constant")
+        self.assertEqual(by["dropout0.2"]["dropout"], 0.2)
+        self.assertEqual(by["lr0.03"]["learning_rate"], 0.03)
+
+    def test_param_counts_rise_with_depth_and_exclude_embeddings(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="4,8"))
+        d4 = next(r for r in plan["runs"] if r["depth"] == 4)
+        d8 = next(r for r in plan["runs"] if r["depth"] == 8)
+        self.assertLess(d4["params"], d8["params"])
+        self.assertLess(d8["params_embedding_free"], d8["params"])
+
+    def test_a_malformed_variant_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            cs312.build_plan(defaults(PROBLEM="p2", P2_VARIANTS="baseline=0.003:linear"))
+
+
+class PlanP2ArchTest(unittest.TestCase):
+    ARCH = ("hc=0.003:linear:0.0:hc,mhc=0.003:linear:0.0:mhc,"
+            "layerrope=0.003:linear:0.0:layerrope:-0.5,"
+            "mhc_layerrope=0.003:linear:0.0:mhc_layerrope:0.0")
+
+    def test_arch_variants_carry_the_builder_and_kwargs(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="4",
+                                         P2_VARIANTS=self.ARCH))
+        by = {r["variant"]: r for r in plan["runs"]}
+        self.assertEqual(by["hc"]["overrides"]["model_builder"],
+                         "cs312_arch:build_arch_model")
+        self.assertEqual(by["mhc"]["overrides"]["model_builder_kwargs"]["variant"], "mhc")
+        self.assertEqual(
+            by["layerrope"]["overrides"]["model_builder_kwargs"]["layerrope_alpha"], -0.5)
+        self.assertEqual(
+            by["mhc_layerrope"]["overrides"]["model_builder_kwargs"]["layerrope_alpha"], 0.0)
+
+    def test_architectures_do_not_collide_on_one_run_name(self):
+        # the course run name ignores model_builder, so the suffix must separate them
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="4",
+                                         P2_VARIANTS=self.ARCH))
+        names = {cs312.json.dumps(r["train_config"], sort_keys=True) for r in plan["runs"]}
+        self.assertEqual(len(names), 4)
+        suffixes = {r["suffix"] for r in plan["runs"]}
+        self.assertEqual(len(suffixes), 4)
+
+    def test_plain_recipe_variants_keep_their_original_suffix(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2", P2_DEPTHS="4"))
+        for run in plan["runs"]:
+            self.assertEqual(run["suffix"], "test")
+            self.assertNotIn("model_builder", run["overrides"])
