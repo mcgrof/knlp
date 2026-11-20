@@ -16,8 +16,10 @@ that apply_pool, pool_matrix.py and pack_pool_layer.py accept.
 
     mix-calibration OUT.json CALIBRATION.json...
         Concatenate calibration files into one, for calibrate_pool.py.
-        Each file contributes all its texts; the calibration average is
-        per token, so a domain with longer texts weighs more.
+        Each file contributes all its texts, labelled by the file's
+        directory name in "groups". The calibration average is per
+        token, so a domain with longer texts weighs more unless
+        calibrate_pool.py runs with --balance-groups.
 
 Both print, per layer, how many kept experts each number of source pools
 shares (vote only).
@@ -87,16 +89,23 @@ def vote(args):
 
 
 def mix(args):
-    items, texts, sources = [], [], []
+    items, texts, groups, sources = [], [], [], []
     for p in args.inputs:
         with open(p) as f:
             c = json.load(f)
         assert len(c["items"]) == len(c["texts"])
         items += c["items"]
         texts += c["texts"]
+        groups += [os.path.basename(os.path.dirname(os.path.abspath(p)))] * len(
+            c["texts"]
+        )
         sources.append({"file": os.path.abspath(p), "count": len(c["texts"])})
     with open(args.out, "w") as f:
-        json.dump({"items": items, "texts": texts, "sources": sources}, f, indent=1)
+        json.dump(
+            {"items": items, "texts": texts, "groups": groups, "sources": sources},
+            f,
+            indent=1,
+        )
     print(f"{len(texts)} calibration texts from {len(sources)} files")
 
 

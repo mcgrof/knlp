@@ -10,8 +10,14 @@ Routed and shared experts use separate softmaxes, as in the model's forward
 pass. Note that EMO's ``keep_k`` counts the shared expert; this script
 takes the routed count explicitly, so ``--routed 32`` keeps 33 experts.
 
+The average is per calibration token, so texts with more tokens weigh
+more. With --balance-groups, the calibration file's ``groups`` list
+(one label per text, as written by general_pool.py mix-calibration)
+makes each group weigh the same instead.
+
 Usage:
     calibrate_pool.py MODEL_DIR CALIBRATION.json OUT_POOL.json --routed 32
+        [--balance-groups]
 """
 
 import argparse
@@ -32,12 +38,21 @@ class EarlyExit(Exception):
 
 
 @torch.no_grad()
-def layer_avg_probs(model, batches, li):
+def layer_avg_probs(model, batches, li, groups=None):
+    """Average router probabilities per token of the calibration texts.
+
+    With groups (one label per text), average per token within each
+    group, then weigh every group equally, so a group with longer texts
+    does not dominate. Without groups this is the plain per-token mean.
+    """
     layer = model.model.layers[li]
     moe = layer.mlp
     n, ns = moe.num_experts, moe.num_shared_experts
-    tot = torch.zeros(n, dtype=torch.float64)
-    ntok = 0
+    if groups is None:
+        groups = [0] * len(batches)
+    labels = sorted(set(groups), key=groups.index)
+    tot = {g: torch.zeros(n, dtype=torch.float64) for g in labels}
+    ntok = {g: 0 for g in labels}
     cap = []
 
     def hook(mod, inp, out):
@@ -51,7 +66,7 @@ def layer_avg_probs(model, batches, li):
     if li + 1 < len(model.model.layers):
         h2 = model.model.layers[li + 1].register_forward_pre_hook(stop)
     try:
-        for ids in batches:
+        for ids, g in zip(batches, groups):
             cap.clear()
             try:
                 model(input_ids=ids)
@@ -59,14 +74,15 @@ def layer_avg_probs(model, batches, li):
                 pass
             assert len(cap) == 1
             lg = cap[0]
-            tot[: n - ns] += F.softmax(lg[:, : n - ns], dim=-1).sum(0).double().cpu()
-            tot[n - ns :] += F.softmax(lg[:, n - ns :], dim=-1).sum(0).double().cpu()
-            ntok += lg.shape[0]
+            tot[g][: n - ns] += F.softmax(lg[:, : n - ns], dim=-1).sum(0).double().cpu()
+            tot[g][n - ns :] += F.softmax(lg[:, n - ns :], dim=-1).sum(0).double().cpu()
+            ntok[g] += lg.shape[0]
     finally:
         h1.remove()
         if h2 is not None:
             h2.remove()
-    return tot / ntok, ntok
+    avg = sum(tot[g] / ntok[g] for g in labels) / len(labels)
+    return avg, sum(ntok.values())
 
 
 def main():
@@ -75,6 +91,11 @@ def main():
     ap.add_argument("calibration")
     ap.add_argument("out")
     ap.add_argument("--routed", type=int, default=32)
+    ap.add_argument(
+        "--balance-groups",
+        action="store_true",
+        help="weigh each group of the calibration file's 'groups' equally",
+    )
     args = ap.parse_args()
 
     model, tok = load_model(args.model_dir)
@@ -84,13 +105,17 @@ def main():
         torch.tensor([tok(t, add_special_tokens=False)["input_ids"]], device="cuda")
         for t in cal["texts"]
     ]
+    groups = None
+    if args.balance_groups:
+        groups = cal["groups"]
+        assert len(groups) == len(batches)
     t0 = time.time()
     layers = {}
     ns = model.model.layers[0].mlp.num_shared_experts
     for li, layer in enumerate(model.model.layers):
         moe = layer.mlp
         n = moe.num_experts
-        probs, ntok = layer_avg_probs(model, batches, li)
+        probs, ntok = layer_avg_probs(model, batches, li, groups)
         std = probs[: n - ns]
         routed = sorted(torch.topk(std, args.routed).indices.tolist())
         shared = list(range(n - ns, n))
@@ -115,6 +140,7 @@ def main():
         "note": f"{args.routed + ns}-total pool ({args.routed} routed + {ns} shared); EMO keep_k counts the shared expert",
         "calibration_file": os.path.abspath(args.calibration),
         "calibration_count": len(cal["texts"]),
+        "balanced_groups": sorted(set(groups)) if groups else None,
         "model_dir": os.path.abspath(args.model_dir),
         "runtime": runtime_identity(),
         "seconds": round(time.time() - t0, 2),
