@@ -33,9 +33,17 @@ A selector qualifies when, in every pooled domain, its served quality
 has at most --max-net-losses net losses against the oracle pick on the
 primary (per character) metric.
 
+On a pool server, routers past layer 0 run on hidden states that the
+resident pool computed. --test-resident NAME takes the test requests'
+router features from the run with pool NAME resident (selector_features
+--resident); --train-resident NAME does the same for the training
+requests. Without them both come from the full model. The input
+embedding and layer 0's router do not depend on the pool.
+
 Usage:
     selector_eval.py FEATURES.pt POOL_MATRIX.json OUT.json
         [--n-train 8 32 128] [--depths 1 2 4 16]
+        [--train-resident NAME] [--test-resident NAME]
 """
 
 import argparse
@@ -145,6 +153,8 @@ def main():
         "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
     )
     ap.add_argument("--max-net-losses", type=int, default=4)
+    ap.add_argument("--train-resident")
+    ap.add_argument("--test-resident")
     args = ap.parse_args()
 
     # Our own features file; it holds the runtime identity, not only tensors.
@@ -170,7 +180,11 @@ def main():
             return x["tokens"]
         if kind == "emb":
             return x["emb"].double()
-        return x["router"][:, :depth, :].reshape(len(x["ids"]), -1).double()
+        res = args.train_resident if split == "train" else args.test_resident
+        r = x["router"]
+        if res is not None:
+            r = F["resident"][res]["domains"][d][split]["router"]
+        return r[:, :depth, :].reshape(len(x["ids"]), -1).double()
 
     specs = [("tokens-nb", "tokens", None, "nb"), ("emb-centroid", "emb", None, "c")]
     specs.append(("emb-logreg", "emb", None, "lr"))
