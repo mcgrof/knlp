@@ -1297,6 +1297,240 @@ trained, so the numbers transfer no further than that.</p></section>
 <p class="scope">Put together with the frontier, the ranking at the highest KV quantization is clear: query-key normalization first, by a wide margin, then a gentler learning rate for a modest further gain. The stress cell's seed instability swamps the small optimizer effects, so no optimizer setting makes 2-bit per-tensor reliable on this model without query-key normalization.</p>
 </section>
 
+<section id="scaling">
+<h2>Part 5: does a scaling law extrapolate?</h2>
+<p>The assignment's second problem asks whether a scaling law can be trusted
+outside the range it was fitted on. Four recipe variants were trained across a
+depth ladder at a fixed 600,000-sequence budget, so each curve is loss against
+model size at constant data: the baseline, a constant learning-rate schedule,
+dropout 0.2, and a ten-times learning rate. Each curve was fitted as a power
+law on <strong>d4 to d7 only</strong>, the predictions for d8 and d9 were
+written down, and only then were those two depths trained.</p>
+<p>The figure starts at the fitted range. Move the slider to reveal deeper
+models. d8 and d9 are measured, drawn as diamonds joined to the fit by a short
+line whose length is the prediction error; past d9 nothing was trained, so only
+the fitted curve continues.</p>
+
+<figure>
+<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px">
+<label for="cs312-depth" style="font-size:14px;color:#a5b9ac">Show models up to</label>
+<input type="range" id="cs312-depth" min="7" max="20" step="1" value="7"
+       style="flex:1 1 240px;min-width:200px;accent-color:#55e6b0"
+       aria-describedby="cs312-depth-out">
+<output id="cs312-depth-out" for="cs312-depth"
+        style="font-size:13px;color:#e9f0eb;font-weight:650;min-width:16ch"></output>
+</div>
+<svg viewBox="0 0 940 540" width="100%" height="auto" role="img" aria-labelledby="sl-t sl-d" style="display:block">
+<title id="sl-t">Power-law fits made on d4 to d7, with deeper models revealed on demand</title>
+<desc id="sl-d">Validation loss against non-embedding parameters on log-log axes for four recipe variants. Each fit uses depths 4 to 7 only. The slider reveals greater depths: 8 and 9 have measurements, drawn as diamonds joined to the fit by a short line showing the error, and every one lies above its own fit. Beyond depth 9 there are no measurements, so only the fitted curve continues.</desc>
+<rect width="940" height="540" fill="#101c17"/>
+<line x1="96" y1="48" x2="118" y2="48" stroke="#1fa87c" stroke-width="3"/>
+<text x="124" y="52" fill="#a5b9ac" font-size="12">baseline</text>
+<line x1="246" y1="48" x2="268" y2="48" stroke="#c77f32" stroke-width="3"/>
+<text x="274" y="52" fill="#a5b9ac" font-size="12">constant LR</text>
+<line x1="396" y1="48" x2="418" y2="48" stroke="#8a6fd0" stroke-width="3"/>
+<text x="424" y="52" fill="#a5b9ac" font-size="12">dropout 0.2</text>
+<line x1="546" y1="48" x2="568" y2="48" stroke="#c2566f" stroke-width="3"/>
+<text x="574" y="52" fill="#a5b9ac" font-size="12">lr 0.03</text>
+<text x="96" y="88" fill="#e9f0eb" font-size="15" font-weight="650">Fits use d4 to d7 only; everything right of the line is extrapolation</text>
+<line x1="96" y1="398.0" x2="830" y2="398.0" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="402.0" text-anchor="end" fill="#a5b9ac" font-size="11">2.4</text>
+<line x1="96" y1="341.2" x2="830" y2="341.2" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="345.2" text-anchor="end" fill="#a5b9ac" font-size="11">2.6</text>
+<line x1="96" y1="288.5" x2="830" y2="288.5" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="292.5" text-anchor="end" fill="#a5b9ac" font-size="11">2.8</text>
+<line x1="96" y1="239.5" x2="830" y2="239.5" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="243.5" text-anchor="end" fill="#a5b9ac" font-size="11">3.0</text>
+<line x1="96" y1="193.7" x2="830" y2="193.7" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="197.7" text-anchor="end" fill="#a5b9ac" font-size="11">3.2</text>
+<line x1="96" y1="150.7" x2="830" y2="150.7" stroke="#293d32" stroke-width="1"/>
+<text x="86" y="154.7" text-anchor="end" fill="#a5b9ac" font-size="11">3.4</text>
+<text x="30" y="258.0" fill="#a5b9ac" font-size="12" transform="rotate(-90 30 258.0)" text-anchor="middle">Validation loss (log scale)</text>
+<text x="463.0" y="464" text-anchor="middle" fill="#a5b9ac" font-size="12">Non-embedding parameters (log scale)</text>
+<line x1="388.5" y1="110" x2="388.5" y2="406" stroke="#a5b9ac" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
+<text x="380.5" y="122" text-anchor="end" fill="#a5b9ac" font-size="11">fitted</text>
+<text x="396.5" y="122" fill="#a5b9ac" font-size="11">extrapolated</text>
+<polyline points="127.1,174.0 220.2,204.3 296.3,226.6 360.7,242.9" fill="none" stroke="#1fa87c" stroke-width="2.5"/>
+<circle cx="127.1" cy="174.0" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>baseline d4: 3.2901</title></circle>
+<circle cx="220.2" cy="204.3" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>baseline d5: 3.1526</title></circle>
+<circle cx="296.3" cy="226.6" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>baseline d6: 3.0553</title></circle>
+<circle cx="360.7" cy="242.9" r="5" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>baseline d7: 2.9859</title></circle>
+<polyline points="127.1,146.4 220.2,165.5 296.3,183.0 360.7,191.0" fill="none" stroke="#c77f32" stroke-width="2.5"/>
+<circle cx="127.1" cy="146.4" r="5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>constant LR d4: 3.4204</title></circle>
+<circle cx="220.2" cy="165.5" r="5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>constant LR d5: 3.3295</title></circle>
+<circle cx="296.3" cy="183.0" r="5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>constant LR d6: 3.2485</title></circle>
+<circle cx="360.7" cy="191.0" r="5" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>constant LR d7: 3.2124</title></circle>
+<polyline points="127.1,140.9 220.2,166.6 296.3,190.2 360.7,209.7" fill="none" stroke="#8a6fd0" stroke-width="2.5"/>
+<circle cx="127.1" cy="140.9" r="5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d4: 3.4469</title></circle>
+<circle cx="220.2" cy="166.6" r="5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d5: 3.3246</title></circle>
+<circle cx="296.3" cy="190.2" r="5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d6: 3.2160</title></circle>
+<circle cx="360.7" cy="209.7" r="5" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>dropout 0.2 d7: 3.1288</title></circle>
+<polyline points="127.1,167.6 220.2,191.0 296.3,214.8 360.7,222.2" fill="none" stroke="#c2566f" stroke-width="2.5"/>
+<circle cx="127.1" cy="167.6" r="5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>lr 0.03 d4: 3.3200</title></circle>
+<circle cx="220.2" cy="191.0" r="5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>lr 0.03 d5: 3.2121</title></circle>
+<circle cx="296.3" cy="214.8" r="5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>lr 0.03 d6: 3.1064</title></circle>
+<circle cx="360.7" cy="222.2" r="5" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>lr 0.03 d7: 3.0743</title></circle>
+<text x="127.1" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d4</text>
+<text x="220.2" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d5</text>
+<text x="296.3" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d6</text>
+<text x="360.7" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d7</text>
+<g class="cs312-dep" data-d="8" style="display:none">
+<text x="416.4" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d8</text>
+<line x1="360.7" y1="244.4" x2="416.4" y2="260.9" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="416.4" y1="260.9" x2="416.4" y2="257.3" stroke="#1fa87c" stroke-width="1.5" opacity="0.85"/>
+<rect x="411.9" y="252.8" width="9" height="9" fill="#1fa87c" stroke="#101c17" stroke-width="2" transform="rotate(45 416.4 257.3)"><title>baseline d8: measured 2.9258, fit predicted 2.9111</title></rect>
+<line x1="360.7" y1="193.3" x2="416.4" y2="204.3" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="416.4" y1="204.3" x2="416.4" y2="200.1" stroke="#c77f32" stroke-width="1.5" opacity="0.85"/>
+<rect x="411.9" y="195.6" width="9" height="9" fill="#c77f32" stroke="#101c17" stroke-width="2" transform="rotate(45 416.4 200.1)"><title>constant LR d8: measured 3.1713, fit predicted 3.1528</title></rect>
+<line x1="360.7" y1="209.7" x2="416.4" y2="226.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="416.4" y1="226.2" x2="416.4" y2="225.2" stroke="#8a6fd0" stroke-width="1.5" opacity="0.85"/>
+<rect x="411.9" y="220.7" width="9" height="9" fill="#8a6fd0" stroke="#101c17" stroke-width="2" transform="rotate(45 416.4 225.2)"><title>dropout 0.2 d8: measured 3.0613, fit predicted 3.0570</title></rect>
+<line x1="360.7" y1="225.4" x2="416.4" y2="238.9" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="416.4" y1="238.9" x2="416.4" y2="233.0" stroke="#c2566f" stroke-width="1.5" opacity="0.85"/>
+<rect x="411.9" y="228.5" width="9" height="9" fill="#c2566f" stroke="#101c17" stroke-width="2" transform="rotate(45 416.4 233.0)"><title>lr 0.03 d8: measured 3.0278, fit predicted 3.0025</title></rect>
+</g>
+<g class="cs312-dep" data-d="9" style="display:none">
+<text x="465.6" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d9</text>
+<line x1="416.4" y1="260.9" x2="465.6" y2="275.5" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="275.5" x2="465.6" y2="267.8" stroke="#1fa87c" stroke-width="1.5" opacity="0.85"/>
+<rect x="461.1" y="263.3" width="9" height="9" fill="#1fa87c" stroke="#101c17" stroke-width="2" transform="rotate(45 465.6 267.8)"><title>baseline d9: measured 2.8830, fit predicted 2.8520</title></rect>
+<line x1="416.4" y1="204.3" x2="465.6" y2="213.9" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="213.9" x2="465.6" y2="212.1" stroke="#c77f32" stroke-width="1.5" opacity="0.85"/>
+<rect x="461.1" y="207.6" width="9" height="9" fill="#c77f32" stroke="#101c17" stroke-width="2" transform="rotate(45 465.6 212.1)"><title>constant LR d9: measured 3.1182, fit predicted 3.1103</title></rect>
+<line x1="416.4" y1="226.2" x2="465.6" y2="240.7" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="240.7" x2="465.6" y2="239.0" stroke="#8a6fd0" stroke-width="1.5" opacity="0.85"/>
+<rect x="461.1" y="234.5" width="9" height="9" fill="#8a6fd0" stroke="#101c17" stroke-width="2" transform="rotate(45 465.6 239.0)"><title>dropout 0.2 d9: measured 3.0025, fit predicted 2.9950</title></rect>
+<line x1="416.4" y1="238.9" x2="465.6" y2="250.9" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="250.9" x2="465.6" y2="240.3" stroke="#c2566f" stroke-width="1.5" opacity="0.85"/>
+<rect x="461.1" y="235.8" width="9" height="9" fill="#c2566f" stroke="#101c17" stroke-width="2" transform="rotate(45 465.6 240.3)"><title>lr 0.03 d9: measured 2.9969, fit predicted 2.9523</title></rect>
+</g>
+<g class="cs312-dep" data-d="10" style="display:none">
+<text x="509.6" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d10</text>
+<line x1="465.6" y1="275.5" x2="509.6" y2="288.5" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="213.9" x2="509.6" y2="222.5" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="240.7" x2="509.6" y2="253.7" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="465.6" y1="250.9" x2="509.6" y2="261.6" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="11" style="display:none">
+<line x1="509.6" y1="288.5" x2="549.4" y2="300.3" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="222.5" x2="549.4" y2="230.3" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="253.7" x2="549.4" y2="265.5" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="509.6" y1="261.6" x2="549.4" y2="271.3" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="12" style="display:none">
+<text x="585.7" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d12</text>
+<line x1="549.4" y1="300.3" x2="585.7" y2="311.0" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="230.3" x2="585.7" y2="237.4" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="265.5" x2="585.7" y2="276.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="549.4" y1="271.3" x2="585.7" y2="280.2" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="13" style="display:none">
+<line x1="585.7" y1="311.0" x2="619.1" y2="320.9" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="237.4" x2="619.1" y2="244.0" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="276.2" x2="619.1" y2="286.1" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="585.7" y1="280.2" x2="619.1" y2="288.3" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="14" style="display:none">
+<text x="650.0" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d14</text>
+<line x1="619.1" y1="320.9" x2="650.0" y2="330.1" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="619.1" y1="244.0" x2="650.0" y2="250.0" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="619.1" y1="286.1" x2="650.0" y2="295.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="619.1" y1="288.3" x2="650.0" y2="295.8" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="15" style="display:none">
+<line x1="650.0" y1="330.1" x2="678.8" y2="338.6" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="650.0" y1="250.0" x2="678.8" y2="255.7" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="650.0" y1="295.2" x2="678.8" y2="303.7" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="650.0" y1="295.8" x2="678.8" y2="302.8" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="16" style="display:none">
+<text x="705.8" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d16</text>
+<line x1="678.8" y1="338.6" x2="705.8" y2="346.6" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="678.8" y1="255.7" x2="705.8" y2="261.0" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="678.8" y1="303.7" x2="705.8" y2="311.7" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="678.8" y1="302.8" x2="705.8" y2="309.4" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="17" style="display:none">
+<line x1="705.8" y1="346.6" x2="731.1" y2="354.0" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="705.8" y1="261.0" x2="731.1" y2="265.9" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="705.8" y1="311.7" x2="731.1" y2="319.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="705.8" y1="309.4" x2="731.1" y2="315.5" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="18" style="display:none">
+<text x="755.0" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d18</text>
+<line x1="731.1" y1="354.0" x2="755.0" y2="361.1" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="731.1" y1="265.9" x2="755.0" y2="270.6" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="731.1" y1="319.2" x2="755.0" y2="326.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="731.1" y1="315.5" x2="755.0" y2="321.4" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="19" style="display:none">
+<line x1="755.0" y1="361.1" x2="777.5" y2="367.8" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="755.0" y1="270.6" x2="777.5" y2="275.0" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="755.0" y1="326.2" x2="777.5" y2="332.9" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<line x1="755.0" y1="321.4" x2="777.5" y2="326.8" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+</g>
+<g class="cs312-dep" data-d="20" style="display:none">
+<text x="798.9" y="418" text-anchor="middle" fill="#a5b9ac" font-size="11">d20</text>
+<line x1="777.5" y1="367.8" x2="798.9" y2="374.1" stroke="#1fa87c" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<text x="806.9" y="378.1" fill="#1fa87c" font-size="11" font-weight="650">2.48</text>
+<line x1="777.5" y1="275.0" x2="798.9" y2="279.2" stroke="#c77f32" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<text x="806.9" y="283.2" fill="#c77f32" font-size="11" font-weight="650">2.84</text>
+<line x1="777.5" y1="332.9" x2="798.9" y2="339.2" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<text x="806.9" y="343.2" fill="#8a6fd0" font-size="11" font-weight="650">2.61</text>
+<line x1="777.5" y1="326.8" x2="798.9" y2="332.1" stroke="#c2566f" stroke-width="2" stroke-dasharray="7 5" opacity="0.9"/>
+<text x="806.9" y="336.1" fill="#c2566f" font-size="11" font-weight="650">2.63</text>
+</g>
+<g class="cs312-note" data-d="8" style="display:none">
+<text x="830" y="144" text-anchor="end" fill="#e9f0eb" font-size="12" font-weight="650">every measured point sits above its own fit</text>
+</g>
+<g class="cs312-note" data-d="10" style="display:none">
+<text x="830" y="164" text-anchor="end" fill="#f4c27d" font-size="11">beyond d9 nothing was trained: these are fitted curves only</text>
+</g>
+</svg>
+<figcaption>Loss against non-embedding parameters, log-log, for the four
+variants. Solid segments and circles are the fitted range d4 to d7; dashed
+segments continue each fitted power law; diamonds are measured held-out
+depths. The number at the right edge of each curve, once d20 is reached, is
+that fit's predicted loss there.</figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+<caption>Predictions registered from the d4 to d7 fits, against what the
+held-out depths actually measured. Rows appear as the slider reveals them.</caption>
+<thead><tr><th scope="col">variant</th><th scope="col">depth</th><th scope="col">predicted</th><th scope="col">measured</th><th scope="col">error</th></tr></thead>
+<tbody>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">baseline</th><td>d8</td><td>2.9112</td><td>2.9258</td><td><strong>+0.0146</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">baseline</th><td>d9</td><td>2.8522</td><td>2.8830</td><td><strong>+0.0308</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">constant LR</th><td>d8</td><td>3.1546</td><td>3.1713</td><td><strong>+0.0167</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">constant LR</th><td>d9</td><td>3.1121</td><td>3.1182</td><td><strong>+0.0061</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">dropout 0.2</th><td>d8</td><td>3.0592</td><td>3.0613</td><td><strong>+0.0021</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">dropout 0.2</th><td>d9</td><td>2.9973</td><td>3.0025</td><td><strong>+0.0052</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">lr 0.03</th><td>d8</td><td>3.0016</td><td>3.0278</td><td><strong>+0.0262</strong></td></tr>
+<tr class="cs312-row" data-d="9" style="display:none"><th scope="row">lr 0.03</th><td>d9</td><td>2.9515</td><td>2.9969</td><td><strong>+0.0454</strong></td></tr>
+<tr class="cs312-row" data-d="8" style="display:none"><th scope="row">all eight cells</th><td>—</td><td>—</td><td>—</td><td><strong>every error positive</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout cs312-note" data-d="8" style="display:none"><strong>All eight
+extrapolations were optimistic.</strong> Every measured point sits above its own
+fit, mean error +0.0184 nats. If the signs were random that is a one-in-256
+coincidence, so this is systematic bias rather than noise. The errors also grow
+with distance: the baseline misses d8 by +0.0146 and d9 by +0.0308.</div>
+
+<p class="scope">The in-sample fits look immaculate and say nothing useful about
+this: the baseline's residual is 0.00194 in log space, yet it misses d9 by 5.5
+times that. The residuals are U-shaped, which is the signature of a missing
+irreducible-loss term; adding one cuts the baseline's residual eightfold.
+Dropout 0.2 is the exception, a genuinely clean power law, and it is also the
+variant that extrapolated best. Beyond d9 the curves are fitted continuations
+only: no model deeper than d9 was trained, and on this evidence a bare d20 point
+estimate would be exactly the overconfidence the problem is about. The honest
+range for the baseline at d20 is about 2.52 to 2.66, weighted to the upper end.
+One seed per cell.</p>
+</section>
+
 <section id="reproduce">
 <h2>Reproduce</h2>
 <p>Each part of this page is one defconfig in knlp:</p>
@@ -1319,5 +1553,25 @@ make</pre>
 </section>
 </main>
 <footer>knlp · CS312 Deep Learning Alchemy findings · d8 model organism · learning rate dominates alone, learning rate and warmup co-vary, query-key normalization defends the KV cache.</footer>
+<script>
+(function () {
+  var slider = document.getElementById('cs312-depth');
+  var out = document.getElementById('cs312-depth-out');
+  if (!slider) return;
+  var items = document.querySelectorAll('.cs312-dep, .cs312-note, .cs312-row');
+  function apply() {
+    var v = parseInt(slider.value, 10);
+    for (var i = 0; i < items.length; i++) {
+      var d = parseInt(items[i].getAttribute('data-d'), 10);
+      items[i].style.display = d <= v ? '' : 'none';
+    }
+    out.textContent = v <= 7 ? 'd4 to d7, the fitted range'
+      : (v <= 9 ? 'd4 to d' + v + ', held-out measurements'
+                : 'd4 to d' + v + ', nothing past d9 was trained');
+  }
+  slider.addEventListener('input', apply);
+  apply();
+})();
+</script>
 </body>
 </html>
