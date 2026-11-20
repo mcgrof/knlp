@@ -264,3 +264,31 @@ class PlanP2ArchTest(unittest.TestCase):
         for run in plan["runs"]:
             self.assertEqual(run["suffix"], "test")
             self.assertNotIn("model_builder", run["overrides"])
+
+
+class PlanP2bTest(unittest.TestCase):
+    def test_mup_scales_the_rate_as_one_over_width(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2b", P2_DEPTHS="4,8,16",
+                                         P2B_VARIANTS="mup_lr"))
+        rates = {r["depth"]: r["overrides"]["learning_rate"] for r in plan["runs"]}
+        # width is 64*depth, so halving depth doubles the rate
+        self.assertAlmostEqual(rates[8], 0.003)
+        self.assertAlmostEqual(rates[4], 0.006)
+        self.assertAlmostEqual(rates[16], 0.0015)
+
+    def test_each_intervention_touches_its_own_axis(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2b", P2_DEPTHS="8"))
+        by = {r["variant"]: r["overrides"] for r in plan["runs"]}
+        self.assertEqual(by["tokens2x"]["num_train_sequences"], 1_200_000)
+        self.assertEqual(by["batch128"]["batch_size"], 128)
+        self.assertEqual(by["kv16v8"]["model_builder_kwargs"]["v_bits"], 8)
+        self.assertEqual(by["kv16v8"]["model_builder_kwargs"]["k_bits"], 16)
+        self.assertNotIn("learning_rate", by["tokens2x"])
+
+    def test_interventions_get_distinct_run_names(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p2b", P2_DEPTHS="8"))
+        self.assertEqual(len({r["suffix"] for r in plan["runs"]}), 4)
+
+    def test_an_unknown_intervention_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            cs312.build_plan(defaults(PROBLEM="p2b", P2B_VARIANTS="not_a_thing"))

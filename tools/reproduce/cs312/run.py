@@ -46,6 +46,8 @@ DEFAULTS = {
     "P1C_WD": "1.0",
     "P1C_CELLS": "wsd0.2:0.0,wsd0.2:0.2,linear:0.1",
     "P2_DEPTHS": "4,5,6,7",
+    "P2B_VARIANTS": "tokens2x,batch128,kv16v8,mup_lr",
+    "P2B_BASE_DEPTH": "8",
     "P2_VARIANTS": ("baseline=0.003:linear:0.0,constant=0.003:constant:0.0,"
                     "dropout0.2=0.003:linear:0.2,lr0.03=0.03:linear:0.0"),
     "P1C_BATCH": "",
@@ -520,6 +522,73 @@ def _d_params(depth, vocab=4096, embedding_free=False):
     return body if embedding_free else body + 2 * vocab * hidden
 
 
+def plan_p2b(cfg):
+    """Interventions that may bend the scaling slope without breaking it.
+
+    Each named variant changes one thing against the standard recipe and is
+    trained across the depth ladder, so its fitted exponent can be compared
+    with the baseline's. The four are deliberately on different axes: data,
+    batch, numerics and the learning-rate rule.
+
+    * `tokens2x` doubles the token budget. The other curves are compute
+      matched at a fixed budget, so this one is not comparable in cost; it
+      is the data axis the assignment asks for.
+    * `batch128` doubles the batch at a fixed token budget, which halves the
+      optimizer steps.
+    * `kv16v8` keeps 16-bit keys and fake-quantizes values to fp8 e4m3 at
+      every attention call, so precision enters as a scaling intervention
+      rather than a post-hoc measurement.
+    * `mup_lr` scales the learning rate as the reciprocal of width, which is
+      the Adam hidden-layer rule of muP (arXiv 2203.03466, Table 3). Width
+      is 64*depth here, so the rate at depth d is base_lr * base_depth / d.
+      This is the learning-rate rule only. The course model is otherwise
+      standard-parameterized: its hidden initialisation already matches muP
+      at 1/sqrt(fan_in), but the readout initialisation and the attention
+      scaling do not, so this is not muTransfer and zero-shot transfer of
+      the optimum is not claimed.
+    """
+    depths = [int(x) for x in cfg["P2_DEPTHS"].split(",") if x.strip()]
+    names = [n.strip() for n in cfg["P2B_VARIANTS"].split(",") if n.strip()]
+    base_depth = int(cfg["P2B_BASE_DEPTH"])
+    base_sequences = int(cfg["NUM_TRAIN_SEQUENCES"])
+    base_lr = 0.003
+    known = {"tokens2x", "batch128", "kv16v8", "mup_lr"}
+    unknown = set(names) - known
+    if unknown:
+        raise SystemExit(f"unknown P2B_VARIANTS {sorted(unknown)}; expected {sorted(known)}")
+    runs = []
+    for depth in depths:
+        for name in names:
+            ov = {"model_name": f"d{depth}"}
+            if name == "tokens2x":
+                ov["num_train_sequences"] = 2 * base_sequences
+            elif name == "batch128":
+                ov["batch_size"] = 128
+            elif name == "kv16v8":
+                ov["model_builder"] = "cs312_quant:build_quant_model"
+                ov["model_builder_kwargs"] = {
+                    "k_bits": 16, "v_bits": 8, "granularity": "per_token",
+                }
+            elif name == "mup_lr":
+                ov["learning_rate"] = base_lr * base_depth / depth
+            suffix = cfg["RUN_SUFFIX"]
+            suffix = f"{name}-{suffix}" if suffix else name
+            runs.append(
+                {
+                    "index": len(runs),
+                    "axis": "intervention",
+                    "variant": name,
+                    "depth": depth,
+                    "params": _d_params(depth),
+                    "params_embedding_free": _d_params(depth, embedding_free=True),
+                    "exponent": 0,
+                    "overrides": ov,
+                    "suffix": suffix,
+                }
+            )
+    return {"depths": depths, "variants": names, "runs": runs}
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -534,7 +603,7 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
     planners = {"p1a": plan_p1a, "p1b": plan_p1b, "p1c": plan_p1c,
-                "p2": plan_p2, "kvq": plan_kvq}
+                "p2": plan_p2, "p2b": plan_p2b, "kvq": plan_kvq}
     if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
@@ -1389,7 +1458,7 @@ def cmd_report(cfg, args):
         text = render_report_p1b(results)
     elif problem == "p1c":
         text = render_report_p1c(results)
-    elif problem == "p2":
+    elif problem in ("p2", "p2b"):
         text = render_report_p2(results)
     else:
         text = render_report(results, against)
