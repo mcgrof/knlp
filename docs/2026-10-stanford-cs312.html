@@ -2489,6 +2489,352 @@ of one: a larger parameter scale needing a smaller relative gradient is a
 plausible reading of these numbers, not something measured.</p>
 </section>
 
+<section id="inside">
+<h2>Part 10: the same lens, turned on our own interventions</h2>
+<p>Part 9 read the internal statistics of recipe changes. The architectures and
+the quantized caches are the larger interventions on this page, and the same
+302 series were logged for them too. Reading those explains two results that
+the losses alone only reported.</p>
+
+<figure>
+<svg viewBox="0 0 960 500" width="100%" height="auto" role="img" aria-labelledby="ia-t ia-d" style="display:block">
+<title id="ia-t">How the residual architectures reshape the activation profile</title>
+<desc id="ia-d">Left: attention activation RMS against layer at d7, log scale, for the baseline, hyper-connections, manifold hyper-connections, LayerRoPE, their combination and K16/V8. The baseline grows about threefold across depth while hyper-connections invert it so activations shrink. Right: that depth growth against final validation loss, where the flatter profiles are the better models.</desc>
+<rect width="960" height="500" fill="#101c17"/>
+<line x1="92" y1="44" x2="112" y2="44" stroke="#8ba49a" stroke-width="3"/>
+<text x="118" y="48" fill="#a5b9ac" font-size="11.5">baseline</text>
+<line x1="307" y1="44" x2="327" y2="44" stroke="#1fa87c" stroke-width="3"/>
+<text x="333" y="48" fill="#a5b9ac" font-size="11.5">HC</text>
+<line x1="522" y1="44" x2="542" y2="44" stroke="#c77f32" stroke-width="3"/>
+<text x="548" y="48" fill="#a5b9ac" font-size="11.5">mHC</text>
+<line x1="92" y1="64" x2="112" y2="64" stroke="#c2566f" stroke-width="3"/>
+<text x="118" y="68" fill="#a5b9ac" font-size="11.5">mHC + LayerRoPE</text>
+<line x1="307" y1="64" x2="327" y2="64" stroke="#8a6fd0" stroke-width="3"/>
+<text x="333" y="68" fill="#a5b9ac" font-size="11.5">LayerRoPE</text>
+<line x1="522" y1="64" x2="542" y2="64" stroke="#5a8fd0" stroke-width="3"/>
+<text x="548" y="68" fill="#a5b9ac" font-size="11.5">K16/V8</text>
+<text x="112" y="120" fill="#e9f0eb" font-size="14" font-weight="650">The residual stream in depth</text>
+<text x="112" y="137" fill="#a5b9ac" font-size="11">Attention output activation RMS, d7, end of training</text>
+<line x1="112" y1="303.3" x2="430" y2="303.3" stroke="#293d32" stroke-width="1"/>
+<text x="104" y="307.3" text-anchor="end" fill="#a5b9ac" font-size="10">1e0</text>
+<line x1="112" y1="157.3" x2="430" y2="157.3" stroke="#293d32" stroke-width="1"/>
+<text x="104" y="161.3" text-anchor="end" fill="#a5b9ac" font-size="10">1e1</text>
+<text x="112.0" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">0</text>
+<text x="218.0" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">2</text>
+<text x="324.0" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">4</text>
+<text x="430.0" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">6</text>
+<text x="271.0" y="416" text-anchor="middle" fill="#a5b9ac" font-size="11.5">Layer</text>
+<text x="60" y="263.0" fill="#a5b9ac" font-size="11.5" transform="rotate(-90 60 263.0)" text-anchor="middle">Activation RMS</text>
+<polyline points="112.0,265.1 165.0,289.2 218.0,290.6 271.0,269.8 324.0,261.9 377.0,234.0 430.0,194.0" fill="none" stroke="#8ba49a" stroke-width="2.3"/>
+<circle cx="112.0" cy="265.1" r="3" fill="#8ba49a"><title>baseline L0: 1.825e+00</title></circle>
+<circle cx="165.0" cy="289.2" r="3" fill="#8ba49a"><title>baseline L1: 1.248e+00</title></circle>
+<circle cx="218.0" cy="290.6" r="3" fill="#8ba49a"><title>baseline L2: 1.220e+00</title></circle>
+<circle cx="271.0" cy="269.8" r="3" fill="#8ba49a"><title>baseline L3: 1.696e+00</title></circle>
+<circle cx="324.0" cy="261.9" r="3" fill="#8ba49a"><title>baseline L4: 1.921e+00</title></circle>
+<circle cx="377.0" cy="234.0" r="3" fill="#8ba49a"><title>baseline L5: 2.980e+00</title></circle>
+<circle cx="430.0" cy="194.0" r="3" fill="#8ba49a"><title>baseline L6: 5.606e+00</title></circle>
+<polyline points="112.0,259.5 165.0,218.2 218.0,259.5 271.0,253.7 324.0,238.2 377.0,249.0 430.0,284.7" fill="none" stroke="#1fa87c" stroke-width="2.3"/>
+<circle cx="112.0" cy="259.5" r="3" fill="#1fa87c"><title>HC L0: 1.993e+00</title></circle>
+<circle cx="165.0" cy="218.2" r="3" fill="#1fa87c"><title>HC L1: 3.827e+00</title></circle>
+<circle cx="218.0" cy="259.5" r="3" fill="#1fa87c"><title>HC L2: 1.993e+00</title></circle>
+<circle cx="271.0" cy="253.7" r="3" fill="#1fa87c"><title>HC L3: 2.184e+00</title></circle>
+<circle cx="324.0" cy="238.2" r="3" fill="#1fa87c"><title>HC L4: 2.791e+00</title></circle>
+<circle cx="377.0" cy="249.0" r="3" fill="#1fa87c"><title>HC L5: 2.352e+00</title></circle>
+<circle cx="430.0" cy="284.7" r="3" fill="#1fa87c"><title>HC L6: 1.341e+00</title></circle>
+<polyline points="112.0,239.0 165.0,226.8 218.0,251.1 271.0,251.5 324.0,250.4 377.0,233.4 430.0,258.2" fill="none" stroke="#c77f32" stroke-width="2.3"/>
+<circle cx="112.0" cy="239.0" r="3" fill="#c77f32"><title>mHC L0: 2.756e+00</title></circle>
+<circle cx="165.0" cy="226.8" r="3" fill="#c77f32"><title>mHC L1: 3.341e+00</title></circle>
+<circle cx="218.0" cy="251.1" r="3" fill="#c77f32"><title>mHC L2: 2.275e+00</title></circle>
+<circle cx="271.0" cy="251.5" r="3" fill="#c77f32"><title>mHC L3: 2.261e+00</title></circle>
+<circle cx="324.0" cy="250.4" r="3" fill="#c77f32"><title>mHC L4: 2.302e+00</title></circle>
+<circle cx="377.0" cy="233.4" r="3" fill="#c77f32"><title>mHC L5: 3.009e+00</title></circle>
+<circle cx="430.0" cy="258.2" r="3" fill="#c77f32"><title>mHC L6: 2.034e+00</title></circle>
+<polyline points="112.0,285.3 165.0,250.2 218.0,262.1 271.0,267.4 324.0,256.6 377.0,238.7 430.0,256.9" fill="none" stroke="#c2566f" stroke-width="2.3"/>
+<circle cx="112.0" cy="285.3" r="3" fill="#c2566f"><title>mHC + LayerRoPE L0: 1.328e+00</title></circle>
+<circle cx="165.0" cy="250.2" r="3" fill="#c2566f"><title>mHC + LayerRoPE L1: 2.310e+00</title></circle>
+<circle cx="218.0" cy="262.1" r="3" fill="#c2566f"><title>mHC + LayerRoPE L2: 1.914e+00</title></circle>
+<circle cx="271.0" cy="267.4" r="3" fill="#c2566f"><title>mHC + LayerRoPE L3: 1.760e+00</title></circle>
+<circle cx="324.0" cy="256.6" r="3" fill="#c2566f"><title>mHC + LayerRoPE L4: 2.086e+00</title></circle>
+<circle cx="377.0" cy="238.7" r="3" fill="#c2566f"><title>mHC + LayerRoPE L5: 2.770e+00</title></circle>
+<circle cx="430.0" cy="256.9" r="3" fill="#c2566f"><title>mHC + LayerRoPE L6: 2.078e+00</title></circle>
+<polyline points="112.0,289.1 165.0,319.8 218.0,332.0 271.0,297.1 324.0,276.0 377.0,259.3 430.0,236.1" fill="none" stroke="#8a6fd0" stroke-width="2.3"/>
+<circle cx="112.0" cy="289.1" r="3" fill="#8a6fd0"><title>LayerRoPE L0: 1.251e+00</title></circle>
+<circle cx="165.0" cy="319.8" r="3" fill="#8a6fd0"><title>LayerRoPE L1: 7.701e-01</title></circle>
+<circle cx="218.0" cy="332.0" r="3" fill="#8a6fd0"><title>LayerRoPE L2: 6.351e-01</title></circle>
+<circle cx="271.0" cy="297.1" r="3" fill="#8a6fd0"><title>LayerRoPE L3: 1.102e+00</title></circle>
+<circle cx="324.0" cy="276.0" r="3" fill="#8a6fd0"><title>LayerRoPE L4: 1.538e+00</title></circle>
+<circle cx="377.0" cy="259.3" r="3" fill="#8a6fd0"><title>LayerRoPE L5: 1.999e+00</title></circle>
+<circle cx="430.0" cy="236.1" r="3" fill="#8a6fd0"><title>LayerRoPE L6: 2.885e+00</title></circle>
+<polyline points="112.0,263.8 165.0,287.9 218.0,286.2 271.0,269.1 324.0,258.8 377.0,229.6 430.0,195.7" fill="none" stroke="#5a8fd0" stroke-width="2.3"/>
+<circle cx="112.0" cy="263.8" r="3" fill="#5a8fd0"><title>K16/V8 L0: 1.864e+00</title></circle>
+<circle cx="165.0" cy="287.9" r="3" fill="#5a8fd0"><title>K16/V8 L1: 1.274e+00</title></circle>
+<circle cx="218.0" cy="286.2" r="3" fill="#5a8fd0"><title>K16/V8 L2: 1.309e+00</title></circle>
+<circle cx="271.0" cy="269.1" r="3" fill="#5a8fd0"><title>K16/V8 L3: 1.713e+00</title></circle>
+<circle cx="324.0" cy="258.8" r="3" fill="#5a8fd0"><title>K16/V8 L4: 2.016e+00</title></circle>
+<circle cx="377.0" cy="229.6" r="3" fill="#5a8fd0"><title>K16/V8 L5: 3.197e+00</title></circle>
+<circle cx="430.0" cy="195.7" r="3" fill="#5a8fd0"><title>K16/V8 L6: 5.458e+00</title></circle>
+<text x="600" y="120" fill="#e9f0eb" font-size="14" font-weight="650">Flatter is better</text>
+<text x="600" y="137" fill="#a5b9ac" font-size="11">Depth growth against final loss</text>
+<line x1="650.7" y1="150" x2="650.7" y2="376" stroke="#293d32" stroke-width="1"/>
+<text x="650.7" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">0.5x</text>
+<line x1="730.2" y1="150" x2="730.2" y2="376" stroke="#293d32" stroke-width="1"/>
+<text x="730.2" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">1x</text>
+<line x1="809.6" y1="150" x2="809.6" y2="376" stroke="#293d32" stroke-width="1"/>
+<text x="809.6" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">2x</text>
+<line x1="889.1" y1="150" x2="889.1" y2="376" stroke="#293d32" stroke-width="1"/>
+<text x="889.1" y="394" text-anchor="middle" fill="#a5b9ac" font-size="10.5">4x</text>
+<line x1="600" y1="356.0" x2="900" y2="356.0" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="360.0" text-anchor="end" fill="#a5b9ac" font-size="10">2.94</text>
+<line x1="600" y1="273.5" x2="900" y2="273.5" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="277.5" text-anchor="end" fill="#a5b9ac" font-size="10">2.96</text>
+<line x1="600" y1="190.9" x2="900" y2="190.9" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="194.9" text-anchor="end" fill="#a5b9ac" font-size="10">2.98</text>
+<line x1="730.2" y1="150" x2="730.2" y2="376" stroke="#e9f0eb" stroke-width="1.2" opacity="0.5"/>
+<text x="735.2" y="162" fill="#a5b9ac" font-size="9.5">flat</text>
+<circle cx="853.5" cy="166.5" r="6" fill="#8ba49a" stroke="#101c17" stroke-width="2"><title>baseline: growth 2.93x, val 2.9859</title></circle>
+<text x="842.5" y="152.5" text-anchor="end" fill="#8ba49a" font-size="10.5" font-weight="650">baseline</text>
+<circle cx="646.5" cy="359.5" r="6" fill="#1fa87c" stroke="#101c17" stroke-width="2"><title>HC: growth 0.48x, val 2.9392</title></circle>
+<text x="657.5" y="363.5" text-anchor="start" fill="#1fa87c" font-size="10.5" font-weight="650">HC</text>
+<circle cx="687.9" cy="277.8" r="6" fill="#c77f32" stroke="#101c17" stroke-width="2"><title>mHC: growth 0.69x, val 2.9590</title></circle>
+<text x="698.9" y="281.8" text-anchor="start" fill="#c77f32" font-size="10.5" font-weight="650">mHC</text>
+<circle cx="733.4" cy="257.0" r="6" fill="#c2566f" stroke="#101c17" stroke-width="2"><title>mHC + LayerRoPE: growth 1.03x, val 2.9640</title></circle>
+<text x="744.4" y="261.0" text-anchor="start" fill="#c2566f" font-size="10.5" font-weight="650">mHC + LayerRoPE</text>
+<circle cx="824.3" cy="169.1" r="6" fill="#8a6fd0" stroke="#101c17" stroke-width="2"><title>LayerRoPE: growth 2.27x, val 2.9853</title></circle>
+<text x="813.3" y="170.1" text-anchor="end" fill="#8a6fd0" font-size="10.5" font-weight="650">LayerRoPE</text>
+<circle cx="849.0" cy="176.7" r="6" fill="#5a8fd0" stroke="#101c17" stroke-width="2"><title>K16/V8: growth 2.82x, val 2.9834</title></circle>
+<text x="838.0" y="192.7" text-anchor="end" fill="#5a8fd0" font-size="10.5" font-weight="650">K16/V8</text>
+<text x="750.0" y="416" text-anchor="middle" fill="#a5b9ac" font-size="11.5">Activation growth, last layer over first</text>
+<text x="548" y="263.0" fill="#a5b9ac" font-size="11.5" transform="rotate(-90 548 263.0)" text-anchor="middle">Validation loss</text>
+</svg>
+<figcaption>Left: attention activation RMS against layer at d7, log scale, at
+the end of training. Right: each variant's activation growth across depth
+against its final loss.</figcaption>
+</figure>
+
+<div class="callout"><strong>Hyper-connections do not just improve the loss,
+they invert the residual stream.</strong> The baseline's activations grow
+through depth, ending about 2.9 times larger at the last layer than the first.
+Under HC they <em>shrink</em>, ending at 0.48 of the first layer. mHC lands at
+0.69 and mHC + LayerRoPE at 1.03, which is almost perfectly flat. LayerRoPE
+alone, at 2.27, leaves the baseline's shape essentially intact, and it is also
+the variant that did not beat the baseline.</div>
+
+<p>Across the six variants the depth growth and the final loss move together
+with a correlation of +0.93, which is a mechanism worth stating carefully.
+Six points are not many, and they fall into two groups rather than lying along
+a line: the three HC-family variants are flat and good, the three without
+hyper-connections are steep and worse, and <em>within</em> each group the
+ordering does not track at all. So the honest claim is that carrying four
+residual streams flattens the depth profile and wins, and that the two travel
+together here. It is not evidence of a continuous law in which a slightly
+flatter model is a slightly better one.</p>
+
+<figure>
+<svg viewBox="0 0 960 500" width="100%" height="auto" role="img" aria-labelledby="ip-t ip-d" style="display:block">
+<title id="ip-t">What low-precision KV and a missing QK-norm do inside the model</title>
+<desc id="ip-d">Two log-scale panels at d8. Left: attention activation RMS by layer. Four-bit keys and values are indistinguishable from the baseline, two-bit per-token is about twenty times larger, and two-bit per-tensor without QK-norm is about a hundred times larger. Right: gradient RMS by layer, where the per-tensor runs show a spike at layer 0 of more than a hundred times the baseline.</desc>
+<rect width="960" height="500" fill="#101c17"/>
+<line x1="92" y1="44" x2="112" y2="44" stroke="#8ba49a" stroke-width="3"/>
+<text x="118" y="48" fill="#a5b9ac" font-size="11.5">baseline</text>
+<line x1="342" y1="44" x2="362" y2="44" stroke="#1fa87c" stroke-width="3"/>
+<text x="368" y="48" fill="#a5b9ac" font-size="11.5">K4/V16</text>
+<line x1="592" y1="44" x2="612" y2="44" stroke="#5a8fd0" stroke-width="3"/>
+<text x="618" y="48" fill="#a5b9ac" font-size="11.5">K4/V4</text>
+<line x1="92" y1="64" x2="112" y2="64" stroke="#c77f32" stroke-width="3"/>
+<text x="118" y="68" fill="#a5b9ac" font-size="11.5">K2/V2 per-token</text>
+<line x1="342" y1="64" x2="362" y2="64" stroke="#c2566f" stroke-width="3"/>
+<text x="368" y="68" fill="#a5b9ac" font-size="11.5">K2/V2 per-tensor</text>
+<line x1="592" y1="64" x2="612" y2="64" stroke="#e0564a" stroke-width="3"/>
+<text x="618" y="68" fill="#a5b9ac" font-size="11.5">K2/V2 per-tensor, no QK-norm</text>
+<text x="112" y="134" fill="#e9f0eb" font-size="14" font-weight="650">The forward pass</text>
+<text x="112" y="151" fill="#a5b9ac" font-size="11">Attention activation RMS, d8, end of training</text>
+<line x1="112" y1="374.5" x2="430" y2="374.5" stroke="#293d32" stroke-width="1"/>
+<text x="104" y="378.5" text-anchor="end" fill="#a5b9ac" font-size="10">1e0</text>
+<line x1="112" y1="304.2" x2="430" y2="304.2" stroke="#293d32" stroke-width="1"/>
+<text x="104" y="308.2" text-anchor="end" fill="#a5b9ac" font-size="10">1e1</text>
+<line x1="112" y1="233.9" x2="430" y2="233.9" stroke="#293d32" stroke-width="1"/>
+<text x="104" y="237.9" text-anchor="end" fill="#a5b9ac" font-size="10">1e2</text>
+<text x="112.0" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">0</text>
+<text x="202.9" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">2</text>
+<text x="293.7" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">4</text>
+<text x="384.6" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">6</text>
+<text x="430.0" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">7</text>
+<text x="271.0" y="424" text-anchor="middle" fill="#a5b9ac" font-size="11.5">Layer</text>
+<text x="60" y="274.0" fill="#a5b9ac" font-size="11.5" transform="rotate(-90 60 274.0)" text-anchor="middle">Activation RMS</text>
+<polyline points="112.0,352.3 157.4,358.6 202.9,362.8 248.3,356.6 293.7,343.5 339.1,337.7 384.6,325.5 430.0,331.2" fill="none" stroke="#8ba49a" stroke-width="2.3"/>
+<circle cx="112.0" cy="352.3" r="3" fill="#8ba49a"><title>baseline L0: 2.069e+00</title></circle>
+<circle cx="157.4" cy="358.6" r="3" fill="#8ba49a"><title>baseline L1: 1.683e+00</title></circle>
+<circle cx="202.9" cy="362.8" r="3" fill="#8ba49a"><title>baseline L2: 1.467e+00</title></circle>
+<circle cx="248.3" cy="356.6" r="3" fill="#8ba49a"><title>baseline L3: 1.797e+00</title></circle>
+<circle cx="293.7" cy="343.5" r="3" fill="#8ba49a"><title>baseline L4: 2.757e+00</title></circle>
+<circle cx="339.1" cy="337.7" r="3" fill="#8ba49a"><title>baseline L5: 3.344e+00</title></circle>
+<circle cx="384.6" cy="325.5" r="3" fill="#8ba49a"><title>baseline L6: 4.986e+00</title></circle>
+<circle cx="430.0" cy="331.2" r="3" fill="#8ba49a"><title>baseline L7: 4.134e+00</title></circle>
+<polyline points="112.0,352.1 157.4,358.6 202.9,362.4 248.3,356.2 293.7,342.2 339.1,334.8 384.6,326.5 430.0,329.2" fill="none" stroke="#1fa87c" stroke-width="2.3"/>
+<circle cx="112.0" cy="352.1" r="3" fill="#1fa87c"><title>K4/V16 L0: 2.083e+00</title></circle>
+<circle cx="157.4" cy="358.6" r="3" fill="#1fa87c"><title>K4/V16 L1: 1.685e+00</title></circle>
+<circle cx="202.9" cy="362.4" r="3" fill="#1fa87c"><title>K4/V16 L2: 1.486e+00</title></circle>
+<circle cx="248.3" cy="356.2" r="3" fill="#1fa87c"><title>K4/V16 L3: 1.822e+00</title></circle>
+<circle cx="293.7" cy="342.2" r="3" fill="#1fa87c"><title>K4/V16 L4: 2.879e+00</title></circle>
+<circle cx="339.1" cy="334.8" r="3" fill="#1fa87c"><title>K4/V16 L5: 3.670e+00</title></circle>
+<circle cx="384.6" cy="326.5" r="3" fill="#1fa87c"><title>K4/V16 L6: 4.823e+00</title></circle>
+<circle cx="430.0" cy="329.2" r="3" fill="#1fa87c"><title>K4/V16 L7: 4.415e+00</title></circle>
+<polyline points="112.0,341.8 157.4,349.9 202.9,356.3 248.3,352.3 293.7,334.9 339.1,327.9 384.6,319.3 430.0,314.8" fill="none" stroke="#5a8fd0" stroke-width="2.3"/>
+<circle cx="112.0" cy="341.8" r="3" fill="#5a8fd0"><title>K4/V4 L0: 2.921e+00</title></circle>
+<circle cx="157.4" cy="349.9" r="3" fill="#5a8fd0"><title>K4/V4 L1: 2.239e+00</title></circle>
+<circle cx="202.9" cy="356.3" r="3" fill="#5a8fd0"><title>K4/V4 L2: 1.817e+00</title></circle>
+<circle cx="248.3" cy="352.3" r="3" fill="#5a8fd0"><title>K4/V4 L3: 2.068e+00</title></circle>
+<circle cx="293.7" cy="334.9" r="3" fill="#5a8fd0"><title>K4/V4 L4: 3.657e+00</title></circle>
+<circle cx="339.1" cy="327.9" r="3" fill="#5a8fd0"><title>K4/V4 L5: 4.599e+00</title></circle>
+<circle cx="384.6" cy="319.3" r="3" fill="#5a8fd0"><title>K4/V4 L6: 6.098e+00</title></circle>
+<circle cx="430.0" cy="314.8" r="3" fill="#5a8fd0"><title>K4/V4 L7: 7.064e+00</title></circle>
+<polyline points="112.0,270.9 157.4,277.7 202.9,274.7 248.3,271.5 293.7,260.8 339.1,256.2 384.6,250.8 430.0,232.5" fill="none" stroke="#c77f32" stroke-width="2.3"/>
+<circle cx="112.0" cy="270.9" r="3" fill="#c77f32"><title>K2/V2 per-token L0: 2.976e+01</title></circle>
+<circle cx="157.4" cy="277.7" r="3" fill="#c77f32"><title>K2/V2 per-token L1: 2.377e+01</title></circle>
+<circle cx="202.9" cy="274.7" r="3" fill="#c77f32"><title>K2/V2 per-token L2: 2.624e+01</title></circle>
+<circle cx="248.3" cy="271.5" r="3" fill="#c77f32"><title>K2/V2 per-token L3: 2.919e+01</title></circle>
+<circle cx="293.7" cy="260.8" r="3" fill="#c77f32"><title>K2/V2 per-token L4: 4.133e+01</title></circle>
+<circle cx="339.1" cy="256.2" r="3" fill="#c77f32"><title>K2/V2 per-token L5: 4.820e+01</title></circle>
+<circle cx="384.6" cy="250.8" r="3" fill="#c77f32"><title>K2/V2 per-token L6: 5.747e+01</title></circle>
+<circle cx="430.0" cy="232.5" r="3" fill="#c77f32"><title>K2/V2 per-token L7: 1.045e+02</title></circle>
+<polyline points="112.0,264.2 157.4,267.2 202.9,225.0 248.3,246.5 293.7,231.8 339.1,232.4 384.6,233.1 430.0,220.2" fill="none" stroke="#c2566f" stroke-width="2.3"/>
+<circle cx="112.0" cy="264.2" r="3" fill="#c2566f"><title>K2/V2 per-tensor L0: 3.709e+01</title></circle>
+<circle cx="157.4" cy="267.2" r="3" fill="#c2566f"><title>K2/V2 per-tensor L1: 3.356e+01</title></circle>
+<circle cx="202.9" cy="225.0" r="3" fill="#c2566f"><title>K2/V2 per-tensor L2: 1.338e+02</title></circle>
+<circle cx="248.3" cy="246.5" r="3" fill="#c2566f"><title>K2/V2 per-tensor L3: 6.619e+01</title></circle>
+<circle cx="293.7" cy="231.8" r="3" fill="#c2566f"><title>K2/V2 per-tensor L4: 1.068e+02</title></circle>
+<circle cx="339.1" cy="232.4" r="3" fill="#c2566f"><title>K2/V2 per-tensor L5: 1.049e+02</title></circle>
+<circle cx="384.6" cy="233.1" r="3" fill="#c2566f"><title>K2/V2 per-tensor L6: 1.025e+02</title></circle>
+<circle cx="430.0" cy="220.2" r="3" fill="#c2566f"><title>K2/V2 per-tensor L7: 1.562e+02</title></circle>
+<polyline points="112.0,220.9 157.4,255.7 202.9,248.2 248.3,251.5 293.7,252.2 339.1,219.2 384.6,197.1 430.0,185.2" fill="none" stroke="#e0564a" stroke-width="2.3"/>
+<circle cx="112.0" cy="220.9" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L0: 1.529e+02</title></circle>
+<circle cx="157.4" cy="255.7" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L1: 4.890e+01</title></circle>
+<circle cx="202.9" cy="248.2" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L2: 6.252e+01</title></circle>
+<circle cx="248.3" cy="251.5" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L3: 5.621e+01</title></circle>
+<circle cx="293.7" cy="252.2" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L4: 5.492e+01</title></circle>
+<circle cx="339.1" cy="219.2" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L5: 1.615e+02</title></circle>
+<circle cx="384.6" cy="197.1" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L6: 3.335e+02</title></circle>
+<circle cx="430.0" cy="185.2" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L7: 4.922e+02</title></circle>
+<text x="600" y="134" fill="#e9f0eb" font-size="14" font-weight="650">The backward pass</text>
+<text x="600" y="151" fill="#a5b9ac" font-size="11">Attention gradient RMS, same runs</text>
+<line x1="600" y1="368.7" x2="900" y2="368.7" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="372.7" text-anchor="end" fill="#a5b9ac" font-size="10">1e-5</text>
+<line x1="600" y1="304.2" x2="900" y2="304.2" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="308.2" text-anchor="end" fill="#a5b9ac" font-size="10">1e-4</text>
+<line x1="600" y1="239.8" x2="900" y2="239.8" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="243.8" text-anchor="end" fill="#a5b9ac" font-size="10">1e-3</text>
+<line x1="600" y1="175.3" x2="900" y2="175.3" stroke="#293d32" stroke-width="1"/>
+<text x="592" y="179.3" text-anchor="end" fill="#a5b9ac" font-size="10">1e-2</text>
+<text x="600.0" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">0</text>
+<text x="685.7" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">2</text>
+<text x="771.4" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">4</text>
+<text x="857.1" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">6</text>
+<text x="900.0" y="402" text-anchor="middle" fill="#a5b9ac" font-size="10.5">7</text>
+<text x="750.0" y="424" text-anchor="middle" fill="#a5b9ac" font-size="11.5">Layer</text>
+<text x="548" y="274.0" fill="#a5b9ac" font-size="11.5" transform="rotate(-90 548 274.0)" text-anchor="middle">Gradient RMS</text>
+<polyline points="600.0,326.3 642.9,341.4 685.7,346.8 728.6,348.9 771.4,345.3 814.3,351.7 857.1,348.7 900.0,361.8" fill="none" stroke="#8ba49a" stroke-width="2.3"/>
+<circle cx="600.0" cy="326.3" r="3" fill="#8ba49a"><title>baseline L0: 4.537e-05</title></circle>
+<circle cx="642.9" cy="341.4" r="3" fill="#8ba49a"><title>baseline L1: 2.647e-05</title></circle>
+<circle cx="685.7" cy="346.8" r="3" fill="#8ba49a"><title>baseline L2: 2.180e-05</title></circle>
+<circle cx="728.6" cy="348.9" r="3" fill="#8ba49a"><title>baseline L3: 2.025e-05</title></circle>
+<circle cx="771.4" cy="345.3" r="3" fill="#8ba49a"><title>baseline L4: 2.302e-05</title></circle>
+<circle cx="814.3" cy="351.7" r="3" fill="#8ba49a"><title>baseline L5: 1.836e-05</title></circle>
+<circle cx="857.1" cy="348.7" r="3" fill="#8ba49a"><title>baseline L6: 2.039e-05</title></circle>
+<circle cx="900.0" cy="361.8" r="3" fill="#8ba49a"><title>baseline L7: 1.276e-05</title></circle>
+<polyline points="600.0,327.3 642.9,342.7 685.7,346.9 728.6,348.5 771.4,345.1 814.3,350.9 857.1,349.5 900.0,361.6" fill="none" stroke="#1fa87c" stroke-width="2.3"/>
+<circle cx="600.0" cy="327.3" r="3" fill="#1fa87c"><title>K4/V16 L0: 4.389e-05</title></circle>
+<circle cx="642.9" cy="342.7" r="3" fill="#1fa87c"><title>K4/V16 L1: 2.524e-05</title></circle>
+<circle cx="685.7" cy="346.9" r="3" fill="#1fa87c"><title>K4/V16 L2: 2.175e-05</title></circle>
+<circle cx="728.6" cy="348.5" r="3" fill="#1fa87c"><title>K4/V16 L3: 2.052e-05</title></circle>
+<circle cx="771.4" cy="345.1" r="3" fill="#1fa87c"><title>K4/V16 L4: 2.318e-05</title></circle>
+<circle cx="814.3" cy="350.9" r="3" fill="#1fa87c"><title>K4/V16 L5: 1.886e-05</title></circle>
+<circle cx="857.1" cy="349.5" r="3" fill="#1fa87c"><title>K4/V16 L6: 1.983e-05</title></circle>
+<circle cx="900.0" cy="361.6" r="3" fill="#1fa87c"><title>K4/V16 L7: 1.285e-05</title></circle>
+<polyline points="600.0,320.8 642.9,339.0 685.7,348.2 728.6,351.8 771.4,344.0 814.3,350.5 857.1,349.3 900.0,359.9" fill="none" stroke="#5a8fd0" stroke-width="2.3"/>
+<circle cx="600.0" cy="320.8" r="3" fill="#5a8fd0"><title>K4/V4 L0: 5.525e-05</title></circle>
+<circle cx="642.9" cy="339.0" r="3" fill="#5a8fd0"><title>K4/V4 L1: 2.889e-05</title></circle>
+<circle cx="685.7" cy="348.2" r="3" fill="#5a8fd0"><title>K4/V4 L2: 2.080e-05</title></circle>
+<circle cx="728.6" cy="351.8" r="3" fill="#5a8fd0"><title>K4/V4 L3: 1.829e-05</title></circle>
+<circle cx="771.4" cy="344.0" r="3" fill="#5a8fd0"><title>K4/V4 L4: 2.413e-05</title></circle>
+<circle cx="814.3" cy="350.5" r="3" fill="#5a8fd0"><title>K4/V4 L5: 1.913e-05</title></circle>
+<circle cx="857.1" cy="349.3" r="3" fill="#5a8fd0"><title>K4/V4 L6: 1.997e-05</title></circle>
+<circle cx="900.0" cy="359.9" r="3" fill="#5a8fd0"><title>K4/V4 L7: 1.367e-05</title></circle>
+<polyline points="600.0,315.0 642.9,320.0 685.7,331.6 728.6,334.3 771.4,329.9 814.3,339.3 857.1,340.1 900.0,350.5" fill="none" stroke="#c77f32" stroke-width="2.3"/>
+<circle cx="600.0" cy="315.0" r="3" fill="#c77f32"><title>K2/V2 per-token L0: 6.806e-05</title></circle>
+<circle cx="642.9" cy="320.0" r="3" fill="#c77f32"><title>K2/V2 per-token L1: 5.681e-05</title></circle>
+<circle cx="685.7" cy="331.6" r="3" fill="#c77f32"><title>K2/V2 per-token L2: 3.761e-05</title></circle>
+<circle cx="728.6" cy="334.3" r="3" fill="#c77f32"><title>K2/V2 per-token L3: 3.417e-05</title></circle>
+<circle cx="771.4" cy="329.9" r="3" fill="#c77f32"><title>K2/V2 per-token L4: 3.998e-05</title></circle>
+<circle cx="814.3" cy="339.3" r="3" fill="#c77f32"><title>K2/V2 per-token L5: 2.855e-05</title></circle>
+<circle cx="857.1" cy="340.1" r="3" fill="#c77f32"><title>K2/V2 per-token L6: 2.772e-05</title></circle>
+<circle cx="900.0" cy="350.5" r="3" fill="#c77f32"><title>K2/V2 per-token L7: 1.911e-05</title></circle>
+<polyline points="600.0,183.4 642.9,257.9 685.7,233.3 728.6,260.7 771.4,252.6 814.3,260.0 857.1,328.7 900.0,364.6" fill="none" stroke="#c2566f" stroke-width="2.3"/>
+<circle cx="600.0" cy="183.4" r="3" fill="#c2566f"><title>K2/V2 per-tensor L0: 7.496e-03</title></circle>
+<circle cx="642.9" cy="257.9" r="3" fill="#c2566f"><title>K2/V2 per-tensor L1: 5.242e-04</title></circle>
+<circle cx="685.7" cy="233.3" r="3" fill="#c2566f"><title>K2/V2 per-tensor L2: 1.262e-03</title></circle>
+<circle cx="728.6" cy="260.7" r="3" fill="#c2566f"><title>K2/V2 per-tensor L3: 4.736e-04</title></circle>
+<circle cx="771.4" cy="252.6" r="3" fill="#c2566f"><title>K2/V2 per-tensor L4: 6.315e-04</title></circle>
+<circle cx="814.3" cy="260.0" r="3" fill="#c2566f"><title>K2/V2 per-tensor L5: 4.857e-04</title></circle>
+<circle cx="857.1" cy="328.7" r="3" fill="#c2566f"><title>K2/V2 per-tensor L6: 4.171e-05</title></circle>
+<circle cx="900.0" cy="364.6" r="3" fill="#c2566f"><title>K2/V2 per-tensor L7: 1.156e-05</title></circle>
+<polyline points="600.0,215.5 642.9,344.3 685.7,332.7 728.6,354.1 771.4,338.5 814.3,343.7 857.1,334.4 900.0,342.5" fill="none" stroke="#e0564a" stroke-width="2.3"/>
+<circle cx="600.0" cy="215.5" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L0: 2.385e-03</title></circle>
+<circle cx="642.9" cy="344.3" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L1: 2.388e-05</title></circle>
+<circle cx="685.7" cy="332.7" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L2: 3.617e-05</title></circle>
+<circle cx="728.6" cy="354.1" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L3: 1.684e-05</title></circle>
+<circle cx="771.4" cy="338.5" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L4: 2.932e-05</title></circle>
+<circle cx="814.3" cy="343.7" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L5: 2.441e-05</title></circle>
+<circle cx="857.1" cy="334.4" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L6: 3.403e-05</title></circle>
+<circle cx="900.0" cy="342.5" r="3" fill="#e0564a"><title>K2/V2 per-tensor, no QK-norm L7: 2.545e-05</title></circle>
+</svg>
+<figcaption>Attention activation and gradient RMS by layer at d8, log scale,
+across the KV-precision ladder, ending with the same cell run without QK-norm.</figcaption>
+</figure>
+
+<p><strong>Precision shows nothing until it shows everything.</strong> Four-bit
+keys and values are indistinguishable from the baseline in the forward pass,
+within about 1.4 times at every layer, which is the internal counterpart of
+their losses being 2.9333 and 2.9389 against 2.9258. Two-bit per-token lifts
+the activations about twenty-one times. Two-bit per-tensor lifts them
+thirty-one times and, in the backward pass, puts a spike at layer 0 of
+<strong>165 times the baseline gradient</strong> that decays back to normal by
+layer 7.</p>
+
+<div class="table-wrap">
+<table>
+<caption>Peak attention activation and the layer-0 gradient, against the
+baseline, with the loss each one reached.</caption>
+<thead><tr><th scope="col">variant</th><th scope="col">val loss</th><th scope="col">peak activation</th><th scope="col">layer-0 gradient</th></tr></thead>
+<tbody>
+<tr><th scope="row">baseline</th><td>2.9258</td><td>1.0x</td><td>1.0x</td></tr>
+<tr><th scope="row">K4/V16</th><td>2.9333</td><td>1.0x</td><td>1.0x</td></tr>
+<tr><th scope="row">K4/V4</th><td>2.9389</td><td>1.4x</td><td>1.2x</td></tr>
+<tr><th scope="row">K2/V2 per-token</th><td>3.1386</td><td>21.0x</td><td>1.5x</td></tr>
+<tr><th scope="row">K2/V2 per-tensor</th><td>4.7897</td><td>31.3x</td><td><strong>165.2x</strong></td></tr>
+<tr><th scope="row">K2/V2 per-tensor, no QK-norm</th><td>5.5000</td><td><strong>98.7x</strong></td><td>52.6x</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout"><strong>QK-norm's job becomes legible under stress.</strong>
+Hold the quantization fixed at two-bit per-tensor and remove QK-norm: the loss
+goes from 4.7897 to 5.5000 and the peak activation goes from 31 times the
+baseline to 99 times. QK-norm is not improving this model so much as capping
+how large the attention path is allowed to get, and that cap is worth about
+0.71 nats once the cache is quantized hard enough to need it. At four bits,
+where nothing is straining, it would have looked like it was doing nothing.</div>
+
+<p class="scope">One seed per cell and one depth per family: the architectures
+are read at d7 and the precision ladder at d8, so the two figures should not be
+compared against each other. The statistics are RMS at the end of training on
+each block's output projection, so a mid-training excursion or a differently
+behaved submodule inside the same block would not appear. The correlation in
+the first figure is six points in two groups, as noted. The per-tensor cells
+remain a measurement-only configuration: part 4 established that per-tensor
+scaling reads future positions and other batch rows, so it cannot be an online
+cache whatever its loss.</p>
+</section>
+
 <section id="reproduce">
 <h2>Reproduce</h2>
 <p>Each part of this page is one defconfig in knlp:</p>
