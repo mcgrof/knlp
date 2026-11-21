@@ -2402,10 +2402,24 @@ the MLP output at layer 7 ends around eight times the size of layer 1's. The
 parameters start flat, as the initialisation makes them, and then develop a
 depth gradient of their own that was not there at step 0.</p>
 <p>Time matters as much as depth. Activations and parameters both <em>peak in
-the middle of training and come back down</em>, which is the linear schedule
-and the decay term doing their work late, when the learning rate is small
-enough that shrinkage wins. A loss curve falling smoothly to its floor gives no
-hint that the internals are turning around halfway through.</p>
+the middle of training and come back down</em>. The reason is not that a
+falling learning rate lets the decay term overpower the update: in AdamW both
+are multiplied by the learning rate,
+<code>&#952; &#8592; &#952; &#8722; lr&#183;(m&#770;/(&#8730;v&#770;+&#949;)) &#8722; lr&#183;wd&#183;&#952;</code>,
+so lowering the rate scales shrinkage and growth together and leaves their
+balance alone. What moves is the balance <em>point</em>. The weight norm at
+which the two cancel goes as <code>&#8730;(lr/wd)</code>, so a schedule that
+drives the rate toward zero drags that equilibrium down and the weights follow
+it, with the activations following the weights.</p>
+<p>The intervention runs below are a check on that reading. Against the
+standard recipe, <code>&#8730;(lr/wd)</code> predicts 1.73&#215; the parameter
+scale at learning rate 0.009 and 1.82&#215; was measured. It predicts
+0.32&#215; at rate 0.0003 and 0.47&#215; was measured, and 0.33&#215; at weight
+decay 0.9 against 0.55&#215; measured. The direction is right in all three and
+the increase lands closely, while both decreases come out milder than the law
+says, which is what a global RMS over a model whose embeddings, norms and
+biases are not scale-invariant should do. A loss curve falling smoothly to its
+floor gives no hint that any of this is happening.</p>
 
 <figure>
 <svg viewBox="0 0 960 330" width="100%" height="auto" role="img" aria-labelledby="r2-t r2-d" style="display:block">
