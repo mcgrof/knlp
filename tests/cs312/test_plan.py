@@ -292,3 +292,62 @@ class PlanP2bTest(unittest.TestCase):
     def test_an_unknown_intervention_is_rejected(self):
         with self.assertRaises(SystemExit):
             cs312.build_plan(defaults(PROBLEM="p2b", P2B_VARIANTS="not_a_thing"))
+
+
+class PlanP3P4Test(unittest.TestCase):
+    def test_p3_has_the_assigned_run_count_and_parts(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p3"))
+        self.assertEqual(len(plan["runs"]), 25)
+        parts = {}
+        for r in plan["runs"]:
+            parts[r["part"]] = parts.get(r["part"], 0) + 1
+        self.assertEqual(parts, {"ref": 2, "a": 3, "b": 9, "c": 11})
+
+    def test_p3_isolates_one_source_per_arm(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p3"))
+        by = {}
+        for r in plan["runs"]:
+            by.setdefault(r["label"], []).append(r["overrides"])
+        # initialisation arm: deterministic, seeds differ, data seed untouched
+        init = by["initialisation only"]
+        self.assertTrue(all(o["deterministic"] for o in init))
+        self.assertEqual(len({o["model_seed"] for o in init}), 3)
+        self.assertTrue(all("data_seed" not in o for o in init))
+        # data arm: deterministic, one model seed, data seeds differ
+        data = by["data order only"]
+        self.assertEqual(len({o["model_seed"] for o in data}), 1)
+        self.assertEqual(len({o["data_seed"] for o in data}), 3)
+        # hardware arm: every setting identical, only the GPU is free
+        hw = by["hardware only"]
+        self.assertEqual(len({tuple(sorted(o.items())) for o in hw}), 1)
+        self.assertTrue(all(not o["deterministic"] for o in hw))
+
+    def test_identical_runs_still_get_distinct_names(self):
+        for problem, n in (("p3", 25), ("p4", 15)):
+            plan = cs312.build_plan(defaults(PROBLEM=problem))
+            self.assertEqual(len({r["suffix"] for r in plan["runs"]}), n)
+
+    def test_p4_pairs_differ_only_by_the_perturbation(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p4"))
+        self.assertEqual(len(plan["runs"]), 15)
+        ctl = [r for r in plan["runs"] if r["part"] == "control"]
+        pert = [r for r in plan["runs"] if r["part"] == "perturbed"]
+        self.assertEqual((len(ctl), len(pert)), (7, 7))
+        for c_run, p_run in zip(ctl, pert):
+            a, b = dict(c_run["overrides"]), dict(p_run["overrides"])
+            self.assertTrue(b.pop("perturb_one_token"))
+            self.assertEqual(a, b)
+        self.assertTrue(all(r["overrides"]["deterministic"] for r in plan["runs"]))
+
+
+class PlanP5Test(unittest.TestCase):
+    def test_beta1_sweep_skips_the_value_already_measured(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p5", P5_BETA1="0.0,0.5,0.9,0.98"))
+        betas = [r["overrides"]["beta1"] for r in plan["runs"]]
+        self.assertNotIn(0.9, betas)           # the corpus already has it
+        self.assertEqual(sorted(betas), [0.0, 0.5, 0.98])
+
+    def test_beta1_is_the_only_thing_that_changes(self):
+        plan = cs312.build_plan(defaults(PROBLEM="p5"))
+        for r in plan["runs"]:
+            self.assertEqual(list(r["overrides"]), ["beta1"])

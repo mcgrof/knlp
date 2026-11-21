@@ -46,6 +46,11 @@ DEFAULTS = {
     "P1C_WD": "1.0",
     "P1C_CELLS": "wsd0.2:0.0,wsd0.2:0.2,linear:0.1",
     "P2_DEPTHS": "4,5,6,7",
+    "P5_BETA1": "0.0,0.5,0.95,0.98",
+    "P4_DATA_SEEDS": "301,302,303,304,305,306,307",
+    "P3_MODEL_SEEDS": "101,102,103",
+    "P3_DATA_SEEDS": "201,202,203",
+    "P3_BASE_MODEL_SEED": "42",
     "P2B_VARIANTS": "tokens2x,batch128,kv16v8,mup_lr",
     "P2B_BASE_DEPTH": "8",
     "P2_VARIANTS": ("baseline=0.003:linear:0.0,constant=0.003:constant:0.0,"
@@ -589,6 +594,164 @@ def plan_p2b(cfg):
     return {"depths": depths, "variants": names, "runs": runs}
 
 
+def plan_p3(cfg):
+    """Problem 3: measure the sources of run-to-run variation.
+
+    The course exposes one knob per source named in the assignment:
+    `model_seed` is initialisation, `data_seed` is data order and choice,
+    and `deterministic` turns off the nondeterministic GPU kernels. The
+    design separates them by holding two fixed while moving the third.
+
+    Two deterministic references with identical settings come first. They
+    must land on the same loss; if they do not, the determinism harness is
+    broken and every isolation result below is meaningless, so they are
+    the gate rather than a formality.
+
+    Every run carries a unique suffix. The course builds its run name from
+    TrainConfig alone, so the three hardware-only repeats are identical by
+    construction and would otherwise collapse onto one name, with two
+    skipped as already trained and the first result silently reported
+    three times.
+    """
+    depth = int(cfg["DEPTH"])
+    base_sequences = int(cfg["NUM_TRAIN_SEQUENCES"])
+    base_ms = int(cfg["P3_BASE_MODEL_SEED"])
+    mseeds = [int(x) for x in cfg["P3_MODEL_SEEDS"].split(",") if x.strip()]
+    dseeds = [int(x) for x in cfg["P3_DATA_SEEDS"].split(",") if x.strip()]
+    runs = []
+
+    def add(part, label, ov, suffix):
+        runs.append({
+            "index": len(runs), "part": part, "label": label,
+            "depth": ov.get("_depth", depth),
+            "overrides": {k: v for k, v in ov.items() if not k.startswith("_")},
+            "suffix": suffix,
+        })
+
+    # the gate: two identical deterministic runs
+    for i in (1, 2):
+        add("ref", "deterministic reference",
+            {"deterministic": True, "model_seed": base_ms},
+            f"deterministic-reference-{i}")
+
+    # (a) all three sources at once
+    for i, (ms, ds) in enumerate(zip(mseeds, dseeds), 1):
+        add("a", "all three vary",
+            {"deterministic": False, "model_seed": ms, "data_seed": ds},
+            f"p3a-all-{i}")
+
+    # (b) one source at a time
+    for i, ms in enumerate(mseeds, 1):
+        add("b", "initialisation only",
+            {"deterministic": True, "model_seed": ms}, f"p3b-init-{i}")
+    for i, ds in enumerate(dseeds, 1):
+        add("b", "data order only",
+            {"deterministic": True, "model_seed": base_ms, "data_seed": ds},
+            f"p3b-data-{i}")
+    for i in (1, 2, 3):
+        # identical settings on purpose: the only free variable left is the GPU
+        add("b", "hardware only",
+            {"deterministic": False, "model_seed": base_ms}, f"p3b-hw-{i}")
+
+    # (c) does the recipe change how variable the result is?
+    for i, (ms, ds) in enumerate(zip(mseeds, dseeds), 1):
+        add("c", "high learning rate",
+            {"deterministic": False, "model_seed": ms, "data_seed": ds,
+             "learning_rate": 0.03}, f"p3c-lr03-{i}")
+    for i in range(1, 5):
+        ms, ds = mseeds[(i - 1) % len(mseeds)], dseeds[(i - 1) % len(dseeds)] + i
+        add("c", "more capable model",
+            {"deterministic": False, "model_seed": ms, "data_seed": ds,
+             "model_name": "d12", "_depth": 12}, f"p3c-d12-{i}")
+    for i in range(1, 5):
+        ms, ds = mseeds[(i - 1) % len(mseeds)], dseeds[(i - 1) % len(dseeds)] + 10 + i
+        add("c", "longer training",
+            {"deterministic": False, "model_seed": ms, "data_seed": ds,
+             "num_train_sequences": 2 * base_sequences}, f"p3c-long-{i}")
+
+    seen = [r["suffix"] for r in runs]
+    if len(set(seen)) != len(seen):
+        raise SystemExit("p3 plan has duplicate suffixes; runs would collide")
+    return {"depth": depth, "runs": runs}
+
+
+def plan_p4(cfg):
+    """Problem 4: how far does a one-token edit travel?
+
+    Every source of randomness is pinned: deterministic kernels and a fixed
+    model seed, so two runs of one setting are bit-reproducible. The only
+    difference inside a pair is the course's `perturb_one_token`, which
+    rewrites position 100 of row 0 to token 17 after the shuffle.
+
+    The flag is a hardcoded single edit, so magnitude cannot be dialled.
+    Varying `data_seed` instead moves a different sequence into row 0, so
+    the same edit lands on different content and each pair is a different
+    one-token perturbation. Seven pairs give the terminal-loss spread that
+    part (a) asks for, and the per-step history of each pair gives the
+    growth over time that part (b) asks for, measured rather than set.
+
+    The fifteenth run repeats the first pair's control under another name.
+    It is the gate: with randomness pinned it must reproduce that control
+    exactly, and if it does not then no pair difference can be attributed
+    to the edited token.
+    """
+    depth = int(cfg["DEPTH"])
+    dseeds = [int(x) for x in cfg["P4_DATA_SEEDS"].split(",") if x.strip()]
+    runs = []
+
+    def add(part, label, ov, suffix):
+        runs.append({"index": len(runs), "part": part, "label": label,
+                     "depth": depth, "overrides": ov, "suffix": suffix})
+
+    for i, ds in enumerate(dseeds, 1):
+        base = {"deterministic": True, "model_seed": 42, "data_seed": ds}
+        add("control", "unperturbed", dict(base), f"p4-ctl-{i}")
+        add("perturbed", "one token changed",
+            dict(base, perturb_one_token=True), f"p4-pert-{i}")
+
+    add("gate", "determinism gate",
+        {"deterministic": True, "model_seed": 42, "data_seed": dseeds[0]},
+        "p4-gate")
+
+    seen = [r["suffix"] for r in runs]
+    if len(set(seen)) != len(seen):
+        raise SystemExit("p4 plan has duplicate suffixes; runs would collide")
+    return {"depth": depth, "runs": runs}
+
+
+def plan_p5(cfg):
+    """Problem 5: the one axis the loss-curve corpus is missing.
+
+    Parts (b) and (c) are zero-run questions answered by looking back at
+    every run already in W&B, and that corpus is strong on learning rate,
+    batch size, schedule, warmup and weight decay. It has exactly one
+    value of beta1, so the momentum axis the problem names cannot be
+    answered from it. These runs add the missing axis and nothing else.
+
+    beta1 = 0 is included deliberately. Momentum is the term that smooths
+    the update direction, so removing it is the arm most likely to move
+    the curve's microstructure, which is what part (b) asks about. The
+    default 0.9 already exists in the corpus and is not repeated here.
+    """
+    depth = int(cfg["DEPTH"])
+    betas = [float(x) for x in cfg["P5_BETA1"].split(",") if x.strip()]
+    default_beta1 = 0.9
+    runs = []
+    for b in betas:
+        if b == default_beta1:
+            # already in the corpus; spending a run on it would buy nothing
+            continue
+        runs.append({
+            "index": len(runs), "part": "beta1", "label": f"beta1 {b}",
+            "depth": depth, "overrides": {"beta1": b},
+            "suffix": f"p5-b1-{str(b).replace('.', 'p')}",
+        })
+    seen = [r["suffix"] for r in runs]
+    if len(set(seen)) != len(seen):
+        raise SystemExit("p5 plan has duplicate suffixes; runs would collide")
+    return {"depth": depth, "runs": runs}
+
+
 def plan_digest(problem, depth, num_train_sequences, runs):
     payload = {
         "problem": problem,
@@ -603,7 +766,7 @@ def plan_digest(problem, depth, num_train_sequences, runs):
 def build_plan(cfg):
     problem = cfg["PROBLEM"]
     planners = {"p1a": plan_p1a, "p1b": plan_p1b, "p1c": plan_p1c,
-                "p2": plan_p2, "p2b": plan_p2b, "kvq": plan_kvq}
+                "p2": plan_p2, "p2b": plan_p2b, "p3": plan_p3, "p4": plan_p4, "p5": plan_p5, "kvq": plan_kvq}
     if problem not in planners:
         raise SystemExit(f"problem {problem!r} is not implemented")
     depth = int(cfg["DEPTH"])
@@ -816,7 +979,10 @@ def print_plan(plan):
     for axis in plan.get("axes", []):
         print(f"  {axis}: {plan['axis_values'][axis]}")
     for run in plan["runs"]:
-        print(f"  [{run['index']:2d}] {run['axis']:>28s} {run['overrides']}")
+        # not every problem has an "axis"; later ones label a run by what
+        # it is for instead, so fall back rather than fail on the printout
+        tag = run.get("axis") or run.get("label") or run.get("variant") or ""
+        print(f"  [{run['index']:2d}] {tag:>28s} {run['overrides']}")
     if plan.get("reference_output"):
         print(f"  shared single-axis cells come from {plan['reference_output']}")
 
