@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: MIT
+# Prompt-selected EMO expert pools served from NVMe: one expert pool of a
+# mixture-of-experts model resident on the GPU, the pool picked from
+# each request's question, and pool switches read from NVMe straight
+# into GPU memory while earlier requests run.
+#
+# Selecting defconfig-emo-ifp or defconfig-emo-ifp-smoke sets these
+# values. After that, plain `make` runs the stages through
+# Makefile.emo_ifp. All symbols are namespaced CONFIG_KNLP_EMO_IFP_*.
+
+menu "EMO expert pools served from NVMe"
+
+config KNLP_EMO_IFP
+	bool "Enable the EMO expert-pool serving reproduction"
+	default n
+	help
+	  Set by defconfig-emo-ifp and defconfig-emo-ifp-smoke. When set,
+	  plain `make` downloads the EMO checkpoint, builds the data sets,
+	  five expert pools and their quality matrix, packs the experts on
+	  the local NVMe, and serves a mixed five-domain request stream
+	  with pool switches, checked bitwise against a server that keeps
+	  every pool resident.
+
+if KNLP_EMO_IFP
+
+config KNLP_EMO_IFP_ROOT
+	string "Data root (models, data, pools, packed experts, results)"
+	default "./results/emo-ifp"
+	help
+	  Bulk data lives here, outside Git: about 52 GB for the FP32
+	  checkpoint, 26 GB for the BF16 copy, 24 GB for the packed full
+	  model, 37 GB for the five packed pools and 24 GB for the
+	  single-copy layout. Pool switches read from the single-copy
+	  layout, so put the root on the NVMe drive under test.
+
+config KNLP_EMO_IFP_PYTHON
+	string "Python interpreter for the experiment scripts"
+	default "python3"
+	help
+	  An interpreter with torch (ROCm or CUDA build), triton,
+	  transformers 4.57, safetensors, datasets, huggingface_hub and
+	  pybind11. The published results used torch 2.9.1+rocm6.4,
+	  triton 3.5.1 and transformers 4.57.1 on an AMD GPU.
+
+config KNLP_EMO_IFP_MODEL_REPO
+	string "Hugging Face repository of the EMO checkpoint"
+	default "allenai/Emo_1b14b_1T"
+
+config KNLP_EMO_IFP_MODEL_REVISION
+	string "Checkpoint revision"
+	default "007852b1e3d22222f8ee03c6a53fa30e47898dcb"
+
+config KNLP_EMO_IFP_MODEL_FP32_DIR
+	string "Existing FP32 checkpoint directory (empty: download)"
+	default ""
+
+config KNLP_EMO_IFP_MODEL_BF16_DIR
+	string "Existing BF16 conversion (empty: convert)"
+	default ""
+	help
+	  A directory written by scripts/emo_ifp/convert_bf16.py. Its
+	  manifest must be at ROOT/models/bf16-manifest.json.
+
+config KNLP_EMO_IFP_ARC_REVISION
+	string "allenai/ai2_arc dataset revision"
+	default "210d026faf9955653af8916fad021475a3f00453"
+
+config KNLP_EMO_IFP_MMLU_REVISION
+	string "cais/mmlu dataset revision"
+	default "c30699e8356da336a370243923dbaf21066bb9fe"
+
+config KNLP_EMO_IFP_FST_REPO
+	string "fastsafetensors repository with the io_uring DMA-BUF reader"
+	default "https://github.com/mcgrof/fastsafetensors.git"
+
+config KNLP_EMO_IFP_FST_REF
+	string "fastsafetensors git ref"
+	default "a174cd23e4265b7241359586b2a0169c7cfaa6f9"
+	help
+	  The published results used this commit of the
+	  2026-10-28-iouring-dma-buf branch. Its io_uring_dmabuf module
+	  registers GPU memory with io_uring so that NVMe reads land in it
+	  directly.
+
+config KNLP_EMO_IFP_FST_DIR
+	string "Existing built fastsafetensors tree (empty: clone and build)"
+	default ""
+
+config KNLP_EMO_IFP_TUNED_CONFIGS
+	string "Existing fused MoE tile table (empty: tune on this GPU)"
+	default ""
+
+config KNLP_EMO_IFP_ROUTED
+	int "Routed experts per layer in each pool"
+	default 32
+	help
+	  Each pool keeps this many of the 127 routed experts per layer,
+	  plus the shared expert. The published hashes are for 32.
+
+config KNLP_EMO_IFP_RUN_LENGTH
+	int "Mean run length of one domain in the stream"
+	default 16
+
+config KNLP_EMO_IFP_LOOKAHEAD
+	int "Requests the server may prefetch ahead"
+	default 4
+
+config KNLP_EMO_IFP_SELECTOR
+	string "Pool selector"
+	default "emb-logreg"
+	help
+	  emb-logreg: multinomial logistic regression on the mean input
+	  embedding of the question. emb-centroid: the nearest class
+	  centroid of the same embedding. router-logreg needs router
+	  features computed with each pool resident, which this
+	  reproduction does not build.
+
+config KNLP_EMO_IFP_N_TRAIN
+	int "Training questions per domain for the selector"
+	default 32
+
+config KNLP_EMO_IFP_ARRIVAL_RULE
+	string "Switch rule under random arrivals"
+	default "queue"
+	help
+	  switch: switch at once when the next request is not yet visible.
+	  hold: switch only when two picks agree. confident: hold, but
+	  switch at once on a confident pick. queue: debounce on the next
+	  request when it is visible, the confident rule when the queue is
+	  empty (the adopted rule).
+
+config KNLP_EMO_IFP_ARRIVAL_LOADS
+	string "Offered loads, as fractions of the resident server's capacity"
+	default "0.3 0.6 0.9"
+	help
+	  Empty: the saturated stream only.
+
+config KNLP_EMO_IFP_CONFIDENT_PRECISION
+	string "Training precision that sets the confidence threshold"
+	default "0.85"
+
+config KNLP_EMO_IFP_LIMIT
+	int "Serve only the first N requests (0: all 640)"
+	default 0
+
+endif
+
+endmenu

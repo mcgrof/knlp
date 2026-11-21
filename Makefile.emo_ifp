@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the EMO expert-pool serving reproduction.
+#
+#   make defconfig-emo-ifp         the published stream: 640 requests,
+#                                  saturated pass plus three loads
+#   make defconfig-emo-ifp-smoke   the same stages, 40 requests, one load
+#
+# writes .config and enables CONFIG_KNLP_EMO_IFP. Plain `make` then runs
+# emo-ifp-doctor and every stage in order: fetch, data, convert, tune,
+# pools, matrix, pack, features, serve, report. Every stage is
+# resumable; `make emo-ifp-<stage>` runs one stage.
+
+EMO_IFP_ORCH := python3 -m tools.reproduce.emo_ifp.run
+EMO_IFP_STAGES := fetch data convert tune pools matrix pack features \
+	serve report
+
+.PHONY: emo-ifp emo-ifp-doctor emo-ifp-plan emo-ifp-clean \
+	$(addprefix emo-ifp-,$(EMO_IFP_STAGES))
+.NOTPARALLEL: emo-ifp
+
+ifeq ($(CONFIG_KNLP_EMO_IFP),y)
+.DEFAULT_GOAL := emo-ifp
+endif
+
+emo-ifp:
+	@$(EMO_IFP_ORCH) run --config .config
+
+emo-ifp-doctor emo-ifp-plan emo-ifp-clean $(addprefix emo-ifp-,$(EMO_IFP_STAGES)):
+	@$(EMO_IFP_ORCH) $(patsubst emo-ifp-%,%,$@) --config .config

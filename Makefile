@@ -49,6 +49,11 @@ include Makefile.kvio
 # overrides .DEFAULT_GOAL.
 include Makefile.weight_io
 
+# EMO expert pools served from NVMe (emo-ifp-doctor, emo-ifp-fetch, ...,
+# emo-ifp-serve, emo-ifp-report).  When CONFIG_KNLP_EMO_IFP=y this
+# overrides .DEFAULT_GOAL.
+include Makefile.emo_ifp
+
 # Storage-mediated prefill/decode ladder (pd-doctor, pd-run).  When
 # CONFIG_KNLP_REPRODUCE_PD=y this overrides .DEFAULT_GOAL.
 include Makefile.pd
@@ -93,7 +98,7 @@ MUVERA_CONFLICTS := $(foreach v,MODEL_GNN SUBLIMINAL_LEARNING \
 	RESIDUAL_REPRODUCTION KNLP_CONTEXT_ARTIFACTS KNLP_REPRODUCE_DECODE \
 	KNLP_REPRODUCE_CARTRIDGES \
 	KNLP_LMCACHE_SNAPKV CARTRIDGES_CAS KV_LINGO MOT_AUTHOR_BASELINE \
-	KNLP_REPRODUCE_KVIO KNLP_WEIGHT_IO \
+	KNLP_REPRODUCE_KVIO KNLP_WEIGHT_IO KNLP_EMO_IFP \
 	KNLP_REPRODUCE_PD KNLP_REPRODUCE_TOKENDANCE \
 	KNLP_REPRODUCE_KMESH_TRACE KNLP_REPRODUCE_KMESH_RESIDENCY \
 	KNLP_REPRODUCE_KMESH_FORK KNLP_REPRODUCE_KMESH_SERVING \

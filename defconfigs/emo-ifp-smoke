@@ -1,0 +1,47 @@
+# EMO expert pools served from NVMe: a 40-request smoke of the same path.
+#
+# Every stage before serving is the full one (pools, matrix and packed
+# experts are reused by defconfig-emo-ifp under the same root); the
+# serve stage runs the first 40 requests of the stream, one saturated
+# pass and one random-arrival load of 0.5.
+#
+# Downloads allenai/Emo_1b14b_1T (FP32, about 52 GB) at a pinned
+# revision, converts it to a bit-checked BF16 copy, builds ARC-Challenge
+# and four MMLU categories at pinned dataset revisions, calibrates one
+# 32-routed-plus-shared pool per domain, scores every pool on every
+# domain, packs the experts on the local NVMe (single-copy layout), and
+# serves 640 interleaved requests with one pool resident: a saturated
+# pass and random arrivals at 0.3, 0.6 and 0.9 of the resident server's
+# capacity under the queue-aware switch rule. Every served output is
+# checked bitwise against a server with all five pools resident.
+#
+# Needs a GPU with about 48 GB of memory, a kernel with io_uring
+# DMA-BUF registration (docs/io-uring-dmabuf.html), and about 230 GB
+# under the data root:
+#
+#   make defconfig-emo-ifp-smoke
+#   make
+#
+# Results: CONFIG_KNLP_EMO_IFP_ROOT/REPORT-limit40.md and serve-limit40/.
+CONFIG_KNLP_EMO_IFP=y
+CONFIG_KNLP_EMO_IFP_ROOT="./results/emo-ifp"
+CONFIG_KNLP_EMO_IFP_PYTHON="python3"
+CONFIG_KNLP_EMO_IFP_MODEL_REPO="allenai/Emo_1b14b_1T"
+CONFIG_KNLP_EMO_IFP_MODEL_REVISION="007852b1e3d22222f8ee03c6a53fa30e47898dcb"
+CONFIG_KNLP_EMO_IFP_MODEL_FP32_DIR=""
+CONFIG_KNLP_EMO_IFP_MODEL_BF16_DIR=""
+CONFIG_KNLP_EMO_IFP_ARC_REVISION="210d026faf9955653af8916fad021475a3f00453"
+CONFIG_KNLP_EMO_IFP_MMLU_REVISION="c30699e8356da336a370243923dbaf21066bb9fe"
+CONFIG_KNLP_EMO_IFP_FST_REPO="https://github.com/mcgrof/fastsafetensors.git"
+CONFIG_KNLP_EMO_IFP_FST_REF="a174cd23e4265b7241359586b2a0169c7cfaa6f9"
+CONFIG_KNLP_EMO_IFP_FST_DIR=""
+CONFIG_KNLP_EMO_IFP_TUNED_CONFIGS=""
+CONFIG_KNLP_EMO_IFP_ROUTED=32
+CONFIG_KNLP_EMO_IFP_RUN_LENGTH=16
+CONFIG_KNLP_EMO_IFP_LOOKAHEAD=4
+CONFIG_KNLP_EMO_IFP_SELECTOR="emb-logreg"
+CONFIG_KNLP_EMO_IFP_N_TRAIN=32
+CONFIG_KNLP_EMO_IFP_ARRIVAL_RULE="queue"
+CONFIG_KNLP_EMO_IFP_ARRIVAL_LOADS="0.5"
+CONFIG_KNLP_EMO_IFP_CONFIDENT_PRECISION="0.85"
+CONFIG_KNLP_EMO_IFP_LIMIT=40
