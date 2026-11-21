@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="An experiment in offloading a mixture-of-experts model: EMO expert pools picked from each request's question and read from NVMe straight into GPU memory, with the pool quality, selector, storage layout, lead time and switch rules that hiding the reads needs.">
+<title>EMO Expert Pools from NVMe | knlp</title>
+<style>
+:root{color-scheme:dark;--bg:#080d16;--panel:#111b2a;--line:#2b3c51;--text:#eaf1fa;--muted:#a8b7ca;--cyan:#5ce1cf;--amber:#f5c46a;--blue:#82b8ff;--s0:#1fa596;--s1:#c0821a}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:radial-gradient(ellipse at top left,#143142 0,transparent 48%),var(--bg);color:var(--text);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--cyan);text-underline-offset:4px}a:hover{color:white}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{font-size:.88em}p code{overflow-wrap:anywhere}nav{background:#080d16f2;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}.nav-inner{max-width:1180px;margin:auto;padding:14px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}.brand{font-weight:800;color:var(--text);text-decoration:none}.nav-inner a{font-size:14px}.wrap{width:min(1140px,calc(100% - 48px));margin:auto}header{padding:88px 0 52px}.eyebrow{color:var(--cyan);font:700 13px/1.5 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase}h1{font-size:clamp(40px,6.4vw,72px);line-height:1.05;letter-spacing:-.045em;max-width:980px;margin:20px 0 25px}h2{font-size:clamp(28px,3.5vw,38px);line-height:1.2;letter-spacing:-.025em;margin:0 0 22px}h3{font-size:21px;line-height:1.3;margin:28px 0 12px}p{max-width:880px}.lede{font-size:clamp(20px,2.4vw,26px);line-height:1.45;max-width:910px}.muted,small{color:var(--muted)}.tags{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.tag{border:1px solid var(--line);border-radius:30px;padding:6px 12px;font-size:13px;color:var(--muted)}.tag.ok{color:var(--cyan)}.tag.pending{color:var(--amber)}section{padding:48px 0;border-top:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.card h3{margin-top:0}.card p{font-size:16px;margin-bottom:0}.card code{color:var(--cyan)}.notice{border-left:3px solid var(--amber);background:#252119;padding:18px 22px;border-radius:0 10px 10px 0}.notice p{margin:0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;margin:24px 0}table{width:100%;border-collapse:collapse;font-size:15px;min-width:640px;text-align:left}th,td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--cyan);background:#132333}tr:last-child td{border-bottom:0}td:first-child{font-weight:650;min-width:160px}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}tr.hl td{background:#122636}.caption{font-size:14px;color:var(--muted);max-width:100%}pre{padding:20px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#080f1a;font-size:14px;line-height:1.7}.refs li{margin-bottom:13px}footer{padding:36px 0 64px;color:var(--muted);font-size:14px}
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 8px;margin:24px 0;position:relative}.chart{width:100%;height:auto;display:block}.chart .grid{stroke:#22324a;stroke-width:1}.chart .axis{stroke:#4a5d76;stroke-width:1}.chart .tick{fill:var(--muted);font-size:13px}.chart .axis-label{fill:var(--muted);font-size:13px}.chart .ref{stroke:#7d8da3;stroke-width:1.5;stroke-dasharray:5 5}.chart .ref-label{fill:var(--muted);font-size:13px}.chart .direct{fill:var(--text);font-size:14px;font-weight:650}.chart .mark{stroke:var(--panel);stroke-width:2;cursor:default}.chart .mark:hover,.chart .mark:focus{stroke:var(--text);outline:none}.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:14px;color:var(--muted);margin:4px 0 10px}.legend span{display:inline-flex;align-items:center;gap:8px}.sw{width:12px;height:12px;border-radius:50%;display:inline-block}.sw.sq{border-radius:2px}.sw.di{border-radius:1px;transform:rotate(45deg);width:11px;height:11px}.sw.hollow{background:transparent;border:2px solid var(--muted)}.tip{position:absolute;pointer-events:none;background:#0b1422;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);white-space:nowrap;display:none}
+@media(max-width:820px){nav{position:static}header{padding-top:50px}.grid{grid-template-columns:1fr}.wrap{width:calc(100% - 32px)}.nav-inner{gap:12px;padding:12px 16px}section{padding:36px 0}table{font-size:14px}.figure{padding:12px 8px 4px;overflow-x:auto}.chart{min-width:620px}}
+</style>
+</head>
+<body>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a><a href="#idea">Idea</a><a href="#pools">Pools</a><a href="#selector">Selector</a><a href="#prefetch">Prefetch needs</a><a href="#arrivals">Arrivals</a><a href="#value">What pools buy</a><a href="#reproduce">Run it</a><a href="#sources">Sources</a></div></nav>
+<header class="wrap">
+<div class="eyebrow">Mixture-of-experts offload · EMO · November 2026</div>
+<h1>Prompt-selected expert pools, served from NVMe.</h1>
+<p class="lede">An experiment in offloading a mixture-of-experts model: keep one small set of experts on the GPU, pick that set from each request's question, and read the next set from NVMe straight into GPU memory while earlier requests run. The work measures what such a server needs in order to hide its reads.</p>
+<p class="muted">EMO (<a href="https://arxiv.org/abs/2605.06663v2">arXiv 2605.06663</a>) is a mixture-of-experts (MoE) model trained so that each document uses a consistent subset of experts. The EMO paper shows that a small per-domain <em>expert pool</em> keeps most of the quality. Instruction-Following Pruning, or IFP (<a href="https://arxiv.org/abs/2501.02086v3">arXiv 2501.02086</a>), trains a predictor that reads the prompt and selects which weights of a dense model to use. We take IFP's idea of selecting weights from the prompt, but we change the optimization for MoE: no training, EMO's calibrated pools as the unit of selection, a small classifier as the predictor, and real NVMe reads instead of a simulated flash tier.</p>
+<div class="tags"><span class="tag ok">Every served output checked bitwise against all pools resident</span><span class="tag ok">Real NVMe reads into GPU memory</span><span class="tag ok">No model training</span><span class="tag pending">One model, five domains, one GPU</span></div>
+<div class="notice"><p><strong>Result:</strong> one 32-expert pool per layer serves a mixed five-domain stream within 1.5% of a server that keeps all five pools resident. It answers 320 of 640 questions, against 321 with the right pool every time and 335 with the full model. Under random arrivals, the queue-aware switch rule keeps median latency within 1.07 times and 1.25 times the resident server at light and heavy load. Medium load is not yet solved: there the median is 2.02 times. Hiding a pool switch needs lead time in seconds, not a count of requests, and it needs reads of only the experts the new pool adds. <a href="#prefetch">See the requirements.</a></p></div>
+</header>
+<main class="wrap">
+
+<section id="idea">
+<div class="eyebrow">01 / The idea</div><h2>Select weights from the prompt, then prefetch them.</h2>
+<p>A model with 128 experts per layer uses only 8 of them for each token: 7 routed experts and 1 shared expert. If the experts that a whole request will use can be predicted before it runs, a server can keep only those experts in GPU memory and read others from storage when the topic changes. Three separate things must hold for this to work. The selected pool must keep the answers. The prediction must be cheap and come early. And the reads must finish before the GPU needs the weights.</p>
+<div class="grid">
+<article class="card"><h3>What IFP does</h3><p>A predictor reads the prompt and outputs a mask over the feed-forward channels of a dense model. The predictor and the model are trained together, and the mask stays fixed during decode. The paper measures latency with a GPU simulation of flash, not with a storage device.</p></article>
+<article class="card"><h3>What we changed for MoE</h3><p>EMO already groups experts by domain, so the unit of selection is a whole pool: 32 routed experts plus the shared expert in each of 16 layers. Nothing is trained. A logistic regression on the mean input embedding of the question picks one of five pools in under 1 ms. The pool is read from NVMe into registered GPU memory with io_uring. Routing inside the pool stays dynamic.</p></article>
+</div>
+<p>This is not a reproduction of IFP. No trained IFP predictor exists for EMO, so this page makes no IFP comparison. The broad idea is not new either. Apple's <a href="https://machinelearning.apple.com/research/introducing-third-generation-of-apple-foundation-models">third-generation foundation model announcement</a> describes prompt-based routing with weights loaded from flash. <a href="https://arxiv.org/abs/2312.11514">LLM in a Flash</a> and <a href="https://arxiv.org/abs/2410.22134">ProMoE</a> cover sparse flash reads and predictive expert caching. What this page adds is measurement on an open model with real storage. It answers what pool quality, selector cost, storage layout, lead time and switch policy a working server needs.</p>
+</section>
+
+<section id="setup">
+<div class="eyebrow">02 / Setup</div><h2>One model, five domains, one GPU, one drive.</h2>
+<p>The model is <a href="https://huggingface.co/allenai/Emo_1b14b_1T">allenai/Emo_1b14b_1T</a>, converted bit-exactly to BF16 (25.3 GiB). It has 16 layers and 128 experts per layer, one of them shared. The test machine has one AMD Radeon Pro W7900 GPU with 48 GB of memory, running ROCm 6.4 and PyTorch 2.9.1. Its single NVMe SSD reads about 7.5 GB/s into registered GPU memory. MoE layers use vLLM's fused MoE Triton kernel, with tile sizes tuned for this GPU. The kernel is Linux 7.3 with the io_uring DMA-BUF series described on the <a href="io-uring-dmabuf.html">DMA-BUF + io_uring page</a>.</p>
+<p>There are five domains. ARC-Challenge is one. The other four are MMLU categories: health, psychology, history and politics, where politics covers four MMLU subjects. Each domain has 8 calibration texts for its pool, 128 selector-training questions and 128 test questions, and no question appears in two sets. Answers are scored as ranked multiple choice. The <em>stream</em> is 640 test requests in runs of one domain, with a mean run length of 16. Each request is prefilled and then decodes 16 tokens, at batch size one. A request takes about 0.25 s.</p>
+<p>The reference is the same server with all five pools resident, serving the same requests on the same pools. Every request's first-token logits and generated tokens must match that reference bit for bit, and every loaded layer must equal its resident copy. All results on this page passed that check with no exception.</p>
+</section>
+
+<section id="pools">
+<div class="eyebrow">03 / Pool quality</div><h2>A domain's own pool keeps the answers. A wrong pool does not.</h2>
+<p>Each pool keeps, in every layer, the 32 routed experts with the highest mean router probability on its domain's 8 calibration texts, plus the shared expert. Layers are chosen in order with earlier layers already restricted, as in EMO's own selection code. A pool is 25% of the routed experts. With the attention, embedding and shared weights, the pool model takes about 8 GB of GPU memory, against 27 GB for the full model.</p>
+<div class="table-wrap"><table><thead><tr><th>Domain (128 questions)</th><th class="num">Full model</th><th class="num">Own pool</th><th class="num">Worst other pool</th></tr></thead><tbody>
+<tr><td>ARC-Challenge</td><td class="num">72</td><td class="num">71</td><td class="num">38 (history pool)</td></tr>
+<tr><td>Health</td><td class="num">69</td><td class="num">61</td><td class="num">42 (ARC pool)</td></tr>
+<tr><td>Psychology</td><td class="num">78</td><td class="num">77</td><td class="num">54 (history pool)</td></tr>
+<tr><td>History</td><td class="num">63</td><td class="num">60</td><td class="num">34 (psychology pool)</td></tr>
+<tr><td>Politics</td><td class="num">53</td><td class="num">52</td><td class="num">40 (health pool)</td></tr>
+<tr class="hl"><td>All five</td><td class="num">335</td><td class="num">321</td><td class="num">—</td></tr>
+</tbody></table></div>
+<p class="caption">Correct answers out of 128 per domain. "Own pool" is the right pool for every request, which is the most a selector can reach.</p>
+<p>Most wrong picks cost 11 to 34 answers out of 128. The exception is health and psychology, which share many experts. So the selector matters, and the cost of an error depends on which pool it confuses. Pools from different domains overlap little: per layer, only about 6 experts are in all four of the first four pools. One general pool cannot replace them. The best shared pool tested, calibrated on all five domains with equal weight, answers 303 of 640. Politics needs its own pool. A politics pool answers 52 against the full model's 53, but no shared pool of 32, 40 or 48 experts gets politics above 46. Politics is short of pool slots, not short of experts.</p>
+</section>
+
+<section id="selector">
+<div class="eyebrow">04 / The selector</div><h2>A classifier on the question's mean embedding.</h2>
+<p>The selector reads only the question text: no demonstrations and no answer choices. It averages the model's input-embedding rows over the question's tokens (2,048 numbers; no transformer layer runs) and applies multinomial logistic regression. The regression is fitted on 32 training questions per domain, with its penalty chosen by 4-fold cross-validation. Offline it names the right domain for 505 of 640 test questions (79%).</p>
+<div class="table-wrap"><table><thead><tr><th>Selector, on the live stream</th><th class="num">Served (of 640)</th><th class="num">Pick cost</th><th>Notes</th></tr></thead><tbody>
+<tr class="hl"><td>Embedding logistic regression, 32 per domain</td><td class="num">320</td><td class="num">0.2–1 ms</td><td>Adopted. No GPU layer, no dependence on the loaded pool.</td></tr>
+<tr><td>Router logistic regression, first 4 layers, 128 per domain</td><td class="num">313</td><td class="num">7.9 ms</td><td>Must be fitted separately for each loaded pool; 3.1% of wall time.</td></tr>
+<tr><td>Embedding nearest centroid, 128 per domain</td><td class="num">308</td><td class="num">microseconds</td><td>Good with four pools, weak with five.</td></tr>
+<tr><td>Right pool every time</td><td class="num">321</td><td class="num">—</td><td>Upper bound.</td></tr>
+</tbody></table></div>
+<p>Router features looked stronger offline, but they shift once a pool is loaded. Layer 0's router sees the same input whatever pool is loaded, but the routers of layers 1 and later see hidden states that the pool's experts produced. The cosine similarity to full-model features falls to 0.87 at layer 1 and to 0.62 at layer 15. Router selectors fitted on full-model features all fail with a pool loaded: under the worst loaded pool they serve only 279 to 298 of 640. Refitted for each loaded pool they recover, but on the live stream they still serve fewer answers than the embedding selector, and each pick runs four GPU layers. The embedding selector has none of these problems. The server's switch policy (below) also absorbs single wrong picks: offline the embedding selector would serve 314, and on the stream it serves 320.</p>
+</section>
+
+<section id="prefetch">
+<div class="eyebrow">05 / What prefetching needs</div><h2>Lead time in seconds, and reads of only what changes.</h2>
+<p>A whole pool is 6.4 GB of routed experts. One drive reads it in about 0.88 s. One request takes about 0.25 s. A prefetch that starts two requests early therefore has 0.5 s to hide a 0.88 s read. What matters is how many seconds of work lie ahead, not how many requests. The table shows each step that closed this gap on the saturated stream, with a lookahead of Q requests.</p>
+<div class="table-wrap"><table><thead><tr><th>What a switch reads</th><th class="num">Q</th><th class="num">Throughput loss</th><th>Holds the 5% bar?</th></tr></thead><tbody>
+<tr><td>Follow every selector pick, whole pool</td><td class="num">0, 2</td><td class="num">176–276%</td><td>No: a single odd pick starts a switch</td></tr>
+<tr><td>Debounce (two agreeing picks), whole pool</td><td class="num">2</td><td class="num">22.3%</td><td>No: 0.89 s read against 0.48 s lead</td></tr>
+<tr><td>Debounce, whole pool</td><td class="num">4</td><td class="num">5.1%</td><td>No, by a small margin</td></tr>
+<tr><td>Debounce, delta files (only the new pool's missing experts)</td><td class="num">2</td><td class="num">3.2%</td><td>No: switches into history still wait 71 ms</td></tr>
+<tr><td>Debounce, delta files</td><td class="num">4</td><td class="num">2.4%</td><td>Yes</td></tr>
+<tr class="hl"><td>Debounce, slot store from a single-copy layout, five pools</td><td class="num">4</td><td class="num">1.2–1.5%</td><td>Yes, with 11 GB of registered GPU memory</td></tr>
+</tbody></table></div>
+<p class="caption">Four pools except the last row. Loss is wall time against the resident server serving the same picks. The switch wait is the extra first-token time of a switched request; the median is 0.4 ms or less in every passing row.</p>
+<h3>Debounce</h3>
+<p>The server keeps its loaded pool unless both the current request and the next one pick the same other pool. A run of one domain then switches once, and a single wrong pick in the middle of a run costs no switch. It also explains why the selector serves more on the stream than offline: an odd wrong pick inside a run lands on the run's pool.</p>
+<h3>Delta reads</h3>
+<p>Two pools of different domains share 167 to 332 of their 512 routed experts, counted over all 16 layers. A switch that reads only the 180 to 345 missing experts moves 2.3 to 4.3 GB instead of 6.4 GB and finishes in 0.38 to 0.61 s, depending on the pair, at 6.0 to 7.1 GB/s. Small deltas pay a fixed setup cost, so they read at the lower rates.</p>
+<h3>One copy on disk, slots on the GPU</h3>
+<p>Packing every pool and every pool-to-pool delta as its own file stores each expert several times: about 158 GiB for a 26 GiB model. The single-copy layout stores each expert once per layer. It orders the experts by the reflected Gray code of their pool-membership masks, so each pool is 1 to 8 contiguous runs per layer, and the last pool in the order is always one run. A new pool is then a list of runs and needs no writes. It reads as fast as the packed files (median time ratio 1.000, worst 1.014). On the GPU, each layer has one registered buffer of 52 to 57 expert slots, 11.0 GB in all, registered with io_uring once. A switch reads the missing experts from disk straight into free slots, and the layer runs through a slot map. Nothing is copied on the GPU, and nothing is allocated per switch.</p>
+<h3>Two fixes below the server</h3>
+<p>Releasing a DMA-BUF registration waited about 14 ms for an RCU grace period in <code>dma_buf_io_kill_map()</code>. Two kernel patches make the release asynchronous and save 180 to 191 ms on a 25.3 GB whole-model load (branch <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release"><code>2026-11-06-dmabuf-io-async-release</code></a>). Weights used in place must also start on an aligned address. Unaligned packed tensors made the fused MoE kernel up to 2.2 times slower, so the <a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">fastsafetensors DMA-BUF copier</a> now aligns tensor data by default.</p>
+</section>
+
+<section id="arrivals">
+<div class="eyebrow">06 / Random arrivals</div><h2>The switch rule must read the queue.</h2>
+<p>A saturated stream always has four requests waiting, so the server can see what comes next. Real arrivals are not like that. In this test, requests arrive with exponential gaps at 0.3, 0.6 and 0.9 of the resident server's capacity. The server sees only requests that have arrived, picks each pool live, prefetches visible requests up to four ahead, and starts cold on the ARC pool. The resident server replays the same arrivals with the same pools. The bars are a median at most 1.5 times, and a 99th percentile at most 2 times, the resident server's latency (queueing plus first token). Quality must stay within 4 answers of the simplest rule.</p>
+<div class="figure">
+<div class="legend" aria-hidden="true"><span><i class="sw sq" style="background:#7d8da3"></i>Switch at once</span><span><i class="sw sq" style="background:#82b8ff"></i>Hold</span><span><i class="sw sq" style="background:#c0821a"></i>Confident</span><span><i class="sw sq" style="background:#1fa596"></i>Queue-aware (adopted)</span><span>Dashed line: the 1.5× bar</span></div>
+<svg class="chart" viewBox="0 0 900 380" role="img" aria-labelledby="arr-title arr-desc">
+<title id="arr-title">Median latency against the resident server, by switch rule and load</title>
+<desc id="arr-desc">At load 0.3 the switch-at-once rule is 8.9 times the resident median; hold 1.01, confident 1.07 and queue-aware 1.07. At load 0.6 they are 3.51, 1.53, 2.27 and 2.02, all above the 1.5 bar. At load 0.9 they are 1.34, 1.23, 1.82 and 1.25.</desc>
+<line class="grid" x1="80" x2="880" y1="330.0" y2="330.0"/><text class="tick" x="70" y="335.0" text-anchor="end">0×</text>
+<line class="grid" x1="80" x2="880" y1="255.0" y2="255.0"/><text class="tick" x="70" y="260.0" text-anchor="end">1×</text>
+<line class="grid" x1="80" x2="880" y1="180.0" y2="180.0"/><text class="tick" x="70" y="185.0" text-anchor="end">2×</text>
+<line class="grid" x1="80" x2="880" y1="105.0" y2="105.0"/><text class="tick" x="70" y="110.0" text-anchor="end">3×</text>
+<line class="grid" x1="80" x2="880" y1="30.0" y2="30.0"/><text class="tick" x="70" y="35.0" text-anchor="end">4×</text>
+<line class="axis" x1="80" x2="880" y1="330" y2="330"/>
+<rect class="mark" x="133.3" y="30.0" width="34" height="300.0" rx="3" fill="#7d8da3" tabindex="0" data-tip="Load 0.3, switch at once: median 8.89× resident, 317 of 640 served"/>
+<text class="tick" x="150.3" y="24.0" text-anchor="middle">8.9×</text>
+<rect class="mark" x="175.3" y="254.2" width="34" height="75.8" rx="3" fill="#82b8ff" tabindex="0" data-tip="Load 0.3, hold: median 1.01× resident, 305 of 640 served"/>
+<text class="tick" x="192.3" y="248.2" text-anchor="middle">1.01</text>
+<rect class="mark" x="217.3" y="249.8" width="34" height="80.2" rx="3" fill="#c0821a" tabindex="0" data-tip="Load 0.3, confident: median 1.07× resident, 316 of 640 served"/>
+<text class="tick" x="234.3" y="243.8" text-anchor="middle">1.07</text>
+<rect class="mark" x="259.3" y="249.8" width="34" height="80.2" rx="3" fill="#1fa596" tabindex="0" data-tip="Load 0.3, queue-aware: median 1.07× resident, 316 of 640 served"/>
+<text class="tick" x="276.3" y="243.8" text-anchor="middle">1.07</text>
+<text class="axis-label" x="213.3" y="356" text-anchor="middle">Offered load 0.3</text>
+<rect class="mark" x="400.0" y="66.8" width="34" height="263.2" rx="3" fill="#7d8da3" tabindex="0" data-tip="Load 0.6, switch at once: median 3.51× resident, 316 of 640 served"/>
+<text class="tick" x="417.0" y="60.8" text-anchor="middle">3.51</text>
+<rect class="mark" x="442.0" y="215.2" width="34" height="114.8" rx="3" fill="#82b8ff" tabindex="0" data-tip="Load 0.6, hold: median 1.53× resident, 314 of 640 served"/>
+<text class="tick" x="459.0" y="209.2" text-anchor="middle">1.53</text>
+<rect class="mark" x="484.0" y="159.8" width="34" height="170.2" rx="3" fill="#c0821a" tabindex="0" data-tip="Load 0.6, confident: median 2.27× resident, 320 of 640 served"/>
+<text class="tick" x="501.0" y="153.8" text-anchor="middle">2.27</text>
+<rect class="mark" x="526.0" y="178.5" width="34" height="151.5" rx="3" fill="#1fa596" tabindex="0" data-tip="Load 0.6, queue-aware: median 2.02× resident, 317 of 640 served"/>
+<text class="tick" x="543.0" y="172.5" text-anchor="middle">2.02</text>
+<text class="axis-label" x="480.0" y="356" text-anchor="middle">Offered load 0.6</text>
+<rect class="mark" x="666.7" y="229.5" width="34" height="100.5" rx="3" fill="#7d8da3" tabindex="0" data-tip="Load 0.9, switch at once: median 1.34× resident, 320 of 640 served"/>
+<text class="tick" x="683.7" y="223.5" text-anchor="middle">1.34</text>
+<rect class="mark" x="708.7" y="237.8" width="34" height="92.2" rx="3" fill="#82b8ff" tabindex="0" data-tip="Load 0.9, hold: median 1.23× resident, 318 of 640 served"/>
+<text class="tick" x="725.7" y="231.8" text-anchor="middle">1.23</text>
+<rect class="mark" x="750.7" y="193.5" width="34" height="136.5" rx="3" fill="#c0821a" tabindex="0" data-tip="Load 0.9, confident: median 1.82× resident, 321 of 640 served"/>
+<text class="tick" x="767.7" y="187.5" text-anchor="middle">1.82</text>
+<rect class="mark" x="792.7" y="236.2" width="34" height="93.8" rx="3" fill="#1fa596" tabindex="0" data-tip="Load 0.9, queue-aware: median 1.25× resident, 319 of 640 served"/>
+<text class="tick" x="809.7" y="230.2" text-anchor="middle">1.25</text>
+<text class="axis-label" x="746.7" y="356" text-anchor="middle">Offered load 0.9</text>
+<line class="ref" x1="80" x2="880" y1="217.5" y2="217.5"/>
+<text class="axis-label" transform="translate(24 180) rotate(-90)" text-anchor="middle">Median latency / all pools resident</text>
+</svg>
+<div class="tip"></div>
+</div>
+<div class="table-wrap"><table><thead><tr><th>Rule</th><th>What it does when the next request has not arrived</th><th class="num">0.3</th><th class="num">0.6</th><th class="num">0.9</th></tr></thead><tbody>
+<tr><td>Switch at once</td><td>Switches on this request's pick</td><td class="num">8.89× · 317</td><td class="num">3.51× · 316</td><td class="num">1.34× · 320</td></tr>
+<tr><td>Hold</td><td>Switches when this pick agrees with the previous one; prefetches the pick meanwhile</td><td class="num">1.01× · 305</td><td class="num">1.53× · 314</td><td class="num">1.23× · 318</td></tr>
+<tr><td>Confident</td><td>Hold, but switches at once if the selector's probability is at least 0.508</td><td class="num">1.07× · 316</td><td class="num">2.27× · 320</td><td class="num">1.82× · 321</td></tr>
+<tr class="hl"><td>Queue-aware</td><td>Debounce on the next request when it is visible; the confident rule only when the queue is empty</td><td class="num">1.07× · 316</td><td class="num">2.02× · 317</td><td class="num">1.25× · 319</td></tr>
+</tbody></table></div>
+<p class="caption">Median latency ratio, then answers served out of 640. 99th-percentile ratios for the queue-aware rule: 1.62, 1.28 and 1.13. The confidence threshold gives 85% precision on out-of-fold training picks; it was chosen after a first look at test coverage showed that a 95% target covered only 6% of questions.</p>
+<p>At light load the queue is usually empty, and switching at once wastes reads: 218 switches, only 17 with any lead, about 400 ms each. Holding fixes the latency but serves the first request after each domain change on the old pool, which loses 12 answers. A confident pick is right often enough to switch at once without that loss. At heavy load the queue usually shows the next request, and then plain debounce is best: the confident shortcut alone adds switches there (93 at every load). The queue-aware rule uses each signal where it exists. It holds up at 0.3 (median 40 ms against 37 ms) and at 0.9.</p>
+<p>No rule holds up at load 0.6. The queue empties and refills, so the rule makes confident switches that a request arriving a moment later would have stopped: 36 of its 80 switches had no time to prefetch. Two untested changes could address this. One keeps a second pool resident, since the slot store uses 11 GB of 48. The other waits a few milliseconds for the next request before a confident switch. A cold start also remains: loading the first pool takes 0.87 s, and the first request waits about 0.5 s more if it needs another pool.</p>
+</section>
+
+<section id="value">
+<div class="eyebrow">07 / What pools buy</div><h2>Memory and prefill compute, not decode speed.</h2>
+<p>When the full model fits, the plain alternative is to keep it resident and never switch. On a four-pool version of the stream, that server took 184.7 s against 161.8 s for the pool server, about 14% slower, and gave the full model's answers everywhere. On matched requests the decode time per token is the same (14.46 against 14.40 ms), because each token uses 8 experts either way. Prefill is 41% slower on the full model, because a prompt's tokens spread over all 127 routed experts. The pool server also uses about 8 GB of GPU memory instead of 27 GB.</p>
+<p>Pools are therefore most useful where the full model does not fit, or where memory is needed for other work such as a larger KV cache. Falling back to the full model for unknown domains does not keep up on one drive. A switch into the full model reads 19.1 GB in 2.64 s, and even a lookahead of 12 requests gives only about 1.5 s of lead. The fallback server loses 11.8% at that lookahead, and is only 2% faster than keeping the full model resident.</p>
+</section>
+
+<section id="limits">
+<div class="eyebrow">08 / Limits</div><h2>What these results do not show.</h2>
+<p>There is one model, five domains, one GPU and one drive. The quality numbers come from 128 questions per domain, so a difference of a few answers is within noise. The stream is synthetic: runs of one domain, and Poisson arrivals at batch size one. No batching, no concurrent users, and no multi-drive striping were tested. The selector needs labelled questions for every domain, and it cannot detect a domain that has no pool. A centroid for a known unpooled domain can send that domain to the full model, but thresholds learned from pooled domains alone cannot. The comparison with a standard (non-EMO) MoE of the same size has not been run, so this page does not claim that EMO's training is what makes pools work. Only the AMD ROCm path was tested; NVIDIA GPUs need a driver that exports GPU memory as DMA-BUF.</p>
+</section>
+
+<section id="reproduce">
+<div class="eyebrow">09 / Run it</div><h2>One defconfig reproduces the adopted server.</h2>
+<p>The knlp defconfig downloads the checkpoint at a pinned revision and builds the five data sets at pinned dataset revisions. It checks each data file against the hash of the published one. It then converts the model to BF16, tunes the fused MoE kernel, calibrates the five pools (each checked against the published membership), and scores every pool on every domain. Then it packs the experts on the local drive, computes selector features, and serves the stream: a saturated pass and random arrivals at three loads under the queue-aware rule, each checked bitwise against the resident server. It needs a GPU with about 48 GB, a kernel with io_uring DMA-BUF registration, and about 230 GB of space on the NVMe drive under test.</p>
+<pre><code># the published run: 640 requests, loads 0.3, 0.6 and 0.9
+make defconfig-emo-ifp
+make
+
+# the same stages, then 40 requests and one load
+make defconfig-emo-ifp-smoke
+make
+
+# one stage at a time, or the plan
+make emo-ifp-doctor
+make emo-ifp-plan
+make emo-ifp-pools</code></pre>
+<p>The driver is <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/emo_ifp/run.py"><code>tools/reproduce/emo_ifp/run.py</code></a>, and the options are in <a href="https://github.com/mcgrof/knlp/blob/main/Kconfig.emo_ifp"><code>Kconfig.emo_ifp</code></a>. Existing BF16 weights, a tuned kernel table or a built reader can be reused through <code>CONFIG_KNLP_EMO_IFP_MODEL_BF16_DIR</code>, <code>_TUNED_CONFIGS</code> and <code>_FST_DIR</code>. A rebuild of the pools on the same GPU matched the published membership for four of the five pools. The ARC pool differed in one expert of one layer, where two experts' mean router probabilities differ by 0.00002. The calibration code was unchanged, so this is a numeric near tie. The rebuilt ARC pool answers 72 of 128 ARC questions instead of 71. The other four pools gave the published scores on all five domains. The driver reports each pool as matching or differing, and does not stop when one differs. Results land in <code>REPORT.md</code> and <code>serve/mixed-stream.json</code> under the data root. The experiment scripts are in <a href="https://github.com/mcgrof/knlp/tree/main/scripts/emo_ifp"><code>scripts/emo_ifp</code></a>: <code>calibrate_pool.py</code> builds a pool, <code>pack_single_copy.py</code> writes the single-copy layout, <code>slot_store.py</code> holds the GPU slots, and <code>mixed_stream.py</code> is the server and its checks. Each script's docstring documents what it measures.</p>
+</section>
+
+<section id="sources">
+<div class="eyebrow">10 / Primary sources</div><h2>Read the methods.</h2>
+<ol class="refs">
+<li><a href="https://arxiv.org/abs/2605.06663v2">EMO, v2</a>. Sections 3 and 4 and Appendix B cover document-consistent expert training and per-domain pool selection. <a href="https://github.com/allenai/EMO">Author code</a>; the pool calibration here reimplements its greedy layer-wise selection.</li>
+<li><a href="https://arxiv.org/abs/2501.02086v3">Instruction-Following Pruning for Large Language Models, v3</a>. Sections 3 and 4.4 cover the jointly trained prompt predictor and its simulated latency. <a href="https://machinelearning.apple.com/research/pruning-large-language">Apple's page</a>.</li>
+<li><a href="https://machinelearning.apple.com/research/introducing-third-generation-of-apple-foundation-models">Introducing the third generation of Apple foundation models</a>, June 8, 2026: prompt routing with weights loaded from flash.</li>
+<li><a href="https://arxiv.org/abs/2312.11514">LLM in a Flash</a> and <a href="https://arxiv.org/abs/2410.22134">ProMoE</a>: sparse flash reads, and predictive expert caching in host memory.</li>
+<li><a href="io-uring-dmabuf.html">DMA-BUF + io_uring in knlp</a>: the kernel path that reads NVMe straight into GPU memory.</li>
+</ol>
+</section>
+</main>
+<footer class="wrap">knlp · Prompt-selected EMO expert pools served from NVMe · November 20, 2026. Measured results are from one AMD GPU and one NVMe drive.</footer>
+<script>
+(function(){var f=document.querySelector('.figure'),t=f.querySelector('.tip');
+function show(e){var m=e.target.closest('[data-tip]');if(!m)return;t.textContent=m.getAttribute('data-tip');t.style.display='block';var r=f.getBoundingClientRect(),b=m.getBoundingClientRect();var x=b.left-r.left+b.width/2,y=b.top-r.top-10;t.style.left=Math.max(4,Math.min(x-t.offsetWidth/2,r.width-t.offsetWidth-4))+'px';t.style.top=(y-t.offsetHeight)+'px';}
+function hide(){t.style.display='none';}
+f.addEventListener('mouseover',show);f.addEventListener('focusin',show);f.addEventListener('mouseout',hide);f.addEventListener('focusout',hide);})();
+</script>
+</body>
+</html>

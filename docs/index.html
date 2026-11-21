@@ -120,6 +120,14 @@
           <div class="site-card-links"><a href="lm_head_decode.html#availability">Use the implementation</a><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
         </article>
         <article class="site-card">
+          <div class="site-card-kicker">Mixture of experts · NVMe offload</div>
+          <h3><a href="emo-ifp.html">EMO expert pools from NVMe</a></h3>
+          <div class="site-stage"><span class="site-stage-badge evaluation">Experimental R&amp;D</span><span>Prompt-selected pools · prefetch requirements</span></div>
+          <p>Keep one expert pool of a mixture-of-experts model on the GPU, pick it from each request's question, and read the next pool from NVMe straight into GPU memory while earlier requests run.</p>
+          <p class="site-card-progress"><strong>Finding</strong>One pool serves a mixed five-domain stream within 1.5% of all pools resident. Hiding a switch needs lead time in seconds and reads of only the missing experts. Medium-load random arrivals are still open.</p>
+          <div class="site-card-links"><a href="emo-ifp.html#prefetch">Prefetch requirements</a><a href="emo-ifp.html#arrivals">Random arrivals</a><a href="emo-ifp.html#reproduce">Reproduce</a></div>
+        </article>
+        <article class="site-card">
           <div class="site-card-kicker">Storage · workload evidence</div>
           <h3><a href="small-random-reads-ai.html">Small random reads in AI</a></h3>
           <div class="site-stage"><span class="site-stage-badge evaluation">Ongoing R&amp;D hub</span><span>Small reads · I/O paths · replay</span></div>
