@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="KMesh studies how agent serving can keep long contexts across idle turns and restore them on demand. Earlier KV-cache results measured read-once storage and early preparation for request families; released agent traces move the work to the resumed turn.">
+<meta name="description" content="KMesh studied how agent serving can keep long contexts across idle turns and restore them on demand. The research closed in November 2026 with an upstream LMCache store fix and two open directions: using the tool-call wait, and executing kv.retain hints in LMCache.">
 <title>KMesh: Keeping agent context across idle turns</title>
 <link rel="canonical" href="https://knlp.io/kmesh.html">
 <link rel="stylesheet" href="kmesh.css">
@@ -35,14 +35,103 @@ can keep the saved model state for those contexts, the key/value (KV)
 cache, and restore it when the agent resumes instead of computing it
 again. KMesh began as a study of state shared between related agents.
 Released agent traces show that such sharing carries little volume, and
-that each session's own context between turns carries much more.</p>
-<p><a href="#direction">Read the direction</a> &nbsp;&middot;&nbsp;
+that each session's own context between turns carries much more. The
+research closed in November 2026.</p>
+<p><a href="#closing">Read the closing</a> &nbsp;&middot;&nbsp;
+<a href="#outlook">Read the outlook</a> &nbsp;&middot;&nbsp;
 <a href="#conclusions">Read the conclusions</a> &nbsp;&middot;&nbsp;
 <a href="#questions">Explore the research</a></p>
 </div>
 
+<section id="closing">
+<h2>KMesh is closed</h2>
+<p>We closed the KMesh research on November 23, 2026. It began with state
+shared between related agents. Released agent traces showed that such
+sharing carries little volume, and moved the question to each session's
+own context between turns. That question exposed a gap in how LMCache
+stores a resumed session, and the fix is now an upstream pull request.
+Two directions remain open. The <a href="#outlook">outlook</a> describes
+them: one is research, the other is integration.</p>
+<div class="table-wrap"><table>
+<caption>What KMesh leaves</caption>
+<tr><th scope="col">Result</th><th scope="col">Summary</th></tr>
+<tr><td class="hi">Agent traces favor retention over sharing</td><td>Wide fan-out is rare, and children share only a session preamble. Long contexts that resume after an idle wait carry much more input. See the <a href="kmesh-workloads.html">agent workloads page</a>.</td></tr>
+<tr><td class="hi">LMCache stores every chunk a resume needs</td><td>After vLLM's prefix cache covers the start of a prompt, LMCache counted that start as stored without checking. A long answer, an unstored tool call or a failed store left a chunk that nothing wrote, and the first request after vLLM evicted the session recomputed everything after it. The fix stores from token zero and skips the chunks that storage already holds. In the pull request's GPU test, that request's first token comes 30% to 80% sooner, and every other first-token time stays within 10 ms. Another LMCache user reproduced the long-answer case on a different model and GPU. <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a> is open for review.</td></tr>
+<tr><td class="hi">Read-once restoration for request families</td><td>Singleflight plus external retention reads a shared ancestor from SSD once per group, and 100 ms of notice cuts the first child's wait by 47&ndash;50%. See <a href="#conclusions">what the results establish</a>.</td></tr>
+<tr><td class="hi">Recovery across processes</td><td>A separate cache process restores shared text at new prompt positions, and its outputs match the in-process method bit for bit. See the <a href="kmesh-recovery.html">recovery page</a>.</td></tr>
+<tr><td class="hi">Negative results</td><td>Holding a family's ancestor under pressure displaced more cache hits than it saved. The tested GPU checksum kernel made restoration slower. vLLM removed cascade attention. These lines are parked.</td></tr>
+</table></div>
+</section>
+
+<section id="outlook">
+<h2>Outlook: two directions</h2>
+<p>Both directions start from one observation: an agent's context waits on
+something outside the model, a tool or a user, and the serving system
+decides what to do with that context during the wait. The first direction
+is research, because no result answers it yet. The second is integration:
+the interfaces exist, and the work is to connect LMCache to them.</p>
+
+<h3 id="tool-wait">1. Use the tool-call wait (research)</h3>
+<p>When the model calls a tool, its session stops until the result comes
+back. The context up to the call is complete and already cached, but the
+resumed turn must still compute the result's tokens over that whole
+context before it can answer. The FreeInference agentic trace records how
+long these waits are. In both released weeks, 69&ndash;75% of tool-result
+tokens arrive after a wait of 1 s or more, and a quarter after 5 s or
+more. Calls to the file-read tool carry the largest share of result
+tokens.</p>
+<div class="table-wrap"><table>
+<caption>Tool-call waits in the FreeInference agentic trace. Shares are of all tool-result tokens.</caption>
+<tr><th scope="col">Week</th><th scope="col">Tool calls</th><th scope="col">Median wait</th><th scope="col">Share after &ge;&nbsp;1&nbsp;s</th><th scope="col">Share after &ge;&nbsp;5&nbsp;s</th><th scope="col">File-read share</th><th scope="col">File-read median wait</th></tr>
+<tr><td class="hi">May 17&ndash;23, 2026</td><td>11,359</td><td>3.5 s</td><td>75%</td><td>26%</td><td>48%</td><td>3.6 s</td></tr>
+<tr><td class="hi">July 12&ndash;18, 2026</td><td>77,831</td><td>1.6 s</td><td>69%</td><td>25%</td><td>34%</td><td>0.87 s</td></tr>
+</table></div>
+<p>Dynamo's speculative prefill already uses the end of a turn to warm the
+next turn's known prompt. The open question is what more a serving system
+can prepare during a tool wait, so that the resumed turn computes less
+after the result arrives, and whether that work still pays when other
+sessions share the GPU. KMesh has no result on it yet.</p>
+<p>The wait runs from the end of the response that made the call to the
+start of the session's next request, so it includes the harness time
+around the tool. Calls made in one response share it. Token counts use the
+release's tokenizer, not a served model's. The
+<a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/kmesh_traces/README.md">trace
+scripts</a> reproduce the table with <code>tool_wait.py</code>.</p>
+
+<h3 id="kv-retain">2. Execute kv.retain hints in LMCache (integration)</h3>
+<p>Serving engines now accept a typed, versioned <code>kv_hints</code>
+envelope on each request; vLLM merged it in September 2026
+(<a href="https://github.com/vllm-project/vllm/pull/53423">vLLM #53423</a>).
+Its proposed <code>kv.retain</code> action lets an orchestrator that knows
+the workflow name the token ranges a session will use again, each with a
+priority and a duration, so that the cache evicts other blocks first
+(<a href="https://github.com/vllm-project/vllm/pull/38514">vLLM #38514</a>,
+open). This gives the retention question on this page to the party that
+can see the agent. The vLLM proposal applies the hint to vLLM's own GPU
+prefix cache. LMCache holds the same context in host memory and on storage,
+and it reads no KV hints today.</p>
+<div class="table-wrap"><table>
+<caption>Who can produce or carry a kv.retain hint</caption>
+<tr><th scope="col">Party</th><th scope="col">Role</th><th scope="col">Status</th></tr>
+<tr><td class="hi">Dynamo</td><td>Orchestrator</td><td>Its per-request <code>agent_hints</code> carry a priority, which Dynamo forwards to the engine for scheduling and KV-cache eviction, and a speculative-prefill flag. A router plugin interface for session-aware hint policies is in review (<a href="https://github.com/ai-dynamo/dynamo/pull/15679">Dynamo #15679</a>).</td></tr>
+<tr><td class="hi">llm-d</td><td>Orchestrator</td><td>Its endpoint picker writes <code>kv_hints</code> after it chooses a worker, and drops hints that a client sent (<a href="https://github.com/llm-d/llm-d-router/pull/4207">llm-d-router #4207</a>, open).</td></tr>
+<tr><td class="hi">Agent runtimes</td><td>Producer</td><td>A client can put <code>kv_hints</code> on a chat-completions request itself; vLLM #38514 defines the wire format. <a href="https://github.com/vllm-project/vllm/pull/63904">vLLM #63904</a> proposes session-scoped agent hints on the same envelope.</td></tr>
+<tr><td class="hi">API gateways</td><td>Producer</td><td>Hosted APIs already let a client ask for a cache lifetime: Anthropic's <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching"><code>cache_control</code> TTL</a> of 5 minutes or 1 hour, and OpenAI's <a href="https://developers.openai.com/api/docs/guides/prompt-caching"><code>prompt_cache_retention</code></a>. A gateway that serves those APIs from a self-hosted engine could pass that lifetime on as a <code>kv.retain</code> duration. <a href="https://github.com/vllm-project/vllm/pull/48704">vLLM #48704</a> proposes prompt-cache retention policies for vLLM's tiered offload store (open).</td></tr>
+<tr><td class="hi">SGLang</td><td>Engine</td><td>Its hierarchical cache forwards a request's <code>kv_hints</code> to its storage backends (<a href="https://github.com/sgl-project/sglang/pull/51088">SGLang #51088</a>, merged November 20, 2026).</td></tr>
+<tr><td class="hi">TensorRT-LLM</td><td>Engine</td><td>An RFC proposes a versioned hint protocol of the same kind (<a href="https://github.com/NVIDIA/TensorRT-LLM/issues/18153">TensorRT-LLM #18153</a>, open).</td></tr>
+</table></div>
+<p>LMCache is a storage tier for vLLM and also plugs into SGLang's cache.
+A <code>kv.retain</code> reader in LMCache would let any of these producers
+keep a waiting session's context in host memory or on storage, not only in
+GPU memory. Dynamo is one user. llm-d, an agent runtime that sends its own
+hints, and a gateway that passes on a client's cache lifetime are others.
+The SGLang path also needs LMCache's SGLang integration to read the hints
+that SGLang now forwards. This page does not propose how LMCache should
+act on a hint.</p>
+</section>
+
 <section id="direction">
-<h2>Where KMesh is going: from sharing to retention</h2>
+<h2>How KMesh moved from sharing to retention</h2>
 <p>The <a href="kmesh-workloads.html">agent workloads page</a> reads four
 released agent traces. Wide fan-out is rare in them. In a Claude Code
 corpus, launches of four or more children are 2% of all launches, and
@@ -62,17 +151,17 @@ request families still apply to that question: singleflight, external
 retention, ownership of saved state across processes, and the SSD paths
 into GPU memory.</p>
 <div class="table-wrap"><table>
-<caption>What continues and what is parked</caption>
+<caption>Status of each line of work at closing</caption>
 <tr><th scope="col">Work</th><th scope="col">Status</th><th scope="col">Reason</th></tr>
-<tr><td class="hi">Restoring a resumed turn's own context</td><td>Main target</td><td>It carries the idle tokens in the traces. It must be measured at traced context sizes, with no notice and under competing load.</td></tr>
-<tr><td class="hi">Early preparation for subagent waits</td><td>Continues</td><td>This is the one resume with notice. The parent's next request comes a median of 8.6 s after its subagent ends, and the parent's context has a median of 229K tokens. These waits carry 0.68% of the main agent's input tokens.</td></tr>
-<tr><td class="hi">Singleflight</td><td>Continues</td><td>It is a cheap guard for the rare wide launch.</td></tr>
-<tr><td class="hi">DMA-BUF reads into GPU memory</td><td>Continues, with a different argument</td><td>In the <a href="kmesh-recovery.html#serial">recovery comparison</a>, read-call time fell 3.7% and complete restoration was faster in only four of seven pairs, so latency is the wrong argument. The path removes host staging copies and CPU work. The next measure is CPU time and host-memory bandwidth per GB restored.</td></tr>
-<tr><td class="hi">Saved state for compressed and hybrid models</td><td>Open question</td><td>Sparse, hybrid linear-attention and sliding-window models save other kinds of state, such as compressed blocks, recurrent checkpoints and window snapshots. What to save and restore for them is not yet defined.</td></tr>
+<tr><td class="hi">Restoring a resumed turn's own context</td><td>Closed; fix upstream</td><td>It carries the idle tokens in the traces. The LMCache store gap that it exposed is fixed in <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a>. Which contexts to keep moves to the <a href="#kv-retain">kv.retain outlook</a>.</td></tr>
+<tr><td class="hi">Early preparation for subagent waits</td><td>Moves to the outlook</td><td>This is the one resume with notice. The parent's next request comes a median of 8.6 s after its subagent ends, and the parent's context has a median of 229K tokens. These waits carry 0.68% of the main agent's input tokens. A subagent is one kind of tool call, so the <a href="#tool-wait">tool-wait outlook</a> covers it.</td></tr>
+<tr><td class="hi">Singleflight</td><td>Done</td><td>It is a cheap guard for the rare wide launch.</td></tr>
+<tr><td class="hi">DMA-BUF reads into GPU memory</td><td>Continues outside KMesh</td><td>In the <a href="kmesh-recovery.html#serial">recovery comparison</a>, read-call time fell 3.7% and complete restoration was faster in only four of seven pairs, so latency is the wrong argument. The path removes host staging copies and CPU work. The next measure is CPU time and host-memory bandwidth per GB restored, in the LMCache DMA-BUF storage work.</td></tr>
+<tr><td class="hi">Saved state for compressed and hybrid models</td><td>Open, not started</td><td>Sparse, hybrid linear-attention and sliding-window models save other kinds of state, such as compressed blocks, recurrent checkpoints and window snapshots. What to save and restore for them is not yet defined.</td></tr>
 <tr><td class="hi">Cascade attention</td><td>Parked</td><td>vLLM removed it in v0.32.0, and agent traffic forms few wide groups.</td></tr>
 <tr><td class="hi">TokenDance's Master–Mirror sibling diffs</td><td>Parked</td><td>They target synchronized all-gather rounds between sibling agents. The traces do not contain such rounds.</td></tr>
 <tr><td class="hi">Holding a family's ancestor by default</td><td>Parked</td><td>In our <a href="kmesh-retention.html#family-residency">pressure test</a>, the hold displaced more cache hits than it saved.</td></tr>
-<tr><td class="hi">Artifacts beyond KV cache</td><td>Later</td><td>Tool results, document representations and other artifacts may still matter, but the traces do not show them yet.</td></tr>
+<tr><td class="hi">Artifacts beyond KV cache</td><td>Not started</td><td>Tool results, document representations and other artifacts may still matter, but the traces do not show them yet.</td></tr>
 </table></div>
 <div class="note"><strong>The measured results are far below traced sizes.</strong>
 The experiments on these pages test the mechanisms on controlled request
