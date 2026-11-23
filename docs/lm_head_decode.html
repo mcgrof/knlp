@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Certified LM-head decode — read a quarter of the output head, losslessly</title>
+  <title>Certified LM-head decode — an exact argmax from about half the output head</title>
   <meta name="description" content="Completed research with public Triton kernels and artifact-generation tools, not upstreamed. Certified argmax selection reduces output-head reads; measured low-batch head speedups need separate numerical and full-model serving qualification.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
@@ -171,11 +171,34 @@
               Every generated token ends with one enormous multiply &mdash; the hidden state against a
               <strong className="text-gray-200"> 150,000-row output head</strong> &mdash; and at batch-1 that single
               read is the latency. This returns the <strong className="text-gray-200">exact</strong> dense answer while
-              reading about a <strong className="text-gray-200">quarter of its bytes</strong>: not by guessing which
-              rows matter, but by <strong className="text-gray-200">proving</strong> which rows cannot win and never
-              reading them.
+              reading about <strong className="text-gray-200">half of its bytes</strong> on text it has not seen: not by
+              guessing which rows matter, but by <strong className="text-gray-200">proving</strong> which rows cannot win
+              and never reading them.
             </p>
           </header>
+
+          <section id="heldout-correction" className="anchor card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.amber}}>
+            <h2 className="text-xl font-bold mb-3">Correction, November 2026: the byte saving on held-out text</h2>
+            <p className="text-gray-300 mb-3">
+              The exactness result stands. The byte and latency figures further down this page were measured with a
+              rank-1280 shadow whose basis was built from the same 600 to 1,500 hidden states it then scored. A deployed
+              shadow meets hidden states it has not seen. With the basis built from 65,408 WikiText-2 train positions
+              and scored on 8,176 test positions, the rank-1280 certificate opens every block and reads 118% of the
+              dense head on Qwen2.5-7B and on Llama-3.2-3B. The in-sample method on the same model reads 24.7%, which
+              reproduces the published number.
+            </p>
+            <p className="text-gray-300 mb-3">
+              At full rank the method is an int8 screen of the whole head plus an exact fetch of the blocks that can
+              still hold the argmax. That decoder is exact and reads <strong className="text-white">56.0%</strong> of
+              the dense head on Qwen2.5-7B and <strong className="text-white">51.4%</strong> on Llama-3.2-3B, held-out.
+              This is the deployable result. The 5&times; traffic reduction and the 1.97&times; and 1.85&times; latency
+              figures below have not been re-measured for it.
+            </p>
+            <p className="text-gray-400 text-sm">
+              Full table and method: <a className="underline" href="https://github.com/mcgrof/knlp/blob/main/docs/lm-head-decode.md">lm-head-decode.md</a>.
+              Reproduce with <code>scripts/fdec_cert_heldout.py</code>.
+            </p>
+          </section>
 
           <section id="availability" className="anchor card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.emerald}} aria-labelledby="availability-title">
             <div className="text-xs uppercase tracking-widest text-emerald-400 mb-2">R&amp;D complete · implementation available · not upstreamed</div>

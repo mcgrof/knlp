@@ -115,7 +115,7 @@
           <div class="site-card-kicker">Decode · exact selection</div>
           <h3><a href="lm_head_decode.html">Certified LM-head decode</a></h3>
           <div class="site-stage"><span class="site-stage-badge tooling">R&amp;D complete</span><span>Implementation available · not upstreamed</span></div>
-          <p>Use upper bounds to skip vocabulary blocks that cannot win. The research implementation reduces output-head reads and latency for the measured low-batch workloads.</p>
+          <p>Use upper bounds to skip vocabulary blocks that cannot win. The token is exact. On held-out text the full-rank certificate reads 51% to 56% of the output head; the earlier quarter-of-the-head and latency figures came from an in-sample shadow.</p>
           <p class="site-card-progress"><strong>Available to use</strong>Public Triton kernels and artifact-generation tools. Serving-engine integration needs its own numerical and end-to-end qualification.</p>
           <div class="site-card-links"><a href="lm_head_decode.html#availability">Use the implementation</a><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
         </article>

@@ -1,4 +1,4 @@
-# Certified LM-head decode: read a quarter of the output head, losslessly
+# Certified LM-head decode: an exact argmax from about half the output head
 
 Every token a language model generates ends with the same enormous multiply. The
 hidden state runs against the output embedding — a matrix with one row per
@@ -7,18 +7,61 @@ token, and the model takes the argmax. At batch-1 decode that single read *is* t
 latency: for Qwen2.5-7B it is a 1.09 GB sweep of memory, redone every step, and
 almost all of it is wasted because only a handful of tokens are ever plausible.
 
-This page documents a lossless way to skip most of that read. The decoder returns
+This page documents a lossless way to skip part of that read. The decoder returns
 the **exact** token the dense head would return — the same argmax, bit for bit, not
-an approximation — while touching about a quarter of the output head's bytes. It
-gets there not by *predicting* which rows matter, which has a hard ceiling shown
-below, but by *certifying* the answer: a cheap low-rank upper bound proves which
-rows could possibly win, the rest are never read, and the result is mathematically
-guaranteed to equal the dense argmax. The payoff is a 1.97× batch-1 decode-latency
-win on a bandwidth-bound GPU, 1.85× on an H100 through a CUDA graph, and a ~5×
-reduction in output-head traffic everywhere — with the answer provably unchanged.
+an approximation. It gets there not by *predicting* which rows matter, which has a
+hard ceiling shown below, but by *certifying* the answer: a cheap upper bound proves
+which rows could possibly win, the rest are never read, and the result is
+mathematically guaranteed to equal the dense argmax.
+
+## Correction, November 2026: the byte saving on held-out text
+
+The exactness result on this page stands. The byte and latency numbers in the
+sections below do not describe a deployed decoder, and this section replaces them.
+
+The original replay built the rank-1280 shadow basis from the same hidden states it
+then scored: 600 to 1,500 positions, fewer than or close to the rank. A basis fitted
+to so few states contains them almost exactly, so the residual term of the bound was
+near zero and the certificate closed after reading about 2% to 7% of the rows. A
+deployed shadow is built once, offline, and then meets hidden states it has not
+seen. The held-out test builds the basis from 65,408 WikiText-2 train positions and
+scores 8,176 WikiText-2 test positions. The in-sample column repeats the original
+method on the first 1,500 test positions.
+
+| model | shadow rank | head bytes read, held-out | head bytes read, in-sample | exact |
+|---|---:|---:|---:|---:|
+| Qwen2.5-7B (d=3584) | 1279 | 117.8% | 24.7% | 1.000 |
+| Qwen2.5-7B | 2688 | 130.1% | 42.6% | 1.000 |
+| Qwen2.5-7B | 3226 | 97.0% | 51.1% | 1.000 |
+| Qwen2.5-7B | 3405 | 70.6% | 54.0% | 1.000 |
+| Qwen2.5-7B | 3584 (full) | **56.0%** | 56.9% | 1.000 |
+| Llama-3.2-3B (d=3072) | 1097 | 117.5% | 24.3% | 1.000 |
+| Llama-3.2-3B | 2765 | 61.9% | 46.3% | 1.000 |
+| Llama-3.2-3B | 2918 | 52.4% | 48.8% | 1.000 |
+| Llama-3.2-3B | 3072 (full) | **51.4%** | 51.4% | 1.000 |
+
+"Head bytes read" is the int8 shadow plus the exact rows fetched, as a fraction of
+the dense 16-bit head. At the published rank the held-out certificate opens every
+block, so it reads the whole head plus the shadow and costs more than the dense
+head. The in-sample column reproduces the published 24.6%. Hidden states are not
+low-rank enough for a rank-1280 basis to transfer: the saving appears only when the
+basis keeps nearly every direction.
+
+At full rank the method becomes an int8 screen of the whole head followed by an
+exact fetch of the few blocks that can still hold the argmax (5.9% of rows on
+Qwen2.5-7B, 1.3% on Llama-3.2-3B). That decoder is exact and reads 51% to 56% of the
+dense head on text it has not seen. This is the deployable result. The 5× traffic
+reduction and the 1.97× and 1.85× latency figures below were measured with the
+in-sample shadow and have not been re-measured for the full-rank configuration.
+
+You can reproduce the table with
+[`scripts/fdec_cert_heldout.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_heldout.py).
+The certificate also stays exact when the model runs with int8 weights and an
+asymmetric K16/V8 KV cache; see [fdec](fdec.md).
 
 ## Contents
 
+- [Correction, November 2026](#correction-november-2026-the-byte-saving-on-held-out-text)
 - [The output head is a wasteful read](#the-output-head-is-a-wasteful-read)
 - [The structure is real, and it grows with scale](#the-structure-is-real-and-it-grows-with-scale)
 - [Prediction hits a wall](#prediction-hits-a-wall)
@@ -146,6 +189,10 @@ so a token costs the 18% shadow read plus a ~2% exact fetch and comes out
 bit-identical to the dense head every time.
 
 ## Results: bytes, latency, and an honest Pareto switch
+
+The numbers in this section come from the in-sample shadow described in the
+correction above. They show what the kernel does when the certificate closes early;
+they are not held-out results.
 
 The byte reduction is a property of the bound and the model, identical on any GPU.
 With the int8 shadow and an exact residual, across Qwen2.5 scales (600 real hidden
