@@ -327,6 +327,32 @@ def plan(cfg, p):
         print(f"  {name:9s} {'done' if done(cfg, p) else 'to do'}")
 
 
+# The reader's setup.py imports pybind11 at build time. Many training
+# environments lack it (and lack pip), so the fetch stage installs this
+# pinned version into a build-only directory instead of the environment.
+READER_BUILD_REQUIRES = ("pybind11==3.1.0",)
+
+
+def reader_setup(cfg, p, *command):
+    has = subprocess.run(
+        [cfg.python, "-c", "import pybind11"], capture_output=True
+    ).returncode
+    deps = p.fst.parent / "reader-build-deps"
+    if has != 0 and not (deps / "pybind11").is_dir():
+        uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
+        if Path(uv).exists():
+            args = [uv, "pip", "install", "--python", cfg.python]
+        else:
+            args = [cfg.python, "-m", "pip", "install"]
+        sh(cfg, p, args + ["--target", deps, *READER_BUILD_REQUIRES])
+    env = env_for(cfg, p)
+    if has != 0:
+        env["PYTHONPATH"] = os.pathsep.join([str(deps), env["PYTHONPATH"]])
+    args = [cfg.python, "setup.py", *command]
+    print("+ " + " ".join(args), flush=True)
+    subprocess.run(args, check=True, env=env, cwd=p.fst)
+
+
 def fetch(cfg, p):
     if not cfg.model_bf16_dir and not (p.fp32 / "config.json").exists():
         code = (
@@ -339,10 +365,10 @@ def fetch(cfg, p):
         sh(cfg, p, ["git", "clone", cfg.fst_repo, p.fst])
         sh(cfg, p, ["git", "-C", p.fst, "checkout", "--detach", cfg.fst_ref])
     if not list((p.fst / "fastsafetensors").glob("cpp*.so")):
-        sh(cfg, p, [cfg.python, "setup.py", "build_ext", "--inplace"], cwd=p.fst)
+        reader_setup(cfg, p, "build_ext", "--inplace")
     meta = list(p.fst.glob("*.egg-info")) + list(p.fst.glob("meta/*.dist-info"))
     if not meta:
-        sh(cfg, p, [cfg.python, "setup.py", "egg_info"], cwd=p.fst)
+        reader_setup(cfg, p, "egg_info")
     sh(
         cfg,
         p,
