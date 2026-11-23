@@ -180,6 +180,17 @@ class Load:
         )
         if names is not None:
             self.copier.set_byte_ranges(meta.select_byte_ranges(lambda n: n in names))
+        # The fused MoE kernel computes on these tensors in place, and runs
+        # up to 2.1x slower unless the data section is page-aligned. The
+        # packed files start their data at 4096, so this moves nothing;
+        # a file that is not packed that way is moved instead of being
+        # used slowly. The copier's default (no move) suits callers that
+        # copy tensors out. FASTSAFETENSORS_DMABUF_ALIGN, when set, wins.
+        if (
+            hasattr(self.copier, "set_align")
+            and not os.environ.get("FASTSAFETENSORS_DMABUF_ALIGN", "").strip()
+        ):
+            self.copier.set_align(4096)
         self.t_construct1 = time.perf_counter()
 
     def _instrument(self):
@@ -236,6 +247,7 @@ class Load:
             owner.release()
         self.tensors = {k: v.get_raw() for k, v in ts.items()}
         self.t_wait1 = time.perf_counter()
+        self.align_move_bytes = getattr(self.copier, "align_move_bytes", 0)
         return self.tensors
 
     def close(self):
