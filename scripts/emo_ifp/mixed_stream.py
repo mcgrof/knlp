@@ -172,7 +172,12 @@ as a fraction of the resident server's capacity. The server then:
     rule when it is not (switch if the previous request agrees or the
     pick is confident; otherwise run on the loaded pool and prefetch);
     waits, when no request has arrived, until the next one does; a load
-    in flight continues meanwhile.
+    in flight continues meanwhile;
+    with --resident-pools K (default 1), keeps the K most recently used
+    pools in the slot store. A request whose pool is one of them runs on
+    it at once, with no read and no switch rule; the rule decides only
+    switches to a pool that is not resident, and such a switch frees the
+    least recently used resident pool once its reads are done.
 
 Arrival passes use slot switches only and make no per-switch byte check
 or collection call; correctness is checked bitwise against a resident
@@ -344,6 +349,12 @@ def main():
         default="switch",
     )
     ap.add_argument("--confident-precision", type=float, default=0.95)
+    ap.add_argument(
+        "--resident-pools",
+        type=int,
+        default=1,
+        help="pools the arrival passes keep resident in the slot store",
+    )
     ap.add_argument(
         "--lams", type=float, nargs="+", default=[1e-4, 1e-3, 1e-2, 1e-1, 1.0]
     )
@@ -1154,8 +1165,15 @@ def main():
         clock = time.perf_counter
         clear_slots(model)
         cur = classes[0]
+        K = 1 if resident else args.resident_pools
+        loaded = [cur]  # resident pools, most recently used first
         store = None
-        info = {"resident": resident, "lookahead": look, "rule": args.arrival_rule}
+        info = {
+            "resident": resident,
+            "lookahead": look,
+            "rule": args.arrival_rule,
+            "resident_pools": K,
+        }
         if resident:
             set_pool(model, refs[cur])
         else:
@@ -1165,6 +1183,7 @@ def main():
                 {c: pjs[c] for c in classes},
                 tuple(h0.w13[0].shape[1:]),
                 tuple(h0.w2[0].shape[1:]),
+                resident=K,
             )
             t = clock()
             ld = SlotLoader(store, cur)
@@ -1172,8 +1191,10 @@ def main():
             ld.join()
             for li in range(nl):
                 set_slot_layer(model, store, li, refs[cur].gate[li], ld.maps[li])
-            store.commit(cur, ld.plan)
+            store.commit(cur, ld.plan, maps=ld.maps)
             info["startup_load_s"] = clock() - t
+            info["slots"] = store.slots()
+            info["slot_bytes"] = store.bytes
         torch.cuda.synchronize()
         picks, mism, confs = [None] * n, [], [0.0] * n
         state = {"seen": 0, "pick_s": 0.0}
@@ -1208,6 +1229,7 @@ def main():
 
         def plan(i, c):
             out = []
+            held = list(loaded)
             for j in range(i, state["seen"]):
                 p = picks[j]
                 nxt_vis = j + 1 < state["seen"]
@@ -1224,8 +1246,9 @@ def main():
                     )
                 else:
                     agree = not nxt_vis or picks[j + 1] == p
-                if p != c and agree:
+                if p != c and (agree or p in held):
                     c = p
+                    held = [p] + [x for x in held if x != p][: K - 1]
                 out.append(c)
             return out
 
@@ -1244,14 +1267,15 @@ def main():
             rq = reqs[d][k]
             rec = {"i": i, "domain": d, "id": rq["id"], "pool": want}
             rec["arrival_s"] = arrivals[i]
-            rec["switched"] = want != cur
+            rec["switched"] = want not in loaded if not resident else want != cur
+            rec["resident_swap"] = not resident and want != cur and want in loaded
             if resident:
                 set_pool(model, refs[want])
                 r, lg = run_request(model, rq["ids"], args.decode, eos)
             else:
                 if (
                     inflight is not None
-                    and want == cur
+                    and want in loaded
                     and not inflight[1].thread.is_alive()
                     and inflight[0] != picks[i]
                     and inflight[0] not in plan(i, cur)[: look + 1]
@@ -1261,22 +1285,31 @@ def main():
                     inflight[1].join()
                     loads[-1]["dropped"] = True
                     inflight = None
-                if inflight is not None and want != cur and inflight[0] != want:
+                if inflight is not None and want not in loaded and inflight[0] != want:
                     # A prefetch for a pool this request does not use.
                     inflight[1].join()
                     loads[-1]["dropped"] = True
                     inflight = None
                 if inflight is None:
-                    nxt = next((p for p in plan(i, cur)[: look + 1] if p != cur), None)
-                    if want != cur:
+                    nxt = next(
+                        (p for p in plan(i, cur)[: look + 1] if p not in loaded), None
+                    )
+                    if want not in loaded:
                         nxt = want
-                    elif nxt is None and hold and picks[i] != cur:
+                    elif nxt is None and hold and picks[i] not in loaded:
                         # Speculative: this request runs on the loaded
                         # pool; the next may confirm its pick.
                         nxt = picks[i]
                     if nxt is not None:
                         inflight = start_load(nxt, i)
-                if want != cur:
+                if rec["resident_swap"]:
+                    # Another resident pool: point the layers at its slots.
+                    for li in range(nl):
+                        set_slot_layer(
+                            model, store, li, refs[want].gate[li], store.maps[want][li]
+                        )
+                    r, lg = run_request(model, rq["ids"], args.decode, eos)
+                elif want != cur:
                     pool, ld, _ = inflight
                     hooks = slot_wait_hooks(model, store, ld, refs[want].gate)
                     r, lg = run_request(model, rq["ids"], args.decode, eos, hooks)
@@ -1284,11 +1317,12 @@ def main():
                     rec["lead_s"] = r["t_start"] - ld.t0
                     rec["load_s"] = ld.t_ready[-1] - ld.t0
                     loads[-1]["used_by"] = i
-                    store.commit(want, ld.plan)
+                    store.commit(want, ld.plan, keep=loaded[: K - 1], maps=ld.maps)
                     inflight = None
                 else:
                     r, lg = run_request(model, rq["ids"], args.decode, eos)
             cur = want
+            loaded = [want] + [x for x in loaded if x != want][: K - 1]
             assign.append(want)
             rec.update(
                 {
@@ -1319,6 +1353,7 @@ def main():
                 "pick_mismatches": mism,
                 "loads": loads,
                 "switches": sum(r["switched"] for r in recs),
+                "resident_swaps": sum(r.get("resident_swap", False) for r in recs),
             }
         )
         return recs, info
@@ -1526,6 +1561,9 @@ def main():
                     "switch": latency_summary(sw),
                     "resident": latency_summary(rs),
                     "switches": sw_info["switches"],
+                    "resident_swaps": sw_info["resident_swaps"],
+                    "resident_pools": args.resident_pools,
+                    "slot_bytes": sw_info.get("slot_bytes"),
                     "dropped_prefetches": sum(
                         1 for x in sw_info["loads"] if x.get("dropped")
                     ),

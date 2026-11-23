@@ -21,12 +21,19 @@ Once the switch is done, the slots of experts B does not keep become
 free. Reads into free slots never touch a slot the resident pool uses,
 so a switch can run while requests are served on the resident pool.
 
+With resident=K, the store keeps K pools loaded at once: a request for
+any of them runs at once on that pool's slot map, and a switch to
+another pool keeps the K-1 most recently used and frees the rest. S
+is then the largest union of any K+1 pools, so the K residents and
+the pool being read always fit; with K=1 this is the size above.
+
 Each switch's experts are read in file order; consecutive experts that
 land in consecutive slots share one read, so a fresh store reads a pool
 in its file runs, and later switches split reads where free slots are
 not contiguous.
 """
 
+import itertools
 import json
 import os
 import threading
@@ -56,10 +63,19 @@ def max_entering(pools, li):
     )
 
 
+def max_union(pools, li, k):
+    """Largest number of experts any k of the pools hold together."""
+    sets = [set(p["layers"][str(li)]["routed"]) for p in pools.values()]
+    k = min(k, len(sets))
+    return max(len(set().union(*c)) for c in itertools.combinations(sets, k))
+
+
 class SlotStore:
     """Per layer, S registered expert slots and the pool that fills them."""
 
-    def __init__(self, single_dir, pools, shape13, shape2, dtype=torch.bfloat16):
+    def __init__(
+        self, single_dir, pools, shape13, shape2, dtype=torch.bfloat16, resident=1
+    ):
         with open(os.path.join(single_dir, "LAYOUT.json")) as f:
             self.layout = json.load(f)
         missing = set(pools) - set(self.layout["pools"])
@@ -81,7 +97,10 @@ class SlotStore:
             lay = self.layout["layers"][str(li)]
             n = {len(p["layers"][str(li)]["routed"]) for p in pools.values()}
             assert len(n) == 1, f"pools differ in size at layer {li}: {n}"
-            S = n.pop() + max_entering(pools, li)
+            if resident == 1:
+                S = n.pop() + max_entering(pools, li)
+            else:
+                S = max_union(pools, li, resident + 1)
             b13, b2 = lay["w13_bytes"], lay["w2_bytes"]
             nbytes = S * (b13 + b2)
             ptr = dedicated_malloc(nbytes + ALIGN, IS_HIP)
@@ -108,9 +127,11 @@ class SlotStore:
                     "lay": lay,
                     "pos": pos,
                     "slot_of": {},
+                    "pool_slots": {},
                 }
             )
         self.resident = None
+        self.maps = {}
         self.bytes = sum(
             L["S"] * (L["lay"]["w13_bytes"] + L["lay"]["w2_bytes"]) for L in self.layers
         )
@@ -181,15 +202,28 @@ class SlotStore:
                     file_off, dest_off, length = file_off + n, dest_off + n, length - n
         return uds
 
-    def commit(self, name, plan):
+    def commit(self, name, plan, keep=(), maps=None):
+        """Make name resident; keep the pools in keep, free the others.
+
+        maps: the new pool's per-layer slot maps on the GPU, kept for
+        later requests that run on it while it stays resident.
+        """
         for L, p in zip(self.layers, plan):
-            L["slot_of"] = dict(p["slot_of"])
+            ps = {k: L["pool_slots"][k] for k in keep if k != name}
+            ps[name] = dict(p["slot_of"])
+            L["pool_slots"] = ps
+            L["slot_of"] = {e: s for v in ps.values() for e, s in v.items()}
+        self.maps = {k: self.maps[k] for k in keep if k in self.maps}
+        if maps is not None:
+            self.maps[name] = maps
         self.resident = name
 
     def reset(self):
         for L in self.layers:
             L["slot_of"] = {}
+            L["pool_slots"] = {}
         self.resident = None
+        self.maps = {}
 
     def close(self):
         for L in self.layers:
