@@ -8,6 +8,8 @@ attention) has work to do. The second is how much long-context work
 resumes after a long idle gap, which is the case for storing a context at
 the end of a turn and restoring it at the next one. The findings are on
 the [KMesh agent workloads page](https://knlp.io/kmesh-workloads.html).
+A third script, `tool_wait.py`, measures how long agents wait on tool
+calls; the [KMesh overview](https://knlp.io/kmesh.html#outlook) uses it.
 
 The scripts only read published data. They run on a CPU with Python 3.10
 or later and numpy; the FreeInference reader also needs pandas and
@@ -72,6 +74,8 @@ python3 weka_resume.py --traces /path/to/weka/traces.jsonl --output weka-resume.
 for d in 2026-06-02 2026-06-06; do
   python3 copilot_resume.py --data /path/to/copilot --days $d --output copilot-$d.json
 done
+python3 tool_wait.py --release /path/to/fi-layout \
+  --weeks 2026-05-17 2026-07-12 --output fi-tool-wait.json
 ```
 
 Each script prints a short summary and writes one JSON report. The fan-out
@@ -108,3 +112,10 @@ pairs and the start reading in 75%. The script therefore places a call at
 times, and counts two calls as overlapping only beyond the release's 1 s
 timestamp resolution. A compaction is the release's own heuristic: the
 prompt shrinks by more than 30% after a prompt above 10,000 tokens.
+
+A tool call's wait is the FreeInference release's `latency_ms`: the gap
+from the end of the model response that made the call to the start of the
+session's next LLM request. It holds the tool's run time and the harness
+time around it, and calls made in one response share it. Result tokens
+are the release's `o200k_base` counts. The script reports the share of
+result tokens whose call waited at least 250 ms, 1 s and 5 s.
