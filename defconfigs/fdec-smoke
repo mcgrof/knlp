@@ -1,0 +1,17 @@
+# fdec smoke: the composition matrix on a 0.5B model on the CPU.
+#
+# Checks the harness end to end in about two minutes with no GPU. The
+# numbers are not the published ones: the calibration set is small.
+#
+#   make defconfig-fdec-smoke
+#   make
+CONFIG_FDEC_ENABLE=y
+CONFIG_FDEC_MODELS="Qwen/Qwen2.5-0.5B"
+CONFIG_FDEC_ROOT="results/fdec-smoke"
+CONFIG_FDEC_DEVICE="cpu"
+CONFIG_FDEC_EVAL_SEQS=2
+CONFIG_FDEC_CALIB_SEQS=6
+CONFIG_FDEC_INT8_WEIGHTS=y
+CONFIG_FDEC_ASYM_KV=y
+CONFIG_FDEC_LMHEAD_CERT=y
+CONFIG_FDEC_LINEAR_ATTN=n

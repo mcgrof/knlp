@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the fight-decode (fdec) brick composition matrix.
+#
+#   make defconfig-fdec        every brick on the default models
+#   make defconfig-fdec-smoke  a small model on the CPU, about two minutes
+#   make                       runs fdec-run, then fdec-report
+#
+# fdec-run measures every subset of the enabled bricks on each model and
+# skips a model that already has a result. fdec-report writes the table
+# and fails if any cell does not compose. See docs/fdec.md.
+
+FDEC_PY ?= python3
+FDEC_CONFIG ?= .config
+
+.PHONY: fdec fdec-run fdec-report
+.NOTPARALLEL: fdec
+
+fdec: fdec-run fdec-report
+
+fdec-run fdec-report:
+	@$(FDEC_PY) scripts/fdec_run.py --config "$(FDEC_CONFIG)" $(patsubst fdec-%,%,$@)
+
+ifeq ($(CONFIG_FDEC_ENABLE),y)
+.DEFAULT_GOAL := fdec
+endif

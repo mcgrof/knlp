@@ -2,8 +2,9 @@
 # fdec -- fight-decode brick composition. See docs/fdec.md.
 #
 # Names a point in the decode-optimization compatibility matrix: a model plus a
-# set of enabled bricks. The executor is scripts/fdec_matrix.py (algorithmic
-# dimension, any GPU) and the serving-stack profiles (kernel/throughput, CUDA).
+# set of enabled bricks. scripts/fdec_run.py runs scripts/fdec_compose.py on
+# every subset of the enabled bricks (quality and byte accounting, any GPU).
+# Kernel throughput is measured in the serving-stack profiles (CUDA).
 
 menu "Fight-decode (fdec) brick composition"
 
@@ -16,29 +17,51 @@ config FDEC_ENABLE
 
 if FDEC_ENABLE
 
-config FDEC_MODEL
-	string "Model HF id (dense/GQA) or linear-attention checkpoint"
-	default "Qwen/Qwen2.5-7B-Instruct"
+config FDEC_MODELS
+	string "Models to run the matrix on (space separated)"
+	default "Qwen/Qwen2.5-7B meta-llama/Llama-3.2-3B"
+	help
+	  Hugging Face ids of dense decoder models. The matrix runs once
+	  per model.
+
+config FDEC_ROOT
+	string "Result directory"
+	default "results/fdec"
+
+config FDEC_DEVICE
+	string "Torch device"
+	default "cuda:0"
+
+config FDEC_EVAL_SEQS
+	int "Held-out evaluation sequences (512 tokens each)"
+	default 16
+
+config FDEC_CALIB_SEQS
+	int "Calibration sequences for the LM-head certificate"
+	default 128
+
+config FDEC_INT8_WEIGHTS
+	bool "Brick: int8 weights"
+	default y
+	help
+	  Group-wise int8 for every linear layer in the decoder blocks,
+	  with no calibration. Weights-pool brick. The Fisher sensitivity
+	  study found int8 to be the near-lossless point; int4 was not.
 
 config FDEC_ASYM_KV
 	bool "Brick: asymmetric K16/V8 KV quantization"
 	default y
 	help
-	  Keep keys at native precision, quantize values to FP8. KV-pool brick.
-	  Proven (1.38x decode, prefix-cache-safe). N/A for linear-attention models.
+	  Keep keys at 16 bits and quantize values to FP8. KV-pool brick.
+	  Does not apply to linear-attention models.
 
-config FDEC_LMHEAD_IDBLOCK
-	bool "Brick: LM-head idblock routing"
+config FDEC_LMHEAD_CERT
+	bool "Brick: certified LM-head decode"
 	default y
 	help
-	  Certified-lossless LM-head decode routing. LM-head-pool brick.
-
-config FDEC_FIM_WEIGHT_QUANT
-	bool "Brick: FIM-guided weight quantization"
-	default n
-	help
-	  Fisher-sensitivity-guided weight quantization. Weights-pool brick.
-	  Stack-integration open (D5: GGUF/llama.cpp vs vLLM-native weight quant).
+	  A low-rank int8 shadow of the output head bounds every logit, so
+	  the decoder reads only the vocabulary slabs that can hold the
+	  argmax. The returned token is exact. LM-head-pool brick.
 
 config FDEC_LINEAR_ATTN
 	bool "Brick: linear-attention model class"

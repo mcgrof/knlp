@@ -1,9 +1,21 @@
-# fdec: fight-decode brick composition (known-good bricks).
-# See docs/fdec.md. scripts/fdec_matrix.py is the executor; this defconfig names
-# the regime and selects the brick cell (asym KV + LM-head idblock on Qwen2.5-7B).
+# fdec: fight-decode brick composition matrix.
+#
+# Measures every subset of three decode bricks (int8 weights, asymmetric
+# K16/V8 KV cache, certified LM-head decode) on held-out text for each
+# model, and fails if any cell does not compose. Needs one GPU with
+# 24 GiB for the 7B model. See docs/fdec.md.
+#
+#   make defconfig-fdec
+#   make
+#
+# Results: CONFIG_FDEC_ROOT/<model>.json and REPORT.md.
 CONFIG_FDEC_ENABLE=y
-CONFIG_FDEC_MODEL="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_FDEC_MODELS="Qwen/Qwen2.5-7B meta-llama/Llama-3.2-3B"
+CONFIG_FDEC_ROOT="results/fdec"
+CONFIG_FDEC_DEVICE="cuda:0"
+CONFIG_FDEC_EVAL_SEQS=16
+CONFIG_FDEC_CALIB_SEQS=128
+CONFIG_FDEC_INT8_WEIGHTS=y
 CONFIG_FDEC_ASYM_KV=y
-CONFIG_FDEC_LMHEAD_IDBLOCK=y
-CONFIG_FDEC_FIM_WEIGHT_QUANT=n
+CONFIG_FDEC_LMHEAD_CERT=y
 CONFIG_FDEC_LINEAR_ATTN=n

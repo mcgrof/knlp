@@ -90,6 +90,10 @@ include Makefile.rpl2
 # When CONFIG_KNLP_CS312=y this overrides .DEFAULT_GOAL.
 include Makefile.cs312
 
+# Fight-decode brick composition matrix (fdec-run, fdec-report).  When
+# CONFIG_FDEC_ENABLE=y this overrides .DEFAULT_GOAL.
+include Makefile.fdec
+
 # MUVERA presets use their own runners rather than the model training path.
 MUVERA_SELECTED := $(foreach v,GOOGLE_MUVERA_SMALL MUVERA_SMALL,\
 	$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v)))
