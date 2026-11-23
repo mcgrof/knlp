@@ -105,7 +105,7 @@ class Config:
     arc_revision: str = "210d026faf9955653af8916fad021475a3f00453"
     mmlu_revision: str = "c30699e8356da336a370243923dbaf21066bb9fe"
     fst_repo: str = "https://github.com/mcgrof/fastsafetensors.git"
-    fst_ref: str = "a174cd23e4265b7241359586b2a0169c7cfaa6f9"
+    fst_ref: str = "9f77b8c474b4dc99d22396280ce548f159a480e2"
     fst_dir: str = ""
     tuned_configs: str = ""
     routed: int = 32
@@ -114,6 +114,7 @@ class Config:
     selector: str = "emb-logreg"
     n_train: int = 32
     arrival_rule: str = "queue"
+    resident_pools: int = 1
     arrival_loads: list = field(default_factory=lambda: ["0.3", "0.6", "0.9"])
     confident_precision: str = "0.85"
     limit: int = 0
@@ -557,6 +558,8 @@ def serve(cfg, p):
             "--confident-precision",
             cfg.confident_precision,
         ]
+        if cfg.resident_pools > 1:
+            extra += ["--resident-pools", cfg.resident_pools]
     py(
         cfg,
         p,
@@ -614,7 +617,8 @@ def report(cfg, p):
         if not arr:
             continue
         lines += [
-            f"## Random arrivals, rule {cfg.arrival_rule}",
+            f"## Random arrivals, rule {cfg.arrival_rule}, "
+            f"{cfg.resident_pools} resident pool(s)",
             "",
             "| Load | Median ratio | p99 ratio | Switches | Served | "
             "Correct | Holds up |",

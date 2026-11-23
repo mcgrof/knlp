@@ -75,12 +75,17 @@ config KNLP_EMO_IFP_FST_REPO
 
 config KNLP_EMO_IFP_FST_REF
 	string "fastsafetensors git ref"
-	default "a174cd23e4265b7241359586b2a0169c7cfaa6f9"
+	default "9f77b8c474b4dc99d22396280ce548f159a480e2"
 	help
-	  The published results used this commit of the
-	  2026-10-28-iouring-dma-buf branch. Its io_uring_dmabuf module
-	  registers GPU memory with io_uring so that NVMe reads land in it
-	  directly.
+	  A commit of the 2026-10-28-iouring-dma-buf branch. Its
+	  io_uring_dmabuf module registers GPU memory with io_uring so
+	  that NVMe reads land in it directly. The published results used
+	  a174cd23e4265b7241359586b2a0169c7cfaa6f9, whose DMA-BUF copier
+	  never moved tensor data. This commit adds an opt-in move to a
+	  chosen alignment; the copier still moves nothing by default, the
+	  pool loader asks for 4096, and the packed files already start
+	  their data at 4096, so nothing moves in this pipeline. The slot
+	  store's read path is the same code in both commits.
 
 config KNLP_EMO_IFP_FST_DIR
 	string "Existing built fastsafetensors tree (empty: clone and build)"
@@ -128,6 +133,17 @@ config KNLP_EMO_IFP_ARRIVAL_RULE
 	  switch at once on a confident pick. queue: debounce on the next
 	  request when it is visible, the confident rule when the queue is
 	  empty (the adopted rule).
+
+config KNLP_EMO_IFP_RESIDENT_POOLS
+	int "Pools kept resident in the slot store under random arrivals"
+	default 1
+	help
+	  1: one pool, as published on the page's arrival table. 2: the
+	  two most recently used pools stay resident, so a request for
+	  either runs at once and the switch rule decides only switches to
+	  a third pool. Two pools need 13.1 GB of slots instead of 11.0 GB
+	  and keep the median at load 0.6 within 1.5 times the resident
+	  server.
 
 config KNLP_EMO_IFP_ARRIVAL_LOADS
 	string "Offered loads, as fractions of the resident server's capacity"
