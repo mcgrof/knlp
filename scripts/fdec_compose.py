@@ -138,11 +138,11 @@ def kl_against(model, ids, device, ref_lp):
     return tot / max(1, n)
 
 
-def cert_measure(H_basis, H_eval, W_U, r, bits, clusters, device):
+def cert_measure(H_basis, H_eval, W_U, r, bits, clusters, device, basis="hidden_pca"):
     """Build the shadow from H_basis, replay the certificate on H_eval."""
     V, d = W_U.shape
     cof = build_idblock(V, clusters).to(device)
-    B = build_basis("hidden_pca", H_basis, W_U, r, device)
+    B = build_basis(basis, H_basis, W_U, r, device)
     a, delta = shadow_precompute(W_U, B, device)
     err = 0.0
     if bits < 16:
@@ -167,8 +167,9 @@ def main():
     ap.add_argument(
         "--cert-rank-frac",
         type=float,
-        default=1280 / 3584,
-        help="shadow rank as a fraction of the hidden size",
+        default=1.0,
+        help="shadow rank as a fraction of the hidden size; held-out hidden "
+        "states need full rank before the certificate reads less than the head",
     )
     ap.add_argument("--cert-bits", type=int, default=8)
     ap.add_argument("--cert-clusters", type=int, default=256)
