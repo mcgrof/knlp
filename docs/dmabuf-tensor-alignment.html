@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Where safetensors weights land in GPU memory when NVMe reads them straight into it over io_uring DMA-BUF, why it matters only for code that computes on the loaded tensors in place, and which alignment setting each kind of loader should use.">
+<title>Tensor Alignment in DMA-BUF Loads | knlp</title>
+<style>
+:root{color-scheme:dark;--bg:#080d16;--panel:#111b2a;--line:#2b3c51;--text:#eaf1fa;--muted:#a8b7ca;--cyan:#5ce1cf;--amber:#f5c46a;--blue:#82b8ff;--s0:#1fa596;--s1:#c0821a}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:radial-gradient(ellipse at top left,#143142 0,transparent 48%),var(--bg);color:var(--text);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--cyan);text-underline-offset:4px}a:hover{color:white}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{font-size:.88em}p code{overflow-wrap:anywhere}nav{background:#080d16f2;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}.nav-inner{max-width:1180px;margin:auto;padding:14px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}.brand{font-weight:800;color:var(--text);text-decoration:none}.nav-inner a{font-size:14px}.wrap{width:min(1140px,calc(100% - 48px));margin:auto}header{padding:88px 0 52px}.eyebrow{color:var(--cyan);font:700 13px/1.5 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase}h1{font-size:clamp(40px,6.4vw,72px);line-height:1.05;letter-spacing:-.045em;max-width:980px;margin:20px 0 25px}h2{font-size:clamp(28px,3.5vw,38px);line-height:1.2;letter-spacing:-.025em;margin:0 0 22px}h3{font-size:21px;line-height:1.3;margin:28px 0 12px}p{max-width:880px}.lede{font-size:clamp(20px,2.4vw,26px);line-height:1.45;max-width:910px}.muted,small{color:var(--muted)}.tags{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.tag{border:1px solid var(--line);border-radius:30px;padding:6px 12px;font-size:13px;color:var(--muted)}.tag.ok{color:var(--cyan)}.tag.pending{color:var(--amber)}section{padding:48px 0;border-top:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.card h3{margin-top:0}.card p{font-size:16px;margin-bottom:0}.card code{color:var(--cyan)}.notice{border-left:3px solid var(--amber);background:#252119;padding:18px 22px;border-radius:0 10px 10px 0}.notice p{margin:0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;margin:24px 0}table{width:100%;border-collapse:collapse;font-size:15px;min-width:640px;text-align:left}th,td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--cyan);background:#132333}tr:last-child td{border-bottom:0}td:first-child{font-weight:650;min-width:160px}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}tr.hl td{background:#122636}.caption{font-size:14px;color:var(--muted);max-width:100%}pre{padding:20px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#080f1a;font-size:14px;line-height:1.7}.refs li{margin-bottom:13px}footer{padding:36px 0 64px;color:var(--muted);font-size:14px}
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 8px;margin:24px 0;position:relative}.chart{width:100%;height:auto;display:block}.chart .grid{stroke:#22324a;stroke-width:1}.chart .axis{stroke:#4a5d76;stroke-width:1}.chart .tick{fill:var(--muted);font-size:13px}.chart .axis-label{fill:var(--muted);font-size:13px}.chart .ref{stroke:#7d8da3;stroke-width:1.5;stroke-dasharray:5 5}.chart .ref-label{fill:var(--muted);font-size:13px}.chart .direct{fill:var(--text);font-size:14px;font-weight:650}.chart .mark{stroke:var(--panel);stroke-width:2;cursor:default}.chart .mark:hover,.chart .mark:focus{stroke:var(--text);outline:none}.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:14px;color:var(--muted);margin:4px 0 10px}.legend span{display:inline-flex;align-items:center;gap:8px}.sw{width:12px;height:12px;border-radius:50%;display:inline-block}.sw.sq{border-radius:2px}.sw.di{border-radius:1px;transform:rotate(45deg);width:11px;height:11px}.sw.hollow{background:transparent;border:2px solid var(--muted)}.tip{position:absolute;pointer-events:none;background:#0b1422;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);white-space:nowrap;display:none}
+@media(max-width:820px){nav{position:static}header{padding-top:50px}.grid{grid-template-columns:1fr}.wrap{width:calc(100% - 32px)}.nav-inner{gap:12px;padding:12px 16px}section{padding:36px 0}table{font-size:14px}.figure{padding:12px 8px 4px;overflow-x:auto}.chart{min-width:620px}}
+</style>
+
+</head>
+<body>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="io-uring-dmabuf.html">DMA-BUF + io_uring</a><a href="#why">Why tensors move</a><a href="#measured">Measured</a><a href="#guidance">Which setting</a><a href="#how">How to set it</a><a href="#check">Check a load</a><a href="#versions">Versions</a><a href="#limits">Limits</a><a href="#sources">Sources</a></div></nav>
+<header class="wrap">
+<div class="eyebrow">Weight loading · DMA-BUF · November 2026</div>
+<h1>Where loaded weights start, and when it matters.</h1>
+<p class="lede">When NVMe reads a safetensors checkpoint straight into GPU memory, each tensor lands at the same position within a 4 KiB page that it has in the file. That costs nothing for an engine that copies weights into its own parameters, and can make a fused kernel twice as slow for a loader that computes on the loaded weights in place.</p>
+<p class="muted">This page is about the DMA-BUF copier in the <a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">fastsafetensors <code>2026-10-28-iouring-dma-buf</code> branch</a>: it registers GPU memory with io_uring as a DMA-BUF, so the NVMe controller writes the weights into it with no host copy (<a href="io-uring-dmabuf.html">background</a>). The copier's default is to move nothing. Code that uses the loaded tensors in place should ask for 4096-byte alignment or, better, load files whose tensor data already starts on a 4096-byte boundary.</p>
+<div class="tags"><span class="tag ok">Default: no move</span><span class="tag ok">In-place users: 4096</span><span class="tag ok">Every load byte-checked</span><span class="tag pending">One GPU, one kernel family measured</span></div>
+<div class="notice"><p><strong>Short version:</strong> vLLM's <code>--load-format fastsafetensors</code> and other engines that copy weights into their own parameters should leave the default alone. A mixture-of-experts (MoE) loader that runs its fused kernel on the loaded buffer should pack its files with the data section at a multiple of 4096 bytes and call <code>set_align(4096)</code>, so that an unpacked file is moved instead of silently running slower.</p></div>
+</header>
+
+<section id="why"><div class="wrap">
+<h2>Why tensors land off a page</h2>
+<p>A safetensors file is an 8-byte length, a JSON header and then the tensor data. The data section starts at byte <code>8 + header length</code>, which is often not a round number: in the files measured here it starts at byte 280. The safetensors library pads the header to a multiple of 8 bytes, so the data is at least 8-byte aligned.</p>
+<p>O_DIRECT reads, and NVMe DMA into GPU memory, need each read's file offset and destination address to agree modulo 4 KiB. The copier therefore reads the page-aligned range that covers the tensors and places file byte <code>x</code> at a device address congruent to <code>x</code> modulo 4096. Every tensor then sits at its file position within a page: a data section that starts at byte 280 of the file starts at byte 280 of a GPU page. That is the same placement an mmap of the file gives on the host.</p>
+<p>The other fastsafetensors copiers place data differently. The <code>nogds</code> copier reads into host memory and copies the data section to the start of its own GPU allocation. The <code>gds</code> copier moves misaligned data to the device pointer alignment, 16 bytes with PyTorch. Neither is page-aligned unless the file is.</p>
+</div></section>
+
+<section id="measured"><div class="wrap">
+<h2>What it costs</h2>
+<p>All measurements are on one AMD Radeon Pro W7900 (48 GB, gfx1100, ROCm 6.4, PyTorch 2.9) reading from one PCIe NVMe drive, on a kernel with io_uring DMA-BUF registration. Each load is compared byte for byte with a reference reader.</p>
+<h3>Computing in place: a fused MoE kernel on the loaded weights</h3>
+<p>The test loads one 384 MiB expert layer of the EMO mixture-of-experts model and runs a fused MoE Triton kernel at 1,024 tokens directly on the loaded weights, then on a fresh copy of the same weights. Two files hold the same layer: one written by the safetensors library (data at byte 280), one packed with its header padded so the data starts at byte 4096.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>File</th><th>Copier setting</th><th class="num">Bytes moved</th><th class="num">Kernel, loaded</th><th class="num">Kernel, fresh copy</th></tr></thead>
+<tbody>
+<tr><td>Data at byte 280</td><td>1 (the default)</td><td class="num">0</td><td class="num">4.79 ms</td><td class="num">2.35 ms</td></tr>
+<tr><td>Data at byte 280</td><td>16</td><td class="num">384 MiB</td><td class="num">3.16 ms</td><td class="num">2.35 ms</td></tr>
+<tr class="hl"><td>Data at byte 280</td><td>4096</td><td class="num">384 MiB</td><td class="num">2.25–2.35 ms</td><td class="num">2.33–2.34 ms</td></tr>
+<tr class="hl"><td>Data at byte 4096 (packed)</td><td>any</td><td class="num">0</td><td class="num">2.34–2.35 ms</td><td class="num">2.34 ms</td></tr>
+</tbody></table></div>
+<p class="caption">Medians of the kernel benchmark, five loads per setting, November 23 run; the November 6 run gave 4.81, 3.11, 2.26 and 2.25–2.26 ms for the same rows. Every loaded tensor and every kernel output was bitwise equal to the reference. The 4096 range covers both the explicit setting and the EMO pool loader, which asks for 4096 itself.</p>
+<p>The kernel runs at fresh-copy speed only when the data is on a page. A 16-byte move removes about two thirds of the slowdown. On a separate copy probe, 16-byte-aligned data at offsets 64 to 256 within a page ran 8% to 32% slower than page-aligned data. The move itself is a device-to-device copy of about 6 ms per GB, and on a 384 MiB layer it was lost in load-time noise (72 to 84 ms per load across settings).</p>
+<h3>Copying out: a load the way vLLM loads</h3>
+<p>The second test loads the whole 25.3 GiB BF16 EMO checkpoint (11 shards, four of them with data at 8 modulo 16) the way vLLM's fastsafetensors loader does: <code>ParallelLoader</code>, then a copy of every tensor into preallocated parameters, from a cold page cache. Each cell is the median of three loads, in two separate runs.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Copier setting</th><th class="num">nogds</th><th class="num">dmabuf</th><th class="num">dmabuf − nogds</th></tr></thead>
+<tbody>
+<tr class="hl"><td>1, the default (November 23)</td><td class="num">3.994 / 4.023 s</td><td class="num">3.926 / 3.964 s</td><td class="num">−67 / −60 ms</td></tr>
+<tr><td>16 (November 23)</td><td class="num">3.980 / 4.011 s</td><td class="num">4.017 / 4.004 s</td><td class="num">+37 / −7 ms</td></tr>
+<tr><td>1 (November 6)</td><td class="num">4.013 / 4.076 s</td><td class="num">3.942 / 3.966 s</td><td class="num">−71 / −110 ms</td></tr>
+<tr><td>16 (November 6)</td><td class="num">3.990 / 4.044 s</td><td class="num">3.995 / 4.049 s</td><td class="num">+5 / +5 ms</td></tr>
+<tr><td>4096 (November 6)</td><td class="num">4.004 / 4.012 s</td><td class="num">4.171 / 4.134 s</td><td class="num">+167 / +122 ms</td></tr>
+</tbody></table></div>
+<p class="caption">Zero mismatched tensors in every cell. The copy into parameters lands in fresh PyTorch allocations, so the source alignment does not reach the engine's kernels; the move only adds work.</p>
+<p>Without a move the DMA-BUF copier is 60 to 110 ms faster than <code>nogds</code> on this checkpoint. A 16-byte move cancels that lead and a 4096-byte move turns it into a loss. Earlier "DMA-BUF beats nogds" results were measured without any move, so they hold for the default.</p>
+</div></section>
+
+<section id="guidance"><div class="wrap">
+<h2>Which setting to use</h2>
+<p>The setting follows from what the caller does with the tensors, not from whether the model is a mixture of experts.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Caller</th><th>Setting</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>vLLM <code>--load-format fastsafetensors</code> with <code>FASTSAFETENSORS_USE_DMABUF=1</code></td><td>Default (no move)</td><td>Its weight loaders copy each tensor into vLLM's own parameters. vLLM's fused MoE kernels then run on those aligned copies.</td></tr>
+<tr><td>Other engines that load through their own <code>load_weights</code></td><td>Default (no move)</td><td>Same reason. SGLang's fastsafetensors path is expected to copy too, but that is not verified here; check each engine's loader before relying on it.</td></tr>
+<tr><td>A loader that computes on the loaded buffer: MoE expert offload, pool or slot swaps, delta loads</td><td>Files packed at 4096, and <code>set_align(4096)</code></td><td>Only a page-aligned data section matches a fresh allocation for the fused kernel. Packing makes it free; the explicit request catches a file that is not packed.</td></tr>
+<tr><td>Code written against the <code>gds</code> copier's 16-byte contract</td><td><code>FASTSAFETENSORS_DMABUF_ALIGN=16</code></td><td>Same placement as <code>gds</code>.</td></tr>
+</tbody></table></div>
+<p>An engine that already loads safetensors by mmap receives tensors at their file offsets, 8-byte aligned, so it already accepts what the default gives.</p>
+</div></section>
+
+<section id="how"><div class="wrap">
+<h2>How to set it</h2>
+<p>There are three controls. <code>FASTSAFETENSORS_DMABUF_ALIGN</code> sets the alignment, a power of two from 1 to 4096, for every DMA-BUF copier in the process. A caller that drives the copier itself can call <code>set_align()</code> on it before <code>wait_io</code>. And <code>wait_io(noalign=True)</code> skips the move whatever the setting.</p>
+<pre><code>loader = SafeTensorsFileLoader(SingleGroup(), "cuda:0", use_dmabuf=True)
+loader.add_filenames({0: [path]})
+meta, _ = next(iter(loader.meta.values()))
+copier = loader.copier_constructor(meta, loader.device, loader.framework)
+if hasattr(copier, "set_align"):      # the DMA-BUF copier
+    copier.set_align(4096)           # in-place use: page-align the data section
+gbuf = copier.submit_io(True, 16 &lt;&lt; 30)
+tensors = copier.wait_io(gbuf, owner=owner)
+# copier.align_move_bytes: 0 for a file packed at 4096</code></pre>
+<p>When an alignment above 1 is set and the data section is not on it, the copier moves each piece's bytes inside its own allocation after the reads complete. Every allocation has one page more than the span it reads, so the move always fits. Overlapping device copies are undefined, so the bytes go through a temporary buffer of at most 64 MiB.</p>
+<h3>Packing a file so that nothing moves</h3>
+<p>The safetensors format allows trailing spaces in the JSON header. Padding the header until <code>8 + header length</code> is a multiple of 4096 puts the data section on a page, with no change to any tensor. This is what the EMO pipeline's <code>pack_pool_layer.py --align 4096</code> does for its pool files:</p>
+<pre><code>import struct
+with open(src, "rb") as f:
+    n = struct.unpack("&lt;Q", f.read(8))[0]
+    header, body = f.read(n), f.read()
+pad = (-(8 + n)) % 4096
+with open(dst, "wb") as f:
+    f.write(struct.pack("&lt;Q", n + pad) + header + b" " * pad + body)</code></pre>
+</div></section>
+
+<section id="check"><div class="wrap">
+<h2>Checking a load</h2>
+<p>For in-place use, check that each tensor's address agrees with its offset inside the data section modulo 4096. That holds when the data section starts on a page, either because the file was packed or because the copier moved it:</p>
+<pre><code>for name, t in tensors.items():
+    off = meta.tensors[name].data_offsets[0]
+    assert t.get_raw().data_ptr() % 4096 == off % 4096, name</code></pre>
+<p>The fastsafetensors tests check the same property on a CPU device for the default, 1, 16, 4096 and <code>set_align(4096)</code>, with the file loaded in one piece and in several pieces under a small registration cap, and compare every value with the <code>nogds</code> reader.</p>
+</div></section>
+
+<section id="versions"><div class="wrap">
+<h2>Versions</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>fastsafetensors commit</th><th>Copier behaviour</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/mcgrof/fastsafetensors/commit/a174cd23e4265b7241359586b2a0169c7cfaa6f9"><code>a174cd2</code></a></td><td>Never moves; tensors at their file offsets modulo 4 KiB</td><td>The published EMO results and the earlier weight-loading results</td></tr>
+<tr><td><a href="https://github.com/mcgrof/fastsafetensors/commit/4ebdd205dfc520674cf3eadea505f168b962a985"><code>4ebdd20</code></a></td><td>Moves to 16 bytes unless <code>noalign</code>; <code>FASTSAFETENSORS_DMABUF_ALIGN</code> sets 1 to 4096</td><td>Superseded</td></tr>
+<tr class="hl"><td><a href="https://github.com/mcgrof/fastsafetensors/commit/9f77b8c474b4dc99d22396280ce548f159a480e2"><code>9f77b8c</code></a></td><td>Moves nothing by default; <code>set_align()</code> or the variable asks for 2 to 4096</td><td>Current branch tip; pinned by knlp's <code>defconfig-emo-ifp</code></td></tr>
+</tbody></table></div>
+<p>With the default of 1, the current commit places tensors exactly as <a href="https://github.com/mcgrof/fastsafetensors/commit/a174cd23e4265b7241359586b2a0169c7cfaa6f9"><code>a174cd2</code></a> did, so results measured with that commit carry over to callers that do not ask for a move. In knlp's EMO pipeline the pool loader asks for 4096, but the packed files already start their data at 4096, so nothing moves. A pool-switch test gave the same load times within about 1% with the old and the new reader: 898 to 916 ms against 899 to 921 ms per 6.4 GB pool load, with every output correct.</p>
+</div></section>
+
+<section id="limits"><div class="wrap">
+<h2>Limits</h2>
+<p>The kernel slowdown was measured for one fused MoE Triton kernel on one GPU architecture (gfx1100). Other GPUs, other kernels and other tensor shapes may be more or less sensitive, and some may need no alignment beyond 16 bytes. The copy-out result covers one loader pattern on one checkpoint, and its gain over <code>nogds</code> is tens of milliseconds on a load of about 4 s, so it is a small effect. These runs used a kernel without the asynchronous DMA-BUF release patches (branch <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release"><code>2026-11-06-dmabuf-io-async-release</code></a>), which remove about 14 ms per registration from every load. The comparison between alignment settings does not depend on them.</p>
+</div></section>
+
+<section id="sources"><div class="wrap">
+<h2>Sources</h2>
+<ul class="refs">
+<li><a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">fastsafetensors <code>2026-10-28-iouring-dma-buf</code></a>: <code>fastsafetensors/copier/dmabuf.py</code> (module docstring, "Alignment"), <code>docs/overview.md</code> ("Where the loaded tensors start") and <code>tests/unit/test_dmabuf.py</code>.</li>
+<li><a href="https://github.com/foundation-model-stack/fastsafetensors/issues/139">fastsafetensors issue #139</a>: the DMA-BUF copier proposal.</li>
+<li><a href="emo-ifp.html">EMO expert pools from NVMe</a>: the MoE server whose in-place loads found the slowdown, and <a href="https://github.com/mcgrof/knlp/blob/main/scripts/emo_ifp/layer_offload.py"><code>scripts/emo_ifp/layer_offload.py</code></a>, its loader.</li>
+<li><a href="io-uring-dmabuf-weight-loading.html">Weight loading with io_uring and DMA-BUF</a>: whole-model load measurements.</li>
+<li><a href="https://huggingface.co/docs/safetensors/index">safetensors format</a>.</li>
+</ul>
+</div></section>
+<footer class="wrap">knlp · Tensor alignment in DMA-BUF loads · November 23, 2026. Measured results are from one AMD GPU and one NVMe drive.</footer>
+</body>
+</html>

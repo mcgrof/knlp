@@ -120,11 +120,19 @@
           <div class="site-card-links"><a href="lm_head_decode.html#availability">Use the implementation</a><a href="lm_head_decode.html">Certificate &amp; measurements</a></div>
         </article>
         <article class="site-card">
+          <div class="site-card-kicker">Weight loading · DMA-BUF</div>
+          <h3><a href="dmabuf-tensor-alignment.html">Tensor alignment in DMA-BUF loads</a></h3>
+          <div class="site-stage"><span class="site-stage-badge evaluation">Experimental R&amp;D</span><span>Copy out: no move · compute in place: 4096</span></div>
+          <p>NVMe reads straight into GPU memory leave each tensor at its file position within a 4 KiB page. That costs nothing for an engine that copies weights into its own parameters and can halve the speed of a fused kernel that runs on the loaded buffer.</p>
+          <p class="site-card-progress"><strong>Finding</strong>The fastsafetensors DMA-BUF copier now moves nothing by default, 60 to 110 ms faster than nogds on a 25 GB vLLM-style load. In-place MoE loaders pack files at 4096 or ask for 4096, which matches a fresh copy.</p>
+          <div class="site-card-links"><a href="dmabuf-tensor-alignment.html#guidance">Which setting</a><a href="dmabuf-tensor-alignment.html#measured">Measured</a><a href="dmabuf-tensor-alignment.html#how">How to set it</a></div>
+        </article>
+        <article class="site-card">
           <div class="site-card-kicker">Mixture of experts · NVMe offload</div>
           <h3><a href="emo-ifp.html">EMO expert pools from NVMe</a></h3>
           <div class="site-stage"><span class="site-stage-badge evaluation">Experimental R&amp;D</span><span>Prompt-selected pools · prefetch requirements</span></div>
           <p>Keep one expert pool of a mixture-of-experts model on the GPU, pick it from each request's question, and read the next pool from NVMe straight into GPU memory while earlier requests run.</p>
-          <p class="site-card-progress"><strong>Finding</strong>One pool serves a mixed five-domain stream within 1.5% of all pools resident. Hiding a switch needs lead time in seconds and reads of only the missing experts. Medium-load random arrivals are still open.</p>
+          <p class="site-card-progress"><strong>Finding</strong>One pool serves a mixed five-domain stream within 1.2–1.6% of all pools resident. Hiding a switch needs lead time in seconds and reads of only the missing experts. Two resident pools keep random arrivals within 1.5 times the resident median at every load tested.</p>
           <div class="site-card-links"><a href="emo-ifp.html#prefetch">Prefetch requirements</a><a href="emo-ifp.html#arrivals">Random arrivals</a><a href="emo-ifp.html#reproduce">Reproduce</a></div>
         </article>
         <article class="site-card">
