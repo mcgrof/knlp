@@ -282,9 +282,16 @@ not conflict in what they compute. It does not measure speed.
 The bytes-saved column is a model of bytes read, not a latency. Turning it
 into latency needs each brick in a real kernel in one serving stack. The
 asymmetric KV cache has that today in the modified vLLM and FlashInfer
-branches described in [decode reproduction](decode-reproduction.md). Int8
-weights and the full-rank certified head have not been served together with
-it, and the latency of the full-rank certificate has not been measured.
+branches described in [decode reproduction](decode-reproduction.md). Two
+bricks have been served together: packed int4 weights and the K16/V8 cache
+in one vLLM and FlashInfer process, on Qwen3-8B with 8,192 input tokens at
+batch 32. Request throughput was 3.45% higher than the same weights with a
+16-bit cache, against 3.55% with dense weights, so the cache brick keeps
+its gain when the weights are packed
+([asymmetric KV results](asymmetric-results.html#throughput)). That
+workload is mostly prefill and its weights are int4, so it does not test
+the decode byte model here. The full-rank certified head is not in a
+serving engine, and its latency has not been measured.
 
 Evaluation is WikiText-2 only. The weight study also used a cross-domain
 calibration check; the matrix does not yet repeat it, and it has no
