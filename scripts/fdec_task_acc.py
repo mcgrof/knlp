@@ -262,8 +262,21 @@ def main():
 
     res = {}
     if os.path.exists(args.out):
+        # Resume only a run of the same model, settings and items.  The
+        # arms are paired item by item, so a result from other settings or
+        # from an item limit must not be mixed in.
         with open(args.out) as f:
-            res = json.load(f).get("raw", {})
+            old = json.load(f)
+        want = settings(args)
+        diff = {k: (old.get(k), v) for k, v in want.items() if old.get(k) != v}
+        assert not diff, f"{args.out} holds a run with other settings: {diff}"
+        res = old.get("raw", {})
+        for task, per in res.items():
+            for arm, r in per.items():
+                assert task not in data or len(r["ok"]) == len(data[task]), (
+                    f"{args.out}: {task}/{arm} has {len(r['ok'])} items, "
+                    f"this run has {len(data[task])}"
+                )
     quantized = False
     for arm in arms:
         todo = [t for t in data if arm not in res.get(t, {})]
@@ -323,6 +336,20 @@ def main():
             )
 
 
+def settings(args):
+    """What must match before two arms can be paired."""
+    return dict(
+        model=args.model,
+        dtype=args.dtype,
+        w8_group=args.w8_group,
+        shots=args.shots,
+        gsm_max_new=args.gsm_max_new,
+        mmlu_max_len=args.mmlu_max_len,
+        mmlu_per_subject=args.mmlu_per_subject,
+        attention="float32 scores, softmax and value sum",
+    )
+
+
 def write(args, res, t0):
     summary = {}
     for task, per in res.items():
@@ -335,15 +362,8 @@ def write(args, res, t0):
     with open(args.out, "w") as f:
         json.dump(
             dict(
-                model=args.model,
-                dtype=args.dtype,
-                w8_group=args.w8_group,
-                shots=args.shots,
-                gsm_max_new=args.gsm_max_new,
-                mmlu_max_len=args.mmlu_max_len,
-                mmlu_per_subject=args.mmlu_per_subject,
+                **settings(args),
                 torch=torch.__version__,
-                attention="float32 scores, softmax and value sum",
                 seconds=time.time() - t0,
                 summary=summary,
                 raw=res,
