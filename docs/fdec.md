@@ -261,7 +261,9 @@ fused kernel is the default path of the library and of a serving engine.
 | float32 scores and value sum, 16-bit output | 7.463 | 25 |
 
 The perplexity is on WikiText-2 test, 8 sequences of 512 tokens, and the
-problems are the first 32 of the GSM8K test set, on one RTX 4090.
+problems are the first 32 of the GSM8K test set, on one RTX 4090. The same
+check on one Radeon Pro W7900 gives 7.459, 8.801 and 7.459, and 25, 7 and
+25 problems.
 Llama-3.2-3B and Qwen3-8B have attention scores below 50, and the three
 paths agree within 0.03 in perplexity on both.
 
