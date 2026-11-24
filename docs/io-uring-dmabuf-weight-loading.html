@@ -156,7 +156,9 @@ The DMA-BUF copier took 2.17 to 2.21 s and <code>nogds</code> 2.28 to
 every tensor to a 16-byte boundary
 (<code>FASTSAFETENSORS_DMABUF_ALIGN=16</code>) cost about 70 ms on this
 15 GB model and cut its lead to about 30 ms. A copy-out loader such as
-vLLM's should keep the default.</p>
+vLLM's should keep the default. On the newer kernel branch described
+under <a href="#kernel">kernel requirements</a>, the copier took 2.11 to
+2.14 s, 7 to 8% faster than <code>nogds</code>.</p>
 <h3>Details we found on the way</h3>
 <ul>
 <li><strong>Registration size.</strong> The kernel refuses a DMA-BUF larger
@@ -260,8 +262,10 @@ command size. With only the smallest set, reads can be split into
 smaller commands; we have not measured that difference. The later
 <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release">2026-11-06-dmabuf-io-async-release</a>
 branch builds on it and removes a wait of about 14 ms each time a
-DMA-BUF registration that did I/O is released. That should take about
-56 ms off this four-shard load; we have not measured it here.</span></div>
+DMA-BUF registration that did I/O is released. On it the DMA-BUF copier
+loads this four-shard model in 2.11 to 2.14 s, about 70 ms faster;
+<code>nogds</code> is unchanged at 2.27 to 2.36 s. We recommend that
+branch.</span></div>
 <div class="step"><strong>Put the checkpoint on XFS on a PCIe NVMe namespace</strong><span>Only
 PCIe NVMe namespaces implement DMA-BUF I/O today. Software RAID (md),
 device-mapper volumes and NVMe multipath devices do not. To test several
