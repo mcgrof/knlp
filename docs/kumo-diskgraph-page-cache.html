@@ -175,17 +175,17 @@ input::file-selector-button:hover { background: var(--site-border); }
 <section id="measurements" class="site-section">
 <div class="site-section-head"><h2>Cold and warm DiskGraph measurements</h2></div>
 <section id="read-amplification" aria-labelledby="amp-title">
-<h3 id="amp-title">Read amplification from planner intent to NVMe</h3>
-<p>Divide attributed edge-file NVMe read bytes by the sum of captured planner range lengths, counting each request for a range. This follows the DGraphFin comparison of application demand with eBPF-observed device traffic. DiskGraph's planner demand includes encoded graph headers and adjacency as well as feature ranges. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin read amplification</a></p>
-<p><strong>RelBench Stack measured 5.09× cold and 0× warm.</strong> Each pass recorded 50.81 MB of planner intent and 763.84 MB of Buffered requests (15.03×). The cold pass read 258.49 MB from NVMe. The warm pass issued zero attributed device reads.</p>
+<h3 id="amp-title">Read amplification at the Buffered and SSD layers</h3>
+<p><strong>RelBench Stack still had 15.03× Buffered read amplification with a warm page cache.</strong> On the repeat, DiskGraph asked Linux to read 763.84 MB for 50.81 MB of planner intent. The first pass had loaded those pages into RAM, so Linux served the repeat from the page cache. The tracked files generated zero SSD reads, giving <strong>0× NVMe read amplification for the same pass.</strong></p>
+<p>The cold pass submitted the same Buffered reads and read 258.49 MB from NVMe, giving 5.09× NVMe amplification. Both ratios use the same baseline of 50.81 MB of planner intent per pass, counting repeated ranges each time.</p>
 <div id="amp-view" hidden>
   <div class="size-controls">
     <label for="amp-pass">Capture pass
       <select id="amp-pass">
         <option value="stack-0">RelBench Stack · cold</option>
-        <option value="stack-1">RelBench Stack · warm</option>
+        <option value="stack-1">RelBench Stack · warm repeat</option>
         <option value="fixture-0">Synthetic fixture · cold</option>
-        <option value="fixture-1">Synthetic fixture · warm</option>
+        <option value="fixture-1">Synthetic fixture · warm repeat</option>
         <optgroup id="amp-local" label="Local analysis receipt" hidden></optgroup>
       </select>
     </label>
@@ -205,7 +205,8 @@ input::file-selector-button:hover { background: var(--site-border); }
     <tbody id="amp-rows"></tbody>
   </table></div>
 </div>
-<p>Buffered lengths are counted at submission before end-of-file clipping. NVMe bytes count successful device read commands attributed by edge-file extent and pass time. A submitted read can cover multiple planner ranges, and the kernel can read ahead. The ratios compare whole passes. You can also <a href="#receipt">load an analysis receipt</a> to compare your own capture.</p>
+<p>The planner records encoded graph headers, adjacency and feature ranges. Buffered amplification uses the lengths DiskGraph submits to Linux before end-of-file clipping. NVMe amplification uses successful device reads attributed to the tracked edge files by offset and time. Both ratios compare whole passes. The device measurement follows the same approach as DGraphFin. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin read amplification</a></p>
+<p><a href="#receipt">Load an analysis receipt</a> to compare your own capture.</p>
 </section>
 <p>The generated fixture used 512 roots in each pass and three temporal hops. All 181,610 recorded planner ranges per pass were below 4 KiB. DiskGraph's Buffered backend submitted 21,207 requests per pass, including coalesced reads up to 64 KiB. The repeat completed the same file reads from cache. Using 4.11 MB of distinct planner bytes, the cold device ratio was 3.93×.</p>
 <div class="table">
@@ -1019,9 +1020,8 @@ function renderAmplification() {
   const buffered = row.io_uring_requested_bytes_including_eof;
   const nvme = row.nvme ? (row.nvme.payload_bytes ?? 0) : null;
   const multiple = bytes => Number.isFinite(bytes) && intent > 0 ? decimal.format(bytes / intent) + "×" : "Unavailable";
-  ampResult.textContent = nvme === null
-    ? "This pass has no NVMe capture."
-    : multiple(nvme) + " NVMe read amplification";
+  const deviceResult = nvme === null ? "NVMe measurement unavailable" : multiple(nvme) + " NVMe read amplification";
+  ampResult.textContent = multiple(buffered) + " Buffered read amplification · " + deviceResult;
   ampRows.replaceChildren();
   for (const [index, bytes] of [intent, buffered, nvme].entries()) {
     const tr = ampRows.insertRow();
