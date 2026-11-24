@@ -142,7 +142,7 @@ input::file-selector-button:hover { background: var(--site-border); }
     </section>
   </div>
 </div>
-<p>Rank sizes by count or bytes within each layer. The bars show shares of that layer's total. The <a href="#measurements">device measurements</a> count separate NVMe commands.</p>
+<p>Rank sizes by count or bytes within each layer. The bars show shares of that layer's total. See the <a href="#capture">intent and eBPF capture commands</a> and the resulting <a href="#measurements">NVMe measurements</a>.</p>
 <p>The benchmark's <code>user-engagement</code> task asks whether a user will post, comment, or vote in the next two years. The CPU run uses each user's timestamp to sample earlier graph neighbors and fetch their features. The cold and warm passes recorded identical size counts at both layers. <a href="https://huggingface.co/datasets/stanford-star/relbench-v1/blob/main/rel-stack/README.md">RelBench Stack dataset and task</a></p>
 <div class="callout">
 <label for="receipt">Visualize your own <code>analysis.json</code></label>
@@ -158,7 +158,7 @@ input::file-selector-button:hover { background: var(--site-border); }
 <div class="site-grid">
 <div class="site-card"><h3>Graph planner</h3><p>DiskGraph records the encoded header and record ranges it plans to read. These ranges describe graph work before page expansion and reuse. They include adjacency and headers as well as feature records.</p></div>
 <div class="site-card"><h3>Buffered file requests</h3><p>A second hook records the offset and length of each <code>READ</code> and <code>READV</code> queued for the kernel. It retains the worker lane and submission group. This is the stream replay uses.</p></div>
-<div class="site-card"><h3>NVMe commands</h3><p>The optional eBPF observer records completed device reads. The analysis joins them to the immutable edge-file extents on the same monotonic clock. Warm file reads can complete with zero SSD reads.</p></div>
+<div class="site-card"><h3>NVMe commands</h3><p>The optional <a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a> observer records device commands and their completions. The analysis joins completed reads to the immutable edge-file extents on the same monotonic clock. Warm file reads can complete with zero SSD reads.</p></div>
 </div>
 <p class="note">The DGraphFin showcase pairs feature consumption with device traffic and replays the device commands. DiskGraph adds an earlier capture point for rerunning access through the page cache. The two replay modes answer different questions. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin showcase</a></p>
 </section>
@@ -201,12 +201,24 @@ make diskgraph-run DISKGRAPH_DATASET=rel-stack
 make diskgraph-report DISKGRAPH_DATASET=rel-stack
 make diskgraph-replay DISKGRAPH_DATASET=rel-stack DISKGRAPH_REPLAY_MODE=uring</code></pre>
 <p>The RelBench arm fetches the public <code>rel-stack</code> tables and the held-out <code>user-engagement</code> cohort. The pinned download is about 1.04 GB. The local index and replay files need additional space. Set <code>DISKGRAPH_SOURCE</code> to a matching local <code>rel-stack</code> directory to reuse the source tables. The workload runs native sampling and feature delivery. <a href="https://huggingface.co/datasets/stanford-star/relbench-v1/tree/21d7284df2a9621c71f21bc4a1a30b7e8effb8dd/rel-stack">Pinned RelBench data</a></p>
-<p>To include device evidence on a local XFS volume backed by NVMe, supply a built <code>nvme_tp_monitor</code> from ebpf-syscall. This optional observer needs tracing privileges. It issues no raw-device writes.</p>
-<pre><code>sudo -v
-make diskgraph-run DISKGRAPH_RUN=build/diskgraph/fixture-device \
+<h3 id="capture">Capture intent and NVMe command sizes in the same run</h3>
+<p>The <a href="https://github.com/mcgrof/knlp/blob/main/tools/reproduce/diskgraph/diskgraph-read-intent.patch">DiskGraph intent hooks</a> write planner range lengths and submitted Buffered read lengths to <code>intent.jsonl</code>. The <a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a> tool <a href="https://github.com/SamsungDS/ebpf-syscall/blob/main/man/nvme_tp_monitor.1"><code>nvme_tp_monitor</code></a> writes device command lengths and completions to <code>nvme.jsonl</code>. Its <code>.bytes</code> field comes from the command at the NVMe driver's <code>nvme_setup_cmd</code> tracepoint, after any page-cache effects.</p>
+<p>On a local XFS volume backed by NVMe, run the same RelBench capture with tracing privileges. Choose a fresh run directory for each capture.</p>
+<pre><code>make -C /path/to/ebpf-syscall nvme_tp_monitor
+sudo -v
+run=build/diskgraph/stack-device
+make diskgraph-run DISKGRAPH_DATASET=rel-stack DISKGRAPH_RUN="$run" \
   DISKGRAPH_NVME_MONITOR=/path/to/ebpf-syscall/nvme_tp_monitor
-make diskgraph-report DISKGRAPH_RUN=build/diskgraph/fixture-device</code></pre>
-<p>To replay a capture from another machine, point <code>DISKGRAPH_CAPTURE</code> to its <code>intent.jsonl</code>. Replay materializes new files with the recorded sizes and deterministic filler. It checks lengths and repeat checksums without opening the source graph or rebuilding DiskGraph. The trace contains file aliases, lengths, offsets, groups and monotonic times. Those access patterns can still be confidential. Share trace files only with the necessary authorization. <a href="https://github.com/SamsungDS/ebpf-syscall/tree/ebpf-fixes/examples/replay">ebpf-syscall replay tools</a></p>
+make diskgraph-report DISKGRAPH_RUN="$run"</code></pre>
+<p>The harness detects the backing namespace, starts the command below before the workload, and stops it when the workload finishes. The captured run used <code>nvme0n1</code>.</p>
+<pre><code>sudo -n /path/to/ebpf-syscall/nvme_tp_monitor \
+  --disk nvme0n1 --dur 300 --jsonl "$run/nvme.jsonl"</code></pre>
+<p>Read a raw command's starting LBA and size, then read the per-pass histogram for completed commands attributed to the graph's edge files. The histogram keys are byte lengths. The RelBench cold pass had 58,337 attributed 4 KiB NVMe read commands. The warm pass had an empty histogram.</p>
+<pre><code>jq -nc 'first(inputs | select(.event_type == "nvme_cmd" and .op_name == "read") |
+  {slba, bytes})' "$run/nvme.jsonl"
+jq '.passes[] | {pass, nvme_read_command_sizes: (.nvme |
+  with_entries(select(.key | startswith("size_")) | .key |= ltrimstr("size_")))}' "$run/analysis.json"</code></pre>
+<p>To replay a capture from another machine, point <code>DISKGRAPH_CAPTURE</code> to its <code>intent.jsonl</code>. Replay materializes new files with the recorded sizes and deterministic filler. It checks lengths and repeat checksums without opening the source graph or rebuilding DiskGraph. The trace contains file aliases, lengths, offsets, groups and monotonic times. Those access patterns can still be confidential. Share trace files only with the necessary authorization. <a href="https://github.com/SamsungDS/ebpf-syscall/tree/main/examples/replay">ebpf-syscall replay tools</a></p>
 </section>
 <section id="kernel" class="site-section">
 <div class="site-section-head"><h2>Use Buffered for the reference-free read test</h2></div>
