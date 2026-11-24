@@ -157,6 +157,14 @@ restores its context instead of computing it again. The parts we built for
 request families still apply to that question: singleflight, external
 retention, ownership of saved state across processes, and the SSD paths
 into GPU memory.</p>
+<p>Faster GPUs make computing a context again cheaper, so restoring a
+context stays faster only while each saved byte replaces enough prefill
+work. The <a href="https://kvcache.io/cache-reuse-projections.html">cache-reuse
+projection</a> models that race for one context as GPUs, storage paths and
+model architectures change. Its rates are editable assumptions, not
+measurements. The traces put agent contexts on the side that favors
+restoring: the resumed contexts are long, and in an attention model the
+prefill work per saved byte grows with context length.</p>
 <div class="table-wrap"><table>
 <caption>Status of each line of work at closing</caption>
 <tr><th scope="col">Work</th><th scope="col">Status</th><th scope="col">Reason</th></tr>
