@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DiskGraph page-cache I/O intent and replay · knlp</title>
+<link rel="canonical" href="https://knlp.io/kumo-diskgraph-page-cache.html">
+<title>Kumo DiskGraph page-cache I/O intent and replay | knlp</title>
 <meta name="description" content="Record DiskGraph's buffered file reads before the page cache and replay them on Linux without a GPU or the source graph.">
 <style>
 :root { color-scheme: light; --ink:#162825; --muted:#485e58; --paper:#f6f8f4; --line:#cedcd4;
@@ -59,9 +60,9 @@ footer { border-top:1px solid var(--line); padding-block:20px 30px; color:var(--
 </style>
 </head>
 <body>
-<header><nav aria-label="Page navigation"><a href="https://knlp.io/"><strong>knlp</strong></a>
+<header><nav aria-label="Page navigation"><a href="index.html#research"><strong>knlp</strong></a><a href="kumo.html">Kumo R&amp;D</a>
 <a href="#run">Run</a><a href="#measurements">Measurements</a><a href="#kernel">Kernel A/B</a>
-<a href="https://knlp.io/small-random-reads-ai.html">Small random reads</a></nav></header>
+<a href="small-random-reads-ai.html">Small random reads</a></nav></header>
 <main>
 <div class="hero">
 <h1>Record DiskGraph read intent before the page cache</h1>
@@ -110,13 +111,6 @@ footer { border-top:1px solid var(--line); padding-block:20px 30px; color:var(--
 <section id="run">
 <h2>Run and replay on a Linux CPU</h2>
 <p>Use a knlp checkout that includes the DiskGraph page-cache changes. The build needs Git, a C toolchain with liburing headers, Rustup, uv and knlp's Python Kconfig dependencies. The live fixture also needs a kernel that permits <code>io_uring</code>. The first build compiles the pinned native package and needs several GB of free disk. The fixture uses standard Linux buffered I/O.</p>
-<details>
-<summary>Apply the accompanying source patch to public knlp</summary>
-<pre><code>git clone https://github.com/mcgrof/knlp.git
-cd knlp
-git switch --detach 3de7c7c4c35ae29552f7390eca02a70f0adc503f
-git apply /path/to/knlp-diskgraph-page-cache.patch</code></pre>
-</details>
 <pre><code>make defconfig-diskgraph-page-cache
 make</code></pre>
 <p>The default runs a synthetic graph through draft Buffered DiskGraph, records both intent layers, checks sampled timestamps, writes an analysis receipt and runs a buffered <code>pread</code> replay. <code>build/diskgraph/fixture-buffered/</code> contains <code>intent.jsonl</code>, <code>live.json</code> and <code>analysis.json</code>. Each new live capture uses a new output directory.</p>

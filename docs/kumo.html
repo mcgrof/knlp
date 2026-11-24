@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kumo R&amp;D | knlp</title>
+  <meta name="description" content="Reproducible research on Kumo Engine, DiskGraph, and storage for temporal graph sampling and feature gathering.">
+  <link rel="canonical" href="https://knlp.io/kumo.html">
+  <link rel="stylesheet" href="assets/knlp.css">
+</head>
+<body class="site-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-nav">
+    <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+    <nav class="site-nav-links" aria-label="Main navigation">
+      <a href="index.html#research">AI R&amp;D</a>
+      <a href="#studies">Studies</a>
+      <a href="#sources">Sources</a>
+    </nav>
+  </header>
+  <main id="main" class="site-wrap">
+    <section class="site-hero" aria-labelledby="intro-title">
+      <div>
+        <h1 id="intro-title">Kumo R&amp;D</h1>
+        <p class="site-lead">How much storage I/O does a relational model need to assemble its input? We use Kumo Engine’s DiskGraph to measure temporal neighborhood sampling and feature gathering. The CPU reproducer follows the same reads from the graph planner through the Linux page cache to NVMe.</p>
+        <div class="site-actions">
+          <a class="site-button primary" href="kumo-diskgraph-page-cache.html#run">Run DiskGraph on a CPU</a>
+          <a class="site-button" href="#studies">See the measurements</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="studies" class="site-section" aria-labelledby="studies-title">
+      <div class="site-section-head">
+        <h2 id="studies-title">DiskGraph studies</h2>
+      </div>
+      <div class="site-grid site-topic-grid">
+        <article class="site-card">
+          <h3><a href="kumo-diskgraph-page-cache.html">Page-cache read intent and replay</a></h3>
+          <p>Capture the buffered file offsets, lengths and submission groups. Replay those requests with <code>pread</code> or <code>io_uring</code> using generated files.</p>
+          <p class="site-card-progress"><strong>Measured on RelBench Stack</strong> Each 512-root pass submitted 158,718 buffered file requests. The cold pass read 258.49 MB from the tracked edge files on NVMe. The warm repeat issued zero NVMe reads to those files.</p>
+          <div class="site-card-links"><a href="kumo-diskgraph-page-cache.html#measurements">Measurements</a><a href="kumo-diskgraph-page-cache.html#run">Reproduce</a></div>
+        </article>
+        <article class="site-card">
+          <h3><a href="kumo-diskgraph-page-cache.html#kernel">Linux buffered-read kernel comparison</a></h3>
+          <p>Use the pinned draft Buffered backend to test the reference-free page-cache read patch. Keep the query stream and cache state fixed across kernels. Use the same engine’s mmap backend as a control.</p>
+          <p class="site-card-progress"><strong>Status</strong> CPU workload and replay verified. Kernel A/B results are open.</p>
+          <div class="site-card-links"><a href="kumo-diskgraph-page-cache.html#kernel">Kernel A/B procedure</a><a href="small-random-reads-ai.html#page-cache">Page-cache background</a></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="sources" class="site-section" aria-labelledby="sources-title">
+      <div class="site-section-head">
+        <h2 id="sources-title">Sources and related work</h2>
+      </div>
+      <ul>
+        <li><a href="https://github.com/NVIDIA/kumo-engine">Kumo Engine source</a> includes DiskGraph, the graph storage and neighborhood reader used here.</li>
+        <li><a href="https://arxiv.org/abs/2604.12596">KumoRFM-2</a> describes the relational model and its SSD-backed graph engine. The knlp experiments measure how that class of workload gathers inputs.</li>
+        <li><a href="https://huggingface.co/datasets/stanford-star/relbench-v1/tree/21d7284df2a9621c71f21bc4a1a30b7e8effb8dd/rel-stack">RelBench Stack</a> supplies the public graph and held-out query cohort.</li>
+        <li><a href="small-random-reads-ai.html#graph-research">Small random reads in AI</a> connects this work to other graph and feature-gathering workloads.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
