@@ -113,7 +113,10 @@ certificate reads, shadow included.
 
 The three models were measured in bfloat16 on one Radeon Pro W7900 with
 PyTorch 2.9.1 and transformers 4.57.1, at knlp commit
-[`2b148e8a8`](https://github.com/mcgrof/knlp/commit/2b148e8a8).
+[`2b148e8a8`](https://github.com/mcgrof/knlp/commit/2b148e8a8). A second run
+of Qwen2.5-7B and Llama-3.2-3B on one RTX 4090 with PyTorch 2.10 agrees with
+these tables within 0.008 in perplexity and 0.002 in top-1 agreement in
+every cell, and all of its cells compose.
 
 ### Qwen2.5-7B
 
