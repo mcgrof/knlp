@@ -28,7 +28,8 @@ asymmetric KV cache at a combined loss cost of 0.1%.
 - [What "composes" means](#what-composes-means)
 - [The measured matrix](#the-measured-matrix)
 - [Cartridges as a brick](#cartridges-as-a-brick)
-- [What the matrix corrected](#what-the-matrix-corrected)
+- [What the measurements corrected](#what-the-measurements-corrected)
+- [Speed so far](#speed-so-far)
 - [Running it](#running-it)
 - [Adding a brick](#adding-a-brick)
 - [Limits and open cells](#limits-and-open-cells)
@@ -53,8 +54,8 @@ Two kinds of optimization exist. *Byte movement* bricks reduce what a step
 reads: quantized weights, a quantized or shorter KV cache, a partial read of
 the head. *Arithmetic intensity* bricks do more useful work per byte read,
 for example by moving a mixed-precision attention kernel onto Tensor Cores.
-The matrix on this page measures the byte movement bricks. Kernel speed is
-measured in the serving stack and is listed under open cells.
+The matrix on this page measures the byte movement bricks.
+[Speed](#speed-so-far) is a separate measurement.
 
 ## The bricks
 
@@ -109,6 +110,14 @@ Each run uses 8,192 evaluation tokens and 65,536 calibration tokens. "Bytes
 saved" is the reduction in bytes read per decode step at a 32,768-token
 context. "Head read" is the fraction of the dense output head that the
 certificate reads, shadow included.
+
+**Correction in progress, November 24.** The tables in this section were
+measured with attention scores rounded to 16 bits. That degrades the 16-bit
+Qwen2.5-7B reference: on a 4,096-token check its perplexity is 8.84 with
+rounded scores and 7.46 with float32 scores. The matrix is being measured
+again with float32 attention arithmetic. The Llama-3.2-3B and Qwen3-8B
+numbers are not expected to change. See
+[the second correction](#the-first-matrix-rounded-attention-scores-to-16-bits).
 
 ### Qwen2.5-7B
 
@@ -204,7 +213,13 @@ level is in-sample. The paired differences between readings do not depend
 on that. The certified head is exact for any hidden state, so it needs no
 separate cartridge test.
 
-## What the matrix corrected
+## What the measurements corrected
+
+Each stricter measurement found an error in an earlier result. Both
+corrections are recorded here, because they are the reason for the rules of
+the method.
+
+### A published byte saving was in-sample
 
 The first held-out run of the matrix found that the certified LM-head
 decode, as first published, saved no bytes. The certificate bounds every
@@ -226,6 +241,83 @@ carries the full sweep.
 
 This is the reason for the rule that a brick counts only after the matrix
 has measured it held-out and in combination.
+
+### The first matrix rounded attention scores to 16 bits
+
+The first version of the matrix measured the 16-bit Qwen2.5-7B model with
+degraded attention. The task-accuracy run exposed the error: the 16-bit
+model solved only 18% of the GSM8K problems.
+
+The harness replaces the attention function of the model, because the
+asymmetric cache changes how values are read. For the unmodified model it
+called the plain attention function of the transformers library. That
+function rounds the query-key scores to the model data type before the
+softmax. bfloat16 keeps 8 significant bits, so a score near 700 moves in
+steps of 4. Qwen2.5-7B has a mean absolute score of 713 in its last layer,
+and the rounding moves a score there by 1.4 on average. A fused attention
+kernel accumulates the scores in float32 and does not have this error. The
+fused kernel is the default path of the library and of a serving engine.
+
+| attention arithmetic, 16-bit Qwen2.5-7B | perplexity | GSM8K problems solved, of 32 |
+|---|---:|---:|
+| fused kernel, the library default | 7.462 | 24 |
+| plain function, scores rounded to 16 bits | 8.843 | 7 |
+| float32 scores and value sum, 16-bit output | 7.463 | 25 |
+
+The perplexity is on WikiText-2 test, 8 sequences of 512 tokens, and the
+problems are the first 32 of the GSM8K test set, on one RTX 4090.
+Llama-3.2-3B and Qwen3-8B have attention scores below 50, and the three
+paths agree within 0.03 in perplexity on both.
+
+Every cell now computes attention with float32 scores and a float32 value
+sum, the 16-bit model included. The asymmetric cache cell therefore differs
+from its reference only in the precision of the values. All three models
+are being measured again.
+
+## Speed so far
+
+The matrix shows that the bricks agree in what they compute. Speed needs
+each brick in a real kernel, and two measurements exist.
+
+Two bricks have run together in one serving engine. Packed int4 weights and
+the K16/V8 cache ran in one vLLM and FlashInfer process on Qwen3-8B, with
+8,192 input tokens at batch 32 on one H100. Request throughput was 3.45%
+higher than the same weights with a 16-bit cache, against 3.55% with dense
+weights, so the cache brick keeps its gain when the weights are packed
+([asymmetric KV results](asymmetric-results.html#throughput)). That
+workload is mostly prefill and its weights are int4, so it does not test
+the decode byte model here.
+
+The certified head has Triton kernels but is not in a serving engine. On
+hidden states it has not seen it runs at 0.99 to 1.28 times the speed of
+the dense head in the mean, and on three of the four models its
+95th-percentile token takes about 1.8 times as long.
+[`scripts/fdec_cert_latency.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_latency.py)
+builds the full-rank shadow from WikiText-2 train hidden states and times
+1,000 WikiText-2 test positions, one token at a time, against the dense
+16-bit head on the same GPU.
+
+| model | GPU | dense head, mean | certified head, mean | speed, mean | speed, median | p95, dense → certified | certified | head read |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Qwen2.5-7B | RTX 4090 | 1.166 ms | 1.087 ms | 1.07× | 1.23× | 1.17 → 2.11 ms | 88.0% | 73.1% |
+| Llama-3.2-3B | RTX 4090 | 0.867 ms | 0.678 ms | 1.28× | 1.30× | 0.87 → 0.67 ms | 98.6% | 57.6% |
+| Qwen3-8B | Radeon Pro W7900 | 2.002 ms | 1.978 ms | 1.01× | 1.16× | 2.01 → 3.68 ms | 87.5% | 73.5% |
+| Qwen2.5-0.5B | RTX 4090 | 0.311 ms | 0.315 ms | 0.99× | 1.04× | 0.32 → 0.58 ms | 95.0% | 67.1% |
+
+The timed variant makes one fused fetch of the vocabulary blocks with the
+highest bounds and checks the certificate once. A token that does not
+certify falls back to the dense head, and "head read" counts the whole head
+for it. The variant that reads the fewest bytes is not the fastest: opening
+one block at a time reads 51% to 56% of the head, the figure in the matrix,
+but runs at 0.72 to 1.16 times the dense head because each block costs a
+kernel launch. A dense head at batch 1 takes 0.3 to 2 ms, so there is
+little time to win.
+
+The earlier figures of 1.97 and 1.85 times came from the in-sample shadow.
+The same in-sample setup on these GPUs gives 1.56 to 1.78 times on the
+three larger models, so the difference is the shadow and not the kernel.
+The [certified decode page](lm-head-decode.md#latency-on-held-out-hidden-states)
+has the details.
 
 ## Running it
 
@@ -282,16 +374,9 @@ not conflict in what they compute. It does not measure speed.
 The bytes-saved column is a model of bytes read, not a latency. Turning it
 into latency needs each brick in a real kernel in one serving stack. The
 asymmetric KV cache has that today in the modified vLLM and FlashInfer
-branches described in [decode reproduction](decode-reproduction.md). Two
-bricks have been served together: packed int4 weights and the K16/V8 cache
-in one vLLM and FlashInfer process, on Qwen3-8B with 8,192 input tokens at
-batch 32. Request throughput was 3.45% higher than the same weights with a
-16-bit cache, against 3.55% with dense weights, so the cache brick keeps
-its gain when the weights are packed
-([asymmetric KV results](asymmetric-results.html#throughput)). That
-workload is mostly prefill and its weights are int4, so it does not test
-the decode byte model here. The full-rank certified head is not in a
-serving engine, and its latency has not been measured.
+branches described in [decode reproduction](decode-reproduction.md). No
+serving engine runs all the bricks together, and no measurement yet
+compares the decode latency of the full stack with the byte model.
 
 Evaluation is WikiText-2 only. The weight study also used a cross-domain
 calibration check; the matrix does not yet repeat it, and it has no
