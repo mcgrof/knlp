@@ -45,6 +45,8 @@ from fdec_matrix import install_asym_kv, restore  # noqa: E402
 
 ARMS = ("base", "kv", "w8", "w8+kv")
 LETTERS = "ABCD"
+# batch * length^2 limit for the eager attention matrices (8 x 1024^2)
+ATTN_BUDGET = 8 * 1024 * 1024
 NUM = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?")
 
 
@@ -120,9 +122,17 @@ def mmlu_items(per_subject):
     return items
 
 
-def batches(order, size):
-    for i in range(0, len(order), size):
-        yield order[i : i + size]
+def batches(order, size, lens=None, budget=0):
+    """Batches over `order` (longest first).  With a budget, the batch shrinks
+    so that batch * length^2 stays under it: eager attention holds one
+    length-by-length matrix per head and sequence."""
+    i = 0
+    while i < len(order):
+        n = size
+        if budget:
+            n = max(1, min(size, budget // (lens[order[i]] ** 2)))
+        yield order[i : i + n]
+        i += n
 
 
 @torch.no_grad()
@@ -154,7 +164,8 @@ def run_mmlu(model, tok, items, device, batch, max_len, letter_ids):
     pred = [None] * len(items)
     ids = [tok(it["prompt"]).input_ids[-max_len:] for it in items]
     order = sorted(range(len(items)), key=lambda i: -len(ids[i]))
-    for idx in batches(order, batch):
+    lens = [len(x) for x in ids]
+    for idx in batches(order, batch, lens, ATTN_BUDGET):
         width = max(len(ids[i]) for i in idx)
         x = torch.full((len(idx), width), tok.pad_token_id, dtype=torch.long)
         mask = torch.zeros((len(idx), width), dtype=torch.long)
