@@ -17,7 +17,7 @@ measurement and fails if any combination does not compose.
 Measured on Qwen2.5-7B, Llama-3.2-3B and Qwen3-8B, the three dense-model
 bricks compose in all eight combinations. The full stack removes
 40% to 46% of the bytes a decode step reads at a 32,768-token context,
-at a perplexity within 0.5% of the unmodified model. A fourth brick,
+at a perplexity within 0.15% of the unmodified model. A fourth brick,
 the trained cartridge, composes with int8 weights and with the
 asymmetric KV cache at a combined loss cost of 0.1%.
 
@@ -63,7 +63,7 @@ The matrix on this page measures the byte movement bricks.
 |---|---|---|---|
 | int8 weights | decoder blocks | group-wise int8 for every linear layer, no calibration | 49% fewer block bytes, near-lossless ([weight quantization study](fim_quantization.html)) |
 | asymmetric KV cache | KV cache | keys stay 16-bit, values go to FP8 | 25% fewer KV bytes ([asymmetric quantization](asymmetric-quantization.html)) |
-| certified LM-head decode | output head | int8 screen of the head, exact fetch of the rows that can still win | exact argmax from 51% to 57% of the head ([certified decode](lm-head-decode.md)) |
+| certified LM-head decode | output head | int8 screen of the head, exact fetch of the rows that can still win | exact argmax from 51% to 56% of the head ([certified decode](lm-head-decode.md)) |
 | trained cartridge | KV cache length | a trained KV prefix replaces a long document | a few hundred cache positions in place of the document ([cartridges](cartridges.html)) |
 
 The weight brick is int8 and not int4. The Fisher-sensitivity study that
@@ -90,9 +90,9 @@ conditions hold.
 1. It runs. A shape, dtype or code-path conflict is recorded as a failed
    cell, not as a crash.
 2. Every exactness claim still holds. The LM-head certificate must return
-   the dense argmax of that cell's own model at every evaluated position.
-   It is checked on hidden states that the other bricks have already
-   perturbed.
+   the token that the full output head selects, computed in float32, at
+   every evaluated position of that cell's own model. It is checked on
+   hidden states that the other bricks have already perturbed.
 3. Quality costs add and do not multiply. The increase in log-perplexity
    of the cell must be within 0.01 of the sum of the increases of its
    bricks measured alone.
@@ -111,58 +111,54 @@ saved" is the reduction in bytes read per decode step at a 32,768-token
 context. "Head read" is the fraction of the dense output head that the
 certificate reads, shadow included.
 
-**Correction in progress, November 24.** The tables in this section were
-measured with attention scores rounded to 16 bits. That degrades the 16-bit
-Qwen2.5-7B reference: on a 4,096-token check its perplexity is 8.84 with
-rounded scores and 7.46 with float32 scores. The matrix is being measured
-again with float32 attention arithmetic. The Llama-3.2-3B and Qwen3-8B
-numbers are not expected to change. See
-[the second correction](#the-first-matrix-rounded-attention-scores-to-16-bits).
+The three models were measured in bfloat16 on one Radeon Pro W7900 with
+PyTorch 2.9.1 and transformers 4.57.1, at knlp commit
+[`2b148e8a8`](https://github.com/mcgrof/knlp/commit/2b148e8a8).
 
 ### Qwen2.5-7B
 
-Baseline perplexity 9.844. Bytes read per token: decoder blocks 13051 MB (81%), KV cache 1879 MB (12%), output head 1090 MB (7%).
+Baseline perplexity 8.443. Bytes read per token: decoder blocks 13051 MB (81%), KV cache 1879 MB (12%), output head 1090 MB (7%).
 
 | cell | perplexity | top-1 agreement | KL | certificate exact | head read | bytes saved |
 |---|---:|---:|---:|---|---:|---:|
-| none | 9.844 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
-| int8 weights | 9.804 | 0.917 | 0.0564 | n/a | n/a | 40.1% |
-| asymmetric KV | 9.855 | 0.964 | 0.0084 | n/a | n/a | 2.9% |
-| certified head | 9.844 | 1.000 | 0.0000 | yes | 56.7% | 3.0% |
-| int8 weights + asymmetric KV | 9.798 | 0.917 | 0.0566 | n/a | n/a | 43.0% |
-| int8 weights + certified head | 9.804 | 0.917 | 0.0564 | yes | 56.7% | 43.0% |
-| asymmetric KV + certified head | 9.855 | 0.964 | 0.0084 | yes | 56.7% | 5.9% |
-| all three | 9.798 | 0.917 | 0.0566 | yes | 56.8% | 46.0% |
+| none | 8.443 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
+| int8 weights | 8.449 | 0.976 | 0.0018 | n/a | n/a | 40.1% |
+| asymmetric KV | 8.446 | 0.981 | 0.0017 | n/a | n/a | 2.9% |
+| certified head | 8.443 | 1.000 | 0.0000 | yes | 55.9% | 3.0% |
+| int8 weights + asymmetric KV | 8.455 | 0.974 | 0.0025 | n/a | n/a | 43.0% |
+| int8 weights + certified head | 8.449 | 0.976 | 0.0018 | yes | 55.9% | 43.1% |
+| asymmetric KV + certified head | 8.446 | 0.981 | 0.0017 | yes | 55.9% | 5.9% |
+| all three | 8.455 | 0.974 | 0.0025 | yes | 56.0% | 46.0% |
 
 ### Llama-3.2-3B
 
-Baseline perplexity 11.807. Bytes read per token: decoder blocks 5637 MB (55%), KV cache 3758 MB (37%), output head 788 MB (8%).
+Baseline perplexity 11.811. Bytes read per token: decoder blocks 5637 MB (55%), KV cache 3758 MB (37%), output head 788 MB (8%).
 
 | cell | perplexity | top-1 agreement | KL | certificate exact | head read | bytes saved |
 |---|---:|---:|---:|---|---:|---:|
-| none | 11.807 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
-| int8 weights | 11.812 | 0.981 | 0.0014 | n/a | n/a | 27.2% |
-| asymmetric KV | 11.807 | 0.983 | 0.0011 | n/a | n/a | 9.2% |
-| certified head | 11.807 | 1.000 | 0.0000 | yes | 51.4% | 3.8% |
-| int8 weights + asymmetric KV | 11.804 | 0.979 | 0.0018 | n/a | n/a | 36.5% |
-| int8 weights + certified head | 11.812 | 0.981 | 0.0014 | yes | 51.4% | 31.0% |
-| asymmetric KV + certified head | 11.807 | 0.983 | 0.0011 | yes | 51.4% | 13.0% |
-| all three | 11.804 | 0.979 | 0.0018 | yes | 51.4% | 40.2% |
+| none | 11.811 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
+| int8 weights | 11.812 | 0.983 | 0.0013 | n/a | n/a | 27.2% |
+| asymmetric KV | 11.819 | 0.981 | 0.0011 | n/a | n/a | 9.2% |
+| certified head | 11.811 | 1.000 | 0.0000 | yes | 51.4% | 3.8% |
+| int8 weights + asymmetric KV | 11.816 | 0.980 | 0.0017 | n/a | n/a | 36.5% |
+| int8 weights + certified head | 11.812 | 0.983 | 0.0013 | yes | 51.4% | 31.0% |
+| asymmetric KV + certified head | 11.819 | 0.981 | 0.0011 | yes | 51.4% | 13.0% |
+| all three | 11.816 | 0.980 | 0.0017 | yes | 51.4% | 40.2% |
 
 ### Qwen3-8B
 
-Baseline perplexity 15.048. Bytes read per token: decoder blocks 13892 MB (70%), KV cache 4832 MB (24%), output head 1245 MB (6%).
+Baseline perplexity 15.024. Bytes read per token: decoder blocks 13892 MB (70%), KV cache 4832 MB (24%), output head 1245 MB (6%).
 
 | cell | perplexity | top-1 agreement | KL | certificate exact | head read | bytes saved |
 |---|---:|---:|---:|---|---:|---:|
-| none | 15.048 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
-| int8 weights | 15.046 | 0.979 | 0.0021 | n/a | n/a | 34.2% |
-| asymmetric KV | 15.055 | 0.982 | 0.0017 | n/a | n/a | 6.0% |
-| certified head | 15.048 | 1.000 | 0.0000 | yes | 54.1% | 2.9% |
-| int8 weights + asymmetric KV | 15.054 | 0.978 | 0.0025 | n/a | n/a | 40.3% |
-| int8 weights + certified head | 15.046 | 0.979 | 0.0021 | yes | 54.1% | 37.1% |
-| asymmetric KV + certified head | 15.055 | 0.982 | 0.0017 | yes | 54.1% | 8.9% |
-| all three | 15.054 | 0.978 | 0.0025 | yes | 54.1% | 43.1% |
+| none | 15.024 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
+| int8 weights | 15.048 | 0.980 | 0.0017 | n/a | n/a | 34.2% |
+| asymmetric KV | 15.035 | 0.982 | 0.0014 | n/a | n/a | 6.0% |
+| certified head | 15.024 | 1.000 | 0.0000 | yes | 54.1% | 2.9% |
+| int8 weights + asymmetric KV | 15.040 | 0.977 | 0.0021 | n/a | n/a | 40.3% |
+| int8 weights + certified head | 15.048 | 0.980 | 0.0017 | yes | 54.1% | 37.1% |
+| asymmetric KV + certified head | 15.035 | 0.982 | 0.0014 | yes | 54.1% | 8.9% |
+| all three | 15.040 | 0.977 | 0.0021 | yes | 54.1% | 43.1% |
 
 All 24 cells compose. The certificate is exact in every cell that has it,
 including the cells where int8 weights and FP8 values have changed the
@@ -170,12 +166,11 @@ hidden states it certifies. A shadow built from the unmodified model reads
 the same fraction of the head as one rebuilt for the quantized model, so
 the artifact does not need rebuilding when the other bricks change.
 
-The interaction term is at most 0.002 in log-perplexity, inside the
+The interaction term is at most 0.0013 in log-perplexity, inside the
 noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive
-measure. On Qwen2.5-7B int8 weights change 8% of the predicted tokens while
-perplexity stays level, so the changed predictions are near-ties. That
-model has unusually large activations, and it is the one model here where
-calibration-free int8 should be checked on the target task before use.
+measure. Each brick alone changes about 2% of the predicted tokens, and
+the full stack changes 2% to 3%, while perplexity moves by at most 0.14%.
+The changed predictions are therefore near-ties.
 
 ## Cartridges as a brick
 
@@ -235,7 +230,7 @@ The token was exact in both cases. Only the byte count was wrong, and only
 a held-out measurement could show it. A rank sweep then found that the
 saving returns near full rank, where the method becomes an int8 screen of
 the whole head followed by an exact fetch of 1% to 6% of the rows. That
-configuration reads 51% to 57% of the head on unseen text, and it is the
+configuration reads 51% to 56% of the head on unseen text, and it is the
 one the matrix now uses. The [certified decode page](lm-head-decode.md)
 carries the full sweep.
 
@@ -244,9 +239,10 @@ has measured it held-out and in combination.
 
 ### The first matrix rounded attention scores to 16 bits
 
-The first version of the matrix measured the 16-bit Qwen2.5-7B model with
-degraded attention. The task-accuracy run exposed the error: the 16-bit
-model solved only 18% of the GSM8K problems.
+The first version of the matrix gave the 16-bit Qwen2.5-7B model a
+perplexity of 9.84. The correct value is 8.44. The task-accuracy run
+exposed the error: the same 16-bit model solved only 18% of the GSM8K
+problems.
 
 The harness replaces the attention function of the model, because the
 asymmetric cache changes how values are read. For the unmodified model it
@@ -271,8 +267,17 @@ paths agree within 0.03 in perplexity on both.
 
 Every cell now computes attention with float32 scores and a float32 value
 sum, the 16-bit model included. The asymmetric cache cell therefore differs
-from its reference only in the precision of the values. All three models
-are being measured again.
+from its reference only in the precision of the values.
+
+All three models were measured again. Llama-3.2-3B and Qwen3-8B moved by
+less than 0.03 in perplexity. Qwen2.5-7B changed in two ways. Its 16-bit
+perplexity is 8.44 and not 9.84. And it is no longer the weakest model: the
+first matrix showed int8 weights changing 8.3% of its predicted tokens, and
+with correct attention they change 2.4%, close to the 1.7% and 2.0% of the
+other two models. With scores rounded to 16 bits, a small change to the model moves
+many scores across a rounding step, which is the likely source of the 8.3%.
+[`scripts/fdec_attn_precision.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_attn_precision.py)
+runs this check on any model.
 
 ## Speed so far
 
@@ -367,8 +372,9 @@ only alone.
 ## Limits and open cells
 
 The matrix measures quality and bytes with the bricks emulated in PyTorch:
-weights are rounded in place, values pass through an FP8 cast, and the
-certificate is replayed against dense logits. It shows that the bricks do
+weights are rounded in place, values pass through an FP8 cast, attention
+runs with float32 arithmetic, and the certificate is replayed against
+float32 logits. It shows that the bricks do
 not conflict in what they compute. It does not measure speed.
 
 The bytes-saved column is a model of bytes read, not a latency. Turning it
