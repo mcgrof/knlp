@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Which read sizes loading model weights produces: tensor and expert sizes across ten open checkpoints, the sizes that vLLM's default reader, fastsafetensors and the io_uring DMA-BUF copier ask the kernel for, and the NVMe command sizes that reach the drive.">
+<title>Weight-loading I/O sizes — io_uring + DMA-BUF — knlp</title>
+<link rel="canonical" href="https://knlp.io/io-uring-dmabuf-weight-io-sizes.html">
+<link rel="stylesheet" href="io-uring-dmabuf.css">
+<style>
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font:12px var(--mono);color:var(--muted);margin:10px 0}
+.legend i{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:-1px}
+.figure{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:22px 0;overflow-x:auto}
+.figure svg{min-width:640px}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><nav aria-label="GPU storage guide">
+<a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span>
+<a href="io-uring-dmabuf.html">Overview</a>
+<a href="io-uring-dmabuf-drivers.html">Drivers</a>
+<a href="io-uring-dmabuf-memory.html">Memory & integration</a>
+<a href="io-uring-dmabuf-results.html">Qualification & results</a>
+<a href="io-uring-dmabuf-linux.html">Linux & reproduce</a>
+<a href="io-uring-dmabuf-weight-loading.html">Weight loading</a>
+</nav></header>
+<main id="content">
+<div class="hero">
+<span class="eyebrow">io_uring + DMA-BUF · Weight loading · Updated 24 November 2026</span>
+<h1>Which read sizes weight loading produces</h1>
+<p class="lead"><strong>No loader we traced asks the kernel for tensor-sized reads.</strong> vLLM's default reader maps each file and lets kernel readahead read it in 128 KiB commands. fastsafetensors' <code>nogds</code> reader asks for 516 KiB at a time, which reaches the drive as four 128 KiB commands and one 4 KiB command. Our DMA-BUF copier asks for 64 MiB at a time, straight into GPU memory, and the drive gets 2 MiB commands. Tensor sizes matter when a loader reads only part of a model, such as one expert of a mixture-of-experts layer: current MoE checkpoints store experts as 2 to 16 MiB tensors, and some store an expert's scales far from its weights, which adds a read of a few KiB.</p>
+<nav class="toc" aria-label="On this page"><a href="#sizes">Three sizes</a><a href="#checkpoints">How checkpoints store bytes</a><a href="#loaders">What loaders ask for</a><a href="#experts">Fetching experts</a><a href="#stack">Software and kernel</a><a href="#reproduce">Reproduce</a><a href="#limits">Limits</a></nav>
+</div>
+
+<section id="sizes">
+<h2>Three sizes in one load</h2>
+<p>A weight load has three different read sizes, and each layer of the
+stack can change the size it receives. The <strong>tensor size</strong> is
+set by the checkpoint file: how big each tensor is and where it sits. The
+<strong>intent size</strong> is what the loader asks the kernel for: its
+read calls, its memory mappings and its io_uring requests. The
+<strong>command size</strong> is what reaches the drive: the NVMe read
+commands, after the page cache, readahead and the block layer have
+split or merged the loader's requests. We recorded all three for each
+load with the tracers of the
+<a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a>
+project and one bpftrace script.</p>
+<div class="flow">
+<div><b>Checkpoint</b><span>Tensor and expert sizes and offsets, read from the safetensors headers</span></div>
+<div><b>Loader intent</b><span>Read calls and their sizes (<code>syscall_monitor</code>), page faults and readahead (<code>mmap_readamp</code>), io_uring request sizes (bpftrace)</span></div>
+<div><b>Kernel</b><span>Page cache and readahead, or io_uring DMA-BUF straight into GPU memory; the block layer splits at the command limit</span></div>
+<div><b>Drive</b><span>Each NVMe command and its size (<code>nvme_tp_monitor</code>)</span></div>
+</div>
+<p>On the drive used here, a normal read command carries at most
+128 KiB and a DMA-BUF read command at most 2 MiB. The kernel splits any
+larger request at that limit.</p>
+</section>
+
+<section id="checkpoints">
+<h2>How checkpoints store their bytes</h2>
+<p>We read every safetensors header of ten open checkpoints, from a
+0.6-billion-parameter dense model to a 2.4-trillion-parameter
+mixture-of-experts (MoE) model: 836 files and 954,042 tensors. No weights
+were needed for this part. The chart shows, for each checkpoint, the
+share of its bytes held in tensors of each size.</p>
+<div class="figure">
+<div class="legend"><span><i style="background:#2b3a33"></i>&lt; 1 MiB</span><span><i style="background:#1f6b52"></i>1-4 MiB</span><span><i style="background:#2ae6a3"></i>4-16 MiB</span><span><i style="background:#62dce5"></i>16-64 MiB</span><span><i style="background:#8fb0ff"></i>64-256 MiB</span><span><i style="background:#ae94ff"></i>256 MiB-1 GiB</span><span><i style="background:#f0b65c"></i>1 GiB +</span></div>
+<svg viewBox="0 0 1000 396" role="img" aria-labelledby="inv-title inv-desc">
+<title id="inv-title">Where checkpoint bytes are, by tensor size</title>
+<desc id="inv-desc">For each checkpoint, a bar split by the share of its bytes held in tensors of each size class.</desc>
+<text x="0" y="18" fill="#e2ece5" font-size="13" font-family="sans-serif">Qwen3-0.6B</text><text x="0" y="31" fill="#62736a" font-size="11" font-family="monospace">dense BF16</text>
+<rect x="190.0" y="6" width="0.1" height="26" fill="#2b3a33"><title>Qwen3-0.6B: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.1" y="6" width="63.3" height="26" fill="#1f6b52"><title>Qwen3-0.6B: 7.8% of bytes in 1-4 MiB tensors</title></rect>
+<text x="221.7" y="23" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">8%</text>
+<rect x="253.4" y="6" width="411.3" height="26" fill="#2ae6a3"><title>Qwen3-0.6B: 50.8% of bytes in 4-16 MiB tensors</title></rect>
+<text x="459.0" y="23" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">51%</text>
+<rect x="664.7" y="6" width="335.3" height="26" fill="#ae94ff"><title>Qwen3-0.6B: 41.4% of bytes in 256 MiB-1 GiB tensors</title></rect>
+<text x="832.3" y="23" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">41%</text>
+<text x="0" y="56" fill="#e2ece5" font-size="13" font-family="sans-serif">Qwen2.5-7B</text><text x="0" y="69" fill="#62736a" font-size="11" font-family="monospace">dense BF16</text>
+<rect x="190.0" y="44" width="0.0" height="26" fill="#2b3a33"><title>Qwen2.5-7B: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.0" y="44" width="10.9" height="26" fill="#1f6b52"><title>Qwen2.5-7B: 1.3% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="201.0" y="44" width="76.5" height="26" fill="#62dce5"><title>Qwen2.5-7B: 9.4% of bytes in 16-64 MiB tensors</title></rect>
+<text x="239.2" y="61" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">9%</text>
+<rect x="277.5" y="44" width="606.6" height="26" fill="#8fb0ff"><title>Qwen2.5-7B: 74.9% of bytes in 64-256 MiB tensors</title></rect>
+<text x="580.8" y="61" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">75%</text>
+<rect x="884.1" y="44" width="115.9" height="26" fill="#f0b65c"><title>Qwen2.5-7B: 14.3% of bytes in 1 GiB + tensors</title></rect>
+<text x="942.0" y="61" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">14%</text>
+<text x="0" y="94" fill="#e2ece5" font-size="13" font-family="sans-serif">Qwen2.5-7B AWQ</text><text x="0" y="107" fill="#62736a" font-size="11" font-family="monospace">dense INT4 (AWQ)</text>
+<rect x="190.0" y="82" width="13.1" height="26" fill="#2b3a33"><title>Qwen2.5-7B AWQ: 1.6% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="203.1" y="82" width="13.0" height="26" fill="#1f6b52"><title>Qwen2.5-7B AWQ: 1.6% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="216.1" y="82" width="52.3" height="26" fill="#2ae6a3"><title>Qwen2.5-7B AWQ: 6.5% of bytes in 4-16 MiB tensors</title></rect>
+<text x="242.2" y="99" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">6%</text>
+<rect x="268.4" y="82" width="414.6" height="26" fill="#62dce5"><title>Qwen2.5-7B AWQ: 51.2% of bytes in 16-64 MiB tensors</title></rect>
+<text x="475.7" y="99" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">51%</text>
+<rect x="683.0" y="82" width="317.0" height="26" fill="#f0b65c"><title>Qwen2.5-7B AWQ: 39.1% of bytes in 1 GiB + tensors</title></rect>
+<text x="841.5" y="99" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">39%</text>
+<text x="0" y="132" fill="#e2ece5" font-size="13" font-family="sans-serif">Llama-3.1-405B</text><text x="0" y="145" fill="#62736a" font-size="11" font-family="monospace">dense BF16</text>
+<rect x="190.0" y="120" width="0.0" height="26" fill="#2b3a33"><title>Llama-3.1-405B: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.0" y="120" width="8.4" height="26" fill="#62dce5"><title>Llama-3.1-405B: 1.0% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="198.4" y="120" width="135.0" height="26" fill="#ae94ff"><title>Llama-3.1-405B: 16.7% of bytes in 256 MiB-1 GiB tensors</title></rect>
+<text x="265.9" y="137" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">17%</text>
+<rect x="333.5" y="120" width="666.5" height="26" fill="#f0b65c"><title>Llama-3.1-405B: 82.3% of bytes in 1 GiB + tensors</title></rect>
+<text x="666.7" y="137" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">82%</text>
+<text x="0" y="170" fill="#e2ece5" font-size="13" font-family="sans-serif">Qwen3-Next-80B</text><text x="0" y="183" fill="#62736a" font-size="11" font-family="monospace">MoE BF16</text>
+<rect x="190.0" y="158" width="0.1" height="26" fill="#2b3a33"><title>Qwen3-Next-80B: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.1" y="158" width="788.4" height="26" fill="#1f6b52"><title>Qwen3-Next-80B: 97.3% of bytes in 1-4 MiB tensors</title></rect>
+<text x="584.2" y="175" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">97%</text>
+<rect x="978.4" y="158" width="15.4" height="26" fill="#62dce5"><title>Qwen3-Next-80B: 1.9% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="993.8" y="158" width="6.2" height="26" fill="#ae94ff"><title>Qwen3-Next-80B: 0.8% of bytes in 256 MiB-1 GiB tensors</title></rect>
+<text x="0" y="208" fill="#e2ece5" font-size="13" font-family="sans-serif">DeepSeek-V3</text><text x="0" y="221" fill="#62736a" font-size="11" font-family="monospace">MoE FP8</text>
+<rect x="190.0" y="196" width="0.2" height="26" fill="#2b3a33"><title>DeepSeek-V3: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.2" y="196" width="0.6" height="26" fill="#1f6b52"><title>DeepSeek-V3: 0.1% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="190.8" y="196" width="786.3" height="26" fill="#2ae6a3"><title>DeepSeek-V3: 97.1% of bytes in 4-16 MiB tensors</title></rect>
+<text x="583.9" y="213" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">97%</text>
+<rect x="977.1" y="196" width="4.0" height="26" fill="#62dce5"><title>DeepSeek-V3: 0.5% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="981.1" y="196" width="10.2" height="26" fill="#8fb0ff"><title>DeepSeek-V3: 1.3% of bytes in 64-256 MiB tensors</title></rect>
+<rect x="991.3" y="196" width="8.7" height="26" fill="#f0b65c"><title>DeepSeek-V3: 1.1% of bytes in 1 GiB + tensors</title></rect>
+<text x="0" y="246" fill="#e2ece5" font-size="13" font-family="sans-serif">Kimi-K2</text><text x="0" y="259" fill="#62736a" font-size="11" font-family="monospace">MoE FP8</text>
+<rect x="190.0" y="234" width="0.2" height="26" fill="#2b3a33"><title>Kimi-K2: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.2" y="234" width="0.2" height="26" fill="#1f6b52"><title>Kimi-K2: 0.0% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="190.4" y="234" width="801.9" height="26" fill="#2ae6a3"><title>Kimi-K2: 99.0% of bytes in 4-16 MiB tensors</title></rect>
+<text x="591.3" y="251" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">99%</text>
+<rect x="992.3" y="234" width="3.7" height="26" fill="#62dce5"><title>Kimi-K2: 0.5% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="996.0" y="234" width="0.3" height="26" fill="#8fb0ff"><title>Kimi-K2: 0.0% of bytes in 64-256 MiB tensors</title></rect>
+<rect x="996.3" y="234" width="3.7" height="26" fill="#f0b65c"><title>Kimi-K2: 0.5% of bytes in 1 GiB + tensors</title></rect>
+<text x="0" y="284" fill="#e2ece5" font-size="13" font-family="sans-serif">DeepSeek-V4-Pro</text><text x="0" y="297" fill="#62736a" font-size="11" font-family="monospace">MoE FP4</text>
+<rect x="190.0" y="272" width="46.1" height="26" fill="#2b3a33"><title>DeepSeek-V4-Pro: 5.7% of bytes in &lt; 1 MiB tensors</title></rect>
+<text x="213.0" y="289" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">6%</text>
+<rect x="236.1" y="272" width="0.7" height="26" fill="#1f6b52"><title>DeepSeek-V4-Pro: 0.1% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="236.8" y="272" width="739.2" height="26" fill="#2ae6a3"><title>DeepSeek-V4-Pro: 91.3% of bytes in 4-16 MiB tensors</title></rect>
+<text x="606.4" y="289" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">91%</text>
+<rect x="976.0" y="272" width="3.9" height="26" fill="#62dce5"><title>DeepSeek-V4-Pro: 0.5% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="980.0" y="272" width="16.6" height="26" fill="#8fb0ff"><title>DeepSeek-V4-Pro: 2.0% of bytes in 64-256 MiB tensors</title></rect>
+<rect x="996.5" y="272" width="3.5" height="26" fill="#f0b65c"><title>DeepSeek-V4-Pro: 0.4% of bytes in 1 GiB + tensors</title></rect>
+<text x="0" y="322" fill="#e2ece5" font-size="13" font-family="sans-serif">Kimi-K3</text><text x="0" y="335" fill="#62736a" font-size="11" font-family="monospace">MoE packed 4-bit</text>
+<rect x="190.0" y="310" width="44.2" height="26" fill="#2b3a33"><title>Kimi-K3: 5.5% of bytes in &lt; 1 MiB tensors</title></rect>
+<text x="212.1" y="327" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">5%</text>
+<rect x="234.2" y="310" width="0.3" height="26" fill="#1f6b52"><title>Kimi-K3: 0.0% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="234.5" y="310" width="707.6" height="26" fill="#2ae6a3"><title>Kimi-K3: 87.4% of bytes in 4-16 MiB tensors</title></rect>
+<text x="588.2" y="327" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">87%</text>
+<rect x="942.0" y="310" width="6.2" height="26" fill="#62dce5"><title>Kimi-K3: 0.8% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="948.3" y="310" width="48.5" height="26" fill="#8fb0ff"><title>Kimi-K3: 6.0% of bytes in 64-256 MiB tensors</title></rect>
+<text x="972.5" y="327" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">6%</text>
+<rect x="996.8" y="310" width="0.8" height="26" fill="#ae94ff"><title>Kimi-K3: 0.1% of bytes in 256 MiB-1 GiB tensors</title></rect>
+<rect x="997.6" y="310" width="2.4" height="26" fill="#f0b65c"><title>Kimi-K3: 0.3% of bytes in 1 GiB + tensors</title></rect>
+<text x="0" y="360" fill="#e2ece5" font-size="13" font-family="sans-serif">Qwen3.8-2.4T</text><text x="0" y="373" fill="#62736a" font-size="11" font-family="monospace">MoE BF16, fused experts</text>
+<rect x="190.0" y="348" width="0.0" height="26" fill="#2b3a33"><title>Qwen3.8-2.4T: 0.0% of bytes in &lt; 1 MiB tensors</title></rect>
+<rect x="190.0" y="348" width="0.0" height="26" fill="#1f6b52"><title>Qwen3.8-2.4T: 0.0% of bytes in 1-4 MiB tensors</title></rect>
+<rect x="190.1" y="348" width="0.1" height="26" fill="#2ae6a3"><title>Qwen3.8-2.4T: 0.0% of bytes in 4-16 MiB tensors</title></rect>
+<rect x="190.2" y="348" width="1.7" height="26" fill="#62dce5"><title>Qwen3.8-2.4T: 0.2% of bytes in 16-64 MiB tensors</title></rect>
+<rect x="191.9" y="348" width="13.2" height="26" fill="#ae94ff"><title>Qwen3.8-2.4T: 1.6% of bytes in 256 MiB-1 GiB tensors</title></rect>
+<rect x="205.1" y="348" width="794.9" height="26" fill="#f0b65c"><title>Qwen3.8-2.4T: 98.1% of bytes in 1 GiB + tensors</title></rect>
+<text x="602.5" y="365" fill="#070b09" font-size="11" font-family="monospace" text-anchor="middle">98%</text>
+</svg>
+</div>
+<div class="scroll"><table>
+<caption>Tensors and routed-expert units per checkpoint, from the safetensors headers</caption>
+<thead><tr><th scope="col">Checkpoint</th><th scope="col">Type</th><th scope="col">Tensors</th><th scope="col">Size</th><th scope="col">Tensors under 1 MiB</th><th scope="col">One routed expert</th></tr></thead>
+<tbody>
+<tr><td>Qwen3-0.6B</td><td>dense BF16</td><td>311</td><td>1.4 GiB</td><td>36%</td><td>-</td></tr>
+<tr><td>Qwen2.5-7B</td><td>dense BF16</td><td>339</td><td>14.2 GiB</td><td>42%</td><td>-</td></tr>
+<tr><td>Qwen2.5-7B AWQ</td><td>dense INT4 (AWQ)</td><td>731</td><td>5.2 GiB</td><td>69%</td><td>-</td></tr>
+<tr><td>Llama-3.1-405B</td><td>dense BF16</td><td>1,137</td><td>756 GiB</td><td>22%</td><td>-</td></tr>
+<tr><td>Qwen3-Next-80B</td><td>MoE BF16</td><td>75,944</td><td>151 GiB</td><td>0%</td><td>6 MiB (95% of bytes); 1 extent: 15,071, 2 extents: 9,505</td></tr>
+<tr><td>DeepSeek-V3</td><td>MoE FP8</td><td>91,991</td><td>641 GiB</td><td>50%</td><td>42.0 MiB (97% of bytes); 1 extent: 14,951, 2 extents: 153</td></tr>
+<tr><td>Kimi-K2</td><td>MoE FP8</td><td>139,644</td><td>958 GiB</td><td>50%</td><td>42.0 MiB (99% of bytes); 2 extents: 23,040</td></tr>
+<tr><td>DeepSeek-V4-Pro</td><td>MoE FP4</td><td>145,116</td><td>805 GiB</td><td>50%</td><td>33.5 MiB (95% of bytes); 2 extents: 23,424</td></tr>
+<tr><td>Kimi-K3</td><td>MoE packed 4-bit</td><td>497,220</td><td>1.4 TiB</td><td>50%</td><td>16.7 MiB (93% of bytes); 1 extent: 82,432</td></tr>
+<tr><td>Qwen3.8-2.4T</td><td>MoE BF16, fused experts</td><td>1,609</td><td>4.4 TiB</td><td>38%</td><td>96 MiB slab inside fused 3-D tensors</td></tr>
+</tbody></table></div>
+<p>Dense checkpoints keep their bytes in a few large tensors. In
+Qwen2.5-7B, 89% of the bytes are in tensors of 128 MiB or more. In
+Llama-3.1-405B, 81% are in tensors of 1 to 2 GiB. Most current MoE
+checkpoints are the opposite: 87 to 99% of their bytes are in the
+routed experts, which are stored as separate tensors of 2 to 16 MiB. One
+expert is 6 MiB (Qwen3-Next) to 42 MiB (DeepSeek-V3 and Kimi-K2 in FP8).
+Lower precision makes the expert tensors smaller and adds a scale tensor
+for each weight tensor, so in the FP8 and FP4 checkpoints half of all
+tensors are scales. The scales hold at most 6% of the bytes.
+Qwen3.8-2.4T is the exception: it stores all experts of a layer as two
+fused tensors of 16 and 32 GiB, but one expert is still a contiguous
+96 MiB slab inside them.</p>
+<p>Where an expert sits matters when a loader reads only some experts.
+In Kimi-K2 and DeepSeek-V4-Pro every expert is in two places. The
+safetensors writer groups tensors by data type, so each file holds all
+its scale tensors together, away from the weights. Fetching one Kimi-K2
+expert is one 42 MiB read plus one 10.5 KiB read up to 15 GB away in the
+same file. In DeepSeek-V4-Pro it is one 31.5 MiB read plus one 2 MiB
+read. In Qwen3-Next, 9,505 of 24,576 experts are split across two files.
+In every checkpoint, the tensor data starts off a 4 KiB boundary for
+more than 99.99% of the bytes, because the data section begins right
+after a header of arbitrary length.</p>
+</section>
+
+<section id="loaders">
+<h2>What loaders ask for</h2>
+<p><strong>No loader we traced asks the kernel for tensor-sized reads.
+The loader, not the tensor layout, sets the intent size of a full
+load.</strong> We traced three loaders on four checkpoints that we have in
+full: two dense BF16 models, an INT4 AWQ model and a 27 GB MoE model
+(EMO 1b14b, 128 experts per layer). Each load started with an empty page
+cache, and every tensor was checked against a SHA-256 of the file
+bytes. All 40 loads matched.</p>
+<div class="scroll"><table>
+<caption>Full loads: what each loader asks for and what reaches the drive. The intent and command columns are from the first load; the second matches.</caption>
+<thead><tr><th scope="col">Checkpoint</th><th scope="col">Loader</th><th scope="col">Load time (s), two cold loads</th><th scope="col">What the loader asks for</th><th scope="col">NVMe read commands</th><th scope="col">Drive bytes over loaded bytes</th></tr></thead>
+<tbody>
+<tr><td>Qwen3-0.6B (1.5 GB)</td><td>vLLM default (safetensors, mmap)</td><td>1.06, 1.02</td><td>no read calls; maps each shard, 0 page faults; readahead fills 1.50 GB</td><td>11,512: 11,479 of 128 KiB</td><td>+0.2%</td></tr>
+<tr><td>Qwen3-0.6B (1.5 GB)</td><td>fastsafetensors nogds</td><td>0.245, 0.248</td><td>2,870 pread64 calls; 2,867 of 516 KiB</td><td>14,369: 11,477 of 128 KiB, 2,879 of 16 KiB or less</td><td>+0.9%</td></tr>
+<tr><td>Qwen3-0.6B (1.5 GB)</td><td>DMA-BUF copier</td><td>0.225, 0.225</td><td>23 io_uring reads into GPU memory; 22 of 64 MiB, the rest shorter shard tails</td><td>748: 716 of 2 MiB</td><td>+0.1%</td></tr>
+<tr><td>Qwen2.5-7B (15.2 GB)</td><td>vLLM default (safetensors, mmap)</td><td>8.82, 8.83</td><td>no read calls; maps each shard, 1 page fault; readahead fills 15.23 GB</td><td>116,256: 116,208 of 128 KiB</td><td>+0.0%</td></tr>
+<tr><td>Qwen2.5-7B (15.2 GB)</td><td>fastsafetensors nogds</td><td>2.30, 2.28</td><td>29,062 pread64 calls; 29,050 of 516 KiB</td><td>145,291: 116,212 of 128 KiB, 29,062 of 16 KiB or less</td><td>+0.8%</td></tr>
+<tr><td>Qwen2.5-7B (15.2 GB)</td><td>DMA-BUF copier</td><td>2.15, 2.14</td><td>228 io_uring reads into GPU memory; 224 of 64 MiB, the rest shorter shard tails</td><td>7,332: 7,260 of 2 MiB</td><td>+0.0%</td></tr>
+<tr><td>Qwen2.5-7B AWQ (5.6 GB)</td><td>vLLM default (safetensors, mmap)</td><td>3.60, 3.61</td><td>no read calls; maps each shard, 604 page faults; readahead fills 5.57 GB</td><td>42,709: 42,376 of 128 KiB</td><td>+0.0%</td></tr>
+<tr><td>Qwen2.5-7B AWQ (5.6 GB)</td><td>fastsafetensors nogds</td><td>0.839, 0.839</td><td>10,630 pread64 calls; 10,624 of 516 KiB</td><td>53,160: 42,508 of 128 KiB, 10,636 of 16 KiB or less</td><td>+0.8%</td></tr>
+<tr><td>Qwen2.5-7B AWQ (5.6 GB)</td><td>DMA-BUF copier</td><td>0.818, 0.788</td><td>84 io_uring reads into GPU memory; 82 of 64 MiB, the rest shorter shard tails</td><td>2,688: 2,655 of 2 MiB</td><td>+0.0%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>vLLM default (safetensors, mmap)</td><td>20.29, 20.44</td><td>no read calls; maps each shard, 32 page faults; readahead fills 27.14 GB</td><td>207,392: 206,993 of 128 KiB</td><td>+0.0%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>fastsafetensors nogds</td><td>4.00, 4.08</td><td>51,793 pread64 calls; 51,760 of 516 KiB</td><td>258,852: 207,044 of 128 KiB, 51,786 of 16 KiB or less</td><td>+0.8%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>DMA-BUF copier</td><td>3.82, 3.84</td><td>413 io_uring reads into GPU memory; 402 of 64 MiB, the rest shorter shard tails</td><td>12,983: 12,931 of 2 MiB</td><td>+0.0%</td></tr>
+</tbody></table></div>
+<h3>vLLM's default reader</h3>
+<p>vLLM's default loader opens each shard with the safetensors library
+and calls <code>get_tensor()</code> for every tensor. We ran the same calls
+outside vLLM. The library maps the shard into memory and makes no read
+call on it. Copying a tensor out of the mapping touches its pages. The
+kernel's readahead then reads the whole file ahead of the copy, so the
+tracer counted only 0 to 604 page faults per load. The drive gets 128 KiB commands, the largest normal command, and
+reads the file once. This path is about 4 to 5 times slower than the
+other two here. We did not profile why.</p>
+<h3>fastsafetensors nogds</h3>
+<p>The <code>nogds</code> reader reads each shard with <code>pread64</code>
+calls of 516 KiB into a host buffer, then copies the buffer to the GPU.
+Each call is 512 KiB of data plus 4 KiB for alignment. The drive gets
+four 128 KiB commands and one 4 KiB command for each call. These 4 KiB
+commands are 20% of all its commands, and they make the drive read 0.8 to 0.9%
+more bytes than the files hold. This is the only place in a full load
+where we saw many small commands, and they come from the reader's
+alignment, not from the tensors.</p>
+<h3>The DMA-BUF copier</h3>
+<p>The copier issues io_uring <code>READ_FIXED</code> requests of 64 MiB
+straight into GPU memory, with a shorter request at the end of each
+shard. The kernel splits each request into 2 MiB NVMe commands, the
+largest DMA-BUF command on this drive. For the 15.2 GB model that is
+228 requests and 7,260 commands of 2 MiB, against 145,291 commands for
+<code>nogds</code>. The drive reads the file bytes to within 0.1%. Its
+only read calls are the 8-byte header length and the JSON header of
+each shard (9 to 72 KiB). The larger commands are why the copier is the
+fastest loader here; the
+<a href="io-uring-dmabuf-weight-loading.html#why-faster">weight-loading page</a>
+explains this with drive rates.</p>
+</section>
+
+<section id="experts">
+<h2>Fetching experts</h2>
+<p>An MoE server that keeps experts on NVMe reads only the experts a
+request needs. That is where tensor size becomes intent size. In EMO
+1b14b one expert is three 4 MiB tensors, stored next to each other. We
+fetched one expert and eight experts of one layer, once through
+safetensors and once with one <code>pread</code> per tensor.</p>
+<div class="scroll"><table>
+<caption>Fetching routed experts of one layer (12 MiB each: three 4 MiB tensors)</caption>
+<thead><tr><th scope="col">Checkpoint</th><th scope="col">Loader</th><th scope="col">Load time (s), two cold loads</th><th scope="col">What the loader asks for</th><th scope="col">NVMe read commands</th><th scope="col">Drive bytes over loaded bytes</th></tr></thead>
+<tbody>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>1 expert, safetensors (mmap)</td><td>0.019, 0.017</td><td>no read calls; maps the shard, 1 page fault; readahead fills 14.5 MB</td><td>142: 111 of 128 KiB, 13 of 16 KiB or less</td><td>+25.4%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>8 experts, safetensors (mmap)</td><td>0.087, 0.085</td><td>no read calls; maps the shard, 7 page faults; readahead fills 106.1 MB</td><td>844: 801 of 128 KiB</td><td>+6.6%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>1 expert, one pread per tensor</td><td>0.015, 0.015</td><td>3 pread64 calls; 3 of 4 MiB</td><td>117: 100 of 128 KiB, 6 of 16 KiB or less</td><td>+10.0%</td></tr>
+<tr><td>EMO 1b14b MoE (27.1 GB)</td><td>8 experts, one pread per tensor</td><td>0.094, 0.098</td><td>24 pread64 calls; 24 of 4 MiB</td><td>801: 772 of 128 KiB</td><td>+2.3%</td></tr>
+</tbody></table></div>
+<p>With one <code>pread</code> per tensor, the loader asks for 4 MiB at a
+time, and the drive gets 128 KiB commands through the page cache.
+Readahead reads past the end of what was asked: 10% extra for one
+expert, 2% for eight. Through safetensors the extra is 25% for one
+expert and 7% for eight. At these sizes the drive gets no command smaller
+than 128 KiB apart from a few at the edges.</p>
+<p>Two cases in the larger checkpoints would produce smaller reads. A
+fetch of one Kimi-K2 expert includes a 10.5 KiB scale read. Qwen3-Next
+stores 2 MiB expert tensors, so a reader that reads one tensor at a
+time asks for 2 MiB. We did not trace those checkpoints, because we have
+only their headers. We have also not traced an expert fetch through
+the DMA-BUF copier. With it, one expert would be one io_uring read into
+GPU memory, split into 2 MiB commands.</p>
+</section>
+
+<section id="stack">
+<h2>Software and kernel</h2>
+<div class="scroll"><table>
+<caption>What the measurements used</caption>
+<thead><tr><th scope="col">Part</th><th scope="col">Version</th><th scope="col">What it does here</th></tr></thead>
+<tbody>
+<tr><td>fastsafetensors</td><td><a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">2026-10-28-iouring-dma-buf</a> at <a href="https://github.com/mcgrof/fastsafetensors/commit/eb7ec8f">eb7ec8f</a></td><td>Our branch adds the DMA-BUF copier. It exports GPU memory as a DMA-BUF, registers it with io_uring as a fixed buffer, and reads each shard into it with <code>READ_FIXED</code>. Without kernel support it falls back to <code>nogds</code>. The same branch provides the <code>nogds</code> reader.</td></tr>
+<tr><td>Linux kernel</td><td><a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release">2026-11-06-dmabuf-io-async-release</a> at <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/commit/?id=a7c2fb31d587738afec3fe514f0d2b87eedc80b9">a7c2fb31</a></td><td>The io_uring DMA-BUF series queued for Linux 7.4, the XFS support RFC, ext4 support, patches that let DMA-BUF reads use the drive's largest command (<code>max_hw_dmabuf_sectors_kb</code>, 2 MiB here), and a fix that releases a DMA-BUF registration without waiting about 14 ms. See <a href="io-uring-dmabuf-weight-loading.html#kernel">kernel requirements</a>.</td></tr>
+<tr><td>Tracers</td><td><a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a>: <code>syscall_monitor</code>, <code>mmap_readamp</code>, <code>nvme_tp_monitor</code>; bpftrace 0.27</td><td>Loader calls with requested sizes, page faults and readahead fills, NVMe commands. The bpftrace script records io_uring setup, registrations and the size of each request.</td></tr>
+<tr><td>Python stack</td><td>Python 3.12, PyTorch 2.9.1 for ROCm 6.4.3, safetensors 0.8.0</td><td>The loaders.</td></tr>
+<tr><td>GPU</td><td>AMD RDNA3 workstation GPU, 48 GB, PCIe Gen4 x16</td><td>The load target.</td></tr>
+<tr><td>Drive and file system</td><td>One PCIe Gen4 x4 NVMe SSD, 4 TB class, 512-byte logical blocks, 128 KiB normal command limit, 2 MiB DMA-BUF command limit; XFS</td><td>Holds the checkpoints.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="reproduce">
+<h2>Reproduce</h2>
+<p>The scripts are in knlp's
+<a href="https://github.com/mcgrof/knlp/tree/main/scripts/weight_io">scripts/weight_io</a>.
+You need the kernel branch above for the DMA-BUF loader, a built
+ebpf-syscall tree, bpftrace, and sudo for the tracers. The loaders run as
+your user. Put the fastsafetensors branch on <code>PYTHONPATH</code>:</p>
+<pre><code>git clone -b 2026-10-28-iouring-dma-buf https://github.com/mcgrof/fastsafetensors
+export PYTHONPATH=$PWD/fastsafetensors
+python3 scripts/weight_io/trace_intent.py --tools ~/ebpf-syscall --disk nvme0n1 \
+    --model qwen2.5-7b=/models/Qwen2.5-7B-Instruct \
+    --model moe=/models/my-moe --moe moe --out /data/intent
+python3 scripts/weight_io/analyze_intent.py /data/intent &gt; intent_summary.json</code></pre>
+<p><code>--moe</code> adds the expert fetches for that model; <code>--layer</code>,
+<code>--experts-1</code> and <code>--experts-8</code> choose the layer and the
+experts. <code>--disk</code> names the block device that holds the models, so
+the NVMe tracer watches the right drive. For the checkpoint layout, the
+inventory stage of the weight-loading I/O workflow
+(<code>make defconfig-weight-io-inventory &amp;&amp; make</code>) reads the shard
+headers over HTTP without downloading weights, and
+<code>inventory_sizes.py</code> turns its <code>inventory.jsonl</code> into the
+size classes and expert units shown above.</p>
+</section>
+
+<section id="limits">
+<h2>Limits</h2>
+<ul>
+<li>One GPU, one drive and one file system (XFS). A drive with a larger
+or smaller command limit changes the command sizes.</li>
+<li>The loaders ran outside vLLM with the same calls vLLM makes. A
+served load can add its own reads.</li>
+<li>Each case ran twice. That is enough to show the sizes, which do not
+change between runs, not to rank small timing differences.</li>
+<li>The eight large checkpoints were measured from their headers only.
+Their read sizes under each loader are projected from the layout, not
+traced.</li>
+<li>No tensor-parallel load was traced. A rank that reads part of a
+tensor can produce strided reads.</li>
+<li>Expert fetches through the DMA-BUF copier were not traced.</li>
+</ul>
+</section>
+
+
+<div class="pager" aria-label="Continue reading"><a href="io-uring-dmabuf-weight-loading.html">← Weight loading</a><a href="dmabuf-tensor-alignment.html">Tensor alignment →</a></div>
+<footer><a href="io-uring-dmabuf.html">GPU storage overview</a> ·
+<a href="io-uring-dmabuf-weight-loading.html">Weight loading</a> ·
+<a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">fastsafetensors branch</a> ·
+<a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release">kernel branch</a>
+<p>Experimental evaluation. Measured results apply to the stated GPU, kernel, drive and file system.</p>
+</footer>
+</main>
+</body>
+</html>

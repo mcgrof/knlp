@@ -188,6 +188,10 @@ matched the file digests. Tracing changed the load times by between -2%
 and +0.5%, which is less than the difference between the readers. The
 copier also makes far fewer system calls. We did not measure host CPU
 time, so we do not claim a CPU saving.</p>
+<p>The <a href="io-uring-dmabuf-weight-io-sizes.html">read-size page</a>
+traces what each loader asks the kernel for, next to the NVMe commands,
+for four checkpoints and for single-expert fetches. It also shows how
+ten open checkpoints, dense and mixture-of-experts, store their tensors.</p>
 <h3>Details we found on the way</h3>
 <ul>
 <li><strong>Registration size.</strong> The kernel refuses a DMA-BUF larger
