@@ -57,8 +57,8 @@ the agent tell the cache what to keep.</p>
 <div class="table-wrap"><table>
 <caption>The two directions</caption>
 <tr><th scope="col">Direction</th><th scope="col">Why</th><th scope="col">What it needs</th></tr>
-<tr><td class="hi"><a href="#tool-wait">1. Use the tool-call wait</a> (research)</td><td>In the FreeInference agentic trace, 69&ndash;75% of tool-result tokens arrive after a wait of 1&nbsp;s or more. The resumed turn must still compute the result's tokens over the whole context.</td><td>A test of what a serving system can prepare during the wait, and whether that work pays when other sessions share the GPU. No result answers it yet.</td></tr>
-<tr><td class="hi"><a href="#kv-retain">2. Execute kv.retain hints in LMCache</a> (integration)</td><td>Serving engines now accept a <code>kv_hints</code> envelope, so an orchestrator or client that knows the workflow can name the context to keep and for how long. LMCache holds context in host memory and on storage, but it reads no hints.</td><td>A <code>kv.retain</code> reader in LMCache. The interfaces exist; the work is to connect LMCache to them.</td></tr>
+<tr><td class="hi"><a href="#tool-wait">1. Use the tool-call wait</a> (research)</td><td>In the FreeInference agentic trace, 69&ndash;75% of tool-result tokens arrive after a wait of 1&nbsp;s or more. The resumed turn must still compute the result's tokens over the whole context.</td><td>A test of what a serving system can prepare during the wait beyond what published systems do, and whether that work pays when other sessions share the GPU. Published systems keep the context through the call (<a href="https://arxiv.org/abs/2402.01869">InferCept</a>, <a href="https://arxiv.org/abs/2511.02230">Continuum</a>), read it back before the tool returns (<a href="https://arxiv.org/abs/2611.25112">TripleKV</a>), or overlap the next prefill or the tool itself with model work (<a href="https://arxiv.org/abs/2601.12967">Sutradhara</a>, <a href="https://arxiv.org/abs/2406.00059">Conveyor</a>, <a href="https://arxiv.org/abs/2603.18897">PASTE</a>). KMesh has no result yet.</td></tr>
+<tr><td class="hi"><a href="#kv-retain">2. Execute kv.retain hints in LMCache</a> (integration)</td><td>Serving engines now accept a <code>kv_hints</code> envelope (<a href="https://github.com/vllm-project/vllm/pull/53423">vLLM #53423</a>). Its proposed <code>kv.retain</code> action (<a href="https://github.com/vllm-project/vllm/pull/38514">vLLM #38514</a>) lets an orchestrator or client that knows the workflow name the context to keep and for how long. LMCache holds context in host memory and on storage, but it reads no hints.</td><td>A <code>kv.retain</code> reader in LMCache. The interfaces exist; the work is to connect LMCache to them. TensorRT-LLM already ships the same token-range priority and duration (<a href="https://nvidia.github.io/TensorRT-LLM/llm-api/reference/KvCacheRetentionConfig.html"><code>KvCacheRetentionConfig</code></a>), and <a href="https://arxiv.org/abs/2511.02230">Continuum</a>, <a href="https://arxiv.org/abs/2507.07400">KVFlow</a> and <a href="https://arxiv.org/abs/2608.14624">CacheScout</a> show ways for a producer to choose what to keep.</td></tr>
 </table></div>
 <h3 id="tool-wait">1. Use the tool-call wait (research)</h3>
 <p>When the model calls a tool, its session stops until the result comes
@@ -75,10 +75,23 @@ tokens.</p>
 <tr><td class="hi">May 17&ndash;23, 2026</td><td>11,359</td><td>3.5 s</td><td>75%</td><td>26%</td><td>48%</td><td>3.6 s</td></tr>
 <tr><td class="hi">July 12&ndash;18, 2026</td><td>77,831</td><td>1.6 s</td><td>69%</td><td>25%</td><td>34%</td><td>0.87 s</td></tr>
 </table></div>
-<p>Dynamo's speculative prefill already uses the end of a turn to warm the
-next turn's known prompt. The open question is what more a serving system
-can prepare during a tool wait, so that the resumed turn computes less
-after the result arrives, and whether that work still pays when other
+<p>Published systems already use the wait in several ways:</p>
+<div class="table-wrap"><table>
+<caption>Published work on the tool-call wait</caption>
+<tr><th scope="col">Work</th><th scope="col">What it does with the wait</th></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2402.01869">InferCept</a> (ICML 2024)</td><td>Chooses for each call whether to keep the context in GPU memory, discard it or swap it to host memory.</td></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2511.02230">Continuum</a> (2025)</td><td>Keeps the context in GPU memory with a time-to-live set from the reload cost and the queueing delay that eviction would cause. Built on vLLM.</td></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2611.25112">TripleKV</a> (2026)</td><td>Predicts when each tool call ends and reads the context's KV blocks from SSD into host memory before it does.</td></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2601.12967">Sutradhara</a> (2026)</td><td>Overlaps tool execution with the next prefill through tool-aware prompt splitting, and starts tools during decode. Built on vLLM.</td></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2406.00059">Conveyor</a> (2024)</td><td>Starts a tool while the model is still decoding the call.</td></tr>
+<tr><td class="hi"><a href="https://arxiv.org/abs/2603.18897">PASTE</a> (2026)</td><td>Predicts future tool calls from recurring agent patterns and runs them speculatively while the model generates.</td></tr>
+<tr><td class="hi"><a href="https://docs.nvidia.com/dynamo/v1.0.1/user-guides/agents#speculative-prefill">Dynamo speculative prefill</a></td><td>Uses the end of a turn to warm the next turn's known prompt.</td></tr>
+</table></div>
+<p>Keeping or reading back the context does not remove the work that
+follows the result: the resumed turn must still compute the result's
+tokens over the whole context. The open question is what more a serving
+system can prepare during a tool wait, so that the resumed turn computes
+less after the result arrives, and whether that work still pays when other
 sessions share the GPU. KMesh has no result on it yet.</p>
 <p>The wait runs from the end of the response that made the call to the
 start of the session's next request, so it includes the harness time
@@ -100,14 +113,16 @@ can see the agent. The vLLM proposal applies the hint to vLLM's own GPU
 prefix cache. LMCache holds the same context in host memory and on storage,
 and it reads no KV hints today.</p>
 <div class="table-wrap"><table>
-<caption>Who can produce or carry a kv.retain hint</caption>
+<caption>Who produces, carries or executes a kv.retain hint</caption>
 <tr><th scope="col">Party</th><th scope="col">Role</th><th scope="col">Status</th></tr>
+<tr><td class="hi">vLLM</td><td>Engine</td><td>Merged the envelope (<a href="https://github.com/vllm-project/vllm/pull/53423">#53423</a>). In review: <code>kv.retain</code> on the GPU prefix cache (<a href="https://github.com/vllm-project/vllm/pull/38514">#38514</a>), a retain mapped to request priority (<a href="https://github.com/vllm-project/vllm/pull/59714">#59714</a>), <code>kv_hints</code> on the chat and completions endpoints (<a href="https://github.com/vllm-project/vllm/pull/68333">#68333</a>), session-based prefix-cache retention (<a href="https://github.com/vllm-project/vllm/pull/67562">#67562</a>) and TTL-based prefix-cache eviction (<a href="https://github.com/vllm-project/vllm/pull/68538">#68538</a>).</td></tr>
+<tr><td class="hi">LMCache</td><td>Storage tier</td><td>Reads no hints. Open work on what it keeps: a fix that refreshes the session TTL on use (<a href="https://github.com/LMCache/LMCache/pull/6099">#6099</a>), an experimental value-based admission and L2 replacement policy (<a href="https://github.com/LMCache/LMCache/pull/6678">#6678</a>) and an RFC for pluggable, cost-aware admission (<a href="https://github.com/LMCache/LMCache/issues/5780">#5780</a>).</td></tr>
 <tr><td class="hi">Dynamo</td><td>Orchestrator</td><td>Its per-request <code>agent_hints</code> carry a priority, which Dynamo forwards to the engine for scheduling and KV-cache eviction, and a speculative-prefill flag. A router plugin interface for session-aware hint policies is in review (<a href="https://github.com/ai-dynamo/dynamo/pull/15679">Dynamo #15679</a>).</td></tr>
 <tr><td class="hi">llm-d</td><td>Orchestrator</td><td>Its endpoint picker writes <code>kv_hints</code> after it chooses a worker, and drops hints that a client sent (<a href="https://github.com/llm-d/llm-d-router/pull/4207">llm-d-router #4207</a>, open).</td></tr>
 <tr><td class="hi">Agent runtimes</td><td>Producer</td><td>A client can put <code>kv_hints</code> on a chat-completions request itself; vLLM #38514 defines the wire format. <a href="https://github.com/vllm-project/vllm/pull/63904">vLLM #63904</a> proposes session-scoped agent hints on the same envelope.</td></tr>
 <tr><td class="hi">API gateways</td><td>Producer</td><td>Hosted APIs already let a client ask for a cache lifetime: Anthropic's <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching"><code>cache_control</code> TTL</a> of 5 minutes or 1 hour, and OpenAI's <a href="https://developers.openai.com/api/docs/guides/prompt-caching"><code>prompt_cache_retention</code></a>. A gateway that serves those APIs from a self-hosted engine could pass that lifetime on as a <code>kv.retain</code> duration. <a href="https://github.com/vllm-project/vllm/pull/48704">vLLM #48704</a> proposes prompt-cache retention policies for vLLM's tiered offload store (open).</td></tr>
 <tr><td class="hi">SGLang</td><td>Engine</td><td>Its hierarchical cache forwards a request's <code>kv_hints</code> to its storage backends (<a href="https://github.com/sgl-project/sglang/pull/51088">SGLang #51088</a>, merged November 20, 2026).</td></tr>
-<tr><td class="hi">TensorRT-LLM</td><td>Engine</td><td>An RFC proposes a versioned hint protocol of the same kind (<a href="https://github.com/NVIDIA/TensorRT-LLM/issues/18153">TensorRT-LLM #18153</a>, open).</td></tr>
+<tr><td class="hi">TensorRT-LLM</td><td>Engine</td><td>Already ships token-range retention with a priority and a duration (<a href="https://nvidia.github.io/TensorRT-LLM/llm-api/reference/KvCacheRetentionConfig.html"><code>KvCacheRetentionConfig</code></a>), the same shape as <code>kv.retain</code>. An RFC proposes a versioned hint protocol (<a href="https://github.com/NVIDIA/TensorRT-LLM/issues/18153">TensorRT-LLM #18153</a>, open).</td></tr>
 </table></div>
 <p>LMCache is a storage tier for vLLM and also plugs into SGLang's cache.
 A <code>kv.retain</code> reader in LMCache would let any of these producers
@@ -117,6 +132,7 @@ hints, and a gateway that passes on a client's cache lifetime are others.
 The SGLang path also needs LMCache's SGLang integration to read the hints
 that SGLang now forwards. This page does not propose how LMCache should
 act on a hint.</p>
+<p>Published policies show how a producer can choose what to keep: <a href="https://arxiv.org/abs/2507.07400">KVFlow</a> from a workflow graph, <a href="https://arxiv.org/abs/2608.14624">CacheScout</a> from learned agent transitions and <a href="https://arxiv.org/abs/2511.02230">Continuum</a> from the predicted tool time. <a href="https://arxiv.org/abs/2610.22863">KV Residency</a> measures what retention costs in four production Microsoft 365 agent traces.</p>
 <p>A producer must also choose each hint's duration. The
 <a href="https://kvcache.io/agentic-kv-economics.html">idle-context cost
 model</a> compares the cost of keeping one context in host memory or on
