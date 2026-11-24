@@ -41,12 +41,16 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fdec_compose import quantize_weights_int8  # noqa: E402
-from fdec_matrix import install_asym_kv, restore  # noqa: E402
+from fdec_matrix import (  # noqa: E402
+    install_asym_kv,
+    install_fp32_attention,
+    restore,
+)
 
 ARMS = ("base", "kv", "w8", "w8+kv")
 LETTERS = "ABCD"
-# batch * length^2 limit for the eager attention matrices (8 x 1024^2)
-ATTN_BUDGET = 8 * 1024 * 1024
+# batch * length^2 limit for the float32 attention matrices (16 x 1024^2)
+ATTN_BUDGET = 16 * 1024 * 1024
 NUM = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?")
 
 
@@ -124,8 +128,8 @@ def mmlu_items(per_subject):
 
 def batches(order, size, lens=None, budget=0):
     """Batches over `order` (longest first).  With a budget, the batch shrinks
-    so that batch * length^2 stays under it: eager attention holds one
-    length-by-length matrix per head and sequence."""
+    so that batch * length^2 stays under it: the attention function holds
+    one float32 length-by-length matrix per head and sequence."""
     i = 0
     while i < len(order):
         n = size
@@ -221,7 +225,7 @@ def main():
     ap.add_argument(
         "--mmlu-per-subject", type=int, default=0, help="0 means every test item"
     )
-    ap.add_argument("--mmlu-batch", type=int, default=8)
+    ap.add_argument("--mmlu-batch", type=int, default=16)
     ap.add_argument("--mmlu-max-len", type=int, default=2048)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -242,6 +246,12 @@ def main():
         args.model, dtype=getattr(torch, args.dtype), attn_implementation="eager"
     ).to(device)
     model.eval()
+    # Every arm, the dense model included, computes attention the way a fused
+    # serving kernel does.  The stock eager function rounds the attention
+    # scores to bf16 before the softmax.  In a 32-problem GSM8K check that
+    # alone took Qwen2.5-7B from 24 solved problems to 7 (see fp32_attention
+    # in fdec_matrix.py).
+    install_fp32_attention(model)
 
     data = {}
     if "gsm8k" in tasks:
@@ -333,6 +343,7 @@ def write(args, res, t0):
                 mmlu_max_len=args.mmlu_max_len,
                 mmlu_per_subject=args.mmlu_per_subject,
                 torch=torch.__version__,
+                attention="float32 scores, softmax and value sum",
                 seconds=time.time() - t0,
                 summary=summary,
                 raw=res,
