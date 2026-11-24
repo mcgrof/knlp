@@ -52,7 +52,44 @@ exact fetch of the few blocks that can still hold the argmax (5.9% of rows on
 Qwen2.5-7B, 1.3% on Llama-3.2-3B). That decoder is exact and reads 51% to 56% of the
 dense head on text it has not seen. This is the deployable result. The 5× traffic
 reduction and the 1.97× and 1.85× latency figures below were measured with the
-in-sample shadow and have not been re-measured for the full-rank configuration.
+in-sample shadow.
+
+### Latency on held-out hidden states
+
+On hidden states it has not seen, the full-rank certified head runs at 0.99 to 1.28
+times the speed of the dense head.
+[`scripts/fdec_cert_latency.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_latency.py)
+builds the shadow from WikiText-2 train hidden states and times 1,000 WikiText-2
+test positions, one token at a time, against the dense bf16 head on the same GPU.
+The timed variant is the one-shot fused fetch: it opens a fixed share of the
+vocabulary blocks in bound order, checks the certificate once, and falls back to the
+dense head for a token that does not certify.
+
+| model | GPU | dense head, mean | certified head, mean | speed, mean | speed, median | p95, dense → certified | blocks fetched | certified | head bytes read |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Qwen2.5-7B | RTX 4090 | 1.166 ms | 1.087 ms | 1.07× | 1.23× | 1.17 → 2.11 ms | 12.5% | 88.0% | 73.1% |
+| Llama-3.2-3B | RTX 4090 | 0.867 ms | 0.678 ms | 1.28× | 1.30× | 0.87 → 0.67 ms | 6.25% | 98.6% | 57.6% |
+| Qwen3-8B | Radeon Pro W7900 | 2.002 ms | 1.978 ms | 1.01× | 1.16× | 2.01 → 3.68 ms | 12.5% | 87.5% | 73.5% |
+| Qwen2.5-0.5B | RTX 4090 | 0.311 ms | 0.315 ms | 0.99× | 1.04× | 0.32 → 0.58 ms | 12.5% | 95.0% | 67.1% |
+
+The table shows the fastest of three fetch budgets for each model. "Head bytes read"
+counts the whole head for a token that fell back. Such a token pays for the screen,
+the fetch and the dense product, so the 95th percentile is about 1.8 times the dense
+head on three of the four models. The block-by-block loop reads the fewest bytes,
+51% to 56% of the head, but its mean speed is 0.72 to 1.16 times the dense head
+because each block costs a kernel launch.
+
+The script repeats the in-sample setup on the same GPU. There the fused variant is
+1.56 to 1.78 times faster in the mean on the three larger models, which reproduces
+the size of the figures below. The difference between the two results is the shadow
+and not the kernel.
+
+Every variant is scored against the argmax of float32 logits. The loop certified
+every token and returned that argmax for every token on all four models. The dense
+bf16 head rounds its logits to 8 significant bits, which makes ties among the top
+tokens: it returned the float32 argmax on 94.8% to 98.6% of the tokens. A bf16 dense
+head is therefore not an exact reference, and an optimized path can score below
+1.000 against it without an error in the certificate.
 
 You can reproduce the table with
 [`scripts/fdec_cert_heldout.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_heldout.py).

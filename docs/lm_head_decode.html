@@ -192,11 +192,22 @@
               still hold the argmax. That decoder is exact and reads <strong className="text-white">56.0%</strong> of
               the dense head on Qwen2.5-7B and <strong className="text-white">51.4%</strong> on Llama-3.2-3B, held-out.
               This is the deployable result. The 5&times; traffic reduction and the 1.97&times; and 1.85&times; latency
-              figures below have not been re-measured for it.
+              figures below were measured with the in-sample shadow.
+            </p>
+            <p className="text-gray-300 mb-3">
+              Latency is now measured for the full-rank decoder on hidden states it has not seen, one token at a time,
+              against the dense head on the same GPU. In mean time per token it is
+              <strong className="text-white"> 1.07&times;</strong> the speed of the dense head on Qwen2.5-7B and
+              <strong className="text-white"> 1.28&times;</strong> on Llama-3.2-3B (RTX 4090),
+              <strong className="text-white"> 1.01&times;</strong> on Qwen3-8B (Radeon Pro W7900) and
+              <strong className="text-white"> 0.99&times;</strong> on Qwen2.5-0.5B. A token that does not certify falls
+              back to the dense head, so the 95th-percentile token takes about 1.8 times as long as the dense head's on
+              three of the four models. The in-sample setup, repeated on the same GPUs, gives 1.56&times; to
+              1.78&times;, so the difference is the shadow and not the kernel.
             </p>
             <p className="text-gray-400 text-sm">
-              Full table and method: <a className="underline" href="https://github.com/mcgrof/knlp/blob/main/docs/lm-head-decode.md">lm-head-decode.md</a>.
-              Reproduce with <code>scripts/fdec_cert_heldout.py</code>.
+              Full tables and method: <a className="underline" href="https://github.com/mcgrof/knlp/blob/main/docs/lm-head-decode.md">lm-head-decode.md</a>.
+              Reproduce the bytes with <code>scripts/fdec_cert_heldout.py</code> and the latency with <code>scripts/fdec_cert_latency.py</code>.
             </p>
           </section>
 
@@ -224,10 +235,10 @@
           {/* Key stats */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
             <StatCard label="Output head" value="150K" sub="rows, read every token" />
-            <StatCard label="Head bytes" value="20" unit="%" sub="of dense, at 7B" color={C.emerald}/>
-            <StatCard label="Reduction" value="5" unit="×" sub="lossless" color={C.emerald}/>
-            <StatCard label="Batch-1 head" value="1.97" unit="×" sub="W7900, 7B" color={C.teal}/>
-            <StatCard label="H100 replay" value="1.85" unit="×" sub="head only, 7B, no fallback" color={C.teal}/>
+            <StatCard label="Head bytes, held-out" value="51–56" unit="%" sub="of dense, full-rank screen" color={C.emerald}/>
+            <StatCard label="Head bytes, in-sample" value="20" unit="%" sub="of dense, at 7B" color={C.emerald}/>
+            <StatCard label="Batch-1 head, held-out" value="1.0–1.3" unit="×" sub="0.99 to 1.28, four models" color={C.teal}/>
+            <StatCard label="Batch-1 head, in-sample" value="1.97" unit="×" sub="W7900, 7B" color={C.teal}/>
             <StatCard label="Byte replay match" value="1.0000" sub="optimized kernels: see limits above" color={C.green}/>
           </div>
 
@@ -243,6 +254,9 @@
               hand. On Qwen2.5-7B that closes after reading about <strong className="text-white">2%</strong> of the
               vocabulary, on top of an 18% shadow read, for a <strong className="text-white">~5× lossless</strong>{" "}
               reduction in output-head traffic and a <strong className="text-white">1.97×</strong> batch-1 output-head win.
+              Those byte and latency figures hold for hidden states the shadow was built from. On unseen text the
+              decoder needs a full-rank shadow, reads 51% to 56% of the head and is 0.99× to 1.28× the speed of the
+              dense head; see the correction above.
               The certificate is exact in real arithmetic; floating-point implementations still need the reference checks above.
             </p>
           </div>
