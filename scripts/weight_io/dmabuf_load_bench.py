@@ -250,6 +250,7 @@ def worker(args):
 
     devs = one_file_per_device(files)
     before = [sectors_read(f) for f in devs]
+    out["t0_mono_ns"] = time.monotonic_ns()
     t0 = time.perf_counter()
     pl = ParallelLoader(
         pg=SingleGroup(),
@@ -268,6 +269,7 @@ def worker(args):
         pl.close()
     sync()
     out["load_s"] = time.perf_counter() - t0
+    out["t1_mono_ns"] = time.monotonic_ns()
     after = [sectors_read(f) for f in devs]
     if None not in before and None not in after:
         out["drive_bytes_read"] = sum(a - b for a, b in zip(after, before))

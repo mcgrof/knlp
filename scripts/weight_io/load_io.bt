@@ -1,0 +1,51 @@
+// Record what one model-load process does: every system call (count and
+// time, per thread name), io_uring setup and buffer registration events
+// with timestamps, each submitted io_uring request and whether it was
+// handed to an io-wq worker, completion latency and exact size, and which
+// thread issued each NVMe command. $1 = the stopped root pid; children
+// and threads it creates are followed. nsecs is CLOCK_MONOTONIC.
+BEGIN { @t[$1] = 1; printf("attached %llu\n", nsecs); }
+tracepoint:sched:sched_process_fork /@t[pid]/ { @t[args.child_pid] = 1; }
+tracepoint:raw_syscalls:sys_enter /@t[pid]/ { @se[tid] = nsecs; }
+tracepoint:raw_syscalls:sys_exit /@t[pid] && @se[tid]/ {
+  $d = nsecs - @se[tid];
+  @sys_n[comm, args.id] = count();
+  @sys_ns[comm, args.id] = sum($d);
+  delete(@se[tid]);
+}
+tracepoint:io_uring:io_uring_create /@t[pid]/ {
+  printf("E %llu create tid=%d fd=%d sq=%u cq=%u flags=0x%x\n", nsecs, tid,
+         args.fd, args.sq_entries, args.cq_entries, args.flags);
+}
+tracepoint:io_uring:io_uring_register /@t[pid]/ {
+  printf("E %llu register tid=%d ctx=%p op=%u nr_files=%u nr_bufs=%u ret=%ld\n",
+         nsecs, tid, args.ctx, args.opcode, args.nr_files, args.nr_bufs, args.ret);
+}
+tracepoint:io_uring:io_uring_submit_req /@t[pid]/ {
+  @sub[str(args.op_str)] = count();
+  @sub_comm[comm] = count();
+  @start[args.req] = nsecs;
+  if (@first_sub == 0) { @first_sub = nsecs; }
+  @last_sub = nsecs;
+}
+tracepoint:io_uring:io_uring_queue_async_work /@t[pid]/ {
+  @punt[str(args.op_str), args.hashed] = count();
+}
+tracepoint:io_uring:io_uring_complete /@t[pid] && @start[args.req]/ {
+  $l = nsecs - @start[args.req];
+  @lat_us = hist($l / 1000);
+  @cmp_comm[comm] = count();
+  if (args.res < 0) { @cmp_err[args.res] = count(); }
+  else { @cmp_bytes = sum(args.res); @cmp_size = hist(args.res); @req_size[args.res] = count(); }
+  delete(@start[args.req]);
+  @last_cmp = nsecs;
+}
+tracepoint:io_uring:io_uring_req_failed /@t[pid]/ {
+  printf("E %llu failed op=%u err=%d len=%u\n", nsecs, args.opcode, args.error, args.len);
+}
+tracepoint:nvme:nvme_setup_cmd /@t[pid]/ { @nvme_issuer[comm] = count(); }
+END {
+  printf("first_sub %llu last_sub %llu last_cmp %llu\n", @first_sub, @last_sub, @last_cmp);
+  clear(@t); clear(@se); clear(@start);
+  delete(@first_sub); delete(@last_sub); delete(@last_cmp);
+}

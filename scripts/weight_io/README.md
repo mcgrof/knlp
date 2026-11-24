@@ -102,6 +102,33 @@ pip install ./fastsafetensors
 python3 dmabuf_release_bench.py --model /models/my-model --out load.json
 ```
 
+## Read sizes of whole loaders
+
+[`trace_intent.py`](trace_intent.py) traces complete loaders rather than
+a replay: vLLM's default safetensors reader (run through
+[`intent_worker.py`](intent_worker.py) with the calls vLLM makes),
+fastsafetensors `nogds` and the DMA-BUF copier, and, with `--moe`,
+fetches of one or eight routed experts of one layer. Each cold load runs
+under `nvme_tp_monitor`, `syscall_monitor`, `mmap_readamp` and
+[`load_io.bt`](load_io.bt), which records io_uring setup and the size of
+each io_uring request. Every load checks the SHA-256 of each tensor it
+loaded. [`analyze_intent.py`](analyze_intent.py) then reports, inside
+each load's window, what the loader asked for (read calls and their
+sizes, mappings, page faults, readahead fills, io_uring request sizes)
+next to the NVMe command sizes.
+[`inventory_sizes.py`](inventory_sizes.py) turns the inventory stage's
+`inventory.jsonl` into tensor size classes and routed-expert units per
+checkpoint. The results are on the
+[read-size page](https://knlp.io/io-uring-dmabuf-weight-io-sizes.html).
+
+```
+python3 trace_intent.py --tools ~/ebpf-syscall --disk nvme0n1 \
+    --model qwen2.5-7b=/models/Qwen2.5-7B-Instruct \
+    --model moe=/models/my-moe --moe moe --out /data/intent
+python3 analyze_intent.py /data/intent > intent_summary.json
+python3 inventory_sizes.py stageA/inventory.jsonl > inventory_sizes.json
+```
+
 ## What to publish
 
 A reproducibility claim needs the device's geometry, not its identity:
