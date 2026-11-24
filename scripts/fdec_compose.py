@@ -56,7 +56,6 @@ sys.path.insert(0, os.path.join(HERE, "..", "lm_head", "kernel"))
 from fdec_matrix import (  # noqa: E402
     _fake_quant_groupwise,
     _find_decoder_layers,
-    decode_byte_model,
     install_asym_kv,
     restore,
 )
@@ -70,6 +69,27 @@ from shadow_bound_replay import (  # noqa: E402
 
 BRICK_ORDER = ("w8", "kv", "cert")
 KV_FACTOR = 0.75  # keys 16-bit + values 8-bit, against 16-bit both
+
+
+def decode_bytes(model, ctx, kv_f, lm_f, w_f):
+    """Bytes one decode step reads, in MB, by pool, for a 16-bit model.
+
+    The decoder blocks are read once per token and are what the w8 brick
+    quantizes. The KV cache grows with context. The LM head is the output
+    matrix. The input embedding is left out: a step reads one row of it."""
+    cfg = model.config
+    blocks = sum(p.numel() for p in _find_decoder_layers(model).parameters())
+    hkv = getattr(cfg, "num_key_value_heads", None) or cfg.num_attention_heads
+    hd = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+    w = blocks * 2 * w_f
+    kv = cfg.num_hidden_layers * hkv * ctx * hd * 2 * 2 * kv_f
+    lm = cfg.vocab_size * cfg.hidden_size * 2 * lm_f
+    return dict(
+        weights_mb=w / 1e6,
+        kv_mb=kv / 1e6,
+        lmhead_mb=lm / 1e6,
+        total_mb=(w + kv + lm) / 1e6,
+    )
 
 
 def load_ids(tok, split, num_seqs, seq_len):
@@ -174,7 +194,6 @@ def main():
     ap.add_argument("--cert-bits", type=int, default=8)
     ap.add_argument("--cert-clusters", type=int, default=256)
     ap.add_argument("--ctx", type=int, default=32768, help="context for the byte model")
-    ap.add_argument("--hbm-gbps", type=float, default=3350.0)
     ap.add_argument(
         "--interaction-tol",
         type=float,
@@ -266,14 +285,12 @@ def main():
             rec["error"] = f"{type(e).__name__}: {e}"
         lm_f = rec["cert_matched"]["total_byteratio"] if "cert_matched" in rec else 1.0
         lm_f = min(lm_f, 1.0)
-        bm = decode_byte_model(
+        bm = decode_bytes(
             model,
             args.ctx,
-            2,
             KV_FACTOR if "kv" in s else 1.0,
             lm_f,
             weight_f if "w8" in s else 1.0,
-            args.hbm_gbps,
         )
         rec["decode_mb_per_token"] = bm["total_mb"]
         rec["byte_pools_mb"] = {k: bm[k] for k in ("weights_mb", "kv_mb", "lmhead_mb")}
