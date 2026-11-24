@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MIT
+
+DISKGRAPH_DIR ?= build/diskgraph
+DISKGRAPH_RUN ?= $(DISKGRAPH_DIR)/$(DISKGRAPH_DATASET)-$(DISKGRAPH_BACKEND)
+DISKGRAPH_DATASET ?= fixture
+DISKGRAPH_BACKEND ?= buffered
+DISKGRAPH_SEEDS ?= 512
+DISKGRAPH_THREADS ?= 2
+DISKGRAPH_QD ?= 32
+DISKGRAPH_PASSES ?= 2
+DISKGRAPH_CLIENTS ?= 1
+DISKGRAPH_CAPTURE ?= $(DISKGRAPH_RUN)/intent.jsonl
+DISKGRAPH_REPORT ?= $(DISKGRAPH_RUN)/analysis.json
+DISKGRAPH_PY = "$(DISKGRAPH_DIR)/venv/bin/python"
+DISKGRAPH_TOOLS = tools/reproduce/diskgraph
+DISKGRAPH_WHEEL ?=
+DISKGRAPH_SOURCE ?=
+DISKGRAPH_NVME_MONITOR ?=
+DISKGRAPH_REPLAY_MODE ?= pread
+DISKGRAPH_REPLAY_LIB = $(DISKGRAPH_DIR)/libdiskgraph_replay.so
+DISKGRAPH_REPEAT ?= 2
+
+.PHONY: diskgraph diskgraph-build diskgraph-run diskgraph-replay diskgraph-report
+diskgraph: diskgraph-run
+ifeq ($(DISKGRAPH_BACKEND),buffered)
+ifeq ($(DISKGRAPH_NO_CAPTURE),)
+	@$(MAKE) diskgraph-report diskgraph-replay
+endif
+endif
+
+diskgraph-build:
+	@DISKGRAPH_WHEEL="$(DISKGRAPH_WHEEL)" $(DISKGRAPH_TOOLS)/build.sh "$(DISKGRAPH_DIR)"
+
+diskgraph-run: diskgraph-build
+	@$(DISKGRAPH_PY) $(DISKGRAPH_TOOLS)/workload.py --dataset "$(DISKGRAPH_DATASET)" \
+		--backend "$(DISKGRAPH_BACKEND)" --work "$(DISKGRAPH_DIR)" --run "$(DISKGRAPH_RUN)" \
+		--seeds "$(DISKGRAPH_SEEDS)" --threads "$(DISKGRAPH_THREADS)" --qd "$(DISKGRAPH_QD)" \
+		--passes "$(DISKGRAPH_PASSES)" $(if $(DISKGRAPH_SOURCE),--source "$(DISKGRAPH_SOURCE)") \
+		$(if $(DISKGRAPH_NO_CAPTURE),--no-capture) $(if $(DISKGRAPH_NO_AUDIT),--no-audit) \
+		$(if $(DISKGRAPH_NVME_MONITOR),--nvme-monitor "$(DISKGRAPH_NVME_MONITOR)")
+
+diskgraph-report:
+	@$(PYTHON) $(DISKGRAPH_TOOLS)/intent.py report "$(DISKGRAPH_CAPTURE)" \
+		--live "$(DISKGRAPH_RUN)/live.json" --output "$(DISKGRAPH_REPORT)"
+
+$(DISKGRAPH_REPLAY_LIB): $(DISKGRAPH_TOOLS)/replay.c
+	@mkdir -p "$(@D)"
+	@$(CC) -O2 -Wall -Wextra -Werror -fPIC -shared -o "$@" "$<" -luring
+
+diskgraph-replay: $(DISKGRAPH_REPLAY_LIB)
+	@$(PYTHON) $(DISKGRAPH_TOOLS)/intent.py replay "$(DISKGRAPH_CAPTURE)" \
+		--library "$(DISKGRAPH_REPLAY_LIB)" --directory "$(DISKGRAPH_DIR)/replay" --mode "$(DISKGRAPH_REPLAY_MODE)" \
+		--clients "$(DISKGRAPH_CLIENTS)" --passes "$(DISKGRAPH_REPEAT)" \
+		$(if $(DISKGRAPH_NO_DIGEST),--no-digest) $(if $(DISKGRAPH_COLD),--cold)
+
+ifeq ($(CONFIG_KNLP_DISKGRAPH_PAGE_CACHE),y)
+.DEFAULT_GOAL := diskgraph
+endif

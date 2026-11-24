@@ -1,0 +1,2 @@
+# CPU-only DiskGraph buffered I/O intent capture, analysis and replay.
+CONFIG_KNLP_DISKGRAPH_PAGE_CACHE=y

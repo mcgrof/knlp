@@ -1,0 +1,250 @@
+diff --git a/diskgraph-index/src/lib.rs b/diskgraph-index/src/lib.rs
+index dbc0b70..cef13c0 100644
+--- a/diskgraph-index/src/lib.rs
++++ b/diskgraph-index/src/lib.rs
+@@ -27,3 +27,6 @@ mod tests_builder;
+ #[cfg(test)]
+ mod tests_reader;
+ pub mod truncate;
++
++#[cfg(target_os = "linux")]
++mod read_intent;
+diff --git a/diskgraph-index/src/page_io.rs b/diskgraph-index/src/page_io.rs
+index 61bd508..b4d87a6 100644
+--- a/diskgraph-index/src/page_io.rs
++++ b/diskgraph-index/src/page_io.rs
+@@ -1657,6 +1657,7 @@ fn read_pages_on_ring_coalesced(
+     let mut completed_bytes = 0u64;
+ 
+     while completed < reads.len() {
++        let first = next;
+         while next < reads.len() && in_flight < entries as usize {
+             let read = reads[next];
+             let spec = &specs[read.first];
+@@ -1691,6 +1692,10 @@ fn read_pages_on_ring_coalesced(
+             next += 1;
+             in_flight += 1;
+         }
++        crate::read_intent::read_batch(entries, reads[first..next].iter().map(|read| {
++            let spec = &specs[read.first];
++            (spec.fd, spec.page_number * PAGE_SIZE as u64, (read.pages * PAGE_SIZE) as u64)
++        }));
+ 
+         loop {
+             match ring.submit_and_wait(1) {
+@@ -1785,6 +1790,7 @@ fn read_pages_on_ring(
+     let mut completed_bytes = 0u64;
+ 
+     while completed < specs.len() {
++        let first = next;
+         while next < specs.len() && in_flight < entries as usize {
+             let offset = specs[next]
+                 .page_number
+@@ -1806,6 +1812,9 @@ fn read_pages_on_ring(
+             next += 1;
+             in_flight += 1;
+         }
++        crate::read_intent::read_batch(entries, specs[first..next].iter().map(|spec| {
++            (spec.fd, spec.page_number * PAGE_SIZE as u64, PAGE_SIZE as u64)
++        }));
+ 
+         // SIGPROF and other process signals may interrupt io_uring_enter after
+         // the kernel has accepted submissions. Returning here would drop
+diff --git a/diskgraph-index/src/read_intent.rs b/diskgraph-index/src/read_intent.rs
+new file mode 100644
+index 0000000..6946efb
+--- /dev/null
++++ b/diskgraph-index/src/read_intent.rs
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Opt-in Buffered I/O shape capture for the knlp reproduction.
++
++use serde_json::{json, Value};
++use std::collections::HashMap;
++use std::fs::{File, OpenOptions};
++use std::io::{BufWriter, Write};
++use std::sync::{Mutex, OnceLock};
++
++struct Capture {
++    output: BufWriter<File>,
++    files: HashMap<i32, u64>,
++}
++
++static CAPTURE: OnceLock<Option<Mutex<Capture>>> = OnceLock::new();
++
++fn capture() -> Option<&'static Mutex<Capture>> {
++    CAPTURE
++        .get_or_init(|| {
++            let path = std::env::var_os("KNLP_DISKGRAPH_INTENT")?;
++            let mut options = OpenOptions::new();
++            options.create_new(true).write(true);
++            #[cfg(unix)]
++            {
++                use std::os::unix::fs::OpenOptionsExt;
++                options.mode(0o600);
++            }
++            let mut log = Capture {
++                output: BufWriter::new(options.open(path).expect("create intent trace")),
++                files: HashMap::new(),
++            };
++            log.write(json!({"event":"meta","version":1,"clock":"CLOCK_MONOTONIC"}));
++            Some(Mutex::new(log))
++        })
++        .as_ref()
++}
++
++impl Capture {
++    fn write(&mut self, value: Value) {
++        serde_json::to_writer(&mut self.output, &value).expect("serialize intent trace");
++        self.output.write_all(b"\n").expect("write intent trace");
++        self.output.flush().expect("flush intent trace");
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn now() -> u64 {
++    let mut ts = libc::timespec {
++        tv_sec: 0,
++        tv_nsec: 0,
++    };
++    assert_eq!(
++        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) },
++        0
++    );
++    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
++}
++
++#[cfg(target_os = "linux")]
++pub(crate) fn file(fd: i32, file: u64, size: u64) {
++    if let Some(log) = capture() {
++        let mut log = log.lock().expect("lock intent trace");
++        log.files.insert(fd, file);
++        log.write(json!({"event":"file","file":file,"size":size}));
++    }
++}
++
++#[cfg(target_os = "linux")]
++pub(crate) fn ranges<I>(kind: &str, file: u64, ranges: I)
++where
++    I: IntoIterator<Item = (u64, u64)>,
++{
++    if let Some(log) = capture() {
++        let ranges: Vec<_> = ranges
++            .into_iter()
++            .filter(|(s, e)| s < e)
++            .map(|(start, end)| [start, end - start])
++            .collect();
++        if !ranges.is_empty() {
++            log.lock().expect("lock intent trace").write(json!({
++                "event":"demand","kind":kind,"file":file,"at_ns":now(),"ranges":ranges
++            }));
++        }
++    }
++}
++
++#[cfg(target_os = "linux")]
++pub(crate) fn read_batch<I>(qd: u32, reads: I)
++where
++    I: IntoIterator<Item = (i32, u64, u64)>,
++{
++    if let Some(log) = capture() {
++        let mut log = log.lock().expect("lock intent trace");
++        let reads: Vec<_> = reads
++            .into_iter()
++            .map(|(fd, offset, size)| {
++                [
++                    *log.files.get(&fd).expect("registered Buffered edge file"),
++                    offset,
++                    size,
++                ]
++            })
++            .collect();
++        if !reads.is_empty() {
++            log.write(json!({
++                "event":"read_batch","at_ns":now(),"lane":unsafe { libc::syscall(libc::SYS_gettid) },
++                "qd":qd,"reads":reads
++            }));
++        }
++    }
++}
+diff --git a/diskgraph-index/src/reader.rs b/diskgraph-index/src/reader.rs
+index d29850c..40cbc0d 100644
+--- a/diskgraph-index/src/reader.rs
++++ b/diskgraph-index/src/reader.rs
+@@ -183,12 +183,18 @@ impl ShardReader {
+             node_data_len_bytes = header.node_data_len_bytes,
+             "Shard reader opened"
+         );
++        let edge_file_id = NEXT_EDGE_FILE_ID.fetch_add(1, Ordering::Relaxed);
++        #[cfg(target_os = "linux")]
++        if edge_backend == EdgeIoBackend::Buffered {
++            use std::os::fd::AsRawFd;
++            crate::read_intent::file(edges_file.as_raw_fd(), edge_file_id, edges.len() as u64);
++        }
+         Ok(Self {
+             offsets_mmap: offsets,
+             edges,
+             edges_file: Arc::new(edges_file),
+             direct_edges_file,
+-            edge_file_id: NEXT_EDGE_FILE_ID.fetch_add(1, Ordering::Relaxed),
++            edge_file_id,
+             edge_backend,
+             header,
+             offsets_header_len: header_len,
+@@ -439,6 +445,12 @@ impl ShardReader {
+                 })?;
+             }
+         }
++        #[cfg(target_os = "linux")]
++        if self.edge_backend == EdgeIoBackend::Buffered {
++            crate::read_intent::ranges("header", self.edge_file_id, plan.records.iter().map(
++                |r| (r.start, planned_header_end(r.start, r.end, max_prefix, eager_node_pages)),
++            ));
++        }
+         plan.page_numbers.clear();
+         plan.page_numbers.reserve(page_capacity);
+         for record in &plan.records {
+@@ -493,6 +505,10 @@ impl ShardReader {
+ 
+     pub fn prepare_ranges(&self, ranges: &[(u64, u64)]) -> Result<PreparedPages> {
+         let pages = pages_for_ranges(ranges, self.edges.len() as u64)?;
++        #[cfg(target_os = "linux")]
++        if self.edge_backend == EdgeIoBackend::Buffered {
++            crate::read_intent::ranges("range", self.edge_file_id, ranges.iter().copied());
++        }
+         self.prepare_page_numbers(&pages)
+     }
+ 
+@@ -502,6 +518,10 @@ impl ShardReader {
+         existing: PreparedPages,
+     ) -> Result<PreparedPages> {
+         let mut missing = pages_for_ranges(ranges, self.edges.len() as u64)?;
++        #[cfg(target_os = "linux")]
++        if self.edge_backend == EdgeIoBackend::Buffered {
++            crate::read_intent::ranges("range", self.edge_file_id, ranges.iter().copied());
++        }
+         missing.retain(|&page| !existing.contains_page(page));
+         Ok(existing.merge(self.prepare_page_numbers(&missing)?))
+     }
+@@ -512,6 +532,10 @@ impl ShardReader {
+         existing: PreparedPages,
+     ) -> Result<PendingPages> {
+         let mut missing = pages_for_ranges(ranges, self.edges.len() as u64)?;
++        #[cfg(target_os = "linux")]
++        if self.edge_backend == EdgeIoBackend::Buffered {
++            crate::read_intent::ranges("range", self.edge_file_id, ranges.iter().copied());
++        }
+         missing.retain(|&page| !existing.contains_page(page));
+         Ok(PendingPages {
+             existing,
+@@ -525,6 +549,10 @@ impl ShardReader {
+         existing: PreparedPages,
+     ) -> Result<RangeReadPlan> {
+         let mut missing = pages_for_ranges(ranges, self.edges.len() as u64)?;
++        #[cfg(target_os = "linux")]
++        if self.edge_backend == EdgeIoBackend::Buffered {
++            crate::read_intent::ranges("range", self.edge_file_id, ranges.iter().copied());
++        }
+         missing.retain(|&page| !existing.contains_page(page));
+         Ok(RangeReadPlan {
+             existing,

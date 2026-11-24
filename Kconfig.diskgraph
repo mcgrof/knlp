@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+
+config KNLP_DISKGRAPH_PAGE_CACHE
+	bool "DiskGraph buffered page-cache capture and replay"
+	default n
+	help
+	  Run a CPU-only temporal graph sampling fixture with the pinned
+	  DiskGraph buffered backend and replay its recorded read requests.
