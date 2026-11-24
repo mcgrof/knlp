@@ -6,79 +6,70 @@
 <link rel="canonical" href="https://knlp.io/kumo-diskgraph-page-cache.html">
 <title>Kumo DiskGraph page-cache I/O intent and replay | knlp</title>
 <meta name="description" content="Record DiskGraph's buffered file reads before the page cache and replay them on Linux without a GPU or the source graph.">
+<link rel="stylesheet" href="assets/knlp.css">
 <style>
-:root { color-scheme: light; --ink:#162825; --muted:#485e58; --paper:#f6f8f4; --line:#cedcd4;
-        --strong:#095c48; --soft:#e4f1e8; --disk:#93521f; --disk-light:#e7bb8c; --code:#112c26; }
-* { box-sizing:border-box; }
-body { margin:0; color:var(--ink); background:var(--paper);
-       font:16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
-header { border-bottom:1px solid var(--line); background:#fff; }
-nav, main, footer { max-width:1060px; margin:auto; padding-inline:24px; }
-nav { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding-block:12px; }
-nav strong { color:var(--strong); font-family:monospace; font-size:1.2rem; }
-a { color:var(--strong); text-underline-offset:3px; }
-a:focus-visible, input:focus-visible { outline:3px solid var(--strong); outline-offset:4px; }
-.hero { padding:54px 0 30px; }
-h1 { max-width:820px; margin:0; font-size:clamp(2.45rem, 6.2vw, 4.3rem); line-height:1.03; letter-spacing:-.05em; }
-h2 { margin:0 0 12px; font-size:clamp(1.6rem, 4vw, 2.15rem); letter-spacing:-.025em; line-height:1.2; }
-h3 { margin:18px 0 5px; font-size:1.12rem; }
-p { margin:0 0 1em; max-width:82ch; }
-.hero p { margin-top:18px; font-size:1.2rem; color:var(--muted); }
-section { padding:26px 0; border-top:1px solid var(--line); }
-section:first-child { border-top:0; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr)); gap:12px; }
-.card { border:1px solid var(--line); border-radius:10px; padding:16px; background:white; }
-.card h3 { margin-top:0; }
-.card p { margin:0; color:var(--muted); }
-pre { overflow:auto; background:var(--code); color:#e9f6ef; border-radius:8px; padding:14px 18px; font-size:.91rem; }
-code { font-family:ui-monospace, "SFMono-Regular", Consolas, monospace; font-size:.94em; }
-pre code { font-size:inherit; }
-table { width:100%; border-collapse:collapse; background:white; }
-th, td { padding:9px 12px; border-bottom:1px solid var(--line); text-align:left; }
-tbody th { font-weight:600; }
-th:not(:first-child), td { font-variant-numeric:tabular-nums; }
-.table { overflow:auto; margin:15px 0; border:1px solid var(--line); border-radius:8px; }
-figure { margin:0 0 16px; }
-.graph { border:1px solid var(--line); background:white; border-radius:10px; padding:15px 18px; }
-.bar-row { display:grid; grid-template-columns:minmax(130px,1fr) minmax(85px,3fr) 6.6rem; gap:10px; align-items:center; margin:8px 0; }
-.bar { height:12px; border-radius:7px; background:var(--soft); overflow:hidden; }
-.bar span { display:block; height:100%; width:var(--pct); background:var(--strong); border-radius:inherit; }
-.bar.disk span { background:var(--disk); }
-.value { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
-figcaption,.note { color:var(--muted); font-size:.93rem; }
-.callout { background:var(--soft); border-left:4px solid var(--strong); border-radius:4px; padding:14px 16px; }
-.callout p:last-child { margin:0; }
-label { font-weight:650; display:block; }
-input { padding:8px 0; max-width:100%; }
-kbd { font-family:inherit; }
-footer { border-top:1px solid var(--line); padding-block:20px 30px; color:var(--muted); }
+.site-section > p, .callout p { max-width: 82ch; margin: 0 0 1em; overflow-wrap: anywhere; }
+.site-section :is(p, figcaption) a { color: var(--site-amber); text-decoration: underline; text-underline-offset: 3px; }
+.site-section :is(p, figcaption) a:hover { color: var(--site-text); }
+.site-card p, .site-section > p:last-child, .callout p:last-child { margin-bottom: 0; }
+.site-section .note { margin-top: 16px; }
+pre { overflow: auto; background: #020617; border: 1px solid var(--site-border); border-radius: 10px; padding: 14px 18px; font-size: .91rem; }
+code { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .94em; }
+pre code { font-size: inherit; }
+.graph, .table, .callout { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; }
+thead { background: var(--site-bg); }
+th, td { padding: 9px 12px; border-bottom: 1px solid var(--site-border); text-align: left; }
+tbody tr:last-child > * { border-bottom: 0; }
+tbody th { font-weight: 600; }
+th:not(:first-child), td { font-variant-numeric: tabular-nums; }
+.table { overflow: auto; margin: 16px 0; }
+.graph { margin: 0 0 16px; padding: 15px 18px; }
+.bar-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 3fr) 6.6rem; gap: 10px; align-items: center; margin: 8px 0; }
+.bar { height: 12px; border-radius: 7px; background: var(--site-bg); overflow: hidden; }
+.bar span { display: block; height: 100%; width: var(--pct); background: var(--site-cyan); border-radius: inherit; }
+.bar.disk span { background: var(--site-amber); }
+.value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
+figcaption, .note, #receipt-status { color: var(--site-muted); font-size: .93rem; }
+.callout { border-left: 3px solid var(--site-amber); padding: 14px 16px; }
+.callout .table { margin-bottom: 0; }
+label { font-weight: 650; display: block; }
+input[type="file"] { padding: 8px 0; max-width: 100%; font: inherit; }
+input::file-selector-button { padding: 5px 10px; margin-right: 8px; border: 1px solid var(--site-border); border-radius: 6px; background: var(--site-bg); color: var(--site-text); font: inherit; }
+input::file-selector-button:hover { background: var(--site-border); }
 @media (max-width:440px) {
-  nav,main,footer { padding-inline:14px; }
-  .hero { padding-top:32px; }
-  .bar-row { grid-template-columns:minmax(106px,1fr) minmax(36px,1fr) 5.6rem; font-size:.82rem; gap:6px; }
+  .bar-row { grid-template-columns: minmax(96px, 1fr) minmax(0, 1fr) 4.5rem; font-size: .82rem; gap: 6px; }
 }
 </style>
 </head>
-<body>
-<header><nav aria-label="Page navigation"><a href="index.html#research"><strong>knlp</strong></a><a href="kumo.html">Kumo R&amp;D</a>
-<a href="#run">Run</a><a href="#measurements">Measurements</a><a href="#kernel">Kernel A/B</a>
-<a href="small-random-reads-ai.html">Small random reads</a></nav></header>
-<main>
-<div class="hero">
-<h1>Record DiskGraph read intent before the page cache</h1>
-<p>Run a temporal graph workload on a Linux CPU. Save the file reads DiskGraph asks for, compare them with actual NVMe traffic, and replay the same requests on a second kernel using generated files. A GPU and model weights are unnecessary.</p>
-</div>
-<section id="layers">
-<h2>What each observer sees</h2>
-<div class="grid">
-<div class="card"><h3>Graph planner</h3><p>DiskGraph records the encoded header and record ranges it plans to read. These ranges describe graph work before page expansion and reuse. They include adjacency and headers as well as feature records.</p></div>
-<div class="card"><h3>Buffered file requests</h3><p>A second hook records the offset and length of each <code>READ</code> and <code>READV</code> queued for the kernel. It retains the worker lane and submission group. This is the stream replay uses.</p></div>
-<div class="card"><h3>NVMe commands</h3><p>The optional eBPF observer records completed device reads. The analysis joins them to the immutable edge-file extents on the same monotonic clock. Warm file reads can complete with zero SSD reads.</p></div>
-</div>
-<p class="note" style="margin-top:12px">The DGraphFin showcase pairs feature consumption with device traffic and replays the device commands. DiskGraph adds an earlier capture point for rerunning access through the page cache. The two replay modes answer different questions. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin showcase</a></p>
+<body class="site-page">
+<a class="site-skip" href="#main">Skip to content</a>
+<header class="site-nav">
+  <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
+  <nav class="site-nav-links" aria-label="Page navigation">
+    <a href="kumo.html">Kumo R&amp;D</a>
+    <a href="#measurements">Measurements</a>
+    <a href="#run">Run</a>
+    <a href="#kernel">Kernel A/B</a>
+    <a href="small-random-reads-ai.html">Small random reads</a>
+  </nav>
+</header>
+<main id="main" class="site-wrap">
+<section class="site-hero" aria-labelledby="intro-title">
+<h1 id="intro-title">Record DiskGraph read intent before the page cache</h1>
+<p class="site-lead">Run a temporal graph workload on a Linux CPU. Save the file reads DiskGraph asks for, compare them with actual NVMe traffic, and replay the same requests on a second kernel using generated files. A GPU and model weights are unnecessary.</p>
 </section>
-<section id="measurements">
-<h2>Held the graph work fixed across a cold pass and its repeat</h2>
+<section id="layers" class="site-section">
+<div class="site-section-head"><h2>What each observer sees</h2></div>
+<div class="site-grid">
+<div class="site-card"><h3>Graph planner</h3><p>DiskGraph records the encoded header and record ranges it plans to read. These ranges describe graph work before page expansion and reuse. They include adjacency and headers as well as feature records.</p></div>
+<div class="site-card"><h3>Buffered file requests</h3><p>A second hook records the offset and length of each <code>READ</code> and <code>READV</code> queued for the kernel. It retains the worker lane and submission group. This is the stream replay uses.</p></div>
+<div class="site-card"><h3>NVMe commands</h3><p>The optional eBPF observer records completed device reads. The analysis joins them to the immutable edge-file extents on the same monotonic clock. Warm file reads can complete with zero SSD reads.</p></div>
+</div>
+<p class="note">The DGraphFin showcase pairs feature consumption with device traffic and replays the device commands. DiskGraph adds an earlier capture point for rerunning access through the page cache. The two replay modes answer different questions. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin showcase</a></p>
+</section>
+<section id="measurements" class="site-section">
+<div class="site-section-head"><h2>Held the graph work fixed across a cold pass and its repeat</h2></div>
 <p>The generated fixture used 512 roots in each pass and three temporal hops. All 181,610 recorded planner ranges per pass were below 4 KiB. DiskGraph's Buffered backend submitted 21,207 requests per pass, including coalesced reads up to 64 KiB. The repeat completed the same file reads from cache.</p>
 <figure class="graph" aria-labelledby="example-caption">
 <div class="bar-row"><span>Planner, distinct</span><div class="bar" aria-hidden="true"><span style="--pct:25.4%"></span></div><span class="value">4.11 MB</span></div>
@@ -108,8 +99,8 @@ footer { border-top:1px solid var(--line); padding-block:20px 30px; color:var(--
 <tbody id="local-rows"></tbody></table></div>
 </div>
 </section>
-<section id="run">
-<h2>Run and replay on a Linux CPU</h2>
+<section id="run" class="site-section">
+<div class="site-section-head"><h2>Run and replay on a Linux CPU</h2></div>
 <p>Use a knlp checkout that includes the DiskGraph page-cache changes. The build needs Git, a C toolchain with liburing headers, Rustup, uv and knlp's Python Kconfig dependencies. The live fixture also needs a kernel that permits <code>io_uring</code>. The first build compiles the pinned native package and needs several GB of free disk. The fixture uses standard Linux buffered I/O.</p>
 <pre><code>make defconfig-diskgraph-page-cache
 make</code></pre>
@@ -126,8 +117,8 @@ make diskgraph-run DISKGRAPH_RUN=build/diskgraph/fixture-device \
 make diskgraph-report DISKGRAPH_RUN=build/diskgraph/fixture-device</code></pre>
 <p>To replay a capture from another machine, point <code>DISKGRAPH_CAPTURE</code> to its <code>intent.jsonl</code>. Replay materializes new files with the recorded sizes and deterministic filler. It checks lengths and repeat checksums without opening the source graph or rebuilding DiskGraph. The trace contains file aliases, lengths, offsets, groups and monotonic times. Those access patterns can still be confidential. Share trace files only with the necessary authorization. <a href="https://github.com/SamsungDS/ebpf-syscall/tree/ebpf-fixes/examples/replay">ebpf-syscall replay tools</a></p>
 </section>
-<section id="kernel">
-<h2>Use Buffered for the reference-free read test</h2>
+<section id="kernel" class="site-section">
+<div class="site-section-head"><h2>Use Buffered for the reference-free read test</h2></div>
 <p>Draft Buffered DiskGraph sends file reads through the Linux page cache. The default released mmap route also uses the page cache, but its mapped loads do not enter <code>filemap_read()</code>. It is a useful control for a buffered-only kernel change. The harness adds opt-in instrumentation to draft commit <code>acaa797a2779</code>. <a href="https://github.com/NVIDIA/kumo-engine/pull/169">Draft DiskGraph I/O implementation</a></p>
 <p>On each kernel, run the same capture once with checking enabled. Confirm the request size mix, completed bytes and returned features. Then time the live workload with intent recording and the feature audit disabled. Compare the immediate repeat separately from the opening pass. Keep the filesystem, pin, cache policy, cohort, threads and queue depth fixed across boots.</p>
 <pre><code>make diskgraph-run DISKGRAPH_RUN=build/diskgraph/base-buffered \
@@ -143,7 +134,7 @@ make diskgraph-replay DISKGRAPH_REPLAY_MODE=pread DISKGRAPH_CLIENTS=8 \
 <div class="callout"><p>Check that hot reads actually take the experimental copy path on the kernel revision you test. Report fast-path hits or fallbacks, warm wall time and CPU time, and confirm low device traffic during the measured repeat. This page establishes the workload and replay. Kernel A/B results are still open. <a href="https://lists.openwall.net/linux-kernel/2026/11/04/1801">Reference-free filemap RFC</a></p></div>
 </section>
 </main>
-<footer>CPU sampling, trace collection and generated-file replay use the same pinned knlp entry point.</footer>
+<footer class="site-footer site-wrap"><p>CPU sampling, trace collection and generated-file replay use the same pinned knlp entry point.</p></footer>
 <script>
 "use strict";
 const input = document.querySelector("#receipt");
