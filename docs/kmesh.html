@@ -128,6 +128,13 @@ hints, and a gateway that passes on a client's cache lifetime are others.
 The SGLang path also needs LMCache's SGLang integration to read the hints
 that SGLang now forwards. This page does not propose how LMCache should
 act on a hint.</p>
+<p>A producer must also choose each hint's duration. The
+<a href="https://kvcache.io/agentic-kv-economics.html">idle-context cost
+model</a> compares the cost of keeping one context in host memory or on
+storage for 5 minutes to 72 hours with the cost of computing it again once,
+and uses the return times in the Copilot release to estimate how often the
+kept context is used. Its prices, speeds and return rates are editable
+assumptions, not measurements.</p>
 </section>
 
 <section id="direction">
@@ -153,7 +160,7 @@ into GPU memory.</p>
 <div class="table-wrap"><table>
 <caption>Status of each line of work at closing</caption>
 <tr><th scope="col">Work</th><th scope="col">Status</th><th scope="col">Reason</th></tr>
-<tr><td class="hi">Restoring a resumed turn's own context</td><td>Closed; fix upstream</td><td>It carries the idle tokens in the traces. The LMCache store gap that it exposed is fixed in <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a>. Which contexts to keep moves to the <a href="#kv-retain">kv.retain outlook</a>.</td></tr>
+<tr><td class="hi">Restoring a resumed turn's own context</td><td>Closed; fix upstream</td><td>It carries the idle tokens in the traces. The fix for the LMCache store gap that it exposed is in review as <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a>. Which contexts to keep moves to the <a href="#kv-retain">kv.retain outlook</a>.</td></tr>
 <tr><td class="hi">Early preparation for subagent waits</td><td>Moves to the outlook</td><td>This is the one resume with notice. The parent's next request comes a median of 8.6 s after its subagent ends, and the parent's context has a median of 229K tokens. These waits carry 0.68% of the main agent's input tokens. A subagent is one kind of tool call, so the <a href="#tool-wait">tool-wait outlook</a> covers it.</td></tr>
 <tr><td class="hi">Singleflight</td><td>Done</td><td>It is a cheap guard for the rare wide launch.</td></tr>
 <tr><td class="hi">DMA-BUF reads into GPU memory</td><td>Continues outside KMesh</td><td>In the <a href="kmesh-recovery.html#serial">recovery comparison</a>, read-call time fell 3.7% and complete restoration was faster in only four of seven pairs, so latency is the wrong argument. The path removes host staging copies and CPU work. The next measure is CPU time and host-memory bandwidth per GB restored, in the LMCache DMA-BUF storage work.</td></tr>
