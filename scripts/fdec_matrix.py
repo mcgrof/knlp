@@ -418,25 +418,57 @@ def smoothquant_transform(model, tok, calib, alpha, device, seqlen=1024, nsample
         torch.cuda.empty_cache()
 
 
+def fp32_attention(
+    module, query, key, value, attention_mask, scaling, dropout=0.0, v_fp8=False, **kw
+):
+    """Eager attention with the arithmetic of a fused serving kernel.
+
+    A fused attention kernel accumulates the query-key product in float32,
+    applies the softmax to those scores, accumulates the weighted value sum
+    in float32, and rounds only its output to the model dtype.  The stock
+    eager function rounds the query-key product to the model dtype before
+    the softmax.  bf16 keeps 8 significant bits, so a score near 700 moves
+    in steps of 4.
+
+    That rounding is harmless on a model with small scores and severe on
+    one with large scores.  Measured in bf16 on WikiText-2 test at 512
+    tokens: Qwen2.5-7B has a mean absolute score of 713 in its last layer;
+    its perplexity is 7.46 with the default attention path, 8.84 with the
+    stock eager function and 7.46 with this function, and it solves 24, 7
+    and 25 of 32 GSM8K problems.  Llama-3.2-3B and Qwen3-8B have scores
+    below 50 and all three paths agree within 0.03 in perplexity.
+
+    Every cell of a comparison must use this function, the unmodified
+    model included.
+
+    With v_fp8 the values pass through FP8 (e4m3) with one scale per tensor
+    and the keys stay at 16 bits: the asymmetric K16/V8 cache."""
+    g = module.num_key_value_groups
+    ks = key.repeat_interleave(g, dim=1).float()
+    vs = value.repeat_interleave(g, dim=1).float()
+    if v_fp8:
+        scale = vs.abs().amax().clamp(min=1e-6) / 448.0
+        vs = (vs / scale).to(torch.float8_e4m3fn).float() * scale
+    aw = torch.matmul(query.float(), ks.transpose(2, 3)).mul_(scaling)
+    if attention_mask is not None:
+        aw += attention_mask[:, :, :, : ks.shape[-2]]
+    aw = F.softmax(aw, dim=-1)
+    out = torch.matmul(aw, vs).to(query.dtype)
+    return out.transpose(1, 2).contiguous(), aw
+
+
 def asym_kv_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):
-    """Eager attention with K16/V8: keep keys bf16, quantize values to fp8 e4m3."""
-    g = module.num_key_value_groups
-    ks = key.repeat_interleave(g, dim=1)
-    vs = value.repeat_interleave(g, dim=1)
-    # V -> fp8 e4m3 -> bf16 (per-tensor scale); K untouched
-    scale = vs.abs().amax().clamp(min=1e-6) / 448.0
-    vs = (vs / scale).to(torch.float8_e4m3fn).to(vs.dtype) * scale
-    aw = torch.matmul(query, ks.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        aw = aw + attention_mask[:, :, :, : ks.shape[-2]]
-    aw = F.softmax(aw, dim=-1, dtype=torch.float32).to(query.dtype)
-    out = torch.matmul(aw, vs).transpose(1, 2).contiguous()
-    return out, aw
+    """K16/V8: keep keys at 16 bits, pass values through FP8 (e4m3)."""
+    return fp32_attention(
+        module, query, key, value, attention_mask, scaling, v_fp8=True
+    )
 
 
-def install_asym_kv(model):
+def install_attention(model, fn):
+    """Route every attention layer of the model through fn.  Returns the
+    functions it replaced, for restore()."""
     model.config._attn_implementation = "eager"
     mods = set()
     for m in model.modules():
@@ -447,8 +479,19 @@ def install_asym_kv(model):
         mod = sys.modules.get(mn)
         if mod is not None and hasattr(mod, "eager_attention_forward"):
             saved[mn] = mod.eager_attention_forward
-            mod.eager_attention_forward = asym_kv_attention
+            mod.eager_attention_forward = fn
     return saved
+
+
+def install_fp32_attention(model):
+    """Reference attention for the unmodified model and every brick cell."""
+    saved = install_attention(model, fp32_attention)
+    assert saved, "found no eager attention function to replace"
+    return saved
+
+
+def install_asym_kv(model):
+    return install_attention(model, asym_kv_attention)
 
 
 def restore(saved):
@@ -640,6 +683,7 @@ def main():
         args.model, dtype=getattr(torch, args.dtype), attn_implementation="eager"
     ).to(device)
     model.eval()
+    install_fp32_attention(model)
 
     prompts = [
         "The history of the printing press begins when",

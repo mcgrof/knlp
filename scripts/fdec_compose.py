@@ -29,6 +29,12 @@ Two shadow artifacts are measured for each `cert` cell: one built from the
 unmodified model ("reused") and one rebuilt from the cell's own model
 ("matched"). The certificate is exact with either; only the bytes differ.
 
+Attention in every cell, the unmodified model included, accumulates the
+query-key scores and the weighted value sum in float32 and rounds only the
+output to the model dtype, as a fused serving kernel does.  The stock eager
+attention function rounds the scores to bf16 first, which degrades a model
+with large attention scores (see fp32_attention in fdec_matrix.py).
+
 Composition rule: a cell composes when it runs, its certificate (if present)
 matches the dense argmax at every position, and its log-perplexity increase is
 within `--interaction-tol` of the sum of its bricks' solo increases.
@@ -57,6 +63,7 @@ from fdec_matrix import (  # noqa: E402
     _fake_quant_groupwise,
     _find_decoder_layers,
     install_asym_kv,
+    install_fp32_attention,
     restore,
 )
 from h6_oracle_scan import build_idblock  # noqa: E402
@@ -221,6 +228,9 @@ def main():
         args.model, dtype=getattr(torch, args.dtype), attn_implementation="eager"
     ).to(device)
     model.eval()
+    # Every cell, the unmodified model included, computes attention the way a
+    # fused serving kernel does: float32 inside, output in the model dtype.
+    install_fp32_attention(model)
     head = model.get_output_embeddings()
     assert getattr(head, "bias", None) is None, "certificate assumes a bias-free head"
     W_U = head.weight.detach()
@@ -345,6 +355,9 @@ def main():
         "calibration": {"source": "wikitext-2 train", "tokens": int(calib_ids.numel())},
         "cert": {"rank": r, "bits": args.cert_bits, "clusters": args.cert_clusters},
         "w8_group": args.w8_group,
+        "attention": "float32 scores, softmax and value sum; output in model dtype",
+        "dtype": args.dtype,
+        "torch": torch.__version__,
         "ctx": args.ctx,
         "interaction_tol": args.interaction_tol,
         "baseline_ppl": base_ppl,
