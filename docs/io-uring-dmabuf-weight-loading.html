@@ -159,6 +159,35 @@ every tensor to a 16-byte boundary
 vLLM's should keep the default. On the newer kernel branch described
 under <a href="#kernel">kernel requirements</a>, the copier took 2.11 to
 2.14 s, 7 to 8% faster than <code>nogds</code>.</p>
+<h3 id="why-faster">Why the copier is faster</h3>
+<p>The copier is faster because the drive gets larger commands. We traced
+cold loads of three checkpoints on the newer kernel branch. For each
+load we recorded every NVMe command, every system call and every
+io_uring event between the start and the end of the load. The drive
+limits for one command are different for the two readers. A normal read
+command can carry at most 128 KiB. A DMA-BUF read command can carry
+2 MiB. The copier's reads therefore reach the drive as 2 MiB commands.
+<code>nogds</code> reads 516 KiB per <code>pread64</code> call, and the
+drive gets four 128 KiB commands and one 4 KiB command for each call.
+The extra 4 KiB per call also makes <code>nogds</code> read 0.8% more
+bytes than the files hold.</p>
+<div class="scroll"><table>
+<caption>Cold loads with tracing, Qwen2.5-7B (15.2 GB, four shards)</caption>
+<thead><tr><th scope="col">Reader</th><th scope="col">NVMe commands</th><th scope="col">Bytes from the drive</th><th scope="col">Drive rate</th><th scope="col">System calls, threads</th><th scope="col">Load time (s)</th></tr></thead>
+<tbody>
+<tr><td>DMA-BUF copier</td><td class="yes">7,260 of 2 MiB</td><td>15.233 GB (+0.02%)</td><td class="yes">7.2 GB/s</td><td>451 on 3 threads</td><td class="yes">2.121, 2.109</td></tr>
+<tr><td>fastsafetensors nogds</td><td>116,212 of 128 KiB and 29,064 of 4 KiB</td><td>15.352 GB (+0.8%)</td><td>6.8 GB/s</td><td>58,914 on 19 threads</td><td>2.252, 2.275</td></tr>
+</tbody></table></div>
+<p>The drive had a command outstanding for 99% of each load with both
+readers. The drive is the limit, so its rate per command size sets the
+load time. The copier was 7.6% faster on Qwen3-0.6B (1.5 GB), 8.2% faster
+on Qwen2.5-7B, and 6.0% faster on a 27 GB mixture-of-experts checkpoint
+(EMO 1b14b, BF16, eleven shards). On the 27 GB checkpoint the drive read
+7.2 GB/s for the copier and 7.0 GB/s for <code>nogds</code>. All 24 loads
+matched the file digests. Tracing changed the load times by between -2%
+and +0.5%, which is less than the difference between the readers. The
+copier also makes far fewer system calls. We did not measure host CPU
+time, so we do not claim a CPU saving.</p>
 <h3>Details we found on the way</h3>
 <ul>
 <li><strong>Registration size.</strong> The kernel refuses a DMA-BUF larger
@@ -172,8 +201,12 @@ free: on a nearly full GPU, 20 of 20 new allocations succeeded, each in
 about 42 ms. vLLM 0.18.1's loading loop holds one extra shard for both readers; the
 copier itself needs no more live memory than <code>nogds</code>.</li>
 <li><strong>Worker threads.</strong> On XFS, io_uring sends every DMA-BUF
-read to a kernel worker thread. A trace counted 228 of 228 reads.
-Different worker limits did not change the load time.</li>
+read to a kernel worker thread. A trace counted 228 of 228 reads, and
+one worker thread issued every 2 MiB command. The copier does not ask for
+this. The likely cause is that the block layer will not split a large
+non-blocking read, but we have not confirmed it. Different worker limits
+did not change the load time on one drive. With several drives, check
+whether one worker per ring is enough.</li>
 <li><strong>Consumer NVIDIA GPUs.</strong> A GeForce GPU with driver
 615.71.09 reports <code>CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED = 0</code>,
 and CUDA refuses the export (error 801). The copier falls back to
