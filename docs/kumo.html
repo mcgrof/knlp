@@ -39,7 +39,7 @@
           <h3><a href="kumo-diskgraph-page-cache.html">Page-cache read intent and replay</a></h3>
           <p>Capture the buffered file offsets, lengths and submission groups. Replay those requests with <code>pread</code> or <code>io_uring</code> using generated files.</p>
           <p class="site-card-progress"><strong>Measured on RelBench Stack</strong> Each 512-root pass submitted 158,718 buffered file requests. The cold pass read 258.49 MB from the tracked edge files on NVMe. The warm repeat issued zero NVMe reads to those files.</p>
-          <div class="site-card-links"><a href="kumo-diskgraph-page-cache.html#measurements">Measurements</a><a href="kumo-diskgraph-page-cache.html#run">Reproduce</a></div>
+          <div class="site-card-links"><a href="kumo-diskgraph-page-cache.html#io-sizes">I/O size visualizer</a><a href="kumo-diskgraph-page-cache.html#measurements">Measurements</a><a href="kumo-diskgraph-page-cache.html#run">Reproduce</a></div>
         </article>
         <article class="site-card">
           <h3><a href="kumo-diskgraph-page-cache.html#kernel">Linux buffered-read kernel comparison</a></h3>

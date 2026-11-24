@@ -37,8 +37,21 @@ label { font-weight: 650; display: block; }
 input[type="file"] { padding: 8px 0; max-width: 100%; font: inherit; }
 input::file-selector-button { padding: 5px 10px; margin-right: 8px; border: 1px solid var(--site-border); border-radius: 6px; background: var(--site-bg); color: var(--site-text); font: inherit; }
 input::file-selector-button:hover { background: var(--site-border); }
+.size-controls { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 16px; }
+.size-controls label { min-width: 0; max-width: 100%; }
+.size-controls select { display: block; max-width: 100%; margin-top: 4px; padding: 7px 10px; border: 1px solid var(--site-border); border-radius: 6px; background: var(--site-bg); color: var(--site-text); font: inherit; }
+.size-chart { list-style: none; margin: 0; padding: 0; }
+.size-chart .bar-row { grid-template-columns: 6.5rem minmax(0, 1fr) 9.5rem; }
+.size-chart .bar span { background: var(--site-amber); }
+.size-chart .value { white-space: nowrap; font-size: .9rem; }
+.size-chart .value small { color: var(--site-muted); font-weight: 400; }
+.size-caption { max-width: 82ch; margin-top: 14px; }
+.size-details { margin-bottom: 16px; }
+.size-details summary { width: fit-content; color: var(--site-amber); cursor: pointer; }
 @media (max-width:440px) {
   .bar-row { grid-template-columns: minmax(96px, 1fr) minmax(0, 1fr) 4.5rem; font-size: .82rem; gap: 6px; }
+  .size-chart .bar-row { grid-template-columns: 4.5rem minmax(0, 1fr) 7rem; }
+  .size-chart .value { font-size: .78rem; }
 }
 </style>
 </head>
@@ -48,6 +61,7 @@ input::file-selector-button:hover { background: var(--site-border); }
   <a class="site-brand" href="index.html" aria-label="knlp home">knlp</a>
   <nav class="site-nav-links" aria-label="Page navigation">
     <a href="kumo.html">Kumo R&amp;D</a>
+    <a href="#io-sizes">I/O sizes</a>
     <a href="#measurements">Measurements</a>
     <a href="#run">Run</a>
     <a href="#kernel">Kernel A/B</a>
@@ -58,6 +72,46 @@ input::file-selector-button:hover { background: var(--site-border); }
 <section class="site-hero" aria-labelledby="intro-title">
 <h1 id="intro-title">Record DiskGraph read intent before the page cache</h1>
 <p class="site-lead">Run a temporal graph workload on a Linux CPU. Save the file reads DiskGraph asks for, compare them with actual NVMe traffic, and replay the same requests on a second kernel using generated files. A GPU and model weights are unnecessary.</p>
+<div class="site-actions"><a class="site-button primary" href="#io-sizes">See captured I/O sizes</a></div>
+</section>
+<section id="io-sizes" class="site-section">
+<div class="site-section-head"><h2>Which DiskGraph read sizes dominate?</h2></div>
+<p>These are the Buffered file-read lengths captured before <code>io_uring</code> submission and page-cache lookup.</p>
+<figure class="graph" id="size-figure" aria-labelledby="size-caption" hidden>
+  <div class="size-controls">
+    <label for="size-source">Workload or pass
+      <select id="size-source">
+        <option value="stack">RelBench Stack</option>
+        <option value="fixture">Synthetic fixture</option>
+        <optgroup id="receipt-passes" label="Local analysis receipt" hidden></optgroup>
+      </select>
+    </label>
+    <label for="size-metric">Rank sizes by
+      <select id="size-metric">
+        <option value="requests">Request count</option>
+        <option value="bytes">Requested bytes</option>
+      </select>
+    </label>
+  </div>
+  <ol class="size-chart" id="size-bars" aria-label="Largest I/O size categories"></ol>
+  <figcaption class="size-caption" id="size-caption" aria-live="polite"></figcaption>
+</figure>
+<details class="size-details" id="size-details" hidden>
+  <summary>Exact counts for every captured request size</summary>
+  <div class="table"><table>
+    <thead><tr><th scope="col">Request size</th><th scope="col">Requests</th><th scope="col">Requested bytes</th></tr></thead>
+    <tbody id="size-rows"></tbody>
+  </table></div>
+</details>
+<p>In the RelBench Stack <code>user-engagement</code> run, <strong>4 KiB reads made up 88.0% of requests and 74.9% of requested bytes</strong>. The graph planner recorded 475,367 of 475,815 logical ranges below 4 KiB. Page alignment and coalescing produced file reads from 4 to 64 KiB. Each published histogram covers one 512-root pass. The cold and warm passes had identical counts at every size.</p>
+<div class="callout">
+<label for="receipt">Visualize your own <code>analysis.json</code></label>
+<input id="receipt" type="file" accept="application/json,.json">
+<p id="receipt-status" role="status">The browser reads the receipt locally. Each captured pass becomes a choice in the chart.</p>
+<div class="table" id="local-table" hidden><table>
+<thead><tr><th scope="col">Pass</th><th scope="col">Distinct planner bytes</th><th scope="col">Buffered requests</th><th scope="col">NVMe read bytes</th></tr></thead>
+<tbody id="local-rows"></tbody></table></div>
+</div>
 </section>
 <section id="layers" class="site-section">
 <div class="site-section-head"><h2>What each observer sees</h2></div>
@@ -90,14 +144,6 @@ input::file-selector-button:hover { background: var(--site-border); }
 </div>
 <p>On a second capture of the same fixture, native buffered <code>pread</code> and <code>io_uring</code> replay each completed 42,414 captured file requests and 390,356,164 bytes per pass. Both modes returned the same per-lane checksums on generated files. The replay drains each recorded submission group, preserving requests and their grouping while leaving the original overlap and timing to the live workload.</p>
 <p>The public RelBench Stack <code>user-engagement</code> test repeated the result with real graph data. Each 512-root pass requested 42.19 MB of distinct planner ranges and submitted 158,718 Buffered file reads. The cold pass issued 60,363 attributed edge-file NVMe reads totaling 258.49 MB, or 6.13 times the distinct planner bytes. The repeat issued zero attributed edge-file NVMe reads. The namespace carried 0.82 MB and 0.066 MB of unrelated reads in the two windows. No excluded read overlapped a tracked edge extent. Buffered and mmap returned the same feature multiset for both workloads. Replaying the real capture through either native reader completed 317,436 requests and 1,527,685,120 bytes per pass with matching checksums.</p>
-<div class="callout">
-<label for="receipt">Inspect your analysis.json</label>
-<input id="receipt" type="file" accept="application/json,.json">
-<p id="receipt-status" role="status">The browser reads your file locally.</p>
-<div class="table" id="local-table" hidden><table>
-<thead><tr><th scope="col">Pass</th><th scope="col">Distinct planner bytes</th><th scope="col">Buffered requests</th><th scope="col">NVMe read bytes</th></tr></thead>
-<tbody id="local-rows"></tbody></table></div>
-</div>
 </section>
 <section id="run" class="site-section">
 <div class="site-section-head"><h2>Run and replay on a Linux CPU</h2></div>
@@ -105,6 +151,10 @@ input::file-selector-button:hover { background: var(--site-border); }
 <pre><code>make defconfig-diskgraph-page-cache
 make</code></pre>
 <p>The default runs a synthetic graph through draft Buffered DiskGraph, records both intent layers, checks sampled timestamps, writes an analysis receipt and runs a buffered <code>pread</code> replay. <code>build/diskgraph/fixture-buffered/</code> contains <code>intent.jsonl</code>, <code>live.json</code> and <code>analysis.json</code>. Each new live capture uses a new output directory.</p>
+<p>Open <code>analysis.json</code> in the <a href="#io-sizes">size visualizer</a> or inspect the size counts and the first recorded request with <code>jq</code>. The histogram keys are requested lengths in bytes before end-of-file clipping. Each trace entry in <code>reads</code> is a three-element array of file alias, byte offset and requested byte length.</p>
+<pre><code>run=build/diskgraph/fixture-buffered
+jq '.passes[] | {pass, io_uring_request_size_histogram}' "$run/analysis.json"
+jq -nc 'first(inputs | select(.event == "read_batch") | .reads[])' "$run/intent.jsonl"</code></pre>
 <pre><code>make diskgraph-replay DISKGRAPH_REPLAY_MODE=uring
 make diskgraph-run DISKGRAPH_DATASET=rel-stack
 make diskgraph-report DISKGRAPH_DATASET=rel-stack
@@ -135,26 +185,122 @@ make diskgraph-replay DISKGRAPH_REPLAY_MODE=pread DISKGRAPH_CLIENTS=8 \
 </section>
 </main>
 <footer class="site-footer site-wrap"><p>CPU sampling, trace collection and generated-file replay use the same pinned knlp entry point.</p></footer>
+<script type="application/json" id="published-sizes">
+{
+  "stack": {
+    "4096": 139733, "8192": 13897, "12288": 3190, "16384": 1091, "20480": 430, "24576": 179,
+    "28672": 90, "32768": 33, "36864": 23, "40960": 11, "45056": 10, "49152": 2,
+    "53248": 2, "57344": 1, "61440": 1, "65536": 25
+  },
+  "fixture": {
+    "4096": 14572, "8192": 2856, "12288": 983, "16384": 523, "20480": 380, "24576": 286,
+    "28672": 218, "32768": 213, "36864": 178, "40960": 127, "45056": 107, "49152": 90,
+    "53248": 67, "57344": 54, "61440": 55, "65536": 498
+  }
+}
+</script>
 <script>
 "use strict";
 const input = document.querySelector("#receipt");
 const status = document.querySelector("#receipt-status");
+const receiptHint = status.textContent;
 const output = document.querySelector("#local-rows");
 const table = document.querySelector("#local-table");
+const source = document.querySelector("#size-source");
+const metric = document.querySelector("#size-metric");
+const bars = document.querySelector("#size-bars");
+const sizeRows = document.querySelector("#size-rows");
+const caption = document.querySelector("#size-caption");
+const receiptPasses = document.querySelector("#receipt-passes");
+const published = JSON.parse(document.querySelector("#published-sizes").textContent);
 const number = new Intl.NumberFormat();
+const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
+const mib = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const display = value => Number.isFinite(value) ? number.format(value) : "Unavailable";
+let local = {};
+
+function sizeLabel(bytes) {
+  return bytes % 1024 === 0 ? display(bytes / 1024) + " KiB" : display(bytes) + " B";
+}
+
+function sizeEntries(histogram) {
+  return Object.entries(histogram ?? {}).map(([size, count]) => [Number(size), count])
+    .filter(([size, count]) => Number.isSafeInteger(size) && size > 0 && Number.isSafeInteger(count) && count > 0);
+}
+
+function renderSizes() {
+  const entries = sizeEntries(published[source.value] ?? local[source.value]);
+  const byBytes = metric.value === "bytes";
+  const measure = ([size, count]) => byBytes ? size * count : count;
+  const total = entries.reduce((sum, row) => sum + measure(row), 0);
+  entries.sort((left, right) => measure(right) - measure(left) || left[0] - right[0]);
+  bars.replaceChildren();
+  sizeRows.replaceChildren();
+
+  const top = entries.slice(0, 6).map(row => [sizeLabel(row[0]), measure(row)]);
+  if (entries.length > top.length) {
+    top.push(["Other sizes", entries.slice(top.length).reduce((sum, row) => sum + measure(row), 0)]);
+  }
+  for (const [label, amount] of top) {
+    const item = document.createElement("li");
+    item.className = "bar-row";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const bar = document.createElement("span");
+    bar.className = "bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.style.setProperty("--pct", (100 * amount / total) + "%");
+    bar.append(fill);
+    const value = document.createElement("span");
+    value.className = "value";
+    const count = document.createElement("small");
+    count.textContent = byBytes ? mib.format(amount / 1048576) + " MiB" : display(amount);
+    value.append(count, " · " + percent.format(amount / total));
+    item.append(name, bar, value);
+    bars.append(item);
+  }
+
+  for (const [size, count] of entries.sort((left, right) => left[0] - right[0])) {
+    const row = sizeRows.insertRow();
+    const label = document.createElement("th");
+    label.scope = "row";
+    label.textContent = sizeLabel(size);
+    row.append(label);
+    row.insertCell().textContent = display(count);
+    row.insertCell().textContent = display(size * count);
+  }
+  const unit = byBytes ? "requested bytes" : "requests";
+  caption.textContent = display(total) + " " + unit + " in this pass. Bars show each size’s share of the total. Lengths are measured before end-of-file clipping.";
+}
+
+source.addEventListener("change", renderSizes);
+metric.addEventListener("change", renderSizes);
+renderSizes();
+document.querySelector("#size-figure").hidden = false;
+document.querySelector("#size-details").hidden = false;
+
 input.addEventListener("change", async () => {
   table.hidden = true;
   output.replaceChildren();
+  if (source.value.startsWith("receipt-")) source.value = "stack";
+  receiptPasses.replaceChildren();
+  receiptPasses.hidden = true;
+  local = {};
+  renderSizes();
   const file = input.files[0];
-  if (!file) return;
+  if (!file) {
+    status.textContent = receiptHint;
+    return;
+  }
   try {
     const report = JSON.parse(await file.text());
+    if (input.files[0] !== file) return;
     if (!Array.isArray(report.passes) || !report.passes.length ||
         !report.passes.every(row => Number.isFinite(row.io_uring_requests))) {
       throw new Error("This file is not a DiskGraph analysis receipt.");
     }
-    for (const row of report.passes) {
+    for (const [index, row] of report.passes.entries()) {
       const tr = document.createElement("tr");
       const values = [row.pass, row.planner_distinct_bytes, row.io_uring_requests,
                       row.nvme ? (row.nvme.payload_bytes ?? 0) : null];
@@ -165,11 +311,24 @@ input.addEventListener("change", async () => {
         tr.append(cell);
       }
       output.append(tr);
+      if (sizeEntries(row.io_uring_request_size_histogram).length) {
+        const key = "receipt-" + index;
+        local[key] = row.io_uring_request_size_histogram;
+        const label = Number.isFinite(row.pass) ? row.pass : index + 1;
+        receiptPasses.append(new Option("Local receipt · pass " + label, key));
+      }
     }
     table.hidden = false;
-    status.textContent = file.name + " loaded.";
+    receiptPasses.hidden = !receiptPasses.children.length;
+    if (receiptPasses.hidden) {
+      status.textContent = file.name + " loaded. This receipt has no request-size histogram.";
+    } else {
+      source.value = receiptPasses.firstElementChild.value;
+      renderSizes();
+      status.textContent = file.name + " loaded. The chart shows the first available pass.";
+    }
   } catch (error) {
-    status.textContent = error.message;
+    if (input.files[0] === file) status.textContent = error.message;
   }
 });
 </script>
