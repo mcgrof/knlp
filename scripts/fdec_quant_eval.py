@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fdec_matrix import (  # noqa: E402
     fim_fake_quant,
     gptq_quantize_model,
+    install_fp32_attention,
     smoothquant_transform,
 )
 
@@ -163,6 +164,11 @@ def load_model(model_id, device, dtype):
         model_id, dtype=getattr(torch, dtype), attn_implementation="eager"
     ).to(device)
     m.eval()
+    # The stock eager function rounds the attention scores to the model dtype
+    # before the softmax, which degrades the reference on a model with large
+    # scores (Qwen2.5).  Compute attention in float32 for the reference and
+    # for every quantized configuration.
+    install_fp32_attention(m)
     return m
 
 
