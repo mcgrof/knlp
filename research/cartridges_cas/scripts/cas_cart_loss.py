@@ -47,6 +47,12 @@ Env:
     PACKED_LEN tokens per packed sequence (default 2048, as before)
     PACKING_MODE truncate (default, as before) or pad; match the
                trainer's settings to read the same loss it reports
+    W8         1 to read every cartridge with an int8-weight model: each
+               linear layer in the decoder blocks is rounded to a
+               group-wise int8 grid (W8_GROUP weights per scale, default
+               128) before scoring. The cartridge was trained against the
+               full-precision model, so this asks whether it survives a
+               quantized reader.
 
 Prints one ``CART_LOSS,<name>,<loss>,<loss_info>,<loss_rest>,<entries>``
 line per cartridge and ``CART_LOSS_DONE`` at the end.
@@ -85,6 +91,29 @@ DEVICE = os.environ.get("DEVICE", "cuda")
 SEQ_LEN = int(os.environ.get("PACKED_LEN", "2048"))
 PACKING_MODE = os.environ.get("PACKING_MODE", "truncate")
 assert PACKING_MODE in ("truncate", "pad"), "PACKING_MODE: truncate or pad"
+W8 = os.environ.get("W8", "0") == "1"
+W8_GROUP = int(os.environ.get("W8_GROUP", "128"))
+
+
+@torch.no_grad()
+def quantize_weights_int8(model, group):
+    """Round every decoder-block linear weight to a group-wise symmetric
+    int8 grid, in place. Returns the number of layers changed."""
+    n = 0
+    for layer in model.model.layers:
+        for m in layer.modules():
+            if not isinstance(m, torch.nn.Linear):
+                continue
+            w = m.weight.data.float()
+            out, inn = w.shape
+            assert inn % group == 0, f"input dim {inn} not divisible by {group}"
+            wg = w.view(out, inn // group, group)
+            scale = (wg.abs().amax(dim=-1, keepdim=True) / 127).clamp(min=1e-8)
+            q = torch.round(wg / scale).clamp(-127, 127) * scale
+            m.weight.data = q.view(out, inn).to(m.weight.dtype)
+            n += 1
+    assert n > 0, "W8=1 but no linear layer was quantized"
+    return n
 
 
 def parse_carts(items):
@@ -184,6 +213,9 @@ def main():
         .to(torch.bfloat16)
     )
     model.eval()
+    if W8:
+        n_q = quantize_weights_int8(model, W8_GROUP)
+        print(f"[cart-loss] int8 weights on {n_q} linear layers", flush=True)
     attn = AttnConfig(
         n_layers=model.config.num_hidden_layers,
         n_heads=model.config.num_key_value_heads,
@@ -204,6 +236,7 @@ def main():
         "parquet": os.path.abspath(PARQUET),
         "limit": LIMIT,
         "seed": SEED,
+        "int8_weights": W8,
         "n_rows": len(dataset.elements),
         "n_packed": len(dataset),
         "carts": {},
