@@ -21,7 +21,7 @@
 </nav></header>
 <main id="content">
 <div class="hero">
-<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 2 November 2026</span>
+<span class="eyebrow">io_uring + DMA-BUF · Experimental · Updated 23 November 2026</span>
 <h1>Loading model weights straight into GPU memory</h1>
 <p class="lead"><strong>vLLM can load a model from NVMe directly into GPU
 memory, with no copy through host memory, and serve the same output as
@@ -60,7 +60,13 @@ that an error.</p>
 cannot ask for the new copier directly. Set
 <code>FASTSAFETENSORS_USE_DMABUF=1</code> to select it without changes to
 vLLM.</p>
-<p>The code is three commits on the
+<p>By default the copier leaves each tensor where the file puts it,
+at its file offset modulo 4 KiB, as a memory-mapped file would. vLLM and
+other engines that copy weights into their own parameters need nothing
+more. A loader that runs kernels directly on the loaded buffer can call
+<code>set_align(4096)</code>; see
+<a href="dmabuf-tensor-alignment.html">tensor alignment in DMA-BUF loads</a>.</p>
+<p>The code is five commits on the
 <a href="https://github.com/mcgrof/fastsafetensors/tree/2026-10-28-iouring-dma-buf">2026-10-28-iouring-dma-buf</a>
 branch of our fastsafetensors fork, on top of the 0.5.0 release. It is
 not yet a pull request upstream. We proposed it to the fastsafetensors
@@ -86,7 +92,7 @@ case; see <a href="#value">why it matters at scale</a>.</p>
 <tr><td>GPU</td><td>AMD RDNA3 workstation GPU, PCIe Gen4 x16, ROCm 6.4.3, PyTorch 2.9.1</td></tr>
 <tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 2 MiB largest DMA-BUF command</td></tr>
 <tr><td>File system</td><td>XFS</td></tr>
-<tr><td>Kernel</td><td>Linux 7.3-rc2 with the <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a> branch (see <a href="#kernel">kernel requirements</a>)</td></tr>
+<tr><td>Kernel</td><td>Linux 7.3-rc2 with the <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a> branch; the rerun on the current fastsafetensors tip used the same branch plus unrelated NFS client patches (see <a href="#kernel">kernel requirements</a>)</td></tr>
 <tr><td>Model</td><td>Qwen2.5-7B-Instruct, BF16, four shards, 15.23 GB, 339 tensors</td></tr>
 <tr><td>Serving engine</td><td>vLLM 0.18.1 (ROCm build), one GPU, eager mode</td></tr>
 </tbody></table></div>
@@ -142,6 +148,15 @@ current vLLM does, outside the engine, and checked every tensor against
 a SHA-256 of the file bytes. Eleven loads with the DMA-BUF copier took
 2.18 to 2.21 s, and every tensor matched the file. <code>nogds</code> took
 2.28 to 2.34 s. Each shard was read as one piece with no configuration.</p>
+<p>We repeated this call on the current branch tip,
+<a href="https://github.com/mcgrof/fastsafetensors/commit/9f77b8c474b4dc99d22396280ce548f159a480e2"><code>9f77b8c</code></a>,
+with its default of no move: two runs of three cold loads per reader.
+The DMA-BUF copier took 2.17 to 2.21 s and <code>nogds</code> 2.28 to
+2.32 s, with every tensor matching the file. Asking the copier to move
+every tensor to a 16-byte boundary
+(<code>FASTSAFETENSORS_DMABUF_ALIGN=16</code>) cost about 70 ms on this
+15 GB model and cut its lead to about 30 ms. A copy-out loader such as
+vLLM's should keep the default.</p>
 <h3>Details we found on the way</h3>
 <ul>
 <li><strong>Registration size.</strong> The kernel refuses a DMA-BUF larger
@@ -242,7 +257,11 @@ the smallest patch set. Our results used the
 branch instead. It has the same series and the XFS RFC, plus ext4
 support and patches that let DMA-BUF reads use the drive's largest
 command size. With only the smallest set, reads can be split into
-smaller commands; we have not measured that difference.</span></div>
+smaller commands; we have not measured that difference. The later
+<a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-11-06-dmabuf-io-async-release">2026-11-06-dmabuf-io-async-release</a>
+branch builds on it and removes a wait of about 14 ms each time a
+DMA-BUF registration that did I/O is released. That should take about
+56 ms off this four-shard load; we have not measured it here.</span></div>
 <div class="step"><strong>Put the checkpoint on XFS on a PCIe NVMe namespace</strong><span>Only
 PCIe NVMe namespaces implement DMA-BUF I/O today. Software RAID (md),
 device-mapper volumes and NVMe multipath devices do not. To test several
