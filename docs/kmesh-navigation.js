@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Keep published question fragments working after the page split.
+// Keep published fragments working after the page splits.
 (() => {
   const pages = {
     "redundancies": "kmesh-design.html",
@@ -30,12 +30,22 @@
     "agent-traces": "kmesh-workloads.html",
     "fan-out": "kmesh-workloads.html",
     "resume": "kmesh-workloads.html",
-    "cascade-upstream": "kmesh-workloads.html"
+    "cascade-upstream": "kmesh-workloads.html",
+    "direction": "kmesh-introspection.html",
+    "grounding": "kmesh-introspection.html",
+    "cascade-offload": "kmesh-introspection.html",
+    "artifact-reuse": "kmesh-introspection.html",
+    "conclusions": "kmesh-introspection.html",
+    "questions": "kmesh-introspection.html",
+    "papers": "kmesh-introspection.html"
   };
 
   function followQuestion() {
     const anchor = window.location.hash.slice(1);
-    if (Object.prototype.hasOwnProperty.call(pages, anchor)) {
+    const page = (name) => name.replace(/\.html$/, "");
+    const here = page(window.location.pathname.split("/").pop());
+    if (Object.prototype.hasOwnProperty.call(pages, anchor) &&
+        page(pages[anchor]) !== here) {
       window.location.replace(pages[anchor] + "#" + anchor);
     }
   }

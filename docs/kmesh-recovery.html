@@ -10,20 +10,23 @@
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
-<header><nav aria-label="KMesh navigation">
-<a class="logo" href="https://knlp.io/">knlp</a>
-<span class="spacer"></span>
-<a href="kmesh.html">overview</a>
-<a href="kmesh-design.html">design</a>
-<a href="kmesh-baselines.html">baselines</a>
-<a href="kmesh-storage.html">storage</a>
-<a href="kmesh-retention.html">retention</a>
-<a href="kmesh-recovery.html" aria-current="page">recovery</a>
-<a href="kmesh-workloads.html">workloads</a>
-</nav></header>
+<header>
+  <nav aria-label="KMesh navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="kmesh.html">overview</a>
+    <a href="kmesh-introspection.html">introspection</a>
+    <a href="kmesh-design.html">design</a>
+    <a href="kmesh-baselines.html">baselines</a>
+    <a href="kmesh-storage.html">storage</a>
+    <a href="kmesh-retention.html">retention</a>
+    <a href="kmesh-recovery.html" aria-current="page">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
+  </nav>
+</header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Shared-state recovery</p>
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / <a href="kmesh-introspection.html">Introspection</a> / Shared-state recovery</p>
 <span class="eyebrow">Cache recovery and storage</span>
 <h1>Reusing shared context across processes and storage</h1>
 <p class="lead">Related requests often contain the same text at different
@@ -36,8 +39,8 @@ Most experiments here use a 0.5B model with 12 MiB of saved state per
 request. A long-context resume in the released agent traces holds about
 2,000 times more KV cache on a 70B model. The results show
 whether the mechanisms work and what they cost at small sizes. The
-<a href="kmesh.html#direction">overview</a> explains where the work goes
-next.</div>
+<a href="kmesh-introspection.html#direction">agentic workflow
+introspection</a> explains where each line of work went.</div>
 <h3>Shared source, request-specific model state</h3>
 <p>A language model saves attention state for text it has processed. This is
 its <strong>key/value (KV) cache</strong>. vLLM runs the model; LMCache stores
@@ -767,7 +770,7 @@ reserved; it cannot authorize fallback or destination reuse.</p>
 </section>
 <nav class="page-nav" aria-label="Research pages"><a href="kmesh-retention.html">&larr; Retention and early loading</a><a href="kmesh-workloads.html">Agent workloads &rarr;</a></nav>
 <footer><a href="kmesh.html">KMesh overview</a>
-&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html#papers">Papers</a>
 &nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
 &nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a></footer>
 </main></body></html>

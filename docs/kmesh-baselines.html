@@ -15,15 +15,18 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="kmesh.html">overview</a>
+    <a href="kmesh-introspection.html">introspection</a>
     <a href="kmesh-design.html">design</a>
     <a href="kmesh-baselines.html" aria-current="page">baselines</a>
     <a href="kmesh-storage.html">storage</a>
     <a href="kmesh-retention.html">retention</a>
+    <a href="kmesh-recovery.html">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Baselines and engine sharing</p>
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / <a href="kmesh-introspection.html">Introspection</a> / Baselines and engine sharing</p>
 <span class="eyebrow">Questions 6–10</span>
 <h1>What do the baseline and serving tests establish?</h1>
 <p class="lead">These five questions separate the TokenDance-style reproduction from ordinary vLLM prefix sharing. The engine already shares compatible resident prefixes; each result states the additional mechanism it tests.</p>
@@ -340,7 +343,7 @@ DMA-BUF/storage-offload performance. LMCache is not used in this serving replay.
 <nav class="page-nav" aria-label="Research pages"><a href="kmesh-design.html">&larr; Design and scope</a><a href="kmesh-storage.html">Storage and preparation &rarr;</a></nav>
 <footer>
 <a href="kmesh.html">KMesh overview</a>
-&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html#papers">Papers</a>
 &nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
 &nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
 </footer>

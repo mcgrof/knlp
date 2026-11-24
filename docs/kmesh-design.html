@@ -15,15 +15,18 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="kmesh.html">overview</a>
+    <a href="kmesh-introspection.html">introspection</a>
     <a href="kmesh-design.html" aria-current="page">design</a>
     <a href="kmesh-baselines.html">baselines</a>
     <a href="kmesh-storage.html">storage</a>
     <a href="kmesh-retention.html">retention</a>
+    <a href="kmesh-recovery.html">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Design and scope</p>
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / <a href="kmesh-introspection.html">Introspection</a> / Design and scope</p>
 <span class="eyebrow">Questions 1–5</span>
 <h1>Why coordinate shared inference state?</h1>
 <p class="lead">The application knows which requests are related. KMesh explores how to pass that knowledge to the inference runtime while preserving cache compatibility.</p>
@@ -31,7 +34,8 @@
 KMesh began with sharing state between related requests. Released agent
 traces later showed that such sharing carries little volume, and that each
 session's own context between turns carries much more. The
-<a href="kmesh.html#direction">overview</a> describes the change of
+<a href="kmesh-introspection.html#direction">agentic workflow
+introspection</a> describes the change of
 direction.</div>
 </div>
 <div class="page-toc"><strong>On this page</strong>
@@ -157,10 +161,10 @@ yet known.</strong> KMesh is a search for the smallest reusable structure that a
 runtime needs to share keyed inference state safely, run as experiments on an open
 vLLM baseline, not a finished system.</div>
 </section>
-<nav class="page-nav" aria-label="Research pages"><a href="kmesh.html">&larr; Overview</a><a href="kmesh-baselines.html">Baselines and engine sharing &rarr;</a></nav>
+<nav class="page-nav" aria-label="Research pages"><a href="kmesh-introspection.html">&larr; Agentic workflow introspection</a><a href="kmesh-baselines.html">Baselines and engine sharing &rarr;</a></nav>
 <footer>
 <a href="kmesh.html">KMesh overview</a>
-&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html#papers">Papers</a>
 &nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
 &nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
 </footer>

@@ -15,15 +15,18 @@
     <a class="logo" href="https://knlp.io/">knlp</a>
     <span class="spacer"></span>
     <a href="kmesh.html">overview</a>
+    <a href="kmesh-introspection.html">introspection</a>
     <a href="kmesh-design.html">design</a>
     <a href="kmesh-baselines.html">baselines</a>
     <a href="kmesh-storage.html">storage</a>
     <a href="kmesh-retention.html" aria-current="page">retention</a>
+    <a href="kmesh-recovery.html">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
   </nav>
 </header>
 <main id="content">
 <div class="page-intro">
-<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Retention and early loading</p>
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / <a href="kmesh-introspection.html">Introspection</a> / Retention and early loading</p>
 <span class="eyebrow">Questions 16–20</span>
 <h1>What does retaining shared context buy?</h1>
 <p class="lead">Singleflight already coordinates one engine restoration. External retention supplies the missing read-once behavior. These five questions measure that gain, the cost of holding state, and the additional value of preparing it before arrival.</p>
@@ -32,8 +35,8 @@ Most experiments here use a 0.5B model with about 4K shared tokens, or
 48 MiB of KV cache. A long-context resume in the released agent traces
 holds about 500 times more KV cache on a 70B model. The results show
 whether the mechanisms work and what they cost at small sizes. The
-<a href="kmesh.html#direction">overview</a> explains where the work goes
-next.</div>
+<a href="kmesh-introspection.html#direction">agentic workflow
+introspection</a> explains where each line of work went.</div>
 </div>
 <div class="page-toc"><strong>On this page</strong>
 <ol start="16">
@@ -461,7 +464,7 @@ Keeping its external copy turns those lookups into memory hits.</p>
 <p>This extends cascade's shared-prefix principle through offloading:
 the shared ancestor and private branches also guide restoration, external
 residency and advance preparation. The
-<a href="kmesh.html#cascade-offload">connection to cascade</a> explains
+<a href="kmesh-introspection.html#cascade-offload">connection to cascade</a> explains
 how these layers fit together. The combined performance benefit of
 cascade attention and these storage controls remains unmeasured.</p>
 <div class="table-wrap"><table>
@@ -744,7 +747,7 @@ authenticate hardware execution.</p>
 <nav class="page-nav" aria-label="Research pages"><a href="kmesh-storage.html">&larr; Storage and preparation</a><a href="kmesh-recovery.html">Recovery across processes &rarr;</a></nav>
 <footer>
 <a href="kmesh.html">KMesh overview</a>
-&nbsp;&middot;&nbsp; <a href="kmesh.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html#papers">Papers</a>
 &nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
 &nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
 </footer>

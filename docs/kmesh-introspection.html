@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="The record of the closed KMesh research: experiments on sharing saved model state between related agent requests, the released agent traces that moved the work to retention, what the results establish, and why each line of work closed.">
+<title>KMesh: Agentic workflow introspection</title>
+<link rel="canonical" href="https://knlp.io/kmesh-introspection.html">
+<link rel="stylesheet" href="kmesh.css">
+<script src="kmesh-navigation.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <nav aria-label="KMesh navigation">
+    <a class="logo" href="https://knlp.io/">knlp</a>
+    <span class="spacer"></span>
+    <a href="kmesh.html">overview</a>
+    <a href="kmesh-introspection.html" aria-current="page">introspection</a>
+    <a href="kmesh-design.html">design</a>
+    <a href="kmesh-baselines.html">baselines</a>
+    <a href="kmesh-storage.html">storage</a>
+    <a href="kmesh-retention.html">retention</a>
+    <a href="kmesh-recovery.html">recovery</a>
+    <a href="kmesh-workloads.html">workloads</a>
+  </nav>
+</header>
+<main id="content">
+<div class="page-intro">
+<p class="breadcrumb"><a href="kmesh.html">KMesh</a> / Agentic workflow introspection</p>
+<span class="eyebrow">History · Closed November 23, 2026</span>
+<h1>Agentic workflow introspection</h1>
+<p class="lead">KMesh began as a study of saved model state shared between
+related agent requests. This page records that research: the experiments,
+the released agent traces that showed where agent context actually sits
+idle, what the results establish and why each line of work closed. The two
+directions that remain open are on the <a href="kmesh.html#outlook">KMesh
+overview</a>.</p>
+</div>
+<div class="page-toc"><strong>On this page</strong>
+<ol>
+<li><a href="#why-closed">Why KMesh closed</a></li>
+<li><a href="#direction">How KMesh moved from sharing to retention</a></li>
+<li><a href="#grounding">The first experiments: reuse inside a request family</a></li>
+<li><a href="#artifact-reuse">Shared artifacts beyond KV cache</a></li>
+<li><a href="#conclusions">What the results establish</a></li>
+<li><a href="#questions">Explore the research</a></li>
+<li><a href="#papers">Papers</a></li>
+</ol></div>
+
+<section id="why-closed">
+<h2>Why KMesh closed</h2>
+<p>We closed KMesh on November 23, 2026, for three reasons. First, its
+premise carries little volume. In released agent traces, wide fan-out is
+rare, and children share only a session preamble, so state shared between
+related agents is a small part of agent input. Second, the volume that
+matters, each session's own context between turns, needs no new KMesh
+machinery. LMCache already stores and restores that context. KMesh found
+one gap in how it stores a resumed session, and the fix is in review
+upstream. Which contexts to keep is a decision for the party that sees the
+agent, and <code>kv.retain</code> hints carry that decision. Third, the
+mechanisms built for request families are either done, such as
+singleflight, or measured worse than the default, such as holding a
+family's ancestor under memory pressure and the tested GPU checksum
+kernel.</p>
+<div class="table-wrap"><table>
+<caption>What KMesh leaves</caption>
+<tr><th scope="col">Result</th><th scope="col">Summary</th></tr>
+<tr><td class="hi">Agent traces favor retention over sharing</td><td>Wide fan-out is rare, and children share only a session preamble. Long contexts that resume after an idle wait carry much more input. See the <a href="kmesh-workloads.html">agent workloads page</a>.</td></tr>
+<tr><td class="hi">LMCache stores every chunk a resume needs</td><td>After vLLM's prefix cache covers the start of a prompt, LMCache counted that start as stored without checking. A long answer, an unstored tool call or a failed store left a chunk that nothing wrote, and the first request after vLLM evicted the session recomputed everything after it. The fix stores from token zero and skips the chunks that storage already holds. In the pull request's GPU test, that request's first token comes 30% to 80% sooner, and every other first-token time stays within 10 ms. Another LMCache user reproduced the long-answer case on a different model and GPU. The fix is in review as <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a>.</td></tr>
+<tr><td class="hi">Read-once restoration for request families</td><td>Singleflight plus external retention reads a shared ancestor from SSD once per group, and 100 ms of notice cuts the first child's wait by 47&ndash;50%. See <a href="#conclusions">what the results establish</a>.</td></tr>
+<tr><td class="hi">Recovery across processes</td><td>A separate cache process restores shared text at new prompt positions, and its outputs match the in-process method bit for bit. See the <a href="kmesh-recovery.html">recovery page</a>.</td></tr>
+<tr><td class="hi">Negative results</td><td>Holding a family's ancestor under pressure displaced more cache hits than it saved. The tested GPU checksum kernel made restoration slower. vLLM removed cascade attention. These lines are parked.</td></tr>
+</table></div>
+</section>
+
+<section id="direction">
+<h2>How KMesh moved from sharing to retention</h2>
+<p>The <a href="kmesh-workloads.html">agent workloads page</a> reads four
+released agent traces. Wide fan-out is rare in them. In a Claude Code
+corpus, launches of four or more children are 2% of all launches, and
+their children share only a preamble that belongs to one session. Long
+contexts sit idle between turns instead. In the same corpus, long
+main-agent requests that resume a minute or more after a user or tool wait
+carry 15.7% of the main agent's input tokens. In the GitHub Copilot
+release, long-context turns that resume on the same model after five or
+more idle minutes carry 17–19% of the prompt tokens the deployment
+recomputes. Their prompts are about
+80K tokens at the median and about 165K at the 90th percentile, and the
+user's return gives no notice.</p>
+<p>So the question changes from sharing to retention: which contexts to
+keep, in which memory tier and for how long, so that a resumed turn
+restores its context instead of computing it again. The parts we built for
+request families still apply to that question: singleflight, external
+retention, ownership of saved state across processes, and the SSD paths
+into GPU memory.</p>
+<div class="table-wrap"><table>
+<caption>Status of each line of work at closing</caption>
+<tr><th scope="col">Work</th><th scope="col">Status</th><th scope="col">Reason</th></tr>
+<tr><td class="hi">Restoring a resumed turn's own context</td><td>Closed; fix upstream</td><td>It carries the idle tokens in the traces. The fix for the LMCache store gap that it exposed is in review as <a href="https://github.com/LMCache/LMCache/pull/6396">LMCache PR #6396</a>. Which contexts to keep moves to the <a href="kmesh.html#kv-retain">kv.retain outlook</a>.</td></tr>
+<tr><td class="hi">Early preparation for subagent waits</td><td>Moves to the outlook</td><td>This is the one resume with notice. The parent's next request comes a median of 8.6 s after its subagent ends, and the parent's context has a median of 229K tokens. These waits carry 0.68% of the main agent's input tokens. A subagent is one kind of tool call, so the <a href="kmesh.html#tool-wait">tool-wait outlook</a> covers it.</td></tr>
+<tr><td class="hi">Singleflight</td><td>Done</td><td>It is a cheap guard for the rare wide launch.</td></tr>
+<tr><td class="hi">DMA-BUF reads into GPU memory</td><td>Continues outside KMesh</td><td>In the <a href="kmesh-recovery.html#serial">recovery comparison</a>, read-call time fell 3.7% and complete restoration was faster in only four of seven pairs, so latency is the wrong argument. The path removes host staging copies and CPU work. The next measure is CPU time and host-memory bandwidth per GB restored, in the LMCache DMA-BUF storage work.</td></tr>
+<tr><td class="hi">Saved state for compressed and hybrid models</td><td>Open, not started</td><td>Sparse, hybrid linear-attention and sliding-window models save other kinds of state, such as compressed blocks, recurrent checkpoints and window snapshots. What to save and restore for them is not yet defined.</td></tr>
+<tr><td class="hi">Cascade attention</td><td>Parked</td><td>vLLM removed it in v0.32.0, and agent traffic forms few wide groups.</td></tr>
+<tr><td class="hi">TokenDance's Master–Mirror sibling diffs</td><td>Parked</td><td>They target synchronized all-gather rounds between sibling agents. The traces do not contain such rounds.</td></tr>
+<tr><td class="hi">Holding a family's ancestor by default</td><td>Parked</td><td>In our <a href="kmesh-retention.html#family-residency">pressure test</a>, the hold displaced more cache hits than it saved.</td></tr>
+<tr><td class="hi">Artifacts beyond KV cache</td><td>Not started</td><td>Tool results, document representations and other artifacts may still matter, but the traces do not show them yet.</td></tr>
+</table></div>
+<div class="note"><strong>The measured results are far below traced sizes.</strong>
+The experiments on these pages test the mechanisms on controlled request
+families. Most use a 0.5B model with about 4K shared tokens, or 48 MiB of
+KV cache, and the latency tests have no competing memory pressure. An
+80K-token resume on Llama-3.3-70B in BF16 holds about 24 GiB of KV cache,
+about 500 times more. The results show whether the mechanisms work and what they cost at
+small sizes. They do not show their value at traced sizes.</div>
+</section>
+<section id="grounding">
+<h2>The first experiments: reuse inside a request family</h2>
+<p>Imagine an agent reads a document and then launches four follow-up
+requests. These related requests form a <strong>family</strong>. Their
+common context is the <strong>ancestor</strong>; each follow-up adds
+private input and output. The model saves attention state for
+text it has processed; this is its <strong>key/value (KV) cache</strong>.
+vLLM runs the model, and its existing prefix cache can share that saved state
+when requests begin with the same tokens. LMCache stores state outside the
+engine, in host RAM or on storage. <strong>Singleflight</strong> makes one
+request restore a cold ancestor while matching followers wait and then
+adopt that copy.</p>
+<p>Sharing inside the engine leaves another question: can the external
+cache serve later lookups without reading the SSD again?
+<strong>External retention keeps the restored objects in LMCache</strong>,
+in host RAM or an external GPU arena. Application notice can then move
+preparation before the follow-ups arrive. The experiments below measure
+this coordination and the lifetime of shared inference state.</p>
+<h3 id="cascade-offload">Cascade attention and family-aware offloading</h3>
+<p><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">FlashInfer's
+Cascade attention</a> shares access to a common KV prefix while computing
+attention for several queries. It computes their private suffixes separately
+and merges the attention results. This reduces repeated GPU memory access
+inside the attention computation.</p>
+<p>KMesh investigates the lifetime and movement of reusable state: which
+copy to retain, which requests can share a restoration, and when to prepare
+it. Cascade can consume shared KV after it becomes available; family-aware
+offloading can also coordinate artifacts with no attention computation at
+all. Family membership supplies reuse hints, while compatible object
+identity determines whether sharing is valid. The shared-ancestor structure
+connects these efforts, but their mechanisms have separate costs and
+correctness conditions. Their combined performance benefit remains
+unmeasured.</p>
+<p>See the <a href="kmesh-storage.html#cascade">Cascade controls</a> and
+<a href="kmesh-retention.html#prefetch-demand">retained early-loading
+comparison</a> for the measured results.</p>
+<p><strong>vLLM removed cascade attention in v0.32.0</strong>, citing its
+maintenance cost against little reach. It engaged only when every request
+holding KV shared one prefix. Released agent traces also give it little to
+work with: launches of four or more children are uncommon, and their
+children share only a session preamble. The traces point instead to long
+contexts that sit idle between turns. The
+<a href="kmesh-workloads.html">agent workloads page</a> gives the trace
+sources, the counts and the upstream history.</p>
+</section>
+
+<section id="artifact-reuse">
+<h2>Shared artifacts beyond KV cache</h2>
+<p>An agent family can share more than attention state. Several children may
+need the same retrieved documents, document embeddings, tool response,
+saved memory or execution record. The shared part can remain immutable while
+each child owns its changes. KMesh's broader goal is to coordinate the
+loading, retention and release of those artifacts through their existing
+storage and restoration interfaces.</p>
+<div class="table-wrap"><table>
+<caption>Reuse depends on the artifact</caption>
+<tr><th scope="col">Artifact</th><th scope="col">Possible shared work</th><th scope="col">Required boundary</th></tr>
+<tr><td class="hi">KV cache</td><td>Load compatible state once and reuse a shared prefix or repair a moved segment.</td><td>Match model and layout; preserve ownership and completion. Changed preceding context can require model recomputation.</td></tr>
+<tr><td class="hi">Document representations and saved model memory</td><td>Reuse a document encoding, embedding or compatible saved context artifact.</td><td>The producing model, version, format and consuming interface must agree. Each format needs its own restore validation.</td></tr>
+<tr><td class="hi">Tool results, playbooks and execution records</td><td>Share a valid result or immutable record instead of fetching or rebuilding it for every child.</td><td>Respect input identity, version, freshness and access permissions. Reusing the record does not automatically reuse the model's work to read it.</td></tr>
+</table></div>
+<p>The <a href="https://kvcache.io/agentic-cache-offloading.html">agentic
+cache-offloading model</a> explores how richer artifacts, indexes and copies
+can grow the working set beyond RAM. It is a capacity projection, not a
+measurement of KMesh performance. Small plan templates can fit in memory;
+large shared artifacts create a different storage problem. KMesh should
+reuse the existing artifact loaders and coordinate with their development.
+CPU-consumed artifacts need an appropriate host-storage path; DMA-BUF is
+relevant where a qualified device-buffer path helps their actual consumer.</p>
+<p><strong>The first objective was to establish whether family information
+makes offloading more useful.</strong> A fair comparison keeps ordinary caching,
+the storage path, memory budget and output requirements fixed, then measures
+what changes when the cache knows which requests are related. Fewer reads
+are useful evidence, but completed agent work, waiting time, retained memory
+and displaced cache hits determine the tradeoff. The KV results below
+establish bounded benefits from retention and early preparation. They do
+not yet establish a general family-policy benefit or non-KV artifact support.
+The released traces answer the volume side of that question: family
+structure carries little of the idle context, so this work now comes after
+the resumed turn.</p>
+</section>
+
+<section id="conclusions">
+<h2>What the results establish</h2>
+<p><strong>External retention completed the read-once path while preserving
+the singleflight sharing that was already working.</strong> In the earlier
+preloading comparisons, singleflight was on and the children shared one
+ancestor inside vLLM. LMCache lookups could still trigger repeated SSD
+reads. Keeping the external copy removed that duplicated storage work.</p>
+<div class="table-wrap"><table>
+<caption>How retention completes the existing singleflight path</caption>
+<tr><th scope="col">Comparison</th><th scope="col">What was already working</th><th scope="col">What changed and what it showed</th></tr>
+<tr><td class="hi">Shared-engine preloading without external retention</td><td>Singleflight is on. Follow-ups reuse one ancestor inside vLLM.</td><td>External lookups can still reread SSD data. The four-child control, including its warm request, reads 240 MiB for a 48 MiB ancestor. Earlier first-token results are mixed.</td></tr>
+<tr><td class="hi">Add external retention</td><td>The same singleflight coordination and shared engine ancestor remain.</td><td>Keep the 48 MiB copy in LMCache. SSD traffic falls from 240 to 48 MiB in that four-child control. All four group-completion medians improve in the small paired test; first-token results remain mixed.</td></tr>
+<tr><td class="hi">Prepare the retained state early</td><td>Singleflight and retention are on in both controls. Each group reads exactly 48 MiB.</td><td>Starting preparation 100 ms early reduces the first child's first-token wait by 47–50% and group eight-token completion by 9–13% versus retained demand.</td></tr>
+</table></div>
+<p>The retention comparison measures keeping the external copy. The latest
+comparison measures when to prepare that retained state. Together they
+show the value of <strong>singleflight plus external retention</strong>,
+followed by the additional benefit of advance preparation. The
+<a href="kmesh-retention.html#prefetch-demand">last question explains the
+sequence and full timing results</a>.</p>
+<div class="stat-grid">
+<div class="stat"><div class="val">48 MiB</div><div class="label">One ancestor read per retained group</div></div>
+<div class="stat"><div class="val cyan">47–50%</div><div class="label">Less wait for the first child's first token with 100 ms notice</div></div>
+<div class="stat"><div class="val amber">9–13%</div><div class="label">Earlier group eight-token completion with 100 ms notice</div></div>
+</div>
+<p>The percentages measure waiting after the fixed scheduled arrival, comparing
+early preparation with loading that starts when the requests arrive, with
+the external copy retained in both cases. Singleflight and read-once
+storage are enabled in both controls. The test covers one small model, four
+or eight requests and eight output tokens per child. Late submission stays
+in the waiting time; the advance preparation and its one warm-up token
+remain real work recorded separately.</p>
+<div class="note"><strong>Retention has a capacity cost.</strong>
+The external cache retains an additional 48 MiB copy, separate from the
+engine's shared ancestor. The latency comparison has no competing memory
+pressure and assumes useful advance notice. A separate
+<a href="kmesh-retention.html#family-residency">pressure test</a> shows that
+holding an ancestor can displace more useful cache hits than it saves.
+The measured early-loading gains apply to both transfer paths; the
+comparison does not establish DMA-BUF superiority or a production policy.</div>
+<h3>Reusing shared text at new prompt positions</h3>
+<p>The retention results above share an identical beginning of a prompt. A
+separate experiment asks whether four follow-ups can reuse saved state for
+the same text when each puts different instructions before it. Moving the
+text changes its position and preceding context, so copying the saved bytes
+alone is insufficient. Our TokenDance-style implementation extends LMCache's
+<strong>CacheBlend</strong> code: it supplies the shared segments and their
+positions, recalculates missing positions, and uses CacheBlend to select
+additional work before reusing the rest.</p>
+<p>CacheBlend already supports non-prefix reuse. The TokenDance-style case
+adds an explicit group of related requests and identifies their shared text
+segments for KMesh. These tests compare our loading and coordination changes;
+they establish no advantage over stock CacheBlend's repair method.</p>
+<p>We test loading 416 shared tokens through a separate cache process and
+running that same repair algorithm. The four follow-ups generate exactly the
+same tokens as when that extended TokenDance-style method runs inside the model
+process. Their saved attention state and next-token scores match bit for bit,
+both when finishing one follow-up at a time and when running one model layer,
+or computation stage,
+for all four follow-ups before advancing to the next layer. The group uses
+LMCache's cache in host RAM. Its failure test lets three follow-ups finish
+while the failed one cleans up and retries by recalculating its whole prompt.</p>
+<p>A separate SSD comparison runs follow-ups one at a time. DMA-BUF, Linux's
+buffer-sharing interface, lets the SSD read directly into GPU memory instead
+of staging the read in host RAM. Read-call time falls by 3.7% across seven
+matched pairs, but complete restoration is faster in only four pairs. In that
+comparison, checking the loaded data still copies it back to the CPU. This storage comparison has
+singleflight off and fixed retention on; it explicitly evicts the retained
+objects before every child to force fresh SSD reads. The earlier read-once
+experiment kept retention and singleflight on across the children. Combining
+this storage path with the group remains untested. The
+<a href="kmesh-recovery.html">recovery page explains the setup and results
+from the beginning</a>. These runs all use CacheBlend's selective recalculation;
+we have not shown here that it matches recalculating the entire prompt or
+improves serving speed.</p>
+<p>A follow-up keeps DMA-BUF reads fixed and computes the same SHA-256 checksum
+on the GPU. It returns 128 digest bytes per child instead of downloading the
+12 MiB source payload for checking. Our tested CUDA kernel is much slower than
+CPU hashing, and complete restoration is slower in all seven matched pairs.
+Model outputs still match exactly. That experiment retains CPU hashing as
+its default; this result concerns one kernel and the existing whole-object format. The
+<a href="kmesh-recovery.html#gpu-integrity">GPU checksum results and reproduction
+instructions</a> give the measurements and the next optimization targets.</p>
+</section>
+
+<section id="questions">
+<h2>Explore the research</h2>
+<p>Each detail page covers four or five research topics with the experiment, findings,
+limits and reproduction instructions. The overview gives the idea and
+conclusions; the detail pages retain the full measurements.</p>
+<div class="page-links">
+<article class="question-group">
+<span class="range">Questions 1–5</span>
+<h3><a href="kmesh-design.html">Design and scope</a></h3>
+<p>The motivation, prior papers, compatible shared state and the architecture that remains to be built.</p>
+<ol start="1">
+<li><a id="redundancies" href="kmesh-design.html#redundancies">What redundant work do related requests repeat?</a></li>
+<li><a id="current" href="kmesh-design.html#current">What do TokenDance and ForkKV show?</a></li>
+<li><a id="generalization" href="kmesh-design.html#generalization">Can the shared object extend beyond KV cache?</a></li>
+<li><a id="unresolved" href="kmesh-design.html#unresolved">Which parts of the architecture remain unresolved?</a></li>
+<li><a id="milestone" href="kmesh-design.html#milestone">What does the implementation test?</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Questions 6–10</span>
+<h3><a href="kmesh-baselines.html">Baselines and engine sharing</a></h3>
+<p>The TokenDance-style reproduction, CPU accounting and real serving checks for vLLM prefix sharing.</p>
+<ol start="6">
+<li><a id="baseline" href="kmesh-baselines.html#baseline">What is the TokenDance-style baseline?</a></li>
+<li><a id="reproduce" href="kmesh-baselines.html#reproduce">How can the baseline be reproduced?</a></li>
+<li><a id="results" href="kmesh-baselines.html#results">What do the baseline measurements establish?</a></li>
+<li><a id="fork-accounting" href="kmesh-baselines.html#fork-accounting">Do reasoning forks need a new memory manager?</a></li>
+<li><span class="fragment-alias" id="prefix-sharing"></span><a id="serving-replay" href="kmesh-baselines.html#serving-replay">Does sharing survive real serving?</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Questions 11–15</span>
+<h3><a href="kmesh-storage.html">Storage and preparation</a></h3>
+<p>DMA-BUF transport, Cascade attention, cold bursts, singleflight and the first preload comparisons.</p>
+<ol start="11">
+<li><a id="restore-latency" href="kmesh-storage.html#restore-latency">Does DMA-BUF reduce offloaded-ancestor latency?</a></li>
+<li><a id="cascade" href="kmesh-storage.html#cascade">Does cascade reach the shared-prefix attention path?</a></li>
+<li><a id="coldburst" href="kmesh-storage.html#coldburst">Do cold siblings repeat storage reads and GPU copies?</a></li>
+<li><a id="singleflight" href="kmesh-storage.html#singleflight">How do follow-ups share one engine restoration?</a></li>
+<li><span class="fragment-alias" id="preload-timeline-title"></span><span class="fragment-alias" id="preload-timeline-desc"></span><span class="fragment-alias" id="preload-time-arrow"></span><span class="fragment-alias" id="preload-diagram-caption"></span><a id="preload" href="kmesh-storage.html#preload">Can loading context early make follow-ups start sooner?</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Questions 16–20</span>
+<h3><a href="kmesh-retention.html">Retention and early loading</a></h3>
+<p>The read-once fix, workload and pressure limits, and the matched early-loading result.</p>
+<ol start="16">
+<li><a id="retained" href="kmesh-retention.html#retained">Does keeping data in LMCache stop repeat SSD reads?</a></li>
+<li><a id="trace-audit" href="kmesh-retention.html#trace-audit">Can the traces qualify family retention?</a></li>
+<li><a id="family-residency" href="kmesh-retention.html#family-residency">Does holding the ancestor pay under pressure?</a></li>
+<li><a id="reasoning-demand" href="kmesh-retention.html#reasoning-demand">Does model-driven branching leave room for better retention?</a></li>
+<li><a id="prefetch-demand" href="kmesh-retention.html#prefetch-demand">Does loading shared context early actually help?</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Topics 21–25</span>
+<h3><a href="kmesh-recovery.html">Recovery across processes</a></h3>
+<p>Safe restoration, memory ownership and copy completion support the model
+experiments. The measured work compares model outputs, SSD loading and
+processing related requests one model layer at a time.</p>
+<ol start="21">
+<li><a href="kmesh-recovery.html#native">Restoring state into vLLM's GPU cache</a></li>
+<li><a href="kmesh-recovery.html#ownership">Owning shared state across processes</a></li>
+<li><a href="kmesh-recovery.html#copies">Completing GPU copies before memory reuse</a></li>
+<li><a href="kmesh-recovery.html#serial">Evaluating model outputs and DMA-BUF loading costs</a></li>
+<li><a href="kmesh-recovery.html#collective">Testing layer-major execution across four related requests</a></li>
+</ol></article>
+<article class="question-group">
+<span class="range">Questions 26–29</span>
+<h3><a href="kmesh-workloads.html">Agent workloads</a></h3>
+<p>What released Claude Code, FreeInference and Copilot traces contain, where
+long context sits idle, and why vLLM removed cascade attention.</p>
+<ol start="26">
+<li><a id="agent-traces" href="kmesh-workloads.html#agent-traces">Which agent traces can answer these questions?</a></li>
+<li><a id="fan-out" href="kmesh-workloads.html#fan-out">Do agent launches fan out over a shared saved ancestor?</a></li>
+<li><a id="resume" href="kmesh-workloads.html#resume">Where does long context sit idle?</a></li>
+<li><a id="cascade-upstream" href="kmesh-workloads.html#cascade-upstream">What happened to cascade attention in vLLM?</a></li>
+</ol></article>
+</div>
+</section>
+
+<section id="papers">
+<h2>Papers</h2>
+<ul class="papers">
+<li>
+  <span class="t"><a href="https://flashinfer.ai/2024/02/02/cascade-inference.html">Cascade Inference: Memory Bandwidth Efficient Shared Prefix Batch Decoding</a></span><br>
+  Shared-prefix attention computation and merging with private suffixes.
+  The post describes multi-level prefix hierarchies already implemented in
+  MLC-Serving; KMesh explores coordination and future reuse around that computation.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2608.00101">Agentic Coding in the Wild: Characterizing GitHub Copilot Traces at Production Scale</a></span><br>
+  Production agent sessions: high cache reuse inside a turn, much lower
+  reuse across turn boundaries, invalidation by model switches and
+  compaction, and minutes-long user idle gaps. Its released traces supply
+  the turn-resume counts on the workloads page.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2511.22333">PAT: Accelerating LLM Decoding via Prefix-Aware Attention with Resource Efficient Multi-Tile Kernel</a></span><br>
+  Groups decode requests by shared prefix inside one batch, as a vLLM
+  plugin. It addresses the single-prefix limit of the removed cascade path.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
+  Cross-turn temporal KV reuse in long-context, short-append agent trajectories,
+  and a dual-path loading scheme that rebalances the resulting storage-bandwidth
+  bottleneck.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2604.03143">TokenDance: Scaling Multi-Agent LLM Serving via Collective KV Cache Sharing</a></span><br>
+  Round-aware segment indexing, collective position-independent KV reuse, and
+  Master&ndash;Mirror diff-aware storage for sibling agents in synchronized
+  All-Gather rounds. The design KMesh reconstructs as its open baseline.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2604.06370">ForkKV: Scaling Multi-LoRA Agent Serving via Copy-on-Write Disaggregated KV Cache</a></span><br>
+  Fork-with-copy-on-write for multi-LoRA agents: a shared trunk plus lightweight
+  per-agent divergence. The evidence that the shareable unit extends past the KV
+  cache to adapter-affected state.
+</li>
+</ul>
+</section>
+<footer>
+<a href="kmesh.html">KMesh overview</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html">Agentic workflow introspection</a>
+&nbsp;&middot;&nbsp; <a href="kmesh-introspection.html#papers">Papers</a>
+&nbsp;&middot;&nbsp; <a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce">Reproduction scripts</a>
+&nbsp;&middot;&nbsp; <a href="io-uring-dmabuf.html">Storage interface</a>
+</footer>
+</main>
+</body>
+</html>
