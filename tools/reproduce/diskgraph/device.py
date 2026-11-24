@@ -35,8 +35,19 @@ def load_extents(path, partition_start=0):
     return extents
 
 
+def phase_bucket(ts, start, end, count):
+    return (ts - start) * count // (end - start)
+
+
 def select(
-    events, start, end, extents, allow_empty=False, keep_events=True, histograms=False
+    events,
+    start,
+    end,
+    extents,
+    allow_empty=False,
+    keep_events=True,
+    histograms=False,
+    payload_buckets=None,
 ):
     headers = []
     drops = []
@@ -93,6 +104,9 @@ def select(
         reads[f"{category}_reads"] += 1
         reads[f"{category}_bytes"] += size
         reads[f"size_{size}"] += 1
+        if payload_buckets is not None and category == "payload":
+            bucket = phase_bucket(command["ts"], start, end, len(payload_buckets))
+            payload_buckets[bucket] += size
         if histograms:
             latency_us[(event["lat_ns"] + 999) // 1000] += 1
             depth[command_depth] += 1

@@ -28,7 +28,6 @@ th:not(:first-child), td { font-variant-numeric: tabular-nums; }
 .bar-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 3fr) 6.6rem; gap: 10px; align-items: center; margin: 8px 0; }
 .bar { height: 12px; border-radius: 7px; background: var(--site-bg); overflow: hidden; }
 .bar span { display: block; height: 100%; width: var(--pct); background: var(--site-cyan); border-radius: inherit; }
-.bar.disk span { background: var(--site-amber); }
 .value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
 figcaption, .note, #receipt-status { color: var(--site-muted); font-size: .93rem; }
 .callout { border-left: 3px solid var(--site-amber); padding: 14px 16px; }
@@ -55,6 +54,17 @@ input::file-selector-button:hover { background: var(--site-border); }
 .size-details .table { max-height: 22rem; margin-bottom: 0; }
 .size-details thead { position: sticky; top: 0; }
 .size-details summary { width: fit-content; color: var(--site-amber); cursor: pointer; }
+#read-amplification { margin-bottom: 32px; scroll-margin-top: 20px; }
+#read-amplification > p { max-width: 82ch; }
+#read-amplification a { color: var(--site-amber); text-decoration: underline; text-underline-offset: 3px; }
+.amp-legend { display: flex; flex-wrap: wrap; gap: 5px 18px; margin: 0 0 10px; padding: 0; list-style: none; font-size: .88rem; }
+.amp-legend li::before { content: ""; display: inline-block; width: 1.1em; height: 3px; margin: 0 .45em .2em 0; background: var(--series-color); }
+.amp-planner { --series-color: var(--site-cyan); }
+.amp-buffered { --series-color: #c4b5fd; }
+.amp-nvme { --series-color: var(--site-amber); }
+#amp-canvas { display: block; width: 100%; height: clamp(250px, 32vw, 380px); }
+#amp-canvas[hidden], #amp-legend [hidden] { display: none; }
+.amp-result { font-weight: 650; margin: 0 0 12px; }
 @media (max-width: 900px) {
   .size-panels { grid-template-columns: 1fr; }
 }
@@ -142,7 +152,7 @@ input::file-selector-button:hover { background: var(--site-border); }
     </section>
   </div>
 </div>
-<p>Rank sizes by count or bytes within each layer. The bars show shares of that layer's total. See the <a href="#capture">intent and eBPF capture commands</a> and the resulting <a href="#measurements">NVMe measurements</a>.</p>
+<p>Rank sizes by count or bytes within each layer. The bars show shares of that layer's total. See the <a href="#capture">intent and eBPF capture commands</a> and the <a href="#read-amplification">read amplification they measured</a>.</p>
 <p>The benchmark's <code>user-engagement</code> task asks whether a user will post, comment, or vote in the next two years. The CPU run uses each user's timestamp to sample earlier graph neighbors and fetch their features. The cold and warm passes recorded identical size counts at both layers. <a href="https://huggingface.co/datasets/stanford-star/relbench-v1/blob/main/rel-stack/README.md">RelBench Stack dataset and task</a></p>
 <div class="callout">
 <label for="receipt">Visualize your own <code>analysis.json</code></label>
@@ -163,14 +173,41 @@ input::file-selector-button:hover { background: var(--site-border); }
 <p class="note">The DGraphFin showcase pairs feature consumption with device traffic and replays the device commands. DiskGraph adds an earlier capture point for rerunning access through the page cache. The two replay modes answer different questions. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin showcase</a></p>
 </section>
 <section id="measurements" class="site-section">
-<div class="site-section-head"><h2>Held the graph work fixed across a cold pass and its repeat</h2></div>
-<p>The generated fixture used 512 roots in each pass and three temporal hops. All 181,610 recorded planner ranges per pass were below 4 KiB. DiskGraph's Buffered backend submitted 21,207 requests per pass, including coalesced reads up to 64 KiB. The repeat completed the same file reads from cache.</p>
-<figure class="graph" aria-labelledby="example-caption">
-<div class="bar-row"><span>Planner, distinct</span><div class="bar" aria-hidden="true"><span style="--pct:25.4%"></span></div><span class="value">4.11 MB</span></div>
-<div class="bar-row"><span>NVMe, cold</span><div class="bar disk" aria-hidden="true"><span style="--pct:100%"></span></div><span class="value">16.16 MB</span></div>
-<div class="bar-row"><span>NVMe, repeat</span><div class="bar disk" aria-hidden="true"><span style="--pct:0%"></span></div><span class="value">0 B</span></div>
-<figcaption id="example-caption">Distinct planner bytes and attributed edge-file NVMe bytes. Linear scale. Physical cold traffic was 3.93 times the distinct encoded ranges in one XFS/NVMe fixture run.</figcaption>
-</figure>
+<div class="site-section-head"><h2>Cold and warm DiskGraph measurements</h2></div>
+<section id="read-amplification" aria-labelledby="amp-title">
+<h3 id="amp-title">Read amplification from planner intent to NVMe</h3>
+<p>Divide attributed edge-file NVMe read bytes by the sum of captured planner range lengths, counting each request for a range. This follows the DGraphFin comparison of application demand with eBPF-observed device traffic. DiskGraph's planner demand includes encoded graph headers and adjacency as well as feature ranges. <a href="https://ebpf.kvcache.io/showcase/gnn-readamp">DGraphFin read amplification</a></p>
+<p><strong>RelBench Stack measured 5.09× cold and 0× warm.</strong> Each pass recorded 50.81 MB of planner intent and 763.84 MB of Buffered requests (15.03×). The cold pass read 258.49 MB from NVMe. The warm pass issued zero attributed device reads.</p>
+<div id="amp-view" hidden>
+  <div class="size-controls">
+    <label for="amp-pass">Capture pass
+      <select id="amp-pass">
+        <option value="stack-0">RelBench Stack · cold</option>
+        <option value="stack-1">RelBench Stack · warm</option>
+        <option value="fixture-0">Synthetic fixture · cold</option>
+        <option value="fixture-1">Synthetic fixture · warm</option>
+        <optgroup id="amp-local" label="Local analysis receipt" hidden></optgroup>
+      </select>
+    </label>
+  </div>
+  <figure class="graph" aria-labelledby="amp-caption">
+    <p class="amp-result" id="amp-result" aria-live="polite"></p>
+    <ul class="amp-legend" id="amp-legend">
+      <li class="amp-planner">Planner intent</li>
+      <li class="amp-buffered">Buffered requests</li>
+      <li class="amp-nvme">Attributed NVMe reads</li>
+    </ul>
+    <canvas id="amp-canvas" role="img" aria-labelledby="amp-caption" hidden></canvas>
+    <figcaption id="amp-caption"></figcaption>
+  </figure>
+  <div class="table"><table>
+    <thead><tr><th scope="col">Capture point</th><th scope="col">Bytes</th><th scope="col">Per planner byte</th></tr></thead>
+    <tbody id="amp-rows"></tbody>
+  </table></div>
+</div>
+<p>Buffered lengths are counted at submission before end-of-file clipping. NVMe bytes count successful device read commands attributed by edge-file extent and pass time. A submitted read can cover multiple planner ranges, and the kernel can read ahead. The ratios compare whole passes. You can also <a href="#receipt">load an analysis receipt</a> to compare your own capture.</p>
+</section>
+<p>The generated fixture used 512 roots in each pass and three temporal hops. All 181,610 recorded planner ranges per pass were below 4 KiB. DiskGraph's Buffered backend submitted 21,207 requests per pass, including coalesced reads up to 64 KiB. The repeat completed the same file reads from cache. Using 4.11 MB of distinct planner bytes, the cold device ratio was 3.93×.</p>
 <div class="table">
 <table>
 <thead><tr><th scope="col">Layer</th><th scope="col">Cold</th><th scope="col">Repeat</th></tr></thead>
@@ -183,7 +220,7 @@ input::file-selector-button:hover { background: var(--site-border); }
 </table>
 </div>
 <p>On a second capture of the same fixture, native buffered <code>pread</code> and <code>io_uring</code> replay each completed 42,414 captured file requests and 390,356,164 bytes per pass. Both modes returned the same per-lane checksums on generated files. The replay drains each recorded submission group, preserving requests and their grouping while leaving the original overlap and timing to the live workload.</p>
-<p>The public RelBench Stack <code>user-engagement</code> test repeated the result with real graph data. Each 512-root pass requested 42.19 MB of distinct planner ranges and submitted 158,718 Buffered file reads. The cold pass issued 60,363 attributed edge-file NVMe reads totaling 258.49 MB, or 6.13 times the distinct planner bytes. The repeat issued zero attributed edge-file NVMe reads. The namespace carried 0.82 MB and 0.066 MB of unrelated reads in the two windows. No excluded read overlapped a tracked edge extent. Buffered and mmap returned the same feature multiset for both workloads. Replaying the real capture through either native reader completed 317,436 requests and 1,527,685,120 bytes per pass with matching checksums.</p>
+<p>The RelBench Stack <code>user-engagement</code> cold pass issued 60,363 attributed edge-file NVMe reads. Counting each planner byte once gives a 42.19 MB denominator and a separate 6.13× cold ratio. The namespace carried 0.82 MB and 0.066 MB of unrelated reads in the two windows. No excluded read overlapped a tracked edge extent. Buffered and mmap returned the same feature multiset for both workloads. Replaying the real capture through either native reader completed 317,436 requests and 1,527,685,120 bytes per pass with matching checksums.</p>
 </section>
 <section id="run" class="site-section">
 <div class="site-section-head"><h2>Run and replay on a Linux CPU</h2></div>
@@ -619,6 +656,138 @@ make diskgraph-replay DISKGRAPH_REPLAY_MODE=pread DISKGRAPH_CLIENTS=8 \
   }
 }
 </script>
+<script type="application/json" id="published-amplification">
+{
+  "stack-0": {
+    "planner_requested_bytes_with_reuse": 50808470,
+    "io_uring_requested_bytes_including_eof": 763842560,
+    "read_byte_timeline": {
+      "elapsed_ns": 979656891,
+      "planner_requested_bytes": [
+        804767, 224499, 497297, 828806, 1567592, 31634, 293378, 444145, 198022, 2594687, 0, 68840,
+        417011, 172018, 1786470, 138903, 512045, 167411, 1345605, 1103819, 176489, 701013, 226613, 1696788,
+        1566207, 84037, 458270, 1083732, 1000266, 260341, 557988, 2088293, 426250, 510628, 715906, 1661507,
+        99484, 541291, 1263919, 1074614, 180067, 513903, 1837523, 960937, 429288, 1015320, 1284265, 375689,
+        1131297, 801210, 633520, 518245, 2390552, 687670, 480744, 1387323, 965812, 176255, 433724, 1907705,
+        128823, 648620, 1412251, 1117142
+      ],
+      "buffered_requested_bytes": [
+        7819264, 10428416, 8904704, 16478208, 7983104, 2396160, 10711040, 12443648, 14581760, 15081472, 753664, 4300800,
+        12918784, 16560128, 7811072, 5226496, 15048704, 14155776, 15044608, 2445312, 12484608, 15110144, 17190912, 15040512,
+        8101888, 5521408, 13189120, 17604608, 6037504, 14995456, 20733952, 17149952, 2109440, 15278080, 19058688, 7163904,
+        8015872, 13332480, 18866176, 5890048, 14082048, 17833984, 16424960, 2392064, 13291520, 17354752, 6287360, 13807616,
+        16027648, 7122944, 18481152, 17915904, 14790656, 3440640, 14700544, 19329024, 6201344, 10194944, 20332544, 8478720,
+        10366976, 24059904, 12922880, 4034560
+      ],
+      "nvme_edge_bytes": [
+        7548928, 9142272, 6479872, 7876608, 4956160, 598016, 7208960, 5607424, 5001216, 5664768, 581632, 2646016,
+        5619712, 5681152, 2920448, 3387392, 6729728, 2818048, 5861376, 1114112, 7335936, 4943872, 2957312, 6238208,
+        2883584, 3108864, 4009984, 4734976, 1941504, 6017024, 2920448, 5959680, 925696, 5074944, 3592192, 2260992,
+        4091904, 3067904, 4112384, 1822720, 6885376, 3088384, 5844992, 1142784, 3665920, 3649536, 1646592, 4501504,
+        3215360, 2215936, 5951488, 2289664, 4796416, 1581056, 5263360, 4763648, 1384448, 4730880, 3289088, 2756608,
+        3964928, 1957888, 3411968, 1052672
+      ]
+    },
+    "nvme": {"payload_bytes": 258494464}
+  },
+  "stack-1": {
+    "planner_requested_bytes_with_reuse": 50808470,
+    "io_uring_requested_bytes_including_eof": 763842560,
+    "read_byte_timeline": {
+      "elapsed_ns": 707660922,
+      "planner_requested_bytes": [
+        1018286, 551950, 1219445, 1142139, 316153, 541048, 1458679, 1237127, 26025, 464347, 1029694, 924273,
+        263808, 498977, 1345153, 1159845, 129736, 729168, 227611, 1662742, 1617853, 33028, 433784, 1157073,
+        972808, 125796, 654169, 1387970, 1164324, 32283, 508570, 166933, 2210480, 51522, 576941, 1262558,
+        1024875, 141649, 563422, 1654508, 1062077, 181159, 473294, 946560, 862639, 775096, 1124350, 739202,
+        288640, 556458, 1516093, 1250081, 726876, 534290, 1294571, 965812, 151718, 439201, 1926765, 25446,
+        602268, 201093, 2478029, 0
+      ],
+      "buffered_requested_bytes": [
+        15781888, 19267584, 15134720, 2867200, 11669504, 13295616, 21987328, 7577600, 2142208, 15081472, 18190336, 6176768,
+        11116544, 12627968, 20774912, 7401472, 7720960, 18284544, 18780160, 15040512, 8101888, 2031616, 15585280, 17518592,
+        6246400, 9150464, 15982592, 22294528, 7626752, 1257472, 14925824, 19058688, 7163904, 4792320, 16556032, 17547264,
+        6467584, 9179136, 14389248, 19718144, 6905856, 4808704, 12480512, 15728640, 4722688, 14282752, 14921728, 4792320,
+        12062720, 14311424, 20492288, 7757824, 5885952, 15380480, 16203776, 6201344, 8990720, 16617472, 13398016, 2129920,
+        18182144, 15155200, 15917056, 0
+      ],
+      "nvme_edge_bytes": [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0
+      ]
+    },
+    "nvme": {"payload_bytes": 0}
+  },
+  "fixture-0": {
+    "planner_requested_bytes_with_reuse": 8867978,
+    "io_uring_requested_bytes_including_eof": 195461120,
+    "read_byte_timeline": {
+      "elapsed_ns": 232637787,
+      "planner_requested_bytes": [
+        11422, 207886, 37310, 298175, 0, 8193, 214703, 136351, 194354, 448, 18931, 208743,
+        339142, 0, 8052, 192358, 182794, 117509, 7231, 21239, 333070, 191262, 447, 20682,
+        242186, 293003, 0, 19043, 202627, 323808, 0, 15187, 202091, 320214, 0, 11594,
+        217951, 302888, 39292, 448, 26903, 324640, 234091, 17971, 239722, 339841, 2608, 222822,
+        328484, 192, 27816, 519877, 0, 7969, 11172, 378236, 156444, 18676, 226559, 282981,
+        14545, 244539, 293436, 7820
+      ],
+      "buffered_requested_bytes": [
+        2002944, 1540096, 4300800, 3129344, 12288, 1445888, 3354624, 5304320, 2068480, 139264, 2723840, 1986560,
+        7553024, 0, 1318912, 3260416, 7016448, 53248, 1298432, 3399680, 5275648, 2060288, 131072, 3502080,
+        1224704, 7458816, 0, 2097152, 2678784, 7241728, 0, 1409024, 3309568, 7335936, 0, 1437696,
+        3395584, 7380992, 69632, 131072, 3526656, 7745536, 1073152, 1462272, 3497984, 7979008, 135168, 4653056,
+        7438336, 53248, 3538944, 8523776, 0, 1462272, 2170880, 6594560, 2080768, 2523136, 4595712, 4829184,
+        1404928, 5423104, 5357568, 1343488
+      ],
+      "nvme_edge_bytes": [
+        1970176, 1572864, 2039808, 864256, 4096, 114688, 1581056, 253952, 61440, 0, 860160, 520192,
+        167936, 0, 0, 937984, 77824, 20480, 0, 929792, 12288, 40960, 0, 733184,
+        0, 61440, 0, 188416, 409600, 36864, 0, 65536, 466944, 24576, 0, 57344,
+        421888, 8192, 12288, 0, 331776, 4096, 4096, 36864, 294912, 8192, 0, 290816,
+        0, 0, 180224, 8192, 0, 36864, 176128, 0, 0, 98304, 69632, 0,
+        8192, 98304, 0, 0
+      ]
+    },
+    "nvme": {"payload_bytes": 16162816}
+  },
+  "fixture-1": {
+    "planner_requested_bytes_with_reuse": 8867978,
+    "io_uring_requested_bytes_including_eof": 195461120,
+    "read_byte_timeline": {
+      "elapsed_ns": 177582389,
+      "planner_requested_bytes": [
+        219308, 335485, 0, 8001, 214895, 330705, 0, 13539, 214583, 339142, 0, 13214,
+        193306, 294193, 0, 25266, 233942, 293594, 447, 28938, 266936, 259997, 0, 19043,
+        209497, 316938, 0, 7930, 209348, 320214, 0, 7692, 221853, 243448, 98732, 448,
+        26903, 241487, 317244, 0, 23211, 249192, 325131, 0, 21638, 235782, 296494, 192,
+        26214, 332810, 188669, 447, 222202, 174728, 156444, 448, 212077, 236654, 79037, 7558,
+        217556, 327406, 0, 7820
+      ],
+      "buffered_requested_bytes": [
+        3543040, 7442432, 0, 1314816, 3485696, 7372800, 0, 1466368, 3383296, 7553024, 0, 1449984,
+        3129344, 7069696, 0, 3538944, 3952640, 4542464, 131072, 4079616, 3645440, 4460544, 0, 2732032,
+        2043904, 7241728, 0, 1347584, 3371008, 7335936, 0, 1310720, 3522560, 7380992, 69632, 131072,
+        3526656, 1196032, 7622656, 0, 3784704, 1175552, 7979008, 0, 3584000, 2084864, 6557696, 131072,
+        3461120, 4845568, 3678208, 122880, 4714496, 7417856, 53248, 131072, 4554752, 7208960, 53248, 1269760,
+        3510272, 7405568, 0, 1343488
+      ],
+      "nvme_edge_bytes": [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0
+      ]
+    },
+    "nvme": {"payload_bytes": 0}
+  }
+}
+</script>
 <script>
 "use strict";
 const input = document.querySelector("#receipt");
@@ -631,6 +800,18 @@ const metric = document.querySelector("#size-metric");
 const breakdown = document.querySelector("#planner-bands");
 const receiptPasses = document.querySelector("#receipt-passes");
 const published = JSON.parse(document.querySelector("#published-sizes").textContent);
+const publishedAmplification = JSON.parse(document.querySelector("#published-amplification").textContent);
+const ampPass = document.querySelector("#amp-pass");
+const ampLocal = document.querySelector("#amp-local");
+const ampResult = document.querySelector("#amp-result");
+const ampCanvas = document.querySelector("#amp-canvas");
+const ampCaption = document.querySelector("#amp-caption");
+const ampRows = document.querySelector("#amp-rows");
+const ampSeries = [
+  { key: "planner_requested_bytes", label: "Planner intent", legend: document.querySelector(".amp-legend .amp-planner") },
+  { key: "buffered_requested_bytes", label: "Buffered requests", legend: document.querySelector(".amp-legend .amp-buffered") },
+  { key: "nvme_edge_bytes", label: "Attributed NVMe reads", legend: document.querySelector(".amp-legend .amp-nvme") },
+];
 const plannerField = "planner_range_size_histogram";
 const bufferedField = "io_uring_request_size_histogram";
 const panels = [
@@ -762,6 +943,98 @@ function renderSizes() {
   for (const panel of panels) renderPanel(panel, selectedSizes(panel.field));
 }
 
+function amplificationPass() {
+  return publishedAmplification[ampPass.value] ?? local[ampPass.value];
+}
+
+function drawAmplificationTimeline() {
+  const timeline = amplificationPass()?.read_byte_timeline;
+  const traces = ampSeries.filter(series => {
+    const buckets = timeline?.[series.key];
+    return Array.isArray(buckets) && buckets.length > 0 &&
+      buckets.every(amount => Number.isSafeInteger(amount) && amount >= 0);
+  });
+  const duration = timeline?.elapsed_ns / 1000000;
+  const context = ampCanvas.getContext("2d");
+  const canDraw = context && traces.length && Number.isFinite(duration) && duration > 0;
+  ampCanvas.hidden = !canDraw;
+  for (const series of ampSeries) series.legend.hidden = !canDraw || !traces.includes(series);
+  ampCaption.textContent = canDraw
+    ? "Cumulative bytes on the same monotonic pass clock. The plot groups recorded events into equal time intervals. NVMe reads are timed at command issue."
+    : "The analysis receipt has no byte timeline. The table shows the available pass totals.";
+  if (!canDraw) return;
+
+  const { width, height } = ampCanvas.getBoundingClientRect();
+  if (width === 0) return;
+  const pixelRatio = window.devicePixelRatio || 1;
+  ampCanvas.width = Math.round(width * pixelRatio);
+  ampCanvas.height = Math.round(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  const style = getComputedStyle(ampCanvas);
+  const left = 45;
+  const right = width - 12;
+  const top = 22;
+  const bottom = height - 30;
+  const maxBytes = Math.max(...traces.map(series => timeline[series.key].reduce((sum, amount) => sum + amount, 0)));
+  const maxMB = maxBytes / 1000000;
+  const stepUnit = 10 ** Math.floor(Math.log10(maxMB || 1));
+  const ceiling = Math.ceil((maxMB || 1) / stepUnit) * stepUnit;
+  const y = bytes => bottom - (bytes / 1000000 / ceiling) * (bottom - top);
+  context.font = "11px system-ui, sans-serif";
+  context.fillStyle = style.getPropertyValue("--site-muted").trim();
+  context.strokeStyle = style.getPropertyValue("--site-border").trim();
+  context.fillText("MB", 0, 12);
+  for (let index = 0; index <= 4; index++) {
+    const mb = ceiling * index / 4;
+    const lineY = y(mb * 1000000);
+    context.beginPath();
+    context.moveTo(left, lineY);
+    context.lineTo(right, lineY);
+    context.stroke();
+    context.fillText(decimal.format(mb), 0, lineY + 4);
+  }
+  for (let index = 0; index <= 4; index++) {
+    const label = display(Math.round(duration * index / 4)) + (index === 4 ? " ms" : "");
+    const position = left + (right - left) * index / 4;
+    context.fillText(label, Math.min(position, width - context.measureText(label).width), bottom + 19);
+  }
+  for (const series of traces) {
+    context.strokeStyle = getComputedStyle(series.legend).getPropertyValue("--series-color").trim();
+    context.lineWidth = 2.5;
+    context.beginPath();
+    context.moveTo(left, bottom);
+    let running = 0;
+    for (const [index, amount] of timeline[series.key].entries()) {
+      running += amount;
+      const x = left + (right - left) * (index + 1) / timeline[series.key].length;
+      context.lineTo(x, y(running));
+    }
+    context.stroke();
+  }
+}
+
+function renderAmplification() {
+  const row = amplificationPass();
+  const intent = row.planner_requested_bytes_with_reuse;
+  const buffered = row.io_uring_requested_bytes_including_eof;
+  const nvme = row.nvme ? (row.nvme.payload_bytes ?? 0) : null;
+  const multiple = bytes => Number.isFinite(bytes) && intent > 0 ? decimal.format(bytes / intent) + "×" : "Unavailable";
+  ampResult.textContent = nvme === null
+    ? "This pass has no NVMe capture."
+    : multiple(nvme) + " NVMe read amplification";
+  ampRows.replaceChildren();
+  for (const [index, bytes] of [intent, buffered, nvme].entries()) {
+    const tr = ampRows.insertRow();
+    const label = document.createElement("th");
+    label.scope = "row";
+    label.textContent = ampSeries[index].label;
+    tr.append(label);
+    tr.insertCell().textContent = bytes === null ? "Not captured" : display(bytes);
+    tr.insertCell().textContent = multiple(bytes);
+  }
+  drawAmplificationTimeline();
+}
+
 for (const control of [source, metric, breakdown]) {
   control.addEventListener("change", renderSizes);
 }
@@ -773,15 +1046,23 @@ for (const panel of panels) {
 }
 renderSizes();
 document.querySelector("#size-visualizer").hidden = false;
+document.querySelector("#amp-view").hidden = false;
+ampPass.addEventListener("change", renderAmplification);
+renderAmplification();
+new ResizeObserver(drawAmplificationTimeline).observe(ampCanvas);
 
 input.addEventListener("change", async () => {
   table.hidden = true;
   output.replaceChildren();
   if (source.value.startsWith("receipt-")) source.value = "stack";
+  if (ampPass.value.startsWith("receipt-")) ampPass.value = "stack-0";
   receiptPasses.replaceChildren();
   receiptPasses.hidden = true;
+  ampLocal.replaceChildren();
+  ampLocal.hidden = true;
   local = {};
   renderSizes();
+  renderAmplification();
   const file = input.files[0];
   if (!file) {
     status.textContent = receiptHint;
@@ -795,6 +1076,9 @@ input.addEventListener("change", async () => {
       throw new Error("This file is not a DiskGraph analysis receipt.");
     }
     for (const [index, row] of report.passes.entries()) {
+      const key = "receipt-" + index;
+      const label = Number.isFinite(row.pass) ? row.pass : index + 1;
+      local[key] = row;
       const tr = document.createElement("tr");
       const values = [row.pass, row.planner_distinct_bytes, row.io_uring_requests,
                       row.nvme ? (row.nvme.payload_bytes ?? 0) : null];
@@ -806,13 +1090,18 @@ input.addEventListener("change", async () => {
       }
       output.append(tr);
       if (sizeEntries(row[plannerField]).length || sizeEntries(row[bufferedField]).length) {
-        const key = "receipt-" + index;
-        local[key] = row;
-        const label = Number.isFinite(row.pass) ? row.pass : index + 1;
         receiptPasses.append(new Option("Local receipt · pass " + label, key));
+      }
+      if (row.planner_requested_bytes_with_reuse > 0) {
+        ampLocal.append(new Option("Local receipt · pass " + label, key));
       }
     }
     table.hidden = false;
+    ampLocal.hidden = !ampLocal.children.length;
+    if (!ampLocal.hidden) {
+      ampPass.value = ampLocal.firstElementChild.value;
+      renderAmplification();
+    }
     receiptPasses.hidden = !receiptPasses.children.length;
     if (receiptPasses.hidden) {
       status.textContent = file.name + " loaded. This receipt has no request-size histogram.";

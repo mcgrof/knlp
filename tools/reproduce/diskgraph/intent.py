@@ -14,10 +14,11 @@ import stat
 import threading
 import time
 
-from device import load_extents, select
+from device import load_extents, phase_bucket, select
 
 PAGE = 4096
 BUF_LIMIT = 1 << 30
+TIMELINE_BUCKETS = 64
 
 
 def read_trace(path):
@@ -86,20 +87,26 @@ def distinct_bytes(ranges):
     return result
 
 
-def shape(files, demand, waves):
+def shape(files, demand, waves, start, end):
     planner_sizes = Counter()
     intervals = defaultdict(list)
+    planner_buckets = [0] * TIMELINE_BUCKETS
     for event in demand:
+        bucket = phase_bucket(event["at_ns"], start, end, TIMELINE_BUCKETS)
+        planner_buckets[bucket] += sum(length for _, length in event["ranges"])
         planner_sizes.update(length for _, length in event["ranges"])
         intervals[event["file"]].extend(
             (offset, offset + size) for offset, size in event["ranges"]
         )
     requested_sizes = Counter()
+    buffered_buckets = [0] * TIMELINE_BUCKETS
     eof_bytes = 0
     unique = defaultdict(set)
     for wave in waves:
+        bucket = phase_bucket(wave["at_ns"], start, end, TIMELINE_BUCKETS)
         for file, offset, length in wave["reads"]:
             requested_sizes[length] += 1
+            buffered_buckets[bucket] += length
             expected = min(length, files[file] - offset)
             eof_bytes += expected
             unique[file].update(
@@ -122,6 +129,11 @@ def shape(files, demand, waves):
         "distinct_requested_pages": sum(map(len, unique.values())),
         "lanes": len({w["lane"] for w in waves}),
         "waves": len(waves),
+        "read_byte_timeline": {
+            "elapsed_ns": end - start,
+            "planner_requested_bytes": planner_buckets,
+            "buffered_requested_bytes": buffered_buckets,
+        },
     }
 
 
@@ -154,9 +166,17 @@ def report(args, files, demand, waves):
                 files,
                 [d for d in demand if start <= d["at_ns"] < end],
                 [w for w in waves if start <= w["at_ns"] < end],
+                start,
+                end,
             )
         )
+        requested = summary["planner_requested_bytes_with_reuse"]
+        if requested:
+            summary["io_uring_requested_bytes_per_planner_requested_byte"] = (
+                summary["io_uring_requested_bytes_including_eof"] / requested
+            )
         if extents:
+            device_buckets = [0] * TIMELINE_BUCKETS
             with capture_path.open() as data:
                 _, physical = select(
                     map(json.loads, data),
@@ -166,11 +186,18 @@ def report(args, files, demand, waves):
                     allow_empty=True,
                     keep_events=False,
                     histograms=True,
+                    payload_buckets=device_buckets,
                 )
             summary["nvme"] = physical
+            summary["read_byte_timeline"]["nvme_edge_bytes"] = device_buckets
+            edge_bytes = physical.get("payload_bytes", 0)
+            if requested:
+                summary["nvme_edge_bytes_per_planner_requested_byte"] = (
+                    edge_bytes / requested
+                )
             if summary["planner_distinct_bytes"]:
                 summary["nvme_edge_bytes_per_distinct_planner_byte"] = (
-                    physical.get("payload_bytes", 0) / summary["planner_distinct_bytes"]
+                    edge_bytes / summary["planner_distinct_bytes"]
                 )
         result["passes"].append(summary)
     if not all(run["io_uring_requests"] for run in result["passes"]):
