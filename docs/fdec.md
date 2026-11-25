@@ -17,9 +17,13 @@ measurement and fails if any combination does not compose.
 Measured on Qwen2.5-7B, Llama-3.2-3B and Qwen3-8B, the three dense-model
 bricks compose in all eight combinations. The full stack removes
 40% to 46% of the bytes a decode step reads at a 32,768-token context,
-at a perplexity within 0.3% of the unmodified model. A fourth brick,
-the trained cartridge, composes with int8 weights and with the
-asymmetric KV cache at a combined loss cost of 0.1%.
+at a perplexity within 0.3% of the unmodified model. On GSM8K and MMLU
+the full stack answers as many questions as the 16-bit model within the
+resolution of the test: the 95% interval of the
+[difference in accuracy](#task-accuracy) contains zero for all three
+models on both tasks. A fourth brick, the trained cartridge, composes
+with int8 weights and with the asymmetric KV cache at a combined loss
+cost of 0.1%.
 
 ## Contents
 
