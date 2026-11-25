@@ -51,6 +51,7 @@
     };
 
     // ───────────────────────── DATA (measured: Qwen2.5-7B + Llama-3.2-3B, fdec quant-eval 2026-06) ─────────────────────────
+    // KNEE was measured again in 2026-11 with float32 attention arithmetic; POOLS, FISHER and PROXY are from 2026-06.
 
     // Decode byte pools, Qwen2.5-7B, ctx 32768, baseline per-token. Weights dominate.
     const POOLS = [
@@ -74,9 +75,9 @@
     // The deployable knee — REAL held-out cross-family eval (wikitext-2 test, 4096 ctx,
     // calib disjoint from eval). top-1 agreement vs fp16, and perplexity ratio.
     const KNEE = [
-      {config:'int8',     qwen:0.921, llama:0.982, qppl:1.027, lppl:0.999, saved:41, lat:3.00},
-      {config:'int4',     qwen:0.823, llama:0.888, qppl:1.160, lppl:1.059, saved:61, lat:2.00},
-      {config:'int4+AWQ', qwen:0.817, llama:0.874, qppl:1.131, lppl:1.056, saved:61, lat:2.00},
+      {config:'int8',     qwen:0.983, llama:0.980, qppl:0.999, lppl:0.999, saved:41, lat:3.00},
+      {config:'int4',     qwen:0.843, llama:0.886, qppl:1.158, lppl:1.059, saved:61, lat:2.00},
+      {config:'int4+AWQ', qwen:0.830, llama:0.873, qppl:1.185, lppl:1.057, saved:61, lat:2.00},
     ];
 
     // The earlier 6-prompt PROXY sweep that the real eval corrected. Shows naive-int4
@@ -165,8 +166,8 @@
               Decode is memory-bound, and at a 7B model with real context the weights are <strong className="text-white">83%</strong>
               {" "}of the bytes read each token &mdash; so quantizing weights is where the decode speedup lives. Diagonal Fisher
               ranks which weights matter: spend int8 on the sensitive ones, int4 on the rest. On a held-out cross-family eval,
-              <strong className="text-white"> int8 weights are near-lossless</strong> (top-1 0.92&ndash;0.98 vs fp16, perplexity
-              within ~3%) for <strong className="text-white">−41%</strong> decode bytes, calibration-free. Pushing to int4
+              <strong className="text-white"> int8 weights are near-lossless</strong> (top-1 0.98 vs fp16, perplexity
+              unchanged) for <strong className="text-white">−41%</strong> decode bytes, calibration-free. Pushing to int4
               buys another <strong className="text-white">−20%</strong> but costs real quality. And the honest part: the
               activation-aware tricks (AWQ, GPTQ) that turned a 6-prompt proxy into a int4 win <strong className="text-white"> do
               not deliver a free win</strong> once you measure on held-out text across two model families &mdash; int8 is the
@@ -259,12 +260,23 @@
               </BarChart>
             </ChartFrame>
             <p>
-              <strong>int8 is the knee.</strong> Qwen2.5-7B holds top-1 0.921 with perplexity within 2.7%; Llama-3.2-3B holds
-              0.982 with perplexity essentially unchanged (ratio 0.999) &mdash; for <strong>−41%</strong> decode bytes and a
+              <strong>int8 is the knee.</strong> Qwen2.5-7B holds top-1 0.983 and Llama-3.2-3B holds 0.980, both with
+              perplexity unchanged (ratio 0.999) &mdash; for <strong>−41%</strong> decode bytes and a
               roofline 5.11&rarr;3.00 ms/token, and it is <strong>calibration-free</strong>. Dropping to int4 with
               Fisher-guided allocation (sensitive layers kept at int8) buys another −20% of bytes but costs real quality
-              (Qwen 0.823, Llama 0.888; perplexity +16% / +6%). int4 is for when that hit is acceptable for the extra bytes;
+              (Qwen 0.843, Llama 0.886; perplexity +16% / +6%). int4 is for when that hit is acceptable for the extra bytes;
               otherwise ship int8.
+            </p>
+            <p>
+              <strong>Corrected in November 2026.</strong> The first version of this chart gave Qwen2.5-7B a top-1
+              agreement of 0.921 at int8, with perplexity 2.7% higher. That run computed the attention scores in 16 bits,
+              which degrades the 16-bit Qwen2.5-7B reference and makes it sensitive to small weight changes
+              (<a className="text-purple-400 underline" href="fdec.html#attention-precision">details on the fdec page</a>).
+              With float32 attention arithmetic, int8 agrees with the 16-bit model on 0.983 of the tokens and leaves
+              perplexity unchanged. The int4 numbers moved less (0.823 to 0.843), and the Llama-3.2-3B column moved by
+              0.002 or less. The chart and the text now show the November measurement, made on one Radeon Pro W7900
+              with <span className="kbd">scripts/fdec_quant_eval.py</span>. The Fisher chart and the 6-prompt proxy chart
+              are from June and were not measured again.
             </p>
           </Section>
 
@@ -288,9 +300,11 @@
               </BarChart>
             </ChartFrame>
             <p>
-              On the real held-out eval across two families, that win evaporates. Fixed-α AWQ is roughly a wash and slightly
-              {" "}<em>hurts</em> agreement (Qwen int4 0.823&rarr;0.817, Llama 0.888&rarr;0.874); it shaves a little perplexity
-              while costing a little KL &mdash; not a free lunch on either family. GPTQ generalizes but does not beat int8,
+              On the real held-out eval across two families, that win evaporates. Fixed-α AWQ
+              {" "}<em>hurts</em> agreement (Qwen int4 0.843&rarr;0.830, Llama 0.886&rarr;0.873) and raises KL on both
+              families. It also raises perplexity on Qwen (+16% to +19%) and leaves it flat on Llama &mdash; not a free
+              lunch on either family. The GPTQ runs below are from June; on Qwen2.5-7B they used the 16-bit attention
+              scores described above and were not measured again. GPTQ generalizes but does not beat int8,
               and most of its apparent perplexity win was <strong>domain alignment</strong>: calibrate and evaluate on the
               same corpus and it shines; calibrate on C4 and evaluate cross-domain and Qwen int8+GPTQ collapses back to plain
               int8. So the corrected, honest knee is <strong>calibration-free int8</strong>, with GPTQ as optional fidelity
@@ -316,7 +330,8 @@
               the byte-cheap key-projection pin stays a safe default even though this eval cannot credit it. And the
               perplexity numbers are model- and corpus-specific &mdash; the durable claims are the byte split (weights
               dominate decode), the int8 near-lossless knee, and that cache-precision policy does not predict
-              weight-precision policy. Data: Qwen2.5-7B and Llama-3.2-3B, held-out wikitext-4k, 2026-06.
+              weight-precision policy. Data: Qwen2.5-7B and Llama-3.2-3B, held-out wikitext-4k, 2026-06; agreement and
+              perplexity measured again in 2026-11.
             </p>
           </Section>
 
