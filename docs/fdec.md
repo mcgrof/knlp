@@ -554,7 +554,9 @@ gains of int8 weights and of the certified head do not add. In the second
 reading, a coarse int8 grid raises GSM8K accuracy on this model. The control
 on the other problems separates the two, because the outcome of the 16-bit
 cell on those problems does not depend on its outcome on the test problems.
-A second run of group size 128 is in progress.
+A second run of group size 128 on the same GPU gives the same outcome on
+every problem as the run in the table, so the gain is not a variation from
+run to run.
 
 One more control tests the first reading directly. It runs the 16-bit cell
 on the test problems in batches of 16 and of 24 prompts in place of 32, on
@@ -570,6 +572,7 @@ change to test the reading. The runs are in the queue.
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
 | Qwen3-8B, GSM8K | int8 weights | group size 128, the run in the table | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
+| Qwen3-8B, GSM8K | int8 weights | group size 128, second run | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
 | Qwen3-8B, GSM8K | int8 weights | group size 64 | 89.01% | +0.08 | -0.61 to +0.76 | 10 | 11 | 1.00 |
 | Qwen3-8B, GSM8K | int8 weights | group size 256 | 89.84% | +0.91 | +0.13 to +1.69 | 8 | 20 | 0.04 |
 | Qwen3-8B, GSM8K | int8 weights | mean of the three roundings | | +0.78 | +0.14 to +1.43 | | | |
@@ -579,8 +582,9 @@ Each row is the cell with int8 weights in a run of the 1,319 GSM8K test
 problems on the same Radeon Pro W7900, in batches of 32 prompts. The group
 size is the number of weights that share one int8 scale. The run with group
 size 64 measured the 16-bit cell again, with the same outcome on every
-problem. A mean row gives the mean of the paired differences over the group
-sizes that its label names.
+problem. The second run of group size 128 is a repeat and not another
+rounding, so the mean rows leave it out. A mean row gives the mean of the
+paired differences over the group sizes that its label names.
 
 The first loss: int8 weights with the asymmetric cache on Qwen2.5-7B answer
 74.04% of the MMLU questions against 74.25%, with 99 questions lost and 70
@@ -711,7 +715,7 @@ weight or the storage format of the cache.
 | Second run of the 16-bit cell and of the int8 cell | Llama-3.2-3B | GSM8K | 0 of 1,319 in each cell | 0.00 |
 | Second run of the 16-bit cell and of the int8 cell | Llama-3.2-3B | MMLU | 0 of 14,042 in each cell | 0.00 |
 | Second run of the 16-bit cell and of the int8 cell | Qwen2.5-7B | MMLU | 0 of 14,042 in each cell | 0.00 |
-| Second run of the 16-bit cell | Qwen3-8B | GSM8K | 0 of 1,319 | 0.00 |
+| Second run of the 16-bit cell and of the int8 cell | Qwen3-8B | GSM8K | 0 of 1,319 in each cell | 0.00 |
 | 16-bit cell and int8 cell on another GPU, PyTorch version and batch size | Qwen2.5-7B | GSM8K | 58 and 56 of 1,319 (4.4% and 4.2%) | -0.30 and +0.45 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | GSM8K | 47 of 1,319 (3.6%) | -1.29 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | MMLU | 155 of 14,042 (1.1%) | +0.04 |
@@ -725,12 +729,11 @@ weight or the storage format of the cache.
 
 The accuracy change is the second condition minus the first. The second run
 used a later commit of the tool on the same GPU with the same batch size.
-The second run of Qwen3-8B is on the W7900 and has the 16-bit cell; its int8
-cell is in the queue. The other second runs are on the RTX 4090. The run on
-another GPU is the earlier W7900 run of Qwen2.5-7B against the RTX 4090 run
-of the table; the row gives the 16-bit cell and the int8 cell. The certified
-head is compared with the 16-bit cell of the same run. The two FP8 casts are
-compared on the asymmetric KV cell.
+The second run of Qwen3-8B is on the W7900, and the other second runs are on
+the RTX 4090. The run on another GPU is the earlier W7900 run of Qwen2.5-7B
+against the RTX 4090 run of the table; the row gives the 16-bit cell and the
+int8 cell. The certified head is compared with the 16-bit cell of the same
+run. The two FP8 casts are compared on the asymmetric KV cell.
 
 A second run of the same cell on the same GPU gives the same outcome on
 every item, on the RTX 4090 and on the W7900, so a flip comes from changed
