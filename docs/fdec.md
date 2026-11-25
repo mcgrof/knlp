@@ -221,15 +221,15 @@ and the 16-bit cell is between them.
 Control runs test these differences, each with a rule set before the run.
 The three controls for Qwen2.5-7B are done, and none reproduces its
 difference. The controls for Qwen3-8B are running. Their first result is
-that the gain of int8 weights does not return with another int8 group size.
-The table gives the state of each control.
+mixed: the gain of int8 weights returns with one other int8 group size and
+not with the other. The table gives the state of each control.
 
 | Difference in the task tables | Control | Result of the control | Outcome by the rule |
 |---|---|---|---|
 | Qwen2.5-7B, MMLU: int8 weights with the asymmetric cache are 0.21 points below the 16-bit model | The same cell with two other int8 group sizes and with another FP8 cast of the values | Mean difference of 0.00 points from the 16-bit model, with a 95% interval from 0.14 points below to 0.14 points above | Not reproduced |
 | Qwen2.5-7B, GSM8K: the certified head is 1.29 points below the 16-bit model | The same cell on 3,957 other problems | 0.28 points above, with a 95% interval from 0.16 points below to 0.72 points above | Not reproduced |
 | Qwen2.5-7B, GSM8K: three cells span 2.35 points | The same cells on 3,957 other problems | The cells span 0.45 points in the reverse order, and the test finds no difference among them (p 0.29) | Not reproduced |
-| Qwen3-8B, GSM8K: int8 weights are 1.36 points above the 16-bit model | The same cell on 2,638 other problems, and with two other int8 group sizes on the test problems | Group size 64: 0.08 points above, with a 95% interval from 0.61 points below to 0.76 points above. Group size 256 and the other problems are not finished | Not a property of the int8 brick. Open: one set of int8 weights, or the sample of test problems |
+| Qwen3-8B, GSM8K: int8 weights are 1.36 points above the 16-bit model | The same cell on 2,638 other problems, and with two other int8 group sizes on the test problems | Group size 64: 0.08 points above, with a 95% interval from 0.61 points below to 0.76 points above. Group size 256: 0.91 points above, with an interval from 0.13 to 1.69 points above. The other problems are not finished | Not a property of the int8 brick by the rule: the gain does not return with both group sizes. The control on other problems is open |
 | Qwen3-8B, GSM8K: the certified head is 0.83 points above the 16-bit model | The same cell on 2,638 other problems | Running | Open |
 | Qwen3-8B, GSM8K: four cells span 1.82 points | The same cells on 2,638 other problems | Running | Open |
 
@@ -529,30 +529,47 @@ group sizes. If it returns on the other problems and not with the other
 group sizes, it belongs to one set of int8 weights. The first control is
 running, and the second is in the queue.
 
-The third control has its first result: the gain does not return with group
-size 64. int8 weights with group size 64 solve 89.01% of the test problems
-against 88.93% for the 16-bit model, with 10 problems lost and 11 gained.
-The difference is 0.08 points, with a 95% interval from 0.61 points below to
-0.76 points above. The finer grid changes fewer outcomes: 21 problems
-against 36 with group size 128. It gains 11 problems, and 10 of them are
-among the 27 that group size 128 gains; it does not gain the other 17. Of
-the 29 problems that only one of the two group sizes solves, group size 128
-solves 23. By the rule, the gain of 1.36 points is not a property of the
-int8 brick on this model, which agrees with the first reading. The control
-on the other problems tells if the gain belongs to this one set of int8
-weights or to the sample of test problems. Group size 256 and a second run
-of group size 128 are in the queue.
+The third control is done, and its result is mixed. With group size 64 the
+gain does not return: int8 weights solve 89.01% of the test problems against
+88.93% for the 16-bit model, with 10 problems lost and 11 gained. The
+difference is 0.08 points, with a 95% interval from 0.61 points below to
+0.76 points above. With group size 256 the gain returns: int8 weights solve
+89.84%, with 8 problems lost and 20 gained (p 0.04). The difference is 0.91
+points, with an interval from 0.13 to 1.69 points above. The mean of these
+two group sizes, which were not selected for their result, is 0.49 points
+above the 16-bit model, with an interval from 0.11 points below to 1.09
+points above. By the rule, the gain is not a property of the int8 brick on
+this model, because it does not return with both group sizes.
+
+The three group sizes gain mostly the same problems. Of the 20 problems that
+group size 256 gains, 16 are among the 27 that group size 128 gains, and so
+are 10 of the 11 that group size 64 gains. The certified head gains 14
+problems, and 9 of them are among the same 27. Every one of these
+comparisons uses the same 16-bit cell. This fits both readings above. In the
+first reading, the set of rounded numbers that matters is the 16-bit cell
+itself: if it fails by chance a number of test problems that the model
+decides by a narrow margin, most small changes of the arithmetic gain
+against it, and they gain the same problems. That would also explain why the
+gains of int8 weights and of the certified head do not add. In the second
+reading, a coarse int8 grid raises GSM8K accuracy on this model. The control
+on the other problems separates the two, because the outcome of the 16-bit
+cell on those problems does not depend on its outcome on the test problems.
+A second run of group size 128 is in progress.
 
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
 | Qwen3-8B, GSM8K | int8 weights | group size 128, the run in the table | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
 | Qwen3-8B, GSM8K | int8 weights | group size 64 | 89.01% | +0.08 | -0.61 to +0.76 | 10 | 11 | 1.00 |
+| Qwen3-8B, GSM8K | int8 weights | group size 256 | 89.84% | +0.91 | +0.13 to +1.69 | 8 | 20 | 0.04 |
+| Qwen3-8B, GSM8K | int8 weights | mean of the three roundings | | +0.78 | +0.14 to +1.43 | | | |
+| Qwen3-8B, GSM8K | int8 weights | mean of the two without the run in the table | | +0.49 | -0.11 to +1.09 | | | |
 
 Each row is the cell with int8 weights in a run of the 1,319 GSM8K test
 problems on the same Radeon Pro W7900, in batches of 32 prompts. The group
 size is the number of weights that share one int8 scale. The run with group
 size 64 measured the 16-bit cell again, with the same outcome on every
-problem.
+problem. A mean row gives the mean of the paired differences over the group
+sizes that its label names.
 
 The first loss: int8 weights with the asymmetric cache on Qwen2.5-7B answer
 74.04% of the MMLU questions against 74.25%, with 99 questions lost and 70
