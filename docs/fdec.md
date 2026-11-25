@@ -848,8 +848,9 @@ less than 0.03 in perplexity. Qwen2.5-7B changed in two ways. Its 16-bit
 perplexity is 8.44 and not 9.84. And it is no longer the weakest model: the
 first matrix showed int8 weights changing 8.3% of its predicted tokens, and
 with correct attention they change 2.4%, close to the 1.7% and 2.0% of the
-other two models. With scores rounded to 16 bits, a small change to the model moves
-many scores across a rounding step, which is the likely source of the 8.3%.
+other two models. With scores rounded to 16 bits, a small change to the
+model moves many scores across a rounding step, which is the likely source
+of the 8.3%.
 [`scripts/fdec_attn_precision.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_attn_precision.py)
 runs this check on any model.
 
