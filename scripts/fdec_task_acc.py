@@ -40,6 +40,10 @@ dense model with a 95% interval, the count of items that flipped in each
 direction, and the exact McNemar p-value.  For a cell with two or more
 bricks it also gives the departure from additivity: the accuracy change of
 the cell minus the sum of the changes of its bricks alone.
+
+The result file keeps four GSM8K completions per cell.  --completions
+writes all of them to a second file, to read the items that change between
+two cells.
 """
 
 import argparse
@@ -127,6 +131,17 @@ def gsm_answer(completion):
     if "####" not in completion:
         return None
     return norm_number(completion.split("####", 1)[1])
+
+
+def keep_completions(path, arm, texts):
+    """Add the completions of one cell to a JSON file: {cell: [text, ...]}."""
+    kept = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            kept = json.load(f)
+    kept[arm] = texts
+    with open(path, "w") as f:
+        json.dump(kept, f)
 
 
 def gsm_clean(solution):
@@ -329,6 +344,11 @@ def main():
     ap.add_argument("--mmlu-batch", type=int, default=16)
     ap.add_argument("--mmlu-max-len", type=int, default=2048)
     ap.add_argument("--out", required=True)
+    ap.add_argument(
+        "--completions",
+        default="",
+        help="also write every GSM8K completion of every cell to this JSON file",
+    )
     args = ap.parse_args()
     unknown = set(args.arms.split(",")) - set(ARMS)
     assert not unknown, f"unknown cells: {sorted(unknown)}"
@@ -409,6 +429,8 @@ def main():
                         model, tok, items, device, args.gsm_batch, args.gsm_max_new
                     )
                     ok = [gsm_answer(t) == it["gold"] for t, it in zip(texts, items)]
+                    if args.completions:
+                        keep_completions(args.completions, arm, texts)
                     extra = dict(
                         no_marker=sum("####" not in t for t in texts),
                         samples=texts[:4],
