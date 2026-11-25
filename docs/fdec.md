@@ -468,20 +468,22 @@ reproduces its loss. The controls of the two gains are in the queue.
 The two gains are in the GSM8K table of Qwen3-8B. int8 weights solve 90.30%
 of the problems against 88.93% for the 16-bit model, with 27 problems gained
 and 9 lost (p 0.004). The certified head alone solves 89.76%, with 14 gained
-and 3 lost (p 0.013). The two cells are not independent evidence. They share
-the 16-bit cell, and 9 of the 14 problems that the certified head gains are
-among the 27 that int8 weights gain; about 3 would be common if the two sets
-were independent. The gains do not add. The full stack has both bricks and
-solves 89.39%, with 20 problems gained and 14 lost. It is 1.29 points below
-the sum of the differences of its three bricks alone, with a 95% interval
-from 2.59 points below to 0.01 points above. In this table the outcome of 65
-problems differs among the six cells. The 16-bit cell solves 25 of the 65,
-and the five cells with bricks solve 19, 31, 32, 36 and 43. Two readings fit
-these counts. In the first, a difference belongs to one set of rounded
-numbers: this set of int8 weights solves more of the problems that the model
-solves by a narrow margin, this FP8 cast of the values solves fewer, and
-another set would land elsewhere. In the second, a brick raises GSM8K
-accuracy on this model. Rounding the weights is not expected to raise
+and 3 lost (p 0.013). A second run of the 16-bit cell on the same GPU gives
+the same outcome on all 1,319 problems, so the gains are not a variation of
+the reference from run to run. The two cells are not independent evidence.
+They share the 16-bit cell, and 9 of the 14 problems that the certified head
+gains are among the 27 that int8 weights gain; about 3 would be common if
+the two sets were independent. The gains do not add. The full stack has both
+bricks and solves 89.39%, with 20 problems gained and 14 lost. It is 1.29
+points below the sum of the differences of its three bricks alone, with a
+95% interval from 2.59 points below to 0.01 points above. In this table the
+outcome of 65 problems differs among the six cells. The 16-bit cell solves
+25 of the 65, and the five cells with bricks solve 19, 31, 32, 36 and 43.
+Two readings fit these counts. In the first, a difference belongs to one set
+of rounded numbers: this set of int8 weights solves more of the problems
+that the model solves by a narrow margin, this FP8 cast of the values solves
+fewer, and another set would land elsewhere. In the second, a brick raises
+GSM8K accuracy on this model. Rounding the weights is not expected to raise
 accuracy, and the other models do not show it on this task: int8 weights are
 0.3 points above the 16-bit model on Llama-3.2-3B and 0.15 points below it
 on Qwen2.5-7B. On MMLU the same weights are level with the 16-bit model on
@@ -633,6 +635,7 @@ weight or the storage format of the cache.
 | Second run of the 16-bit cell and of the int8 cell | Llama-3.2-3B | GSM8K | 0 of 1,319 in each cell | 0.00 |
 | Second run of the 16-bit cell and of the int8 cell | Llama-3.2-3B | MMLU | 0 of 14,042 in each cell | 0.00 |
 | Second run of the 16-bit cell and of the int8 cell | Qwen2.5-7B | MMLU | 0 of 14,042 in each cell | 0.00 |
+| Second run of the 16-bit cell | Qwen3-8B | GSM8K | 0 of 1,319 | 0.00 |
 | 16-bit cell and int8 cell on another GPU, PyTorch version and batch size | Qwen2.5-7B | GSM8K | 58 and 56 of 1,319 (4.4% and 4.2%) | -0.30 and +0.45 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | GSM8K | 47 of 1,319 (3.6%) | -1.29 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | MMLU | 155 of 14,042 (1.1%) | +0.04 |
@@ -646,26 +649,28 @@ weight or the storage format of the cache.
 
 The accuracy change is the second condition minus the first. The second run
 used a later commit of the tool on the same GPU with the same batch size.
-The run on another GPU is the earlier W7900 run of Qwen2.5-7B against the
-RTX 4090 run of the table; the row gives the 16-bit cell and the int8 cell.
-The certified head is compared with the 16-bit cell of the same run. The two
-FP8 casts are compared on the asymmetric KV cell.
+The second run of Qwen3-8B is on the W7900 and has the 16-bit cell; its int8
+cell is in the queue. The other second runs are on the RTX 4090. The run on
+another GPU is the earlier W7900 run of Qwen2.5-7B against the RTX 4090 run
+of the table; the row gives the 16-bit cell and the int8 cell. The certified
+head is compared with the 16-bit cell of the same run. The two FP8 casts are
+compared on the asymmetric KV cell.
 
 A second run of the same cell on the same GPU gives the same outcome on
-every item, so a flip comes from changed arithmetic and not from the run. A
-change of GPU is enough to change the arithmetic. The 16-bit Qwen2.5-7B,
-with no brick, answers 58 of the 1,319 GSM8K problems differently on the
-second GPU (4.4%), and its accuracy moves by 0.3 points. The difference of a
-cell from the 16-bit cell moves too: int8 weights are 0.91 points below the
-16-bit model in the W7900 run and 0.15 points below in the RTX 4090 run. The
-certified head changes no weight and no cached value; it replaces the 16-bit
-logits of the last position with float32 logits, and it still flips 1.3% to
-6.6% of the GSM8K problems and 0.3% to 2.8% of the MMLU questions. The two
-FP8 casts of the values differ by 0.1% in perplexity, and they disagree on
-6.3% of the GSM8K problems: on Llama-3.2-3B the asymmetric cache solves
-28.9% with one cast and 30.2% with the other. One changed token can change
-the rest of a greedy completion. On MMLU the two casts disagree on 1.1% to
-2.8% of the questions.
+every item, on the RTX 4090 and on the W7900, so a flip comes from changed
+arithmetic and not from the run. A change of GPU is enough to change the
+arithmetic. The 16-bit Qwen2.5-7B, with no brick, answers 58 of the 1,319
+GSM8K problems differently on the second GPU (4.4%), and its accuracy moves
+by 0.3 points. The difference of a cell from the 16-bit cell moves too: int8
+weights are 0.91 points below the 16-bit model in the W7900 run and 0.15
+points below in the RTX 4090 run. The certified head changes no weight and
+no cached value; it replaces the 16-bit logits of the last position with
+float32 logits, and it still flips 1.3% to 6.6% of the GSM8K problems and
+0.3% to 2.8% of the MMLU questions. The two FP8 casts of the values differ
+by 0.1% in perplexity, and they disagree on 6.3% of the GSM8K problems: on
+Llama-3.2-3B the asymmetric cache solves 28.9% with one cast and 30.2% with
+the other. One changed token can change the rest of a greedy completion. On
+MMLU the two casts disagree on 1.1% to 2.8% of the questions.
 
 On Llama-3.2-3B and Qwen2.5-7B, int8 weights and the asymmetric cache, alone
 or together, flip 4.2% to 6.4% of the GSM8K problems and move accuracy by
