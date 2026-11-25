@@ -246,23 +246,23 @@ themselves: the lowest and the highest cell are 2.35 and 1.82 points apart,
 and the 16-bit cell is between them.
 
 Control runs test these differences, each with a rule set before the run.
-The three controls for Qwen2.5-7B are done, and none reproduces its
-difference. The controls for Qwen3-8B are running. Their first result is
-mixed: the gain of int8 weights returns with one other int8 group size and
-not with the other. The table gives the state of each control.
+The six controls are done, and none reproduces its difference. The table
+gives the result of each control. Two more runs test why the two gains of
+Qwen3-8B appear on its test problems; they are not finished.
 
 | Difference in the task tables | Control | Result of the control | Outcome by the rule |
 |---|---|---|---|
 | Qwen2.5-7B, MMLU: int8 weights with the asymmetric cache are 0.21 points below the 16-bit model | The same cell with two other int8 group sizes and with another FP8 cast of the values | Mean difference of 0.00 points from the 16-bit model, with a 95% interval from 0.14 points below to 0.14 points above | Not reproduced |
 | Qwen2.5-7B, GSM8K: the certified head is 1.29 points below the 16-bit model | The same cell on 3,957 other problems | 0.28 points above, with a 95% interval from 0.16 points below to 0.72 points above | Not reproduced |
 | Qwen2.5-7B, GSM8K: three cells span 2.35 points | The same cells on 3,957 other problems | The cells span 0.45 points in the reverse order, and the test finds no difference among them (p 0.29) | Not reproduced |
-| Qwen3-8B, GSM8K: int8 weights are 1.36 points above the 16-bit model | The same cell on 2,638 other problems, and with two other int8 group sizes on the test problems | Group size 64: 0.08 points above, with a 95% interval from 0.61 points below to 0.76 points above. Group size 256: 0.91 points above, with an interval from 0.13 to 1.69 points above. The other problems are not finished | Not a property of the int8 brick by the rule: the gain does not return with both group sizes. The control on other problems is open |
-| Qwen3-8B, GSM8K: the certified head is 0.83 points above the 16-bit model | The same cell on 2,638 other problems | Running | Open |
-| Qwen3-8B, GSM8K: four cells span 1.82 points | The same cells on 2,638 other problems | Running | Open |
+| Qwen3-8B, GSM8K: int8 weights are 1.36 points above the 16-bit model | The same cell on 2,638 other problems, and with two other int8 group sizes on the test problems | Other problems: 0.23 points below, with a 95% interval from 0.78 points below to 0.33 points above. On the test problems the gain returns with group size 256 (0.91 points above) and not with group size 64 (0.08 points above) | Not reproduced |
+| Qwen3-8B, GSM8K: the certified head is 0.83 points above the 16-bit model | The same cell on 2,638 other problems | 0.08 points below, with a 95% interval from 0.50 points below to 0.34 points above | Not reproduced |
+| Qwen3-8B, GSM8K: four cells span 1.82 points | The same cells on 2,638 other problems | The cells span 0.57 points in the reverse order, and the test finds no difference among them (p 0.24) | Not reproduced |
 
 The first column gives a difference whose 95% interval excludes zero, or a
 table whose cells differ in the test of the table as a whole. The
-subsections below give each rule and the data of each control.
+subsections below give each rule and the data of each control. The other
+problems are training problems of GSM8K, which the models may have seen.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -430,17 +430,17 @@ of the 42 problems that only one of the two solves, they solve 33. The
 asymmetric cache is the highest cell of one table and the lowest cell of the
 other.
 
-At these p-values the sample of problems is an unlikely cause of the two
-ranges. The test does not exclude that cause, and it does not tell what the
-cause is. A cell is one set of rounded numbers on one GPU. The test is
-evidence that two such sets differ in GSM8K accuracy on the test problems;
-it does not show that a brick is the cause. On MMLU the control of the first
-loss below gives the scale for one cell: four roundings of the same pair of
-bricks span 0.33 points, from 74.04% to 74.37%, which is more than the 0.24
-points between the lowest and the highest cell of that table. The intervals
-in the tables cover the sample of items and not the choice of rounding. On
-GSM8K, a difference of 1 to 2 points between two cells of a Qwen model is
-therefore not, alone, evidence about a brick.
+At these p-values chance in the sample of test problems is an unlikely cause
+of the two ranges. The test does not exclude that cause, and it does not
+tell what the cause is. A cell is one set of rounded numbers on one GPU. The
+test is evidence that two such sets differ in GSM8K accuracy on the test
+problems; it does not show that a brick is the cause. On MMLU the control of
+the first loss below gives the scale for one cell: four roundings of the
+same pair of bricks span 0.33 points, from 74.04% to 74.37%, which is more
+than the 0.24 points between the lowest and the highest cell of that table.
+The intervals in the tables cover the sample of items and not the choice of
+rounding. On GSM8K, a difference of 1 to 2 points between two cells of a
+Qwen model is therefore not, alone, evidence about a brick.
 
 A control for these two tables runs the cells in question on other GSM8K
 problems, which are training problems that are not prompt examples: the
@@ -459,14 +459,18 @@ are not reproduced.
 | Qwen2.5-7B | 1,319 test problems, the run in the table | 16-bit model 81.12%; asymmetric KV 82.18%; certified head 79.83% | certified head | asymmetric KV | 2.35 | <0.001 |
 | Qwen2.5-7B | 1,319 test problems, earlier run on the W7900 | 16-bit model 81.43%; asymmetric KV 80.82%; certified head 80.52% | certified head | 16-bit model | 0.91 | 0.27 |
 | Qwen2.5-7B | 3,957 other problems | 16-bit model 87.54%; asymmetric KV 87.36%; certified head 87.82% | asymmetric KV | certified head | 0.45 | 0.29 |
+| Qwen3-8B | 1,319 test problems, the run in the table | 16-bit model 88.93%; int8 weights 90.30%; asymmetric KV 88.48%; certified head 89.76% | asymmetric KV | int8 weights | 1.82 | <0.001 |
+| Qwen3-8B | 2,638 other problems | 16-bit model 92.38%; int8 weights 92.15%; asymmetric KV 92.72%; certified head 92.30% | int8 weights | asymmetric KV | 0.57 | 0.24 |
 
 The test of equal accuracy over the cells that are measured on the other
 problems. The first row of a model gives these cells in the run of the task
 table. The cells were selected because two of them are the lowest and the
 highest cell of that table, so the p-value of the first row overstates the
-evidence. The other rows have no such selection. The earlier run is the
-W7900 run of the controls below: another GPU, batches of 32 prompts and one
-FP8 scale per value tensor.
+evidence. The other rows have no such selection. The earlier run of
+Qwen2.5-7B is the W7900 run of the controls below: another GPU, batches of
+32 prompts and one FP8 scale per value tensor. For Qwen3-8B the task table
+ran on the W7900 in batches of 32 prompts, and the other problems on the RTX
+4090 in batches of 8.
 
 The control of Qwen2.5-7B is done, and it does not reproduce the differences
 of that table. On the 3,957 other problems the test finds no difference
@@ -478,7 +482,16 @@ gained. Against the certified head it is 0.45 points below, with a 95%
 interval from 1.09 points below to 0.18 points above. On the test problems
 it is 2.35 points above, which is far outside that interval. By the rule,
 the differences among the cells of the Qwen2.5-7B table are not reproduced.
-The control of Qwen3-8B is in the queue.
+
+The control of Qwen3-8B is done too, and it does not reproduce the
+differences of that table. On the 2,638 other problems the test finds no
+difference among the four cells (p 0.24). The cells are within 0.57 points,
+and their order is reversed: int8 weights are the lowest cell and the
+asymmetric cache is the highest. Of the 63 problems that only one of these
+two cells solves, the asymmetric cache solves 39. On the test problems int8
+weights solve 33 of the 42 such problems. By the rule, the differences among
+the cells of the Qwen3-8B table are not reproduced. This control changes two
+things at once: the problems, and the GPU with its batch size.
 
 An earlier run gives a second view, which was not planned as a control. It
 scored the same three cells on the test problems with other arithmetic. The
@@ -494,6 +507,14 @@ sample of test problems from a loss that exists only on problems the model
 has not seen. The next subsection gives that control and the rules for the
 single cells whose interval against the 16-bit model excludes zero.
 
+Two causes remain for the range of each table: chance in the sample of test
+problems, or a difference that exists only on problems that the model has
+not seen. The controls cannot separate the two, because the other problems
+are training problems. For Qwen3-8B the arithmetic of the run on the W7900
+is a third possible cause, and two runs in the next subsection test it. None
+of these causes makes the range a property of a brick that a user can expect
+on other problems.
+
 ### The four intervals that exclude zero
 
 With 30 comparisons at the 95% level, one or two intervals are expected to
@@ -504,8 +525,7 @@ share the 16-bit cell, and the two gains are in one table. With a Bonferroni
 correction over the 30 comparisons none of the four is significant: the
 smallest p-value becomes 0.12. Three of the four are in the two GSM8K tables
 whose cells differ among themselves in the test above. Each of the four has
-a control run. The controls of the two losses are done, and neither
-reproduces its loss. The controls of the two gains are running.
+a control run. The four are done, and none reproduces its difference.
 
 The two gains are in the GSM8K table of Qwen3-8B. int8 weights solve 90.30%
 of the problems against 88.93% for the 16-bit model, with 27 problems gained
@@ -553,8 +573,38 @@ the other problems, with an interval that excludes zero, is a property of
 the head on this model. A gain of int8 weights is a property of the brick on
 this model only if it returns on the other problems and with both other
 group sizes. If it returns on the other problems and not with the other
-group sizes, it belongs to one set of int8 weights. The first control is
-running, and the second is in the queue.
+group sizes, it belongs to one set of int8 weights.
+
+The first control does not reproduce either gain. On the 2,638 other
+problems the 16-bit model solves 92.38%. int8 weights solve 92.15%, with 31
+problems lost and 25 gained (p 0.50). They are 0.23 points below, with a 95%
+interval from 0.78 points below to 0.33 points above. The certified head
+solves 92.30%, with 17 problems lost and 15 gained (p 0.86). It is 0.08
+points below, with an interval from 0.50 points below to 0.34 points above.
+Both intervals contain zero, and both exclude a gain of the size seen on the
+test problems. By the rule, neither gain is reproduced.
+
+| model | cell | GSM8K problems | 16-bit model | cell | difference, points | 95% interval | lost | gained | p |
+|---|---|---|---|---|---|---|---|---|---|
+| Qwen3-8B | int8 weights | 1,319 test problems, the run in the table | 88.93% | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
+| Qwen3-8B | int8 weights | 2,638 other problems | 92.38% | 92.15% | -0.23 | -0.78 to +0.33 | 31 | 25 | 0.50 |
+| Qwen3-8B | certified head | 1,319 test problems, the run in the table | 88.93% | 89.76% | +0.83 | +0.22 to +1.44 | 3 | 14 | 0.01 |
+| Qwen3-8B | certified head | 2,638 other problems | 92.38% | 92.30% | -0.08 | -0.50 to +0.34 | 17 | 15 | 0.86 |
+| Qwen3-8B | asymmetric KV | 1,319 test problems, the run in the table | 88.93% | 88.48% | -0.45 | -1.24 to +0.33 | 17 | 11 | 0.34 |
+| Qwen3-8B | asymmetric KV | 2,638 other problems | 92.38% | 92.72% | +0.34 | -0.18 to +0.86 | 20 | 29 | 0.25 |
+
+Each cell is compared with the 16-bit cell of the same run. The test
+problems ran on one Radeon Pro W7900 in batches of 32 prompts. The other
+problems ran on one RTX 4090 in batches of 8 prompts, at knlp commit
+[`913f411b5`](https://github.com/mcgrof/knlp/commit/913f411b5). The rows of
+the asymmetric cache belong to the control of the test per table above.
+
+This control has two limits. It changes the GPU and the batch size together
+with the problems, so it does not tell if the gains belong to the test
+problems or to the arithmetic of the run on the W7900. The second control,
+which is in the queue, and the batch-size control below tell that. And the
+other problems are training problems that the model may have seen: the
+16-bit model solves 92.38% of them against 88.93% of the test problems.
 
 The third control is done, and its result is mixed. With group size 64 the
 gain does not return: int8 weights solve 89.01% of the test problems against
@@ -566,7 +616,8 @@ points, with an interval from 0.13 to 1.69 points above. The mean of these
 two group sizes, which were not selected for their result, is 0.49 points
 above the 16-bit model, with an interval from 0.11 points below to 1.09
 points above. By the rule, the gain is not a property of the int8 brick on
-this model, because it does not return with both group sizes.
+this model: it does not return with both group sizes, and it does not return
+on the other problems.
 
 The three group sizes gain mostly the same problems. Of the 20 problems that
 group size 256 gains, 16 are among the 27 that group size 128 gains, and so
@@ -579,11 +630,11 @@ decides by a narrow margin, most small changes of the arithmetic gain
 against it, and they gain the same problems. That would also explain why the
 gains of int8 weights and of the certified head do not add. In the second
 reading, a coarse int8 grid raises GSM8K accuracy on this model. The control
-on the other problems separates the two, because the outcome of the 16-bit
-cell on those problems does not depend on its outcome on the test problems.
-A second run of group size 128 on the same GPU gives the same outcome on
-every problem as the run in the table, so the gain is not a variation from
-run to run.
+on the other problems does not support the second reading: there the 16-bit
+cell has other outcomes, and int8 weights with group size 128 do not gain
+against it. A second run of group size 128 on the same GPU gives the same
+outcome on every problem as the run in the table, so the gain is not a
+variation from run to run.
 
 A second run of the certified-head cell also gives the same outcome on every
 problem, and its completions show what the head changes. The two cells write
@@ -605,7 +656,7 @@ The rule is set before the runs. If the mean of these variants is above the
 a low draw, and the two gains are not evidence about a brick. If the
 interval contains zero, this control gives no support to the first reading.
 A variant that changes the outcome of fewer than 10 problems is too small a
-change to test the reading. The runs are in the queue.
+change to test the reading. The runs are in progress.
 
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
@@ -799,8 +850,8 @@ and 2.5% to 3.0% on Llama-3.2-3B, and a rounding change flips 1.1% and 2.8%.
 On these two models, the count of flips cannot tell the effect of a brick
 from the effect of a rounding change. Only the balance of lost and gained
 items can. It differs from an even split in the four cells of the subsection
-above. In two of the four the imbalance does not repeat: in one with other
-roundings of the same weights, and in the other on other problems.
+above. In none of the four does the imbalance repeat: in one with other
+roundings of the same weights, and in three on other problems.
 
 ### Do the bricks compose on task accuracy?
 
@@ -1074,8 +1125,10 @@ compares the decode latency of the full stack with the byte model.
 
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
-task tables are complete. The control runs for two of the four
-comparisons whose interval excludes zero are not finished.
+task tables and their six control runs are complete. The controls on other
+GSM8K problems use training problems, which the models may have seen. Two
+runs that test why the two gains of Qwen3-8B appear on its test problems
+are not finished.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
