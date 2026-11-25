@@ -556,6 +556,17 @@ on the other problems separates the two, because the outcome of the 16-bit
 cell on those problems does not depend on its outcome on the test problems.
 A second run of group size 128 is in progress.
 
+One more control tests the first reading directly. It runs the 16-bit cell
+on the test problems in batches of 16 and of 24 prompts in place of 32, on
+the same GPU. The model and the prompts do not change, and there is no
+brick; only the padding of each prompt changes, and with it the arithmetic.
+The rule is set before the runs. If the mean of these variants is above the
+16-bit cell of the table, with an interval that excludes zero, that cell is
+a low draw, and the two gains are not evidence about a brick. If the
+interval contains zero, this control gives no support to the first reading.
+A variant that changes the outcome of fewer than 10 problems is too small a
+change to test the reading. The runs are in the queue.
+
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
 | Qwen3-8B, GSM8K | int8 weights | group size 128, the run in the table | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
