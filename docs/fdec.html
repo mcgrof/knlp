@@ -152,12 +152,17 @@ make
 
 # the same eight cells on Qwen2.5-0.5B on the CPU, under three minutes
 make defconfig-fdec-smoke
-make</code></pre>
+make
+
+# optional: GSM8K and MMLU for the same bricks, hours per model on one GPU
+make fdec-tasks
+make fdec-report</code></pre>
 <p><code>make</code> runs <a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_compose.py"><code>scripts/fdec_compose.py</code></a> once per model. It writes one result file per model and a <code>REPORT.md</code> table under <code>results/fdec</code>, and it exits non-zero if any cell does not compose. A model with a result file is skipped, so an interrupted run resumes. The 7B model needs a GPU with 24 GiB of memory; each model takes two to five minutes. The smoke configuration checks the harness, not the numbers: its calibration set is small.</p>
+<p><code>make fdec-tasks</code> runs <a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py"><code>scripts/fdec_task_acc.py</code></a> once per model: GSM8K and MMLU for the 16-bit model, each enabled brick alone and the stack, on the same items. It is not part of the default target, because it takes about four hours for the 3B model on one RTX 4090. <code>make fdec-report</code> then adds the task tables to the report and fails if a cell is significantly below the 16-bit model. The test is the exact McNemar test on the items that changed, with a Bonferroni correction over the cells of one model and task, at 0.05.</p>
 <p>The options are in <a href="https://github.com/mcgrof/knlp/blob/main/Kconfig.fdec"><code>Kconfig.fdec</code></a>. <code>CONFIG_FDEC_MODELS</code> takes a space-separated list of Hugging Face model names. Each brick has its own switch, and the harness measures every subset of the enabled bricks.</p>
 <div class="table-wrap"><table><thead><tr><th>Tool</th><th>What it measures</th></tr></thead><tbody>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_compose.py"><code>fdec_compose.py</code></a></td><td>The composition matrix: every subset of bricks, on held-out text</td></tr>
-<tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py"><code>fdec_task_acc.py</code></a></td><td>Paired task accuracy of the bricks that change the logits</td></tr>
+<tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py"><code>fdec_task_acc.py</code></a></td><td>Paired task accuracy: GSM8K and MMLU on the same items for every cell</td></tr>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_heldout.py"><code>fdec_cert_heldout.py</code></a></td><td>Bytes the certified head reads against shadow rank, held-out and in-sample</td></tr>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_attn_precision.py"><code>fdec_attn_precision.py</code></a></td><td>Whether 16-bit attention scores degrade a model: perplexity, a GSM8K sample and the score error per layer</td></tr>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_latency.py"><code>fdec_cert_latency.py</code></a></td><td>Time per token of the certified head against the dense head</td></tr>

@@ -434,6 +434,16 @@ model with a result file is skipped, so an interrupted run resumes. The
 Qwen2.5-0.5B on the CPU in under three minutes. It checks the harness, not
 the numbers: its calibration set is small.
 
+`make fdec-tasks` adds the task check. It runs
+[`scripts/fdec_task_acc.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py)
+once per model: GSM8K and MMLU for the 16-bit model, each enabled brick
+alone and the stack, on the same items. It is not part of the default
+target, because it takes about four hours for the 3B model on one RTX 4090.
+`make fdec-report` then adds the task tables to `REPORT.md` and fails if a
+cell is significantly below the 16-bit model. The test is the exact McNemar
+test on the items that changed, with a Bonferroni correction over the cells
+of one model and task, at 0.05.
+
 The options live in [`Kconfig.fdec`](https://github.com/mcgrof/knlp/blob/main/Kconfig.fdec). `CONFIG_FDEC_MODELS`
 takes a space-separated list of Hugging Face model ids. Each brick has its
 own switch, and the harness measures every subset of the enabled bricks.

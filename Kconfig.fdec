@@ -40,6 +40,28 @@ config FDEC_CALIB_SEQS
 	int "Calibration sequences for the LM-head certificate"
 	default 128
 
+config FDEC_TASK_GSM_LIMIT
+	int "GSM8K problems for make fdec-tasks (0 means all 1,319)"
+	default 0
+
+config FDEC_TASK_MMLU_PER_SUBJECT
+	int "MMLU items per subject for make fdec-tasks (0 means all)"
+	default 0
+	help
+	  MMLU has 57 subjects and 14,042 test items. The published task
+	  tables use every item. A small value is for a harness check only.
+
+config FDEC_TASK_GSM_BATCH
+	int "GSM8K prompts per batch for make fdec-tasks"
+	default 16
+
+config FDEC_TASK_MMLU_BATCH
+	int "MMLU prompts per batch for make fdec-tasks"
+	default 8
+	help
+	  8 fits a 7B model on a GPU with 24 GiB. Every cell of one result
+	  file must use the same batch sizes; the task script checks this.
+
 config FDEC_INT8_WEIGHTS
 	bool "Brick: int8 weights"
 	default y

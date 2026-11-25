@@ -4,20 +4,24 @@
 #   make defconfig-fdec        every brick on the default models
 #   make defconfig-fdec-smoke  a small model on the CPU, about two minutes
 #   make                       runs fdec-run, then fdec-report
+#   make fdec-tasks            GSM8K and MMLU for the same bricks
 #
 # fdec-run measures every subset of the enabled bricks on each model and
 # skips a model that already has a result. fdec-report writes the table
-# and fails if any cell does not compose. See docs/fdec.md.
+# and fails if any cell does not compose. fdec-tasks is optional and
+# takes hours per model on one GPU: it scores the dense model, each
+# enabled brick and the stack on two tasks. Run fdec-report after it to
+# add the task tables. See docs/fdec.md.
 
 FDEC_PY ?= python3
 FDEC_CONFIG ?= .config
 
-.PHONY: fdec fdec-run fdec-report
+.PHONY: fdec fdec-run fdec-tasks fdec-report
 .NOTPARALLEL: fdec
 
 fdec: fdec-run fdec-report
 
-fdec-run fdec-report:
+fdec-run fdec-tasks fdec-report:
 	@$(FDEC_PY) scripts/fdec_run.py --config "$(FDEC_CONFIG)" $(patsubst fdec-%,%,$@)
 
 ifeq ($(CONFIG_FDEC_ENABLE),y)
