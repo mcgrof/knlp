@@ -242,8 +242,8 @@ def report(cfg):
             lines += [
                 f"Interaction term of {'+'.join(key)}: "
                 f"{c['interaction_dlogppl']:+.4f} in log-perplexity, 95% "
-                f"interval {ci[0]:+.4f} to {ci[1]:+.4f}; the limit is "
-                f"{r['interaction_tol']}.",
+                f"interval {ci[0]:+.4f} to {ci[1]:+.4f}; the limit for the "
+                f"upper end is {r['interaction_tol']}.",
                 "",
             ]
         tp = task_path(cfg, model)

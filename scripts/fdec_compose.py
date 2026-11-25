@@ -38,14 +38,17 @@ attention function rounds the scores to bf16 first, which degrades a model
 with large attention scores (see fp32_attention in fdec_matrix.py).
 
 Composition rule: a cell composes when it runs, its certificate (if present)
-matches the dense argmax at every position, and its log-perplexity increase
-does not exceed the sum of its bricks' solo increases by more than
-`--interaction-tol`.
+matches the dense argmax at every position, and its interaction term is at
+most `--interaction-tol` at the upper end of its 95% interval.
 
-The interaction term is the increase of the cell minus that sum. It is the
-mean of one contrast per scored position, so it has a 95% interval. Positions
-of one evaluation sequence share a context, so each sequence is one
-observation: the interval is the Student t interval of the per-sequence means.
+The interaction term is the log-perplexity increase of the cell minus the sum
+of its bricks' solo increases. It is the mean of one contrast per scored
+position, so it has a 95% interval. Positions of one evaluation sequence share
+a context, so each sequence is one observation: the interval is the Student t
+interval of the per-sequence means. The limit applies to the upper end of the
+interval, so an evaluation that is too small to resolve the limit does not
+pass. With one evaluation sequence there is no interval, and the limit applies
+to the term itself.
 The result holds the interval of the interaction term of every cell with two
 bricks that change the logits, the interval of the cost of every cell, and
 the mean loss of every cell on each sequence.
@@ -248,7 +251,9 @@ def main():
         "--interaction-tol",
         type=float,
         default=0.01,
-        help="allowed excess log-perplexity over the sum of solo increases",
+        help="limit for the interaction term: the log-perplexity increase of "
+        "a cell minus the sum of the solo increases, at the upper end of its "
+        "95%% interval",
     )
     ap.add_argument(
         "--bricks",
@@ -404,8 +409,10 @@ def main():
             if k in rec
         )
         rec["cert_exact"] = exact if "cert" in rec["bricks"] else None
+        ci = rec["interaction_ci95"]
+        rec["interaction_upper"] = ci[1] if ci else rec["interaction_dlogppl"]
         rec["composes"] = bool(
-            exact and rec["interaction_dlogppl"] <= args.interaction_tol
+            exact and rec["interaction_upper"] <= args.interaction_tol
         )
 
     res = {
