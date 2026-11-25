@@ -99,8 +99,9 @@ conditions hold.
    every evaluated position of that cell's own model. It is checked on
    hidden states that the other bricks have already perturbed.
 3. Quality costs add and do not multiply. The increase in log-perplexity
-   of the cell must be within 0.01 of the sum of the increases of its
-   bricks measured alone.
+   of the cell must not exceed the sum of the increases of its bricks
+   measured alone by more than 0.01. The difference is the interaction
+   term, and the harness reports it with a 95% interval.
 
 Quality is measured against the unmodified 16-bit model on WikiText-2 test:
 perplexity, top-1 agreement of the predicted token, and mean KL divergence.
@@ -907,7 +908,8 @@ make
 `defconfig-fdec` selects Qwen2.5-7B and Llama-3.2-3B with all three dense
 bricks. `make` runs [`scripts/fdec_compose.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_compose.py)
 once per model, writes one JSON result per model and a `REPORT.md` table
-under `results/fdec`, and exits non-zero if any cell fails to compose. A
+under `results/fdec`, and exits non-zero if any cell fails to compose. The
+report gives the interaction term of each model with its 95% interval. A
 model with a result file is skipped, so an interrupted run resumes. The
 7B model needs a GPU with 24 GiB; each model takes two to five minutes.
 
