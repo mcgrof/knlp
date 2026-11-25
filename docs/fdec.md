@@ -219,11 +219,21 @@ and the 16-bit cell is between them.
 
 Control runs test these differences, each with a rule set before the run.
 The three controls for Qwen2.5-7B are done, and none reproduces its
-difference. Three other roundings of the pair of bricks with the MMLU loss
-have a mean difference of 0.00 points from the 16-bit model. On 3,957 other
-GSM8K problems the certified head is 0.28 points above the 16-bit model, and
-the three cells that span 2.35 points on the test problems are within 0.45
-points, in the reverse order. The controls for Qwen3-8B are queued.
+difference. The controls for Qwen3-8B are in the queue. The table gives the
+state of each control.
+
+| Difference in the task tables | Control | Result of the control | Outcome by the rule |
+|---|---|---|---|
+| Qwen2.5-7B, MMLU: int8 weights with the asymmetric cache are 0.21 points below the 16-bit model | The same cell with two other int8 group sizes and with another FP8 cast of the values | Mean difference of 0.00 points from the 16-bit model, with a 95% interval from 0.14 points below to 0.14 points above | Not reproduced |
+| Qwen2.5-7B, GSM8K: the certified head is 1.29 points below the 16-bit model | The same cell on 3,957 other problems | 0.28 points above, with a 95% interval from 0.16 points below to 0.72 points above | Not reproduced |
+| Qwen2.5-7B, GSM8K: three cells span 2.35 points | The same cells on 3,957 other problems | The cells span 0.45 points in the reverse order, and the test finds no difference among them (p 0.29) | Not reproduced |
+| Qwen3-8B, GSM8K: int8 weights are 1.36 points above the 16-bit model | The same cell on 2,638 other problems, and with two other int8 group sizes on the test problems | In the queue | Open |
+| Qwen3-8B, GSM8K: the certified head is 0.83 points above the 16-bit model | The same cell on 2,638 other problems | In the queue | Open |
+| Qwen3-8B, GSM8K: four cells span 1.82 points | The same cells on 2,638 other problems | In the queue | Open |
+
+The first column gives a difference whose 95% interval excludes zero, or a
+table whose cells differ in the test of the table as a whole. The
+subsections below give each rule and the data of each control.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
