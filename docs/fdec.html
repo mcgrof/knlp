@@ -13,7 +13,7 @@
 </style>
 </head>
 <body>
-<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="#pools">Byte pools</a><a href="#bricks">Bricks</a><a href="#rule">The rule</a><a href="#matrix">Matrix</a><a href="#cartridges">Cartridges</a><a href="#correction">Corrections</a><a href="#speed">Speed</a><a href="#reproduce">Run it</a><a href="#limits">Limits</a></div></nav>
+<nav aria-label="Page navigation"><div class="nav-inner"><a class="brand" href="index.html">knlp</a><a href="#pools">Byte pools</a><a href="#bricks">Bricks</a><a href="#rule">The rule</a><a href="#matrix">Matrix</a><a href="#tasks">Task accuracy</a><a href="#cartridges">Cartridges</a><a href="#correction">Corrections</a><a href="#speed">Speed</a><a href="#reproduce">Run it</a><a href="#limits">Limits</a></div></nav>
 <header class="wrap">
 <div class="eyebrow">Decode · composition of optimizations · November 2026</div>
 <h1>fdec: decode optimizations, measured together.</h1>
@@ -68,12 +68,24 @@
 <h3>Qwen3-8B</h3>
 <div class="table-wrap"><table><thead><tr><th>Cell</th><th class="num">Perplexity</th><th class="num">Top-1 agreement</th><th class="num">KL</th><th class="num">Certificate exact</th><th class="num">Head read</th><th class="num">Bytes saved</th></tr></thead><tbody><tr><td>none</td><td class="num">15.024</td><td class="num">1.000</td><td class="num">0.0000</td><td class="num">n/a</td><td class="num">n/a</td><td class="num">0.0%</td></tr><tr><td>int8 weights</td><td class="num">15.048</td><td class="num">0.980</td><td class="num">0.0017</td><td class="num">n/a</td><td class="num">n/a</td><td class="num">34.2%</td></tr><tr><td>asymmetric KV</td><td class="num">15.035</td><td class="num">0.982</td><td class="num">0.0014</td><td class="num">n/a</td><td class="num">n/a</td><td class="num">6.0%</td></tr><tr><td>certified head</td><td class="num">15.024</td><td class="num">1.000</td><td class="num">0.0000</td><td class="num">yes</td><td class="num">54.1%</td><td class="num">2.9%</td></tr><tr><td>int8 weights + asymmetric KV</td><td class="num">15.040</td><td class="num">0.977</td><td class="num">0.0021</td><td class="num">n/a</td><td class="num">n/a</td><td class="num">40.3%</td></tr><tr><td>int8 weights + certified head</td><td class="num">15.048</td><td class="num">0.980</td><td class="num">0.0017</td><td class="num">yes</td><td class="num">54.1%</td><td class="num">37.1%</td></tr><tr><td>asymmetric KV + certified head</td><td class="num">15.035</td><td class="num">0.982</td><td class="num">0.0014</td><td class="num">yes</td><td class="num">54.1%</td><td class="num">8.9%</td></tr><tr class="hl"><td>all three</td><td class="num">15.040</td><td class="num">0.977</td><td class="num">0.0021</td><td class="num">yes</td><td class="num">54.1%</td><td class="num">43.1%</td></tr></tbody></table></div>
 <p>The certified head is exact in every cell that has it, including the cells where int8 weights and FP8 values changed the hidden states it certifies. A screen built from the 16-bit model reads the same fraction of the head as one rebuilt for the quantized model, so the head artifact does not need a rebuild when the other bricks change.</p>
-<p>The interaction term is at most 0.0013 in log-perplexity, which is inside the noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive measure. Each brick alone changes about 2% of the predicted tokens, and the full stack changes 2% to 3%, while perplexity moves by at most 0.14%. The changed predictions are therefore near-ties.</p>
+<p>The interaction term is at most 0.0013 in log-perplexity, which is inside the noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive measure. Each brick alone changes about 2% of the predicted tokens, and the full stack changes 2% to 3%, while perplexity moves by at most 0.14%. The changed predictions are therefore near-ties. The next section checks what that does to answers.</p>
+</section>
+
+<section id="tasks">
+<div class="eyebrow">05 / Task accuracy</div><h2>Do the bricks change answers?</h2>
+<p>On Llama-3.2-3B, int8 weights, the asymmetric cache and the two together leave task accuracy where the 16-bit model has it. MMLU accuracy is 56.57% for the 16-bit model and 56.63% with both bricks. GSM8K accuracy is 29.4% and 30.3%. Every paired interval contains zero. The Qwen2.5-7B and Qwen3-8B runs are not finished.</p>
+<p>Perplexity and top-1 agreement are measured on running text. The task check asks what a user asks: does a model with int8 weights, the asymmetric cache, or both, answer as many questions correctly as the 16-bit model? <a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py"><code>fdec_task_acc.py</code></a> scores every cell on the same items, so each comparison is paired.</p>
+<p>GSM8K is 1,319 grade-school math problems. The prompt holds eight worked examples, decoding is greedy, and an answer is correct when the first number after the answer marker equals the reference. A completion with no answer marker counts as wrong. MMLU is 14,042 four-choice questions with five examples per subject; the answer is the choice letter with the largest logit. The certified head is not a cell here. It returns the largest float32 logit, and these runs take the largest 16-bit logit, so the two can differ only where the two largest logits tie within the 16-bit rounding step.</p>
+<p>The Llama-3.2-3B runs used bfloat16 on one RTX 4090 with PyTorch 2.10 and transformers 5.3.0, at knlp commit <a href="https://github.com/mcgrof/knlp/commit/dd3a68306"><code>dd3a68306</code></a>.</p>
+<h3>Llama-3.2-3B</h3><div class="table-wrap"><table><thead><tr><th>Task</th><th>Cell</th><th class="num">Accuracy</th><th class="num">Difference, points</th><th class="num">95% interval</th><th class="num">Lost</th><th class="num">Gained</th><th class="num">p</th></tr></thead><tbody><tr><td>GSM8K, 1,319 items</td><td>16-bit model</td><td class="num">29.42%</td><td class="num">reference</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr><tr><td>GSM8K, 1,319 items</td><td>asymmetric KV</td><td class="num">28.89%</td><td class="num">-0.53</td><td class="num">-1.82 to +0.76</td><td class="num">41</td><td class="num">34</td><td class="num">0.49</td></tr><tr><td>GSM8K, 1,319 items</td><td>int8 weights</td><td class="num">29.72%</td><td class="num">+0.30</td><td class="num">-0.97 to +1.58</td><td class="num">35</td><td class="num">39</td><td class="num">0.73</td></tr><tr class="hl"><td>GSM8K, 1,319 items</td><td>int8 weights + asymmetric KV</td><td class="num">30.33%</td><td class="num">+0.91</td><td class="num">-0.47 to +2.29</td><td class="num">37</td><td class="num">49</td><td class="num">0.24</td></tr><tr><td>MMLU, 14,042 items</td><td>16-bit model</td><td class="num">56.57%</td><td class="num">reference</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr><tr><td>MMLU, 14,042 items</td><td>asymmetric KV</td><td class="num">56.52%</td><td class="num">-0.05</td><td class="num">-0.31 to +0.21</td><td class="num">174</td><td class="num">167</td><td class="num">0.75</td></tr><tr><td>MMLU, 14,042 items</td><td>int8 weights</td><td class="num">56.57%</td><td class="num">+0.01</td><td class="num">-0.25 to +0.27</td><td class="num">172</td><td class="num">173</td><td class="num">1.00</td></tr><tr class="hl"><td>MMLU, 14,042 items</td><td>int8 weights + asymmetric KV</td><td class="num">56.63%</td><td class="num">+0.06</td><td class="num">-0.22 to +0.35</td><td class="num">204</td><td class="num">213</td><td class="num">0.70</td></tr></tbody></table></div>
+<p class="caption">"Lost" counts the items that the 16-bit model answers correctly and the cell does not; "gained" counts the reverse. The interval is the 95% interval of the paired difference in accuracy points. The p-value is the exact McNemar test on the lost and gained counts. The models are the base models, not the instruction-tuned ones, so the accuracy level is lower than chat-model reports.</p>
+<p>The bricks do change single answers. Against the 16-bit model, 2.4% to 3.0% of the MMLU items and 5.6% to 6.5% of the GSM8K problems flip. The flips go both ways in almost equal numbers, which is what a small perturbation does to items that the model answers by a narrow margin. The test resolves about 0.3 points on MMLU and 1.4 points on GSM8K; a smaller effect would not show. At the 95% level the two bricks together cost at most 0.22 points on MMLU and 0.47 points on GSM8K.</p>
+<p>The bricks also compose on task accuracy. The change of the pair minus the sum of the two single changes is +0.11 points on MMLU (interval &minus;0.26 to +0.47) and +1.14 points on GSM8K (interval &minus;0.61 to +2.89). Both intervals contain zero.</p>
 </section>
 
 
 <section id="cartridges">
-<div class="eyebrow">05 / Cartridges as a brick</div><h2>A trained cartridge survives a quantized reader and quantized storage.</h2>
+<div class="eyebrow">06 / Cartridges as a brick</div><h2>A trained cartridge survives a quantized reader and quantized storage.</h2>
 <p>A cartridge is a KV prefix trained so that a frozen model answers questions about a document without reading it. It shortens the KV cache, so it is a byte movement brick for the KV pool. It was trained against the 16-bit model, which raises two questions. Does it survive a reader with int8 weights? Does it survive storage with FP8 values?</p>
 <p>The test scores two Qwen3-8B cartridges, trained on two patient records from the LongHealth benchmark, on 256 training conversations each. The score is the trainer's own distillation loss against a teacher that reads the full document. The same cartridge is read in each way, so the comparison is paired.</p>
 <div class="table-wrap"><table><thead><tr><th>Reader weights</th><th>Cartridge storage</th><th class="num">Loss, patient 1</th><th class="num">Loss, patient 2</th></tr></thead><tbody>
@@ -89,7 +101,7 @@
 </section>
 
 <section id="correction">
-<div class="eyebrow">06 / What the measurements corrected</div><h2>Two results did not survive a stricter measurement.</h2>
+<div class="eyebrow">07 / What the measurements corrected</div><h2>Two results did not survive a stricter measurement.</h2>
 <p>Each stricter measurement on this page found an error in an earlier result. Both corrections are recorded here, because they are the reason for the rules of the method.</p>
 <h3>A published byte saving was in-sample</h3>
 <p>The certified output head bounds every logit with a low-rank <em>shadow</em> of the head, plus a residual term for the part of the hidden state outside the shadow's basis. The earlier measurement built a rank-1280 basis from the same 600 to 1,500 hidden states that it then scored. A basis fitted to so few states contains them, so the residual was near zero and the decoder read about a quarter of the head.</p>
@@ -115,7 +127,7 @@
 </section>
 
 <section id="speed">
-<div class="eyebrow">07 / Speed</div><h2>What has been timed so far.</h2>
+<div class="eyebrow">08 / Speed</div><h2>What has been timed so far.</h2>
 <p>The matrix shows that the bricks agree in what they compute. Speed needs each brick in a real kernel. Two measurements exist: two bricks together in a serving engine, and the certified head alone against the dense head.</p>
 <h3>Two bricks in one serving engine</h3>
 <p>Packed int4 weights and the asymmetric K16/V8 cache ran in one vLLM and FlashInfer process on Qwen3-8B, with 8,192 input tokens at batch 32 on one H100. Request throughput was 3.45% higher than the same weights with a 16-bit cache, and the tested quality checks passed. With dense 16-bit weights the same cache change gave 3.55%. The cache brick therefore keeps its gain when the weights are packed. The <a href="asymmetric-results.html#throughput">asymmetric KV results</a> give the controls.</p>
@@ -132,7 +144,7 @@
 
 
 <section id="reproduce">
-<div class="eyebrow">08 / Run it</div><h2>One defconfig runs the matrix.</h2>
+<div class="eyebrow">09 / Run it</div><h2>One defconfig runs the matrix.</h2>
 <pre><code># Qwen2.5-7B and Llama-3.2-3B, all eight cells each
 make defconfig-fdec
 make
@@ -155,9 +167,9 @@ make</code></pre>
 </section>
 
 <section id="limits">
-<div class="eyebrow">09 / Limits</div><h2>What these results do not show.</h2>
+<div class="eyebrow">10 / Limits</div><h2>What these results do not show.</h2>
 <p>The matrix emulates the bricks in PyTorch. Weights are rounded in place, values pass through an FP8 cast, attention runs with float32 arithmetic, and the certified decode is replayed against float32 logits. This shows that the bricks do not conflict in what they compute. It does not measure speed, and "bytes saved" is a model of bytes read, not a latency.</p>
-<p>The perplexity evaluation is WikiText-2 only, on 8,192 tokens per model. The cartridge cells cover one model and two documents, and their loss level is in-sample. Linear-attention models are not in the matrix. No single serving engine runs all four bricks today.</p>
+<p>The perplexity evaluation is WikiText-2 only, on 8,192 tokens per model. The task check covers Llama-3.2-3B so far, and it does not include the certified head. The cartridge cells cover one model and two documents, and their loss level is in-sample. Linear-attention models are not in the matrix. No single serving engine runs all four bricks today.</p>
 </section>
 </main>
 <footer class="wrap">knlp · fdec: decode optimizations measured together · November 2026. The method is described in <a href="https://github.com/mcgrof/knlp/blob/main/docs/fdec.md"><code>docs/fdec.md</code></a>.</footer>

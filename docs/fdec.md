@@ -27,6 +27,7 @@ asymmetric KV cache at a combined loss cost of 0.1%.
 - [The bricks](#the-bricks)
 - [What "composes" means](#what-composes-means)
 - [The measured matrix](#the-measured-matrix)
+- [Task accuracy](#task-accuracy)
 - [Cartridges as a brick](#cartridges-as-a-brick)
 - [What the measurements corrected](#what-the-measurements-corrected)
 - [Speed so far](#speed-so-far)
@@ -173,7 +174,69 @@ The interaction term is at most 0.0013 in log-perplexity, inside the
 noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive
 measure. Each brick alone changes about 2% of the predicted tokens, and
 the full stack changes 2% to 3%, while perplexity moves by at most 0.14%.
-The changed predictions are therefore near-ties.
+The changed predictions are therefore near-ties. The next section checks
+what that does to answers.
+
+## Task accuracy
+
+On Llama-3.2-3B, int8 weights, the asymmetric cache and the two together
+leave task accuracy where the 16-bit model has it. MMLU accuracy is 56.57%
+for the 16-bit model and 56.63% with both bricks. GSM8K accuracy is 29.4%
+and 30.3%. Every paired interval contains zero. The Qwen2.5-7B and Qwen3-8B
+runs are not finished.
+
+Perplexity and top-1 agreement are measured on running text. The task check
+asks what a user asks: does a model with int8 weights, the asymmetric
+cache, or both, answer as many questions correctly as the 16-bit model?
+[`scripts/fdec_task_acc.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_task_acc.py)
+scores every cell on the same items, so each comparison is paired.
+
+GSM8K is 1,319 grade-school math problems. The prompt holds eight worked
+examples, decoding is greedy, and an answer is correct when the first
+number after the answer marker equals the reference. A completion with no
+answer marker counts as wrong. MMLU is 14,042 four-choice questions with
+five examples per subject; the answer is the choice letter with the largest
+logit. The certified head is not a cell here. It returns the largest
+float32 logit, and these runs take the largest 16-bit logit, so the two can
+differ only where the two largest logits tie within the 16-bit rounding
+step.
+
+The Llama-3.2-3B runs used bfloat16 on one RTX 4090 with PyTorch 2.10 and
+transformers 5.3.0, at knlp commit
+[`dd3a68306`](https://github.com/mcgrof/knlp/commit/dd3a68306).
+
+### Llama-3.2-3B
+
+| task | cell | accuracy | difference, points | 95% interval | lost | gained | p |
+|---|---|---|---|---|---|---|---|
+| GSM8K, 1,319 items | 16-bit model | 29.42% | reference | | | | |
+| GSM8K, 1,319 items | asymmetric KV | 28.89% | -0.53 | -1.82 to +0.76 | 41 | 34 | 0.49 |
+| GSM8K, 1,319 items | int8 weights | 29.72% | +0.30 | -0.97 to +1.58 | 35 | 39 | 0.73 |
+| GSM8K, 1,319 items | int8 weights + asymmetric KV | 30.33% | +0.91 | -0.47 to +2.29 | 37 | 49 | 0.24 |
+| MMLU, 14,042 items | 16-bit model | 56.57% | reference | | | | |
+| MMLU, 14,042 items | asymmetric KV | 56.52% | -0.05 | -0.31 to +0.21 | 174 | 167 | 0.75 |
+| MMLU, 14,042 items | int8 weights | 56.57% | +0.01 | -0.25 to +0.27 | 172 | 173 | 1.00 |
+| MMLU, 14,042 items | int8 weights + asymmetric KV | 56.63% | +0.06 | -0.22 to +0.35 | 204 | 213 | 0.70 |
+
+"Lost" counts the items that the 16-bit model answers correctly and the
+cell does not; "gained" counts the reverse. The interval is the 95%
+interval of the paired difference in accuracy points. The p-value is the
+exact McNemar test on the lost and gained counts. The models are the base
+models, not the instruction-tuned ones, so the accuracy level is lower than
+chat-model reports.
+
+The bricks do change single answers. Against the 16-bit model, 2.4% to 3.0%
+of the MMLU items and 5.6% to 6.5% of the GSM8K problems flip. The flips go
+both ways in almost equal numbers, which is what a small perturbation does
+to items that the model answers by a narrow margin. The test resolves about
+0.3 points on MMLU and 1.4 points on GSM8K; a smaller effect would not
+show. At the 95% level the two bricks together cost at most 0.22 points on
+MMLU and 0.47 points on GSM8K.
+
+The bricks also compose on task accuracy. The change of the pair minus the
+sum of the two single changes is +0.11 points on MMLU (interval -0.26 to
++0.47) and +1.14 points on GSM8K (interval -0.61 to +2.89). Both intervals
+contain zero.
 
 ## Cartridges as a brick
 
@@ -389,9 +452,10 @@ branches described in [decode reproduction](decode-reproduction.md). No
 serving engine runs all the bricks together, and no measurement yet
 compares the decode latency of the full stack with the byte model.
 
-Evaluation is WikiText-2 only. The weight study also used a cross-domain
-calibration check; the matrix does not yet repeat it, and it has no
-task-accuracy benchmark.
+The perplexity evaluation is WikiText-2 only. The weight study also used a
+cross-domain calibration check; the matrix does not yet repeat it. The
+task check covers Llama-3.2-3B so far, and it does not include the
+certified head.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
