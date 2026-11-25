@@ -215,12 +215,15 @@ certified head alone gains 0.83 points. None of the four is significant
 after a correction for the 30 comparisons. A test of each table as a whole
 finds that the cells of the two GSM8K tables of the Qwen models differ among
 themselves: the lowest and the highest cell are 2.35 and 1.82 points apart,
-and the 16-bit cell is between them. The control of the MMLU loss is done
-and does not reproduce it: three other roundings of the same pair of bricks
-have a mean difference of 0.00 points from the 16-bit model. The control of
-the GSM8K loss is done and does not reproduce it either: on 3,957 other
-GSM8K problems the certified head is 0.28 points above the 16-bit model. The
-controls of the two gains are queued.
+and the 16-bit cell is between them.
+
+Control runs test these differences, each with a rule set before the run.
+The three controls for Qwen2.5-7B are done, and none reproduces its
+difference. Three other roundings of the pair of bricks with the MMLU loss
+have a mean difference of 0.00 points from the 16-bit model. On 3,957 other
+GSM8K problems the certified head is 0.28 points above the 16-bit model, and
+the three cells that span 2.35 points on the test problems are within 0.45
+points, in the reverse order. The controls for Qwen3-8B are queued.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -397,21 +400,57 @@ in the tables cover the sample of items and not the choice of rounding. On
 GSM8K, a difference of 1 to 2 points between two cells of a Qwen model is
 therefore not, alone, evidence about a brick.
 
-A control for these two tables is in progress. It runs the cells in question
-on other GSM8K problems, which are training problems that are not prompt
-examples: the 16-bit cell, the certified head and the asymmetric cache on
-3,957 problems for Qwen2.5-7B, and the same cells with int8 weights on 2,638
-problems for Qwen3-8B. The rule for the test is published before the cells
-with the asymmetric cache run. If the test rejects equal accuracy on the
-other problems and the same cells are the lowest and the highest, the
-differences belong to the cells. If it rejects equal accuracy with other
-cells at the two ends, the cells differ and their order depends on the set
-of problems. If the test finds no difference there, the differences of the
-test tables are not reproduced. Two cells of Qwen2.5-7B are done: on the
-other problems the certified head is 0.28 points above the 16-bit cell, so
-the lowest cell of the test table is not the lowest there. The next
-subsection gives that result and the rules for the single cells whose
-interval against the 16-bit model excludes zero.
+A control for these two tables runs the cells in question on other GSM8K
+problems, which are training problems that are not prompt examples: the
+16-bit cell, the certified head and the asymmetric cache on 3,957 problems
+for Qwen2.5-7B, and the same cells with int8 weights on 2,638 problems for
+Qwen3-8B. The rule for the test was published before the cells with the
+asymmetric cache ran. If the test rejects equal accuracy on the other
+problems and the same cells are the lowest and the highest, the differences
+belong to the cells. If it rejects equal accuracy with other cells at the
+two ends, the cells differ and their order depends on the set of problems.
+If the test finds no difference there, the differences of the test tables
+are not reproduced.
+
+| model | GSM8K problems | accuracy of each cell | lowest cell | highest cell | range, points | p, equal accuracy |
+|---|---|---|---|---|---:|---:|
+| Qwen2.5-7B | 1,319 test problems, the run in the table | 16-bit model 81.12%; asymmetric KV 82.18%; certified head 79.83% | certified head | asymmetric KV | 2.35 | <0.001 |
+| Qwen2.5-7B | 1,319 test problems, earlier run on the W7900 | 16-bit model 81.43%; asymmetric KV 80.82%; certified head 80.52% | certified head | 16-bit model | 0.91 | 0.27 |
+| Qwen2.5-7B | 3,957 other problems | 16-bit model 87.54%; asymmetric KV 87.36%; certified head 87.82% | asymmetric KV | certified head | 0.45 | 0.29 |
+
+The test of equal accuracy over the cells that are measured on the other
+problems. The first row of a model gives these cells in the run of the task
+table. The cells were selected because two of them are the lowest and the
+highest cell of that table, so the p-value of the first row overstates the
+evidence. The other rows have no such selection. The earlier run is the
+W7900 run of the controls below: another GPU, batches of 32 prompts and one
+FP8 scale per value tensor.
+
+The control of Qwen2.5-7B is done, and it does not reproduce the differences
+of that table. On the 3,957 other problems the test finds no difference
+among the three cells (p 0.29). The cells are within 0.45 points, and their
+order is reversed: the certified head is the highest cell and the asymmetric
+cache is the lowest. The asymmetric cache changes the text of 1,316 of the
+3,957 completions and the outcome of 151 problems, with 79 lost and 72
+gained. Against the certified head it is 0.45 points below, with a 95%
+interval from 1.09 points below to 0.18 points above. On the test problems
+it is 2.35 points above, which is far outside that interval. By the rule,
+the differences among the cells of the Qwen2.5-7B table are not reproduced.
+The control of Qwen3-8B is in the queue.
+
+An earlier run gives a second view, which was not planned as a control. It
+scored the same three cells on the test problems with other arithmetic. The
+test finds no difference among the cells there either (p 0.27). The
+asymmetric cache is 0.61 points below the 16-bit cell in that run, with an
+interval that contains zero. Its high result in the task table repeats
+neither on the same problems with other arithmetic nor on other problems.
+The certified head is below the 16-bit cell in both runs of the test
+problems, by 1.29 and 0.91 points, and 0.28 points above it on the other
+problems. The other problems are training problems, and the model may have
+seen them. For the certified head the evidence therefore cannot tell the
+sample of test problems from a loss that exists only on problems the model
+has not seen. The next subsection gives that control and the rules for the
+single cells whose interval against the 16-bit model excludes zero.
 
 ### The four intervals that exclude zero
 
@@ -555,11 +594,14 @@ problems.
 |---|---|---|---|---|---|---|---|---|---|
 | Qwen2.5-7B | certified head | 1,319 test problems, the run in the table | 81.12% | 79.83% | -1.29 | -2.31 to -0.27 | 32 | 15 | 0.02 |
 | Qwen2.5-7B | certified head | 3,957 other problems | 87.54% | 87.82% | +0.28 | -0.16 to +0.72 | 34 | 45 | 0.26 |
+| Qwen2.5-7B | asymmetric KV | 1,319 test problems, the run in the table | 81.12% | 82.18% | +1.06 | -0.13 to +2.25 | 25 | 39 | 0.10 |
+| Qwen2.5-7B | asymmetric KV | 3,957 other problems | 87.54% | 87.36% | -0.18 | -0.79 to +0.43 | 79 | 72 | 0.63 |
 
 Each cell is compared with the 16-bit cell of the same run, first on the
 test problems of the table above and then on the other problems. Both runs
-used one RTX 4090 and batches of 8 prompts. The run on the other problems is
-at knlp commit
+used one RTX 4090 and batches of 8 prompts. The rows of the asymmetric cache
+belong to the control of the test per table above. The run on the other
+problems is at knlp commit
 [`913f411b5`](https://github.com/mcgrof/knlp/commit/913f411b5), which adds
 the choice of the problem set to the tool.
 
