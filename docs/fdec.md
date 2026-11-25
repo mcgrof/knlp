@@ -194,22 +194,24 @@ and 0.10% of the 16-bit perplexity of the two models.
 
 ## Task accuracy
 
-On three models, 23 of 26 paired comparisons show no difference in task
+On three models, 23 of 27 paired comparisons show no difference in task
 accuracy between a cell with bricks and the 16-bit model: the 95% interval
 of the difference contains zero. With all three bricks, MMLU accuracy is
 56.77% against 56.57% on Llama-3.2-3B and 74.17% against 74.25% on
 Qwen2.5-7B, and GSM8K accuracy is 29.3% against 29.4% on Llama-3.2-3B and
 81.0% against 81.1% on Qwen2.5-7B. On Qwen3-8B, int8 weights with the
 asymmetric cache answer 75.03% of the MMLU questions against 74.96% and
-solve 89.5% of GSM8K against 88.9%. Three intervals exclude zero. On
-Qwen2.5-7B, int8 weights with the asymmetric cache lose 0.21 points of MMLU
-accuracy, and the certified head alone loses 1.29 points of GSM8K accuracy.
-On Qwen3-8B, int8 weights alone gain 1.36 points of GSM8K accuracy. None of
-the three is significant after a correction for the 26 comparisons. The
-control of the MMLU loss is done and does not reproduce it: three other
-roundings of the same pair of bricks have a mean difference of 0.00 points
-from the 16-bit model. The controls of the other two are queued. One run is
-not finished: the certified-head cells of Qwen3-8B.
+solve 89.5% of GSM8K against 88.9%. Four intervals exclude zero: two losses
+and two gains. On Qwen2.5-7B, int8 weights with the asymmetric cache lose
+0.21 points of MMLU accuracy, and the certified head alone loses 1.29 points
+of GSM8K accuracy. On Qwen3-8B, int8 weights alone gain 1.36 points of GSM8K
+accuracy and the certified head alone gains 0.83 points. None of the four is
+significant after a correction for the 27 comparisons. The control of the
+MMLU loss is done and does not reproduce it: three other roundings of the
+same pair of bricks have a mean difference of 0.00 points from the 16-bit
+model. The controls of the three GSM8K cells are queued. Three cells of
+Qwen3-8B are not finished: the full stack on GSM8K, and the certified head
+and the full stack on MMLU.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -226,9 +228,10 @@ logit. A certified-head cell computes the logits of the last position in
 float32, which is the token the certificate returns. The other cells take
 the largest 16-bit logit, so the two can differ where the two largest logits
 tie within the 16-bit rounding step. The tables of Llama-3.2-3B and
-Qwen2.5-7B have the certified head alone and in the full stack. The
-asymmetric KV cells cast the values to FP8 directly, as the
-[matrix](#the-fp8-cast-of-the-values) does.
+Qwen2.5-7B have the certified head alone and in the full stack. The GSM8K
+table of Qwen3-8B has the certified head alone. The asymmetric KV cells cast
+the values to FP8 directly, as the [matrix](#the-fp8-cast-of-the-values)
+does.
 
 All runs are in bfloat16. Llama-3.2-3B and Qwen2.5-7B ran at knlp commit
 [`4aa007a2c`](https://github.com/mcgrof/knlp/commit/4aa007a2c) on one RTX
@@ -296,6 +299,7 @@ examples.
 | GSM8K, 1,319 items | 16-bit model | 88.93% | reference | | | | |
 | GSM8K, 1,319 items | int8 weights | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
 | GSM8K, 1,319 items | asymmetric KV | 88.48% | -0.45 | -1.24 to +0.33 | 17 | 11 | 0.34 |
+| GSM8K, 1,319 items | certified head | 89.76% | +0.83 | +0.22 to +1.44 | 3 | 14 | 0.01 |
 | GSM8K, 1,319 items | int8 weights + asymmetric KV | 89.46% | +0.53 | -0.35 to +1.41 | 14 | 21 | 0.31 |
 | MMLU, 14,042 items | 16-bit model | 74.96% | reference | | | | |
 | MMLU, 14,042 items | int8 weights | 74.94% | -0.02 | -0.18 to +0.13 | 63 | 60 | 0.86 |
@@ -314,12 +318,12 @@ The bricks do change single answers. An item flips when one of two cells
 answers it correctly and the other does not. Against the 16-bit model, 2.5%
 to 3.8% of the MMLU questions flip on Llama-3.2-3B, 1.1% to 1.3% on
 Qwen2.5-7B and 0.9% to 1.1% on Qwen3-8B. On GSM8K, 3.6% to 8.6% of the
-problems flip on the first two models and 2.1% to 2.7% on Qwen3-8B. In 23 of
-the 26 cells the counts of lost and gained items are consistent with an even
+problems flip on the first two models and 1.3% to 2.7% on Qwen3-8B. In 23 of
+the 27 cells the counts of lost and gained items are consistent with an even
 split, which is what a small perturbation does to items that the model
 answers by a narrow margin.
 
-The test resolves about 0.2 to 0.3 points on MMLU and 0.8 to 1.6 points on
+The test resolves about 0.2 to 0.3 points on MMLU and 0.6 to 1.6 points on
 GSM8K; a smaller effect would not show. On Qwen2.5-7B every cell with int8
 weights or the asymmetric cache is below the 16-bit model on MMLU, by 0.06
 to 0.21 points, and the interval of one of these cells excludes zero. With
@@ -335,33 +339,52 @@ cache, the test cannot exclude a loss of 0.10 points on MMLU and 0.35 points
 on GSM8K. On GSM8K the asymmetric cache alone is 0.45 points below the
 16-bit model, and the test cannot exclude a loss of 1.2 points.
 
-### The three intervals that exclude zero
+### The four intervals that exclude zero
 
-With 26 comparisons at the 95% level, about one interval is expected to
-exclude zero when no cell differs from the 16-bit model. Three do: two
-losses and one gain. If the comparisons were independent, three or more
-would occur in about one set of seven; they are not independent, because the
-cells of one table share the 16-bit cell. With a Bonferroni correction over
-the 26 comparisons none of the three is significant: the smallest p-value
-becomes 0.10. Each of the three has a control run. The control of the first
-loss is done and does not reproduce it. The controls of the gain and of the
-second loss are in the queue.
+With 27 comparisons at the 95% level, one or two intervals are expected to
+exclude zero when no cell differs from the 16-bit model. Four do: two losses
+and two gains. If the comparisons were independent, four or more would occur
+in about one set of 23. They are not independent: the cells of one table
+share the 16-bit cell, and the two gains are in one table. With a Bonferroni
+correction over the 27 comparisons none of the four is significant: the
+smallest p-value becomes 0.11. Each of the four has a control run. The
+control of the first loss is done and does not reproduce it. The controls of
+the two gains and of the second loss are in the queue.
 
-The gain: int8 weights on Qwen3-8B solve 90.30% of GSM8K against 88.93% for
-the 16-bit model, with 27 problems gained and 9 lost (p 0.004). Rounding the
-weights is not expected to raise accuracy, and the other models do not show
-it on this task: the same cell is 0.3 points above the 16-bit model on
-Llama-3.2-3B and 0.15 points below it on Qwen2.5-7B. The cell with int8
-weights and the asymmetric cache holds the same weights and is 0.5 points
-above the 16-bit model, which is not significant. On MMLU the same weights
-are level with the 16-bit model: 74.94% against 74.96%, with 63 questions
-lost and 60 gained. With a Bonferroni correction over the three cells of
-this model and task the gain stays significant (p 0.012); over the 26
-comparisons of this section it does not (p 0.10). The evidence does not yet
-tell a chance result from a real effect of this rounding. Two controls are
-queued. The first runs the same cell with two other int8 group sizes, which
-round the same weights to other grids. The second runs the same cell on
-2,638 other GSM8K problems: training problems that are not prompt examples.
+The two gains are in the GSM8K table of Qwen3-8B. int8 weights solve 90.30%
+of the problems against 88.93% for the 16-bit model, with 27 problems gained
+and 9 lost (p 0.004). The certified head alone solves 89.76%, with 14 gained
+and 3 lost (p 0.013). The two cells are not independent evidence. They share
+the 16-bit cell, and 9 of the 14 problems that the certified head gains are
+among the 27 that int8 weights gain; about 3 would be common if the two sets
+were independent. In this table the outcome of 64 problems differs among the
+five cells. The 16-bit cell solves 24 of the 64, and the four cells with
+bricks solve 18, 31, 35 and 42. The differences are not only against the
+16-bit cell: int8 weights are 1.82 points above the asymmetric cache alone,
+with 33 problems gained and 9 lost, which is the largest of the ten
+differences between two cells of the table. Two readings fit these counts.
+In the first, the outcome belongs to this run: the rounding of the 16-bit
+cell fails a set of problems that the model solves by a narrow margin, and
+other roundings solve part of them. In the second, a brick raises GSM8K
+accuracy on this model. Rounding the weights is not expected to raise
+accuracy, and the other models do not show it on this task: int8 weights are
+0.3 points above the 16-bit model on Llama-3.2-3B and 0.15 points below it
+on Qwen2.5-7B. On MMLU the same weights are level with the 16-bit model on
+Qwen3-8B: 74.94% against 74.96%, with 63 questions lost and 60 gained. For
+the certified head a gain has a possible cause, because the float32 logits
+are the more exact ones; but the same head loses 1.29 points on Qwen2.5-7B.
+The evidence does not yet tell the two readings apart. Three controls are
+queued, each with its rule. The first runs the 16-bit cell, the certified
+head and int8 weights on 2,638 other GSM8K problems: training problems that
+are not prompt examples. A gain with the same sign and an interval that
+excludes zero means that the brick raises accuracy on this model; an
+interval that contains zero means that the gain is not reproduced. The
+second runs the same three cells on the test problems on a second GPU, which
+changes the rounding of every cell and keeps the problems; the same rule
+applies. The third runs int8 weights with two other group sizes, which round
+the same weights to other grids: a gain whose interval excludes zero with
+both group sizes means a property of int8 weights on this model, and mixed
+signs or differences near zero mean one rounding.
 
 The first loss: int8 weights with the asymmetric cache on Qwen2.5-7B answer
 74.04% of the MMLU questions against 74.25%, with 99 questions lost and 70
@@ -429,7 +452,8 @@ problems flip in both runs. In the run of the table, the full stack differs
 from the cell with int8 weights and the asymmetric cache only by the head,
 and it is 0.38 points below that cell (31 lost, 26 gained). On MMLU the
 certified head is 0.04 points above the 16-bit model on Qwen2.5-7B, and on
-Llama-3.2-3B it is 0.14 and 0.23 points above on the two tasks. With a
+Llama-3.2-3B it is 0.14 and 0.23 points above on the two tasks. On Qwen3-8B
+it is 0.83 points above on GSM8K, which is the second gain above. With a
 Bonferroni correction over the five cells of this model and task, the loss
 is not significant (p 0.09). A control is queued: the same two cells on
 3,957 other GSM8K problems.
@@ -449,6 +473,7 @@ weight or the storage format of the cache.
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | MMLU | 155 of 14,042 (1.1%) | +0.04 |
 | float32 logits in place of 16-bit logits (certified head) | Llama-3.2-3B | GSM8K | 87 of 1,319 (6.6%) | +0.23 |
 | float32 logits in place of 16-bit logits (certified head) | Llama-3.2-3B | MMLU | 400 of 14,042 (2.8%) | +0.14 |
+| float32 logits in place of 16-bit logits (certified head) | Qwen3-8B | GSM8K | 17 of 1,319 (1.3%) | +0.83 |
 | Direct FP8 cast of the values in place of one scale per tensor | Llama-3.2-3B | GSM8K | 83 of 1,319 (6.3%) | +1.29 |
 | Direct FP8 cast of the values in place of one scale per tensor | Llama-3.2-3B | MMLU | 390 of 14,042 (2.8%) | -0.03 |
 | Direct FP8 cast of the values in place of one scale per tensor | Qwen2.5-7B | MMLU | 157 of 14,042 (1.1%) | +0.08 |
@@ -468,7 +493,7 @@ second GPU (4.4%), and its accuracy moves by 0.3 points. The difference of a
 cell from the 16-bit cell moves too: int8 weights are 0.91 points below the
 16-bit model in the W7900 run and 0.15 points below in the RTX 4090 run. The
 certified head changes no weight and no cached value; it replaces the 16-bit
-logits of the last position with float32 logits, and it still flips 3.6% to
+logits of the last position with float32 logits, and it still flips 1.3% to
 6.6% of the GSM8K problems and 1.1% to 2.8% of the MMLU questions. The two
 FP8 casts of the values differ by 0.1% in perplexity, and they disagree on
 6.3% of the GSM8K problems: on Llama-3.2-3B the asymmetric cache solves
@@ -483,9 +508,9 @@ counts agree: these cells flip 1.1% to 1.2% of the questions on Qwen2.5-7B
 and 2.5% to 3.0% on Llama-3.2-3B, and a rounding change flips 1.1% and 2.8%.
 On these two models, the count of flips cannot tell the effect of a brick
 from the effect of a rounding change. Only the balance of lost and gained
-items can. It differs from an even split in the three cells of the
-subsection above, and in one of the three the imbalance does not repeat with
-other roundings of the same weights.
+items can. It differs from an even split in the four cells of the subsection
+above, and in one of the four the imbalance does not repeat with other
+roundings of the same weights.
 
 ### Do the bricks compose on task accuracy?
 
@@ -736,9 +761,10 @@ compares the decode latency of the full stack with the byte model.
 
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
-task check is not complete: the Qwen3-8B tables have four cells, without
-the certified head, and the control runs for the three comparisons whose
-interval excludes zero are not finished.
+task check is not complete: the Qwen3-8B tables do not have the full
+stack, its MMLU table has no certified-head cell, and the control runs for
+three of the four comparisons whose interval excludes zero are not
+finished.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
