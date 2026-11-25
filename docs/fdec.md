@@ -210,16 +210,20 @@ examples, decoding is greedy, and an answer is correct when the first
 number after the answer marker equals the reference. A completion with no
 answer marker counts as wrong. MMLU is 14,042 four-choice questions with
 five examples per subject; the answer is the choice letter with the largest
-logit. The certified head is not a cell here. It returns the largest
-float32 logit, and these runs take the largest 16-bit logit, so the two can
-differ only where the two largest logits tie within the 16-bit rounding
-step. The asymmetric KV cells in these tables scale each value tensor
+logit. The certified head returns the largest float32 logit, and the other
+cells take the largest 16-bit logit, so the two can differ where the two
+largest logits tie within the 16-bit rounding step. A certified-head cell
+computes the logits of the last position in float32, which is the token the
+certificate returns. So far it is measured for Qwen2.5-7B on GSM8K. The
+asymmetric KV cells in these tables scale each value tensor
 before the FP8 cast; the runs with the direct cast are not finished. The
 [matrix](#the-fp8-cast-of-the-values) shows that the two differ by at most
 0.001 in top-1 agreement.
 
 All runs are in bfloat16 at knlp commit
-[`dd3a68306`](https://github.com/mcgrof/knlp/commit/dd3a68306).
+[`dd3a68306`](https://github.com/mcgrof/knlp/commit/dd3a68306); the
+certified-head cell is at
+[`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6).
 Llama-3.2-3B and the MMLU run of Qwen2.5-7B ran on one RTX 4090 with
 PyTorch 2.10 and transformers 5.3.0. The GSM8K run of Qwen2.5-7B used one
 Radeon Pro W7900 with PyTorch 2.9.1 and transformers 4.57.1.
@@ -240,6 +244,7 @@ report gives 85.4% with four examples of its own.
 | GSM8K, 1,319 items | 16-bit model | 81.43% | reference | | | | |
 | GSM8K, 1,319 items | int8 weights | 80.52% | -0.91 | -2.13 to +0.31 | 40 | 28 | 0.18 |
 | GSM8K, 1,319 items | asymmetric KV | 80.82% | -0.61 | -1.92 to +0.71 | 43 | 35 | 0.43 |
+| GSM8K, 1,319 items | certified head | 80.52% | -0.91 | -2.02 to +0.20 | 34 | 22 | 0.14 |
 | GSM8K, 1,319 items | int8 weights + asymmetric KV | 80.52% | -0.91 | -2.22 to +0.40 | 45 | 33 | 0.21 |
 | MMLU, 14,042 items | 16-bit model | 74.25% | reference | | | | |
 | MMLU, 14,042 items | int8 weights | 74.12% | -0.13 | -0.31 to +0.05 | 95 | 77 | 0.20 |
@@ -278,6 +283,15 @@ negative: 0.07 to 0.14 points on MMLU and 0.6 to 0.9 points on GSM8K. None
 is significant, and for the two bricks together the test cannot exclude a
 loss of 0.25 points on MMLU and 2.2 points on GSM8K. On Llama-3.2-3B the
 differences have both signs.
+
+The certified-head cell is a control for these numbers. It changes no
+weight and no cached value; it only breaks ties between logits with exact
+arithmetic. On Qwen2.5-7B it changes 4.2% of the GSM8K answers (56 of
+1,319), and its accuracy is 0.9 points below the 16-bit cell, with p 0.14.
+That is the same difference as int8 weights, and the bricks change 5.2% to
+5.9% of the answers. One changed token can change the rest of a greedy
+completion, so on GSM8K the differences of the bricks cannot be told apart
+from the effect of a tie-break change.
 
 The bricks also compose on task accuracy. The table gives the change of the
 pair minus the sum of the two single changes. Every interval contains zero.
@@ -516,8 +530,8 @@ compares the decode latency of the full stack with the byte model.
 
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
-task check covers Llama-3.2-3B and Qwen2.5-7B so far, and it does not
-include the certified head.
+task check covers Llama-3.2-3B and Qwen2.5-7B so far, and its
+certified-head cell is measured for one model and one task.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
