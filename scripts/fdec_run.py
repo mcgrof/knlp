@@ -150,6 +150,13 @@ def tasks(cfg):
         subprocess.run(cmd, check=True)
 
 
+def fmt_p(p):
+    """A p-value with two decimals; three when two would print 0.00."""
+    if p < 0.0005:
+        return "<0.001"
+    return f"{p:.3f}" if p < 0.005 else f"{p:.2f}"
+
+
 def task_report(path):
     """Markdown lines for one task result file, and whether every cell
     passes the task rule."""
@@ -176,7 +183,7 @@ def task_report(path):
                 f"| {task} | {cell} | {100 * c['accuracy']:.2f}% | "
                 f"{100 * c['diff_vs_base']:+.2f} | "
                 f"{100 * c['ci95'][0]:+.2f} to {100 * c['ci95'][1]:+.2f} | "
-                f"{c['lost']} | {c['gained']} | {c['mcnemar_p']:.2f} | "
+                f"{c['lost']} | {c['gained']} | {fmt_p(c['mcnemar_p'])} | "
                 f"{'yes' if good else 'NO'} |"
             )
         for cell, x in r.get("nonadditivity", {}).get(task, {}).items():
