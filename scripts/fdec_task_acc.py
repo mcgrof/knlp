@@ -44,6 +44,11 @@ the cell minus the sum of the changes of its bricks alone.
 The result file keeps four GSM8K completions per cell.  --completions
 writes all of them to a second file, to read the items that change between
 two cells.
+
+--gsm-split train scores the training problems that are not prompt
+examples.  They are a second set of problems of the same kind.  Use them
+to check a difference that the test split shows: a real effect of a brick
+appears on other problems too, and a chance result does not.
 """
 
 import argparse
@@ -148,7 +153,7 @@ def gsm_clean(solution):
     return re.sub(r"<<[^>]*>>", "", solution).strip()
 
 
-def gsm_items(shots, limit):
+def gsm_items(shots, limit, split="test"):
     from datasets import load_dataset
 
     ds = load_dataset("openai/gsm8k", "main")
@@ -156,14 +161,17 @@ def gsm_items(shots, limit):
         f"Question: {q}\nAnswer: {gsm_clean(a)}\n\n"
         for q, a in zip(ds["train"]["question"][:shots], ds["train"]["answer"][:shots])
     )
-    test = ds["test"]
-    n = len(test) if limit <= 0 else min(limit, len(test))
+    # The first `shots` training problems are the prompt examples, so a run
+    # on the training split starts after them.
+    pool = ds[split]
+    first = shots if split == "train" else 0
+    n = len(pool) - first if limit <= 0 else min(limit, len(pool) - first)
     return [
         dict(
-            prompt=head + f"Question: {test[i]['question']}\nAnswer:",
-            gold=norm_number(test[i]["answer"].rsplit("####", 1)[1]),
+            prompt=head + f"Question: {pool[i]['question']}\nAnswer:",
+            gold=norm_number(pool[i]["answer"].rsplit("####", 1)[1]),
         )
-        for i in range(n)
+        for i in range(first, first + n)
     ]
 
 
@@ -336,6 +344,13 @@ def main():
     )
     ap.add_argument("--shots", type=int, default=8, help="GSM8K prompt examples")
     ap.add_argument("--gsm-limit", type=int, default=0, help="0 means all")
+    ap.add_argument(
+        "--gsm-split",
+        choices=("test", "train"),
+        default="test",
+        help="'train' scores the training problems after the prompt examples: "
+        "a second set of problems, to check a difference found on the test split",
+    )
     ap.add_argument("--gsm-batch", type=int, default=16)
     ap.add_argument("--gsm-max-new", type=int, default=256)
     ap.add_argument(
@@ -378,7 +393,7 @@ def main():
 
     data = {}
     if "gsm8k" in tasks:
-        data["gsm8k"] = gsm_items(args.shots, args.gsm_limit)
+        data["gsm8k"] = gsm_items(args.shots, args.gsm_limit, args.gsm_split)
     if "mmlu" in tasks:
         data["mmlu"] = mmlu_items(args.mmlu_per_subject)
     letter_ids = [tok.encode(" " + c, add_special_tokens=False)[-1] for c in LETTERS]
@@ -495,12 +510,13 @@ def settings(args):
         kv_scale=args.kv_scale,
         gsm_batch=args.gsm_batch,
         mmlu_batch=args.mmlu_batch,
+        gsm_split=args.gsm_split,
     )
 
 
 # Settings of a result file written before the setting existed.  The batch
 # sizes were not recorded then, so they are not checked for such a file.
-LEGACY = dict(kv_scale="tensor")
+LEGACY = dict(kv_scale="tensor", gsm_split="test")
 UNRECORDED = ("gsm_batch", "mmlu_batch")
 
 
