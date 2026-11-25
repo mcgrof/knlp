@@ -23,7 +23,8 @@ is paired:
          after the first "####" in the completion equals the reference.
   mmlu   four-choice questions, test split of every subject.  The prompt
          holds the five development examples of the subject.  The answer
-         is the choice letter with the largest next-token logit.
+         is the choice letter with the largest next-token logit.  The log
+         also gives the accuracy averaged over the subjects.
 
 The certified head returns the token with the largest float32 logit; the
 composition matrix checks that at every position of every cell.  A task
@@ -178,8 +179,22 @@ def mmlu_items(per_subject):
             f"{sub.replace('_', ' ')}.\n\n"
         )
         head += "".join(mmlu_fmt(r, True) for r in dev[sub][:5])
-        items.append(dict(prompt=head + mmlu_fmt(row, False), gold=row["answer"]))
+        items.append(
+            dict(prompt=head + mmlu_fmt(row, False), gold=row["answer"], subject=sub)
+        )
     return items
+
+
+def subject_mean(ok, items):
+    """Accuracy averaged over the subjects, each subject with equal weight.
+    Some model cards report MMLU this way, so it is the number to compare
+    with them.  The paired statistics use the items."""
+    per = {}
+    for x, it in zip(ok, items):
+        a = per.setdefault(it["subject"], [0, 0])
+        a[0] += x
+        a[1] += 1
+    return sum(a / n for a, n in per.values()) / len(per)
 
 
 def batches(order, size, lens=None, budget=0):
@@ -358,7 +373,7 @@ def main():
         diff = {
             k: (old.get(k, LEGACY.get(k)), v)
             for k, v in want.items()
-            if old.get(k, LEGACY.get(k)) != v
+            if old.get(k, LEGACY.get(k)) != v and not (k in UNRECORDED and k not in old)
         }
         assert not diff, f"{args.out} holds a run with other settings: {diff}"
         res = old.get("raw", {})
@@ -408,13 +423,18 @@ def main():
                         letter_ids,
                     )
                     ok = [p == it["gold"] for p, it in zip(pred, items)]
-                    extra = {}
+                    extra = dict(subject_mean=subject_mean(ok, items))
                 res.setdefault(task, {})[arm] = dict(
                     ok=[int(x) for x in ok], seconds=time.time() - t1, **extra
                 )
+                more = (
+                    f" subject_mean={extra['subject_mean']:.4f}"
+                    if "subject_mean" in extra
+                    else ""
+                )
                 print(
-                    f"[fdec-task] {arm:10s} {task:6s} acc={sum(ok) / len(ok):.4f} "
-                    f"n={len(ok)} {time.time() - t1:.0f}s",
+                    f"[fdec-task] {arm:10s} {task:6s} acc={sum(ok) / len(ok):.4f}"
+                    f"{more} n={len(ok)} {time.time() - t1:.0f}s",
                     flush=True,
                 )
                 write(args, res, t0)
@@ -450,11 +470,15 @@ def settings(args):
         mmlu_per_subject=args.mmlu_per_subject,
         attention="float32 scores, softmax and value sum",
         kv_scale=args.kv_scale,
+        gsm_batch=args.gsm_batch,
+        mmlu_batch=args.mmlu_batch,
     )
 
 
-# Settings of a result file written before the setting existed.
+# Settings of a result file written before the setting existed.  The batch
+# sizes were not recorded then, so they are not checked for such a file.
 LEGACY = dict(kv_scale="tensor")
+UNRECORDED = ("gsm_batch", "mmlu_batch")
 
 
 def write(args, res, t0):
