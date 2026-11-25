@@ -73,13 +73,24 @@ def compute_act_scales(model, tok, calib, lins, lm, device):
 
 
 def fim_fake_quant(
-    model, tok, calib, base_bits, upgrade_frac, group, awq_alpha, device, pin_proj=()
+    model,
+    tok,
+    calib,
+    base_bits,
+    upgrade_frac,
+    group,
+    awq_alpha,
+    device,
+    pin_proj=(),
+    report=None,
 ):
     """FIM-guided weight quant: diagonal Fisher per linear layer (grad^2 on a calib
     pass), upgrade the most-sensitive upgrade_frac of layers to int8 and quantize the
     rest to base_bits, GROUP-WISE. Optional AWQ activation-aware scaling (alpha>0)
     protects salient channels -- the lever for Qwen's massive activations. Excludes
-    the LM-head. Fake-quantizes in place; returns (originals, weight_byte_factor)."""
+    the LM-head. Fake-quantizes in place; returns (originals, weight_byte_factor).
+    A dict passed as report receives the Fisher value of each layer and the names
+    of the layers kept at int8."""
     lm = model.get_output_embeddings()
     lins = [
         (n, m)
@@ -110,6 +121,8 @@ def fim_fake_quant(
         for n in fisher:
             if any(n.endswith(p) for p in pin_proj):
                 upgrade.add(n)
+    if report is not None:
+        report.update(fisher=dict(fisher), upgrade=sorted(upgrade))
     orig = {}
     tot_bits = tot_w = 0
     with torch.no_grad():

@@ -157,6 +157,25 @@ def eval_against_ref(lp_q, ref_lp, gold, chunk=512):
     )
 
 
+def print_fisher(report):
+    """Mean Fisher value per projection type and the share of its layers that
+    the top-fraction rule keeps at int8."""
+    kept = set(report["upgrade"])
+    per = {}
+    for name, value in report["fisher"].items():
+        a = per.setdefault(name.rsplit(".", 1)[-1], [0, 0.0, 0])
+        a[0] += 1
+        a[1] += value
+        a[2] += name in kept
+    for proj, (n, total, up) in sorted(
+        per.items(), key=lambda kv: -kv[1][1] / kv[1][0]
+    ):
+        print(
+            f"  [fisher] {proj:<10} layers={n:<3} mean={total / n:.3e} "
+            f"at_int8={100 * up / n:.0f}%"
+        )
+
+
 def load_model(model_id, device, dtype):
     from transformers import AutoModelForCausalLM
 
@@ -182,6 +201,12 @@ def main():
         "--gptq-calib-source", default="wikitext", choices=["wikitext", "c4"]
     )
     ap.add_argument("--sq-alpha", type=float, default=0.5, help="SmoothQuant strength")
+    ap.add_argument(
+        "--fisher-report",
+        action="store_true",
+        help="print the mean Fisher value per projection type and the share "
+        "of its layers kept at int8, for each Fisher-guided configuration",
+    )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
@@ -217,7 +242,12 @@ def main():
         if "gptq" in cfg:
             _, wf = gptq_quantize_model(model, tok, gptq_calib, device=device, **kw)
         else:
-            _, wf = fim_fake_quant(model, tok, CALIB, device=device, **kw)
+            report = {} if args.fisher_report else None
+            _, wf = fim_fake_quant(
+                model, tok, CALIB, device=device, report=report, **kw
+            )
+            if report:
+                print_fisher(report)
         lp = logprobs(model, inp, device).to("cpu")
         m = eval_against_ref(lp, ref_lp, gold)
         m["cfg"] = cfg
