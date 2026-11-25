@@ -231,6 +231,21 @@ def report(cfg):
                 f"{'yes' if c['composes'] else 'NO'} |"
             )
         lines.append("")
+        # One interaction term per set of bricks that change the logits.
+        seen = set()
+        for name, c in r["cells"].items():
+            ci = c.get("interaction_ci95")
+            key = tuple(b for b in c.get("bricks", []) if b != "cert")
+            if not ci or key in seen:
+                continue
+            seen.add(key)
+            lines += [
+                f"Interaction term of {'+'.join(key)}: "
+                f"{c['interaction_dlogppl']:+.4f} in log-perplexity, 95% "
+                f"interval {ci[0]:+.4f} to {ci[1]:+.4f}; the limit is "
+                f"{r['interaction_tol']}.",
+                "",
+            ]
         tp = task_path(cfg, model)
         if tp.exists():
             more, good = task_report(tp)

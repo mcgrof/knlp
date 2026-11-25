@@ -38,8 +38,19 @@ attention function rounds the scores to bf16 first, which degrades a model
 with large attention scores (see fp32_attention in fdec_matrix.py).
 
 Composition rule: a cell composes when it runs, its certificate (if present)
-matches the dense argmax at every position, and its log-perplexity increase is
-within `--interaction-tol` of the sum of its bricks' solo increases.
+matches the dense argmax at every position, and its log-perplexity increase
+does not exceed the sum of its bricks' solo increases by more than
+`--interaction-tol`.
+
+The interaction term is the increase of the cell minus that sum. It is the
+mean of one contrast per scored position, so it has a 95% interval. Positions
+of one evaluation sequence share a context, so each sequence is one
+observation: the interval is the Student t interval of the per-sequence means.
+The result holds the interval of the interaction term of every cell with two
+bricks that change the logits, the interval of the cost of every cell, and
+the mean loss of every cell on each sequence.
+The certificate returns the exact token and changes no logit, so it has no
+interaction term in perplexity.
 """
 
 from __future__ import annotations
@@ -167,6 +178,29 @@ def kl_against(model, ids, device, ref_lp):
     return tot / max(1, n)
 
 
+# Student t quantiles for a two-sided 95% interval, by degrees of freedom.
+T975 = (
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+    2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+    2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+)  # fmt: skip
+
+
+def seq_interval(contrast, num_seqs):
+    """95% interval of the mean of a per-position contrast.
+
+    Positions of one sequence share a context, so each sequence is one
+    observation. Returns None with fewer than two sequences."""
+    if num_seqs < 2:
+        return None
+    m = contrast.double().view(num_seqs, -1).mean(1)
+    mean = m.mean().item()
+    se = m.std(unbiased=True).item() / math.sqrt(num_seqs)
+    df = num_seqs - 1
+    t = T975[df - 1] if df <= len(T975) else 1.96 + 2.4 / df
+    return [mean - t * se, mean + t * se]
+
+
 def cert_measure(H_basis, H_eval, W_U, r, bits, clusters, device, basis="hidden_pca"):
     """Build the shadow from H_basis, replay the certificate on H_eval."""
     V, d = W_U.shape
@@ -269,6 +303,7 @@ def main():
     ref_lp = base["lp"]
 
     cells = {}
+    nlls = {}
     weight_f = 1.0
     for s in subsets:
         name = "+".join(s) if s else "none"
@@ -281,6 +316,7 @@ def main():
                 assert saved, "kv brick did not patch any attention module"
             try:
                 p = run_pass(model, head, eval_ids, device)
+                nlls[name] = p["nll"]
                 rec["ppl"] = math.exp(p["nll"].mean().item())
                 rec["dlogppl"] = math.log(rec["ppl"] / base_ppl)
                 rec["top1_agreement"] = (p["am"] == base["am"]).float().mean().item()
@@ -335,6 +371,7 @@ def main():
         print(msg, flush=True)
 
     # Composition verdict per cell.
+    n_seqs = eval_ids.shape[0]
     base_mb = cells["none"]["decode_mb_per_token"]
     for name, rec in cells.items():
         rec["bytes_saved_pct"] = round(
@@ -346,6 +383,21 @@ def main():
         quality = [b for b in rec["bricks"] if b != "cert"]
         solo = sum(cells[b]["dlogppl"] for b in quality if cells[b]["ran"])
         rec["interaction_dlogppl"] = rec["dlogppl"] - solo
+        rec["dlogppl_ci95"] = seq_interval(nlls[name] - base["nll"], n_seqs)
+        # Mean loss of each evaluation sequence; an interval of any contrast
+        # of cells can be computed from these without a new run.
+        rec["nll_by_seq"] = nlls[name].double().view(n_seqs, -1).mean(1).tolist()
+        rec["interaction_ci95"] = None
+        if len(quality) > 1 and all(b in nlls for b in quality):
+            contrast = nlls[name] - sum(nlls[b] for b in quality)
+            contrast = contrast + (len(quality) - 1) * base["nll"]
+            rec["interaction_ci95"] = seq_interval(contrast, n_seqs)
+            ci = rec["interaction_ci95"]
+            print(
+                f"  {name:<12} interaction {rec['interaction_dlogppl']:+.4f}"
+                + (f" (95% interval {ci[0]:+.4f} to {ci[1]:+.4f})" if ci else ""),
+                flush=True,
+            )
         exact = all(
             rec[k]["argmax_match"] == 1.0
             for k in ("cert_matched", "cert_reused")
@@ -360,7 +412,11 @@ def main():
         "model": args.model,
         "vocab_size": int(V),
         "hidden_size": int(d),
-        "eval": {"source": "wikitext-2 test", "tokens": int(eval_ids.numel())},
+        "eval": {
+            "source": "wikitext-2 test",
+            "tokens": int(eval_ids.numel()),
+            "sequences": int(n_seqs),
+        },
         "calibration": {"source": "wikitext-2 train", "tokens": int(calib_ids.numel())},
         "cert": {"rank": r, "bits": args.cert_bits, "clusters": args.cert_clusters},
         "w8_group": args.w8_group,
