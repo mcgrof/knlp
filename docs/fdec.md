@@ -99,10 +99,11 @@ conditions hold.
    the token that the full output head selects, computed in float32, at
    every evaluated position of that cell's own model. It is checked on
    hidden states that the other bricks have already perturbed.
-3. Quality costs add and do not multiply. The increase in log-perplexity
-   of the cell must not exceed the sum of the increases of its bricks
-   measured alone by more than 0.01. The difference is the interaction
-   term, and the harness reports it with a 95% interval.
+3. Quality costs add and do not multiply. The increase in log-perplexity of
+   the cell minus the sum of the increases of its bricks measured alone is
+   the interaction term. The upper end of its 95% interval must be at most
+   0.01, so an evaluation that is too small to resolve the limit does not
+   pass.
 
 Quality is measured against the unmodified 16-bit model on WikiText-2 test:
 perplexity, top-1 agreement of the predicted token, and mean KL divergence.
@@ -192,8 +193,11 @@ limit for the interaction term is 0.01.
 Every interval of the interaction term contains zero, and its ends are
 within 0.0024 of zero, a quarter of the limit. The evaluation therefore
 resolves the limit: an interaction of 0.01 would be far outside each
-interval. The full stack costs 0.14% to 0.26% in perplexity, and the
-intervals of that cost end at 0.33% to 0.48%. An earlier run at commit
+interval. Since commit
+[`3fcdc066b`](https://github.com/mcgrof/knlp/commit/3fcdc066b) the rule
+compares the upper end of the interval with the limit, and every cell of
+this run passes it. The full stack costs 0.14% to 0.26% in perplexity, and
+the intervals of that cost end at 0.33% to 0.48%. An earlier run at commit
 [`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6) on the same
 GPU gives the same perplexity, top-1 agreement and KL in every cell, in all
 digits. The fraction of the head that the certificate reads differs by at
