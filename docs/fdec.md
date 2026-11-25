@@ -17,7 +17,7 @@ measurement and fails if any combination does not compose.
 Measured on Qwen2.5-7B, Llama-3.2-3B and Qwen3-8B, the three dense-model
 bricks compose in all eight combinations. The full stack removes
 40% to 46% of the bytes a decode step reads at a 32,768-token context,
-at a perplexity within 0.15% of the unmodified model. A fourth brick,
+at a perplexity within 0.3% of the unmodified model. A fourth brick,
 the trained cartridge, composes with int8 weights and with the
 asymmetric KV cache at a combined loss cost of 0.1%.
 
@@ -63,7 +63,7 @@ The matrix on this page measures the byte movement bricks.
 | brick | pool | what it does | solo result |
 |---|---|---|---|
 | int8 weights | decoder blocks | group-wise int8 for every linear layer, no calibration | 49% fewer block bytes, near-lossless ([weight quantization study](fim_quantization.html)) |
-| asymmetric KV cache | KV cache | keys stay 16-bit, values go to FP8 | 25% fewer KV bytes ([asymmetric quantization](asymmetric-quantization.html)) |
+| asymmetric KV cache | KV cache | keys stay 16-bit, values go to FP8 by a direct cast | 25% fewer KV bytes ([asymmetric quantization](asymmetric-quantization.html)) |
 | certified LM-head decode | output head | int8 screen of the head, exact fetch of the rows that can still win | exact argmax from 51% to 56% of the head ([certified decode](lm-head-decode.md)) |
 | trained cartridge | KV cache length | a trained KV prefix replaces a long document | a few hundred cache positions in place of the document ([cartridges](cartridges.html)) |
 
@@ -114,10 +114,9 @@ certificate reads, shadow included.
 
 The three models were measured in bfloat16 on one Radeon Pro W7900 with
 PyTorch 2.9.1 and transformers 4.57.1, at knlp commit
-[`2b148e8a8`](https://github.com/mcgrof/knlp/commit/2b148e8a8). A second run
-of Qwen2.5-7B and Llama-3.2-3B on one RTX 4090 with PyTorch 2.10 agrees with
-these tables within 0.008 in perplexity and 0.002 in top-1 agreement in
-every cell, and all of its cells compose.
+[`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6) with the
+direct FP8 cast selected. That cast is the default since commit
+[`4aa007a2c`](https://github.com/mcgrof/knlp/commit/4aa007a2c).
 
 ### Qwen2.5-7B
 
@@ -127,12 +126,12 @@ Baseline perplexity 8.443. Bytes read per token: decoder blocks 13051 MB (81%), 
 |---|---:|---:|---:|---|---:|---:|
 | none | 8.443 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
 | int8 weights | 8.449 | 0.976 | 0.0018 | n/a | n/a | 40.1% |
-| asymmetric KV | 8.446 | 0.981 | 0.0017 | n/a | n/a | 2.9% |
+| asymmetric KV | 8.452 | 0.980 | 0.0018 | n/a | n/a | 2.9% |
 | certified head | 8.443 | 1.000 | 0.0000 | yes | 55.9% | 3.0% |
-| int8 weights + asymmetric KV | 8.455 | 0.974 | 0.0025 | n/a | n/a | 43.0% |
-| int8 weights + certified head | 8.449 | 0.976 | 0.0018 | yes | 55.9% | 43.1% |
-| asymmetric KV + certified head | 8.446 | 0.981 | 0.0017 | yes | 55.9% | 5.9% |
-| all three | 8.455 | 0.974 | 0.0025 | yes | 56.0% | 46.0% |
+| int8 weights + asymmetric KV | 8.465 | 0.973 | 0.0026 | n/a | n/a | 43.0% |
+| int8 weights + certified head | 8.449 | 0.976 | 0.0018 | yes | 56.0% | 43.1% |
+| asymmetric KV + certified head | 8.452 | 0.980 | 0.0018 | yes | 56.0% | 5.9% |
+| all three | 8.465 | 0.973 | 0.0026 | yes | 56.0% | 46.0% |
 
 ### Llama-3.2-3B
 
@@ -142,12 +141,12 @@ Baseline perplexity 11.811. Bytes read per token: decoder blocks 5637 MB (55%), 
 |---|---:|---:|---:|---|---:|---:|
 | none | 11.811 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
 | int8 weights | 11.812 | 0.983 | 0.0013 | n/a | n/a | 27.2% |
-| asymmetric KV | 11.819 | 0.981 | 0.0011 | n/a | n/a | 9.2% |
+| asymmetric KV | 11.822 | 0.981 | 0.0011 | n/a | n/a | 9.2% |
 | certified head | 11.811 | 1.000 | 0.0000 | yes | 51.4% | 3.8% |
-| int8 weights + asymmetric KV | 11.816 | 0.980 | 0.0017 | n/a | n/a | 36.5% |
+| int8 weights + asymmetric KV | 11.828 | 0.980 | 0.0018 | n/a | n/a | 36.5% |
 | int8 weights + certified head | 11.812 | 0.983 | 0.0013 | yes | 51.4% | 31.0% |
-| asymmetric KV + certified head | 11.819 | 0.981 | 0.0011 | yes | 51.4% | 13.0% |
-| all three | 11.816 | 0.980 | 0.0017 | yes | 51.4% | 40.2% |
+| asymmetric KV + certified head | 11.822 | 0.981 | 0.0011 | yes | 51.4% | 13.0% |
+| all three | 11.828 | 0.980 | 0.0018 | yes | 51.4% | 40.2% |
 
 ### Qwen3-8B
 
@@ -157,12 +156,12 @@ Baseline perplexity 15.024. Bytes read per token: decoder blocks 13892 MB (70%),
 |---|---:|---:|---:|---|---:|---:|
 | none | 15.024 | 1.000 | 0.0000 | n/a | n/a | 0.0% |
 | int8 weights | 15.048 | 0.980 | 0.0017 | n/a | n/a | 34.2% |
-| asymmetric KV | 15.035 | 0.982 | 0.0014 | n/a | n/a | 6.0% |
+| asymmetric KV | 15.036 | 0.983 | 0.0013 | n/a | n/a | 6.0% |
 | certified head | 15.024 | 1.000 | 0.0000 | yes | 54.1% | 2.9% |
-| int8 weights + asymmetric KV | 15.040 | 0.977 | 0.0021 | n/a | n/a | 40.3% |
+| int8 weights + asymmetric KV | 15.059 | 0.978 | 0.0021 | n/a | n/a | 40.3% |
 | int8 weights + certified head | 15.048 | 0.980 | 0.0017 | yes | 54.1% | 37.1% |
-| asymmetric KV + certified head | 15.035 | 0.982 | 0.0014 | yes | 54.1% | 8.9% |
-| all three | 15.040 | 0.977 | 0.0021 | yes | 54.1% | 43.1% |
+| asymmetric KV + certified head | 15.036 | 0.983 | 0.0013 | yes | 54.1% | 8.9% |
+| all three | 15.059 | 0.978 | 0.0021 | yes | 54.1% | 43.1% |
 
 All 24 cells compose. The certificate is exact in every cell that has it,
 including the cells where int8 weights and FP8 values have changed the
@@ -170,12 +169,26 @@ hidden states it certifies. A shadow built from the unmodified model reads
 the same fraction of the head as one rebuilt for the quantized model, so
 the artifact does not need rebuilding when the other bricks change.
 
-The interaction term is at most 0.0013 in log-perplexity, inside the
+The interaction term is at most 0.0008 in log-perplexity, inside the
 noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive
 measure. Each brick alone changes about 2% of the predicted tokens, and
-the full stack changes 2% to 3%, while perplexity moves by at most 0.14%.
+the full stack changes 2% to 3%, while perplexity moves by at most 0.26%.
 The changed predictions are therefore near-ties. The next section checks
 what that does to answers.
+
+### The FP8 cast of the values
+
+The asymmetric cache casts each value to FP8 as it is. That is the default
+of the vLLM FP8 cache, so the cell computes what a serving engine computes.
+The first version of these tables divided each value tensor by one scale
+before the cast, which uses the whole FP8 range. With that scale the cells
+that contain the cache have a log-perplexity 0.0001 to 0.0012 lower and a
+top-1 agreement within 0.001, every cell composes, and the full stack is
+within 0.14% of the 16-bit perplexity. The cells without the cache are
+identical in the two runs. The per-tensor variant was measured on the W7900
+and on one RTX 4090 with PyTorch 2.10, and the two GPUs agreed within 0.008
+in perplexity and 0.002 in top-1 agreement in every cell. `--kv-scale
+tensor` selects it.
 
 ## Task accuracy
 
@@ -200,7 +213,10 @@ five examples per subject; the answer is the choice letter with the largest
 logit. The certified head is not a cell here. It returns the largest
 float32 logit, and these runs take the largest 16-bit logit, so the two can
 differ only where the two largest logits tie within the 16-bit rounding
-step.
+step. The asymmetric KV cells in these tables scale each value tensor
+before the FP8 cast; the runs with the direct cast are not finished. The
+[matrix](#the-fp8-cast-of-the-values) shows that the two differ by at most
+0.001 in top-1 agreement.
 
 All runs are in bfloat16 at knlp commit
 [`dd3a68306`](https://github.com/mcgrof/knlp/commit/dd3a68306).
@@ -275,7 +291,8 @@ The test scores two Qwen3-8B cartridges, trained on two LongHealth patient
 records, on 256 self-study conversations each. The score is the trainer's
 own distillation loss against the full-document teacher. The same cartridge
 is read four ways, so the comparison is paired and carries no
-training-to-training variance.
+training-to-training variance. The stored values use FP8 with one scale per
+tensor.
 
 | reader weights | cartridge storage | loss, patient 1 | loss, patient 2 |
 |---|---|---:|---:|
@@ -474,7 +491,7 @@ only alone.
 ## Limits and open cells
 
 The matrix measures quality and bytes with the bricks emulated in PyTorch:
-weights are rounded in place, values pass through an FP8 cast, attention
+weights are rounded in place, values pass through a direct FP8 cast, attention
 runs with float32 arithmetic, and the certificate is replayed against
 float32 logits. It shows that the bricks do
 not conflict in what they compute. It does not measure speed.
