@@ -51,7 +51,7 @@
     };
 
     // ───────────────────────── DATA (measured: Qwen2.5-7B + Llama-3.2-3B, fdec quant-eval 2026-06) ─────────────────────────
-    // KNEE was measured again in 2026-11 with float32 attention arithmetic; POOLS, FISHER and PROXY are from 2026-06.
+    // KNEE and FISHER were measured again in 2026-11 with float32 attention arithmetic; POOLS and PROXY are from 2026-06.
 
     // Decode byte pools, Qwen2.5-7B, ctx 32768, baseline per-token. Weights dominate.
     const POOLS = [
@@ -63,13 +63,13 @@
     // Diagonal Fisher (mean grad^2) per projection type, Qwen2.5-7B, diverse calib.
     // pct = share of that projection already promoted to int8 by the FIM top-20% rule.
     const FISHER = [
-      {proj:'v_proj',    fisher:1.29e-6, pct:82, note:'most sensitive'},
-      {proj:'k_proj',    fisher:4.24e-7, pct:50},
-      {proj:'o_proj',    fisher:1.08e-7, pct:4},
-      {proj:'down_proj', fisher:8.5e-8,  pct:4},
-      {proj:'up_proj',   fisher:6.4e-8,  pct:0},
-      {proj:'q_proj',    fisher:4.95e-8, pct:0, note:'Fisher-cheap'},
-      {proj:'gate_proj', fisher:4.2e-8,  pct:0, note:'least'},
+      {proj:'v_proj',    fisher:1.32e-6, pct:82, note:'most sensitive'},
+      {proj:'k_proj',    fisher:4.32e-7, pct:50},
+      {proj:'o_proj',    fisher:1.10e-7, pct:4},
+      {proj:'down_proj', fisher:8.57e-8, pct:4},
+      {proj:'up_proj',   fisher:6.54e-8, pct:0},
+      {proj:'q_proj',    fisher:5.04e-8, pct:0, note:'Fisher-cheap'},
+      {proj:'gate_proj', fisher:4.26e-8, pct:0, note:'least'},
     ];
 
     // The deployable knee — REAL held-out cross-family eval (wikitext-2 test, 4096 ctx,
@@ -232,10 +232,17 @@
               <span className="kbd"> W_k</span> to int8 automatically; <span className="kbd">q_proj</span> stays int4 (0% promoted).
             </div>
             <p>
-              That last fact retires a tempting idea. Because keys must stay FP16 in the cache, you might pin the
+              The order below <span className="kbd">W_v</span> depends on the model. On Llama-3.2-3B,
+              {" "}<span className="kbd">W_v</span> is again the most sensitive projection and Fisher keeps 75% of it at int8.
+              It then keeps 54% of <span className="kbd">o_proj</span> and 11% of <span className="kbd">down_proj</span>, and
+              no key projection.
+            </p>
+            <p>
+              On Qwen2.5-7B that last fact retires a tempting idea. Because keys must stay FP16 in the cache, you might pin the
               key-projection weights to int8 too. It is byte-free (GQA already shrank <span className="kbd">k_proj</span>/<span className="kbd">v_proj</span>),
               but it is <strong>redundant</strong>: Fisher already promotes the sensitive k/v layers, so the explicit pin only
-              adds the Fisher-low remainder and does not move quality. Fisher subsumes the key-aware pin.
+              adds the Fisher-low remainder and does not move quality. Fisher subsumes the key-aware pin. The comparison
+              with the explicit pin is a June measurement and was not repeated after the November correction below.
             </p>
           </Section>
 
@@ -275,8 +282,9 @@
               With float32 attention arithmetic, int8 agrees with the 16-bit model on 0.983 of the tokens and leaves
               perplexity unchanged. The int4 numbers moved less (0.823 to 0.843), and the Llama-3.2-3B column moved by
               0.002 or less. The chart and the text now show the November measurement, made on one Radeon Pro W7900
-              with <span className="kbd">scripts/fdec_quant_eval.py</span>. The Fisher chart and the 6-prompt proxy chart
-              are from June and were not measured again.
+              with <span className="kbd">scripts/fdec_quant_eval.py</span>. The Fisher chart was measured again too
+              (<span className="kbd">--fisher-report</span>): its values moved by 2.2% or less, and the shares kept at int8
+              did not change. The 6-prompt proxy chart is from June and was not measured again.
             </p>
           </Section>
 
