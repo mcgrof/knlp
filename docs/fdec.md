@@ -585,6 +585,17 @@ A second run of group size 128 on the same GPU gives the same outcome on
 every problem as the run in the table, so the gain is not a variation from
 run to run.
 
+A second run of the certified-head cell also gives the same outcome on every
+problem, and its completions show what the head changes. The two cells write
+different text for 364 of the 1,319 problems (27.6%). At the first token
+that differs, the token of the 16-bit head has the lower index in all 364
+problems, which is what a tie of the largest 16-bit logits gives. Both cells
+solve 302 of the 364 problems and neither solves 45; 14 are gained and 3 are
+lost. int8 weights change the text of 440 to 469 completions, by group size.
+At the first token that differs, the lower index is with the 16-bit cell in
+about half of them, 232 of 469 with group size 128, which is what a change
+of the logits with no preferred direction gives.
+
 One more control tests the first reading directly. It runs the 16-bit cell
 on the test problems in batches of 16 and of 24 prompts in place of 32, on
 the same GPU. The model and the prompts do not change, and there is no
