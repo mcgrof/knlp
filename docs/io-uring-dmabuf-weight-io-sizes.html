@@ -52,9 +52,34 @@ project and one bpftrace script.</p>
 <div><b>Kernel</b><span>Page cache and readahead, or io_uring DMA-BUF straight into GPU memory; the block layer splits at the command limit</span></div>
 <div><b>Drive</b><span>Each NVMe command and its size (<code>nvme_tp_monitor</code>)</span></div>
 </div>
-<p>On the drive used here, a normal read command carries at most
-128 KiB and a DMA-BUF read command at most 2 MiB. The kernel splits any
-larger request at that limit.</p>
+<h3 id="command-limits">Where the command limits come from</h3>
+<p>The drive itself accepts read commands of up to 2 MiB. Its
+maximum data transfer size (MDTS) is 9. MDTS counts the controller's
+minimum memory page, which is 4 KiB on this drive (CAP.MPSMIN 0), so
+one command can carry 2<sup>9</sup> &times; 4 KiB = 2 MiB.</p>
+<p>Linux sets a smaller limit, 128 KiB, for normal reads. With the IOMMU
+translating device addresses (the default DMA-FQ mode here), the NVMe
+PCI driver caps a command at the DMA-optimal mapping size:
+<code>dma_opt_mapping_size()</code> in
+<code>drivers/nvme/host/pci.c</code>. That size is the largest address
+range the IOMMU keeps in its allocation cache, 32 pages or 128 KiB
+(<code>iova_rcache_range()</code> in <code>drivers/iommu/iova.c</code>).
+The queue therefore reports <code>max_hw_sectors_kb</code> and
+<code>max_sectors_kb</code> of 128, with 33 segments. With the IOMMU in
+passthrough mode, this cap does not apply. The kernel branch used here
+also has an <code>nvme</code> module parameter,
+<code>lift_dma_opt_clamp</code>, that removes it. The parameter was off
+for every run on this page.</p>
+<p>A DMA-BUF read uses the IOMMU mapping made once, when the buffer is
+registered. It needs no new mapping per command, so the kernel branch
+limits it only by MDTS: <code>max_hw_dmabuf_sectors_kb</code> is 2048.
+The block layer splits any larger request at the limit that applies.</p>
+<p>Reads through the page cache, including mmap, have one more limit.
+Readahead reads at most the larger of <code>read_ahead_kb</code> and
+<code>max_sectors_kb</code> at a time, and both are 128 KiB here. A
+4 MiB <code>pread</code> through the page cache therefore reaches the
+drive as 128 KiB commands. The drive could take 2 MiB commands, but
+Linux does not send them.</p>
 </section>
 
 <section id="checkpoints">
@@ -225,7 +250,7 @@ and calls <code>get_tensor()</code> for every tensor. We ran the same calls
 outside vLLM. The library maps the shard into memory and makes no read
 call on it. Copying a tensor out of the mapping touches its pages. The
 kernel's readahead then reads the whole file ahead of the copy, so the
-tracer counted only 0 to 604 page faults per load. The drive gets 128 KiB commands, the largest normal command, and
+tracer counted only 0 to 604 page faults per load. The drive gets 128 KiB commands, the Linux limit for a normal command, and
 reads the file once. This path is about 4 to 5 times slower than the
 other two here. We did not profile why.</p>
 <h3>fastsafetensors nogds</h3>
@@ -268,7 +293,9 @@ safetensors and once with one <code>pread</code> per tensor.</p>
 <tr><td>EMO 1b14b MoE (27.1 GB)</td><td>8 experts, one pread per tensor</td><td>0.094, 0.098</td><td>24 pread64 calls; 24 of 4 MiB</td><td>801: 772 of 128 KiB</td><td>+2.3%</td></tr>
 </tbody></table></div>
 <p>With one <code>pread</code> per tensor, the loader asks for 4 MiB at a
-time, and the drive gets 128 KiB commands through the page cache.
+time, and the drive gets 128 KiB commands through the page cache. The
+drive's MDTS allows 2 MiB; the 128 KiB comes from the Linux limits
+described <a href="#command-limits">above</a>.
 Readahead reads past the end of what was asked: 10% extra for one
 expert, 2% for eight. Through safetensors the extra is 25% for one
 expert and 7% for eight. At these sizes the drive gets no command smaller
@@ -293,7 +320,7 @@ GPU memory, split into 2 MiB commands.</p>
 <tr><td>Tracers</td><td><a href="https://github.com/SamsungDS/ebpf-syscall">ebpf-syscall</a>: <code>syscall_monitor</code>, <code>mmap_readamp</code>, <code>nvme_tp_monitor</code>; bpftrace 0.27</td><td>Loader calls with requested sizes, page faults and readahead fills, NVMe commands. The bpftrace script records io_uring setup, registrations and the size of each request.</td></tr>
 <tr><td>Python stack</td><td>Python 3.12, PyTorch 2.9.1 for ROCm 6.4.3, safetensors 0.8.0</td><td>The loaders.</td></tr>
 <tr><td>GPU</td><td>AMD RDNA3 workstation GPU, 48 GB, PCIe Gen4 x16</td><td>The load target.</td></tr>
-<tr><td>Drive and file system</td><td>One PCIe Gen4 x4 NVMe SSD, 4 TB class, 512-byte logical blocks, 128 KiB normal command limit, 2 MiB DMA-BUF command limit; XFS</td><td>Holds the checkpoints.</td></tr>
+<tr><td>Drive and file system</td><td>One PCIe Gen4 x4 NVMe SSD, 4 TB class, 512-byte logical blocks, 4 KiB minimum controller page, MDTS 9 (2 MiB per command). Linux limits: normal commands 128 KiB (IOMMU mapping cap; <code>max_sectors_kb</code> 128, 33 segments), DMA-BUF commands 2 MiB (<code>max_hw_dmabuf_sectors_kb</code> 2048), <code>read_ahead_kb</code> 128. IOMMU in DMA-FQ mode. XFS</td><td>Holds the checkpoints. <a href="#command-limits">Where the limits come from</a>.</td></tr>
 </tbody></table></div>
 </section>
 

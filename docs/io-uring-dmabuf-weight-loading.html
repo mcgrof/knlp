@@ -90,7 +90,7 @@ case; see <a href="#value">why it matters at scale</a>.</p>
 <thead><tr><th scope="col">Part</th><th scope="col">Configuration</th></tr></thead>
 <tbody>
 <tr><td>GPU</td><td>AMD RDNA3 workstation GPU, PCIe Gen4 x16, ROCm 6.4.3, PyTorch 2.9.1</td></tr>
-<tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 2 MiB largest DMA-BUF command</td></tr>
+<tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 4 KiB minimum controller page, MDTS 9 (2 MiB per command). Linux sends normal reads as commands of at most 128 KiB (IOMMU mapping cap) and DMA-BUF reads as commands of up to 2 MiB</td></tr>
 <tr><td>File system</td><td>XFS</td></tr>
 <tr><td>Kernel</td><td>Linux 7.3-rc2 with the <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a> branch; the rerun on the current fastsafetensors tip used the same branch plus unrelated NFS client patches (see <a href="#kernel">kernel requirements</a>)</td></tr>
 <tr><td>Model</td><td>Qwen2.5-7B-Instruct, BF16, four shards, 15.23 GB, 339 tensors</td></tr>
@@ -164,9 +164,15 @@ under <a href="#kernel">kernel requirements</a>, the copier took 2.11 to
 cold loads of three checkpoints on the newer kernel branch. For each
 load we recorded every NVMe command, every system call and every
 io_uring event between the start and the end of the load. The drive
-limits for one command are different for the two readers. A normal read
-command can carry at most 128 KiB. A DMA-BUF read command can carry
-2 MiB. The copier's reads therefore reach the drive as 2 MiB commands.
+accepts read commands of up to 2 MiB: its maximum data transfer size
+(MDTS) is 9, counted in 4 KiB controller pages. Linux limits a normal
+read command to 128 KiB on this host, because the NVMe driver caps each
+command at the largest range the IOMMU caches for per-command mappings.
+A DMA-BUF read reuses the mapping made when the buffer was registered,
+so that cap does not apply, and the copier's reads reach the drive as
+2 MiB commands. The
+<a href="io-uring-dmabuf-weight-io-sizes.html#command-limits">read-size page</a>
+traces each limit to the kernel code.
 <code>nogds</code> reads 516 KiB per <code>pread64</code> call, and the
 drive gets four 128 KiB commands and one 4 KiB command for each call.
 The extra 4 KiB per call also makes <code>nogds</code> read 0.8% more
