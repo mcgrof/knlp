@@ -212,8 +212,10 @@ Qwen models differ among themselves: the lowest and the highest cell are
 2.35 and 1.82 points apart, and the 16-bit cell is between them. The control
 of the MMLU loss is done and does not reproduce it: three other roundings of
 the same pair of bricks have a mean difference of 0.00 points from the
-16-bit model. The controls of the three GSM8K cells are queued. Two cells of
-Qwen3-8B are not finished: the certified head and the full stack on MMLU.
+16-bit model. The control of the GSM8K loss is done and does not reproduce
+it either: on 3,957 other GSM8K problems the certified head is 0.28 points
+above the 16-bit model. The controls of the two gains are queued. Two cells
+of Qwen3-8B are not finished: the certified head and the full stack on MMLU.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -388,8 +390,23 @@ points, from 74.04% to 74.37%, which is more than the 0.24 points between
 the lowest and the highest cell of that table. The intervals in the tables
 cover the sample of items and not the choice of rounding. On GSM8K, a
 difference of 1 to 2 points between two cells of a Qwen model is therefore
-not, alone, evidence about a brick. The controls of the next subsection test
-the three GSM8K cells whose interval against the 16-bit model excludes zero.
+not, alone, evidence about a brick.
+
+A control for these two tables is in progress. It runs the cells in question
+on other GSM8K problems, which are training problems that are not prompt
+examples: the 16-bit cell, the certified head and the asymmetric cache on
+3,957 problems for Qwen2.5-7B, and the same cells with int8 weights on 2,638
+problems for Qwen3-8B. The rule for the test is published before the cells
+with the asymmetric cache run. If the test rejects equal accuracy on the
+other problems and the same cells are the lowest and the highest, the
+differences belong to the cells. If it rejects equal accuracy with other
+cells at the two ends, the cells differ and their order depends on the set
+of problems. If the test finds no difference there, the differences of the
+test tables are not reproduced. Two cells of Qwen2.5-7B are done: on the
+other problems the certified head is 0.28 points above the 16-bit cell, so
+the lowest cell of the test table is not the lowest there. The next
+subsection gives that result and the rules for the single cells whose
+interval against the 16-bit model excludes zero.
 
 ### The four intervals that exclude zero
 
@@ -401,8 +418,8 @@ share the 16-bit cell, and the two gains are in one table. With a Bonferroni
 correction over the 28 comparisons none of the four is significant: the
 smallest p-value becomes 0.11. Three of the four are in the two GSM8K tables
 whose cells differ among themselves in the test above. Each of the four has
-a control run. The control of the first loss is done and does not reproduce
-it. The controls of the two gains and of the second loss are in the queue.
+a control run. The controls of the two losses are done, and neither
+reproduces its loss. The controls of the two gains are in the queue.
 
 The two gains are in the GSM8K table of Qwen3-8B. int8 weights solve 90.30%
 of the problems against 88.93% for the 16-bit model, with 27 problems gained
@@ -428,11 +445,11 @@ Qwen3-8B: 74.94% against 74.96%, with 63 questions lost and 60 gained. For
 the certified head a gain has a possible cause, because the float32 logits
 are the more exact ones; but the same head loses 1.29 points on Qwen2.5-7B.
 The evidence does not yet tell the two readings apart. Three controls are
-queued. The first runs the 16-bit cell, the certified head and int8 weights
-on 2,638 other GSM8K problems: training problems that are not prompt
-examples. It runs on the RTX 4090, so it changes the problems and the GPU.
-The second runs the same three cells on the test problems on that GPU. If
-the first control does not reproduce a gain, the second tells if the gain
+queued. The first runs the 16-bit cell, the certified head, the asymmetric
+cache and int8 weights on the 2,638 other GSM8K problems. It runs on the RTX
+4090, so it changes the problems and the GPU. The second runs the 16-bit
+cell, the certified head and int8 weights on the test problems on that GPU.
+If the first control does not reproduce a gain, the second tells if the gain
 belongs to the test problems or to the arithmetic of the W7900. The third
 runs int8 weights with two other group sizes on the W7900, which round the
 same weights to other grids. The rules are set before the runs. A gain is
@@ -513,8 +530,49 @@ certified head is 0.04 points above the 16-bit model on Qwen2.5-7B, and on
 Llama-3.2-3B it is 0.14 and 0.23 points above on the two tasks. On Qwen3-8B
 it is 0.83 points above on GSM8K, which is the second gain above. With a
 Bonferroni correction over the five cells of this model and task, the loss
-is not significant (p 0.09). A control is queued: the same two cells on
-3,957 other GSM8K problems.
+is not significant (p 0.09).
+
+The control does not reproduce this loss. It ran the same two cells on 3,957
+other GSM8K problems, on the same GPU with the same batch size. The other
+problems are the first 3,957 training problems of GSM8K after the eight
+prompt examples. The rule was set before the run: a loss with an interval
+that excludes zero is a property of the head on this model, and an interval
+that contains zero means that the loss is not reproduced. On the other
+problems the certified head solves 87.82% against 87.54% for the 16-bit
+model, with 34 problems lost and 45 gained (p 0.26). It is 0.28 points
+above, with an interval from 0.16 points below to 0.72 points above. The
+interval contains zero, and it excludes a loss of the size seen on the test
+problems.
+
+| model | cell | GSM8K problems | 16-bit model | cell | difference, points | 95% interval | lost | gained | p |
+|---|---|---|---|---|---|---|---|---|---|
+| Qwen2.5-7B | certified head | 1,319 test problems, the run in the table | 81.12% | 79.83% | -1.29 | -2.31 to -0.27 | 32 | 15 | 0.02 |
+| Qwen2.5-7B | certified head | 3,957 other problems | 87.54% | 87.82% | +0.28 | -0.16 to +0.72 | 34 | 45 | 0.26 |
+
+Each cell is compared with the 16-bit cell of the same run, first on the
+test problems of the table above and then on the other problems. Both runs
+used one RTX 4090 and batches of 8 prompts. The run on the other problems is
+at knlp commit
+[`913f411b5`](https://github.com/mcgrof/knlp/commit/913f411b5), which adds
+the choice of the problem set to the tool.
+
+The completions of this run show what the head changes. The two cells write
+different text for 864 of the 3,957 problems (21.8%). At the first token
+that differs, the token of the 16-bit head has the lower index in all 864
+problems, which is what a tie of the largest 16-bit logits gives. Both cells
+solve 688 of the 864 problems and neither solves 97; 34 are lost and 45 are
+gained. A tie changes the wording of a solution far more often than its
+answer, and on these problems neither choice at a tie is better within the
+resolution of the control, which is 0.44 points.
+
+The control has one limit. The other problems are training problems of the
+dataset, and the model may have seen them: the 16-bit model solves 87.54% of
+them against 81.12% of the test problems, and the head changes the outcome
+of 2.0% of them against 3.6% of the test problems. A loss that exists only
+on problems the model has not seen would not show in this control. The test
+problems alone do not establish such a loss. The comparison was selected
+among 28 because its interval excludes zero, and it is not significant after
+a correction.
 
 ### Controls: how much does a rounding change do?
 
@@ -567,8 +625,8 @@ and 2.5% to 3.0% on Llama-3.2-3B, and a rounding change flips 1.1% and 2.8%.
 On these two models, the count of flips cannot tell the effect of a brick
 from the effect of a rounding change. Only the balance of lost and gained
 items can. It differs from an even split in the four cells of the subsection
-above, and in one of the four the imbalance does not repeat with other
-roundings of the same weights.
+above. In two of the four the imbalance does not repeat: in one with other
+roundings of the same weights, and in the other on other problems.
 
 ### Do the bricks compose on task accuracy?
 
@@ -825,7 +883,7 @@ compares the decode latency of the full stack with the byte model.
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
 task check is not complete: the MMLU table of Qwen3-8B has no cell with
-the certified head, and the control runs for three of the four comparisons
+the certified head, and the control runs for two of the four comparisons
 whose interval excludes zero are not finished.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
