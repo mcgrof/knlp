@@ -17,7 +17,8 @@ measurement and fails if any combination does not compose.
 Measured on Qwen2.5-7B, Llama-3.2-3B and Qwen3-8B, the three dense-model
 bricks compose in all eight combinations. The full stack removes
 40% to 46% of the bytes a decode step reads at a 32,768-token context,
-at a perplexity within 0.3% of the unmodified model. On GSM8K and MMLU
+at a perplexity cost of 0.14% to 0.26%; the 95% intervals of the cost
+end below 0.5%. On GSM8K and MMLU
 the full stack answers as many questions as the 16-bit model within the
 resolution of the test: the 95% interval of the
 [difference in accuracy](#task-accuracy) contains zero for all three
@@ -119,9 +120,8 @@ certificate reads, shadow included.
 
 The three models were measured in bfloat16 on one Radeon Pro W7900 with
 PyTorch 2.9.1 and transformers 4.57.1, at knlp commit
-[`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6) with the
-direct FP8 cast selected. That cast is the default since commit
-[`4aa007a2c`](https://github.com/mcgrof/knlp/commit/4aa007a2c).
+[`d675cb036`](https://github.com/mcgrof/knlp/commit/d675cb036), with the
+direct FP8 cast of the values.
 
 ### Qwen2.5-7B
 
@@ -135,7 +135,7 @@ Baseline perplexity 8.443. Bytes read per token: decoder blocks 13051 MB (81%), 
 | certified head | 8.443 | 1.000 | 0.0000 | yes | 55.9% | 3.0% |
 | int8 weights + asymmetric KV | 8.465 | 0.973 | 0.0026 | n/a | n/a | 43.0% |
 | int8 weights + certified head | 8.449 | 0.976 | 0.0018 | yes | 56.0% | 43.1% |
-| asymmetric KV + certified head | 8.452 | 0.980 | 0.0018 | yes | 56.0% | 5.9% |
+| asymmetric KV + certified head | 8.452 | 0.980 | 0.0018 | yes | 55.9% | 5.9% |
 | all three | 8.465 | 0.973 | 0.0026 | yes | 56.0% | 46.0% |
 
 ### Llama-3.2-3B
@@ -174,12 +174,35 @@ hidden states it certifies. A shadow built from the unmodified model reads
 the same fraction of the head as one rebuilt for the quantized model, so
 the artifact does not need rebuilding when the other bricks change.
 
-The interaction term is at most 0.0008 in log-perplexity, inside the
-noise of an 8,192-token evaluation. Top-1 agreement is the more sensitive
-measure. Each brick alone changes about 2% of the predicted tokens, and
-the full stack changes 2% to 3%, while perplexity moves by at most 0.26%.
-The changed predictions are therefore near-ties. The next section checks
-what that does to answers.
+Only int8 weights and the asymmetric cache change the logits, so each model
+has one interaction term in perplexity: the cost of the two bricks together
+minus the sum of their costs alone. The certified head returns the exact
+token and changes no logit, so its check is exactness and not perplexity.
+
+| model | interaction term, log-perplexity | 95% interval | cost of the full stack, perplexity | 95% interval |
+|---|---:|---|---:|---|
+| Qwen2.5-7B | +0.0008 | -0.0008 to +0.0024 | +0.26% | +0.04% to +0.47% |
+| Llama-3.2-3B | +0.0004 | -0.0009 to +0.0018 | +0.14% | -0.05% to +0.33% |
+| Qwen3-8B | -0.0001 | -0.0023 to +0.0020 | +0.23% | -0.01% to +0.48% |
+
+Each 95% interval takes the 16 evaluation sequences of 512 tokens as the
+observations, because the positions of one sequence share a context. The
+limit for the interaction term is 0.01.
+
+Every interval of the interaction term contains zero, and its ends are
+within 0.0024 of zero, a quarter of the limit. The evaluation therefore
+resolves the limit: an interaction of 0.01 would be far outside each
+interval. The full stack costs 0.14% to 0.26% in perplexity, and the
+intervals of that cost end at 0.33% to 0.48%. An earlier run at commit
+[`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6) on the same
+GPU gives the same perplexity, top-1 agreement and KL in every cell, in all
+digits. The fraction of the head that the certificate reads differs by at
+most 0.02 points between the two runs.
+
+Top-1 agreement is the more sensitive measure. Each brick alone changes
+about 2% of the predicted tokens, and the full stack changes 2% to 3%, while
+perplexity moves by at most 0.26%. The changed predictions are therefore
+near-ties. The next section checks what that does to answers.
 
 ### The FP8 cast of the values
 
