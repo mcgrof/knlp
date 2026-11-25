@@ -238,11 +238,18 @@
               no key projection.
             </p>
             <p>
-              On Qwen2.5-7B that last fact retires a tempting idea. Because keys must stay FP16 in the cache, you might pin the
-              key-projection weights to int8 too. It is byte-free (GQA already shrank <span className="kbd">k_proj</span>/<span className="kbd">v_proj</span>),
-              but it is <strong>redundant</strong>: Fisher already promotes the sensitive k/v layers, so the explicit pin only
-              adds the Fisher-low remainder and does not move quality. Fisher subsumes the key-aware pin. The comparison
-              with the explicit pin is a June measurement and was not repeated after the November correction below.
+              The Fisher allocation raises a question about the keys. The cache keeps its keys in 16 bits, so you might
+              also pin the key and value projection weights to int8. The pin is cheap in bytes, because grouped-query
+              attention already shrank <span className="kbd">k_proj</span> and <span className="kbd">v_proj</span>.
+              On Qwen2.5-7B the pin is <strong>redundant</strong>: Fisher already promotes 82% of the value projections
+              and 50% of the key projections, and the pin moves top-1 agreement from 0.830 to 0.833 for 0.1 points more
+              weight bytes. On Llama-3.2-3B Fisher promotes no key projection, and the pin is <strong>not redundant</strong>:
+              top-1 agreement rises from 0.873 to 0.885 and the perplexity cost falls from 5.7% to 4.8%, for 1.0 point more
+              weight bytes (0.283 to 0.293 of the 16-bit size). Both comparisons use int4 with activation-aware scaling on
+              4,096 held-out positions, measured in November 2026 with float32 attention arithmetic. The first version of
+              this page said that Fisher subsumes the pin; that holds for Qwen2.5-7B only. The test pins the key and the
+              value projections together, so it does not tell which of the two gives the gain on Llama-3.2-3B, and it
+              does not compare the pin with the same bytes spent by Fisher.
             </p>
           </Section>
 
@@ -334,8 +341,9 @@
             </p>
             <p>
               Two honest caveats. The Fisher map and the int4 quality are measured on short-to-moderate context and top-1
-              agreement; the long-context regime where key-projection precision would matter most is not exercised here, so
-              the byte-cheap key-projection pin stays a safe default even though this eval cannot credit it. And the
+              agreement; the long-context regime where key-projection precision would matter most is not exercised here. The
+              pin of the key and value projections is cheap in bytes and stays a safe default: this evaluation credits it
+              0.003 of top-1 agreement on Qwen2.5-7B and 0.012 on Llama-3.2-3B. And the
               perplexity numbers are model- and corpus-specific &mdash; the durable claims are the byte split (weights
               dominate decode), the int8 near-lossless knee, and that cache-precision policy does not predict
               weight-precision policy. Data: Qwen2.5-7B and Llama-3.2-3B, held-out wikitext-4k, 2026-06; agreement and
