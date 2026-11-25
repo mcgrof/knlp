@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Task accuracy of the fdec bricks that change the computed logits.
+"""Task accuracy of the fdec bricks.
 
 The composition matrix (fdec_compose.py) scores perplexity and top-1
 agreement on held-out text.  This script asks the task question: does a
-model with int8 decoder weights, an asymmetric K16/V8 cache, or both,
-answer as many questions correctly as the dense model?
+model with int8 decoder weights, an asymmetric K16/V8 cache, the certified
+output head, or a combination of them, answer as many questions correctly
+as the dense model?
 
-Two tasks, both scored on the same items for every arm so the comparison
+A cell is the dense model ("base") or a set of bricks joined by "+":
+
+  w8    int8 weights in every linear layer of the decoder blocks;
+  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8;
+  cert  the token the certified output head returns.
+
+Two tasks, both scored on the same items for every cell so the comparison
 is paired:
 
   gsm8k  grade-school math word problems, test split.  The prompt holds
@@ -18,13 +25,19 @@ is paired:
          holds the five development examples of the subject.  The answer
          is the choice letter with the largest next-token logit.
 
-The certified output head is not an arm here.  It returns the dense argmax
-by construction, so it cannot change a greedy completion or a letter
-choice.
+The certified head returns the token with the largest float32 logit; the
+composition matrix checks that at every position of every cell.  A task
+run needs only that token, so a "cert" cell computes the logits of the
+last position in float32 and takes the largest.  The other cells use the
+dense head of the model, which rounds its logits to the model dtype.  Two
+bf16 logits within one rounding step tie, so the two heads can select
+different tokens there.
 
-For each arm the report gives accuracy, the paired difference against the
+For each cell the report gives accuracy, the paired difference against the
 dense model with a 95% interval, the count of items that flipped in each
-direction, and the exact McNemar p-value.
+direction, and the exact McNemar p-value.  For a cell with two or more
+bricks it also gives the departure from additivity: the accuracy change of
+the cell minus the sum of the changes of its bricks alone.
 """
 
 import argparse
@@ -37,6 +50,7 @@ import time
 from decimal import Decimal, InvalidOperation
 
 import torch
+import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -47,7 +61,10 @@ from fdec_matrix import (  # noqa: E402
     restore,
 )
 
-ARMS = ("base", "kv", "w8", "w8+kv")
+# Run order: every cell without int8 weights comes before the in-place
+# weight quantization.
+ARMS = ("base", "kv", "cert", "kv+cert", "w8", "w8+kv", "w8+cert", "w8+kv+cert")
+DEFAULT_ARMS = "base,kv,cert,w8,w8+kv,w8+kv+cert"
 LETTERS = "ABCD"
 # batch * length^2 limit for the float32 attention matrices (16 x 1024^2)
 ATTN_BUDGET = 16 * 1024 * 1024
@@ -62,6 +79,45 @@ def norm_number(text):
         return str(Decimal(m.group(0).replace(",", "").replace("$", "")).normalize())
     except InvalidOperation:
         return None
+
+
+def bricks(arm):
+    return set() if arm == "base" else set(arm.split("+"))
+
+
+class Float32Head(torch.nn.Module):
+    """Stand-in for the certified output head: float32 logits of the last
+    position.  Their argmax is the token the certificate returns.
+
+    The head weights are cast a block of rows at a time, so the model does
+    not need a second, float32 copy of its head in memory."""
+
+    def __init__(self, head, rows=16384):
+        super().__init__()
+        assert getattr(head, "bias", None) is None, "expects a bias-free head"
+        self.dense = head
+        self.rows = rows
+
+    def forward(self, hidden):
+        h = hidden[:, -1:].float()
+        w = self.dense.weight
+        return torch.cat(
+            [
+                F.linear(h, w[i : i + self.rows].float())
+                for i in range(0, w.shape[0], self.rows)
+            ],
+            dim=-1,
+        )
+
+
+def swap_head(model, new):
+    """Replace the output head of the model; returns the module it replaced."""
+    old = model.get_output_embeddings()
+    for name, child in model.named_children():
+        if child is old:
+            setattr(model, name, new)
+            return old
+    raise AssertionError("output head is not a direct child of the model")
 
 
 def gsm_answer(completion):
@@ -193,6 +249,24 @@ def mcnemar_exact(b, c):
     return min(1.0, 2 * tail)
 
 
+def nonadditivity(per, arm):
+    """Accuracy change of a multi-brick cell minus the sum of the changes of
+    its bricks alone, in accuracy, with a 95% interval over the items.
+    None when the cell has one brick or a single-brick cell is missing."""
+    parts = sorted(bricks(arm))
+    if len(parts) < 2 or any(b not in per for b in parts + ["base"]):
+        return None
+    base, cell = per["base"]["ok"], per[arm]["ok"]
+    solo = [per[b]["ok"] for b in parts]
+    n = len(base)
+    v = [
+        cell[i] - sum(x[i] for x in solo) + (len(parts) - 1) * base[i] for i in range(n)
+    ]
+    mean = sum(v) / n
+    se = math.sqrt(sum((x - mean) ** 2 for x in v) / (n - 1) / n)
+    return dict(value=mean, ci95=[mean - 1.96 * se, mean + 1.96 * se])
+
+
 def paired(base_ok, arm_ok):
     n = len(base_ok)
     b = sum(1 for x, y in zip(base_ok, arm_ok) if x and not y)
@@ -216,8 +290,19 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--tasks", default="gsm8k,mmlu")
-    ap.add_argument("--arms", default=",".join(ARMS))
+    ap.add_argument(
+        "--arms",
+        default=DEFAULT_ARMS,
+        help="cells to score, from: " + ", ".join(ARMS),
+    )
     ap.add_argument("--w8-group", type=int, default=128)
+    ap.add_argument(
+        "--kv-scale",
+        choices=("tensor", "one"),
+        default="tensor",
+        help="how the values reach FP8: one scale per tensor (largest "
+        "magnitude over 448), or a direct cast, the vLLM default",
+    )
     ap.add_argument("--shots", type=int, default=8, help="GSM8K prompt examples")
     ap.add_argument("--gsm-limit", type=int, default=0, help="0 means all")
     ap.add_argument("--gsm-batch", type=int, default=16)
@@ -229,6 +314,8 @@ def main():
     ap.add_argument("--mmlu-max-len", type=int, default=2048)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    unknown = set(args.arms.split(",")) - set(ARMS)
+    assert not unknown, f"unknown cells: {sorted(unknown)}"
     arms = [a for a in ARMS if a in args.arms.split(",")]
     assert arms and arms[0] == "base", "the dense arm is the paired reference"
     tasks = args.tasks.split(",")
@@ -268,7 +355,11 @@ def main():
         with open(args.out) as f:
             old = json.load(f)
         want = settings(args)
-        diff = {k: (old.get(k), v) for k, v in want.items() if old.get(k) != v}
+        diff = {
+            k: (old.get(k, LEGACY.get(k)), v)
+            for k, v in want.items()
+            if old.get(k, LEGACY.get(k)) != v
+        }
         assert not diff, f"{args.out} holds a run with other settings: {diff}"
         res = old.get("raw", {})
         for task, per in res.items():
@@ -282,13 +373,17 @@ def main():
         todo = [t for t in data if arm not in res.get(t, {})]
         if not todo:
             continue
-        if "w8" in arm and not quantized:
+        on = bricks(arm)
+        if "w8" in on and not quantized:
             quantize_weights_int8(model, args.w8_group)
             quantized = True
-        assert quantized == ("w8" in arm), "dense arms must run before int8 weights"
-        saved = install_asym_kv(model) if "kv" in arm else {}
-        if "kv" in arm:
+        assert quantized == ("w8" in on), "dense arms must run before int8 weights"
+        saved = install_asym_kv(model, args.kv_scale) if "kv" in on else {}
+        if "kv" in on:
             assert saved, "kv brick did not patch any attention module"
+        dense_head = None
+        if "cert" in on:
+            dense_head = swap_head(model, Float32Head(model.get_output_embeddings()))
         try:
             for task in todo:
                 t1 = time.time()
@@ -318,21 +413,28 @@ def main():
                     ok=[int(x) for x in ok], seconds=time.time() - t1, **extra
                 )
                 print(
-                    f"[fdec-task] {arm:6s} {task:6s} acc={sum(ok) / len(ok):.4f} "
+                    f"[fdec-task] {arm:10s} {task:6s} acc={sum(ok) / len(ok):.4f} "
                     f"n={len(ok)} {time.time() - t1:.0f}s",
                     flush=True,
                 )
                 write(args, res, t0)
         finally:
             restore(saved)
-    summary = write(args, res, t0)
+            if dense_head is not None:
+                swap_head(model, dense_head)
+    summary, extra = write(args, res, t0)
     for task, per in summary.items():
         for arm, s in per.items():
             print(
-                f"{task:6s} {arm:6s} acc={s['accuracy']:.4f} "
+                f"{task:6s} {arm:10s} acc={s['accuracy']:.4f} "
                 f"diff={s['diff_vs_base']:+.4f} "
                 f"ci=[{s['ci95'][0]:+.4f},{s['ci95'][1]:+.4f}] "
                 f"lost={s['lost']} gained={s['gained']} p={s['mcnemar_p']:.3f}"
+            )
+        for arm, x in extra.get(task, {}).items():
+            print(
+                f"{task:6s} {arm:10s} minus the sum of its bricks alone: "
+                f"{x['value']:+.4f} ci=[{x['ci95'][0]:+.4f},{x['ci95'][1]:+.4f}]"
             )
 
 
@@ -347,17 +449,24 @@ def settings(args):
         mmlu_max_len=args.mmlu_max_len,
         mmlu_per_subject=args.mmlu_per_subject,
         attention="float32 scores, softmax and value sum",
+        kv_scale=args.kv_scale,
     )
 
 
+# Settings of a result file written before the setting existed.
+LEGACY = dict(kv_scale="tensor")
+
+
 def write(args, res, t0):
-    summary = {}
+    summary, extra = {}, {}
     for task, per in res.items():
         if "base" not in per:
             continue
         summary[task] = {
             arm: paired(per["base"]["ok"], r["ok"]) for arm, r in per.items()
         }
+        found = {arm: nonadditivity(per, arm) for arm in per}
+        extra[task] = {arm: x for arm, x in found.items() if x}
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(
@@ -366,11 +475,12 @@ def write(args, res, t0):
                 torch=torch.__version__,
                 seconds=time.time() - t0,
                 summary=summary,
+                nonadditivity=extra,
                 raw=res,
             ),
             f,
         )
-    return summary
+    return summary, extra
 
 
 if __name__ == "__main__":
