@@ -51,6 +51,12 @@ def result_path(cfg, model):
     return Path(cfg["FDEC_ROOT"]) / (model.replace("/", "__") + ".json")
 
 
+def kv_scale(cfg):
+    scale = cfg.get("FDEC_KV_SCALE", "one")
+    assert scale in ("one", "tensor"), f"CONFIG_FDEC_KV_SCALE={scale!r}"
+    return scale
+
+
 TASKS = ("gsm8k", "mmlu")
 TASK_ALPHA = 0.05
 
@@ -75,6 +81,14 @@ def run(cfg):
     for model in cfg["FDEC_MODELS"].split():
         out = result_path(cfg, model)
         if out.exists():
+            # A result written before the option existed used the
+            # per-tensor scale.
+            have = json.loads(out.read_text()).get("kv_scale", "tensor")
+            assert have == kv_scale(cfg) or "kv" not in bricks_of(cfg), (
+                f"{out} was measured with the FP8 scale {have!r}, the "
+                f"configuration asks for {kv_scale(cfg)!r}; remove the file "
+                "or change CONFIG_FDEC_KV_SCALE"
+            )
             print(f"[fdec] {model}: result exists, skipping ({out})")
             continue
         cmd = [
@@ -90,6 +104,8 @@ def run(cfg):
             cfg.get("FDEC_EVAL_SEQS", "16"),
             "--calib-seqs",
             cfg.get("FDEC_CALIB_SEQS", "128"),
+            "--kv-scale",
+            kv_scale(cfg),
             "--out",
             str(out),
         ]
@@ -124,6 +140,8 @@ def tasks(cfg):
             cfg.get("FDEC_TASK_GSM_BATCH", "16"),
             "--mmlu-batch",
             cfg.get("FDEC_TASK_MMLU_BATCH", "8"),
+            "--kv-scale",
+            kv_scale(cfg),
             "--out",
             str(out),
         ]

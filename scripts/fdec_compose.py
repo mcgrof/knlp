@@ -6,8 +6,9 @@ compose. A brick is one optimization that reduces the bytes a decode step moves:
 
   w8    int8 weights for every linear layer in the decoder blocks (group-wise
         symmetric scales, calibration-free). The LM head keeps its native type.
-  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8 (e4m3), with
-        one scale per tensor or with a direct cast (`--kv-scale`).
+  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8 (e4m3) with
+        a direct cast, as the vLLM FP8 cache does by default. `--kv-scale
+        tensor` divides each value tensor by one scale first.
   cert  certified LM-head decode: a low-rank int8 shadow of the output head
         gives an upper bound per token; vocabulary slabs open in bound order
         until the dense argmax is proven. The returned token is exact.
@@ -201,10 +202,10 @@ def main():
     )
     ap.add_argument(
         "--kv-scale",
-        choices=("tensor", "one"),
-        default="tensor",
-        help="how the values reach FP8: one scale per tensor (largest "
-        "magnitude over 448), or a direct cast, the vLLM default",
+        choices=("one", "tensor"),
+        default="one",
+        help="how the values reach FP8: a direct cast, the vLLM default, or "
+        "one scale per tensor (largest magnitude over 448)",
     )
     ap.add_argument("--cert-bits", type=int, default=8)
     ap.add_argument("--cert-clusters", type=int, default=256)

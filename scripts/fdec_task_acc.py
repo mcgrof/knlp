@@ -11,7 +11,8 @@ as the dense model?
 A cell is the dense model ("base") or a set of bricks joined by "+":
 
   w8    int8 weights in every linear layer of the decoder blocks;
-  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8;
+  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8 with a
+        direct cast (--kv-scale selects a per-tensor scale);
   cert  the token the certified output head returns.
 
 Two tasks, both scored on the same items for every cell so the comparison
@@ -313,10 +314,10 @@ def main():
     ap.add_argument("--w8-group", type=int, default=128)
     ap.add_argument(
         "--kv-scale",
-        choices=("tensor", "one"),
-        default="tensor",
-        help="how the values reach FP8: one scale per tensor (largest "
-        "magnitude over 448), or a direct cast, the vLLM default",
+        choices=("one", "tensor"),
+        default="one",
+        help="how the values reach FP8: a direct cast, the vLLM default, or "
+        "one scale per tensor (largest magnitude over 448)",
     )
     ap.add_argument("--shots", type=int, default=8, help="GSM8K prompt examples")
     ap.add_argument("--gsm-limit", type=int, default=0, help="0 means all")

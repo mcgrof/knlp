@@ -77,6 +77,15 @@ config FDEC_ASYM_KV
 	  Keep keys at 16 bits and quantize values to FP8. KV-pool brick.
 	  Does not apply to linear-attention models.
 
+config FDEC_KV_SCALE
+	string "FP8 scale of the cached values (one or tensor)"
+	default "one"
+	help
+	  "one" casts the values to FP8 as they are. This is the default
+	  of the vLLM FP8 cache. "tensor" first divides each value tensor
+	  by its largest magnitude over 448, which uses the whole FP8
+	  range and gives a perplexity about 0.1% lower.
+
 config FDEC_LMHEAD_CERT
 	bool "Brick: certified LM-head decode"
 	default y
