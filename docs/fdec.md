@@ -192,13 +192,16 @@ tensor` selects it.
 
 ## Task accuracy
 
-On Llama-3.2-3B and Qwen2.5-7B, no brick and no combination of bricks moves
-task accuracy beyond the noise of the test. On Llama-3.2-3B, MMLU accuracy
-is 56.57% for the 16-bit model and 56.77% with all three bricks, and GSM8K
-accuracy is 29.4% and 29.3%. On Qwen2.5-7B, MMLU accuracy is 74.25% for the
-16-bit model and 74.18% with int8 weights and the asymmetric cache, and
-GSM8K accuracy is 81.4% and 80.5%. Every paired interval contains zero. The
-Qwen3-8B runs are not finished.
+On three models, no brick and no combination of bricks lowers task accuracy
+beyond the noise of the test. On Llama-3.2-3B, MMLU accuracy is 56.57% for
+the 16-bit model and 56.77% with all three bricks, and GSM8K accuracy is
+29.4% and 29.3%. On Qwen2.5-7B, MMLU accuracy is 74.25% for the 16-bit model
+and 74.18% with int8 weights and the asymmetric cache, and GSM8K accuracy is
+81.4% and 80.5%. On Qwen3-8B, GSM8K accuracy is 88.9% for the 16-bit model
+and 89.5% with the same two bricks. One of the 20 paired intervals does not
+contain zero, and it is a gain: int8 weights alone on Qwen3-8B solve 90.3%
+of GSM8K. A control for that cell is running. The MMLU run and the
+certified-head cells of Qwen3-8B are not finished.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -216,19 +219,20 @@ float32, which is the token the certificate returns. The other cells take
 the largest 16-bit logit, so the two can differ where the two largest logits
 tie within the 16-bit rounding step. The Llama-3.2-3B tables have the
 certified head alone and in the full stack; the Qwen2.5-7B tables have it
-alone on GSM8K. The asymmetric KV cells of Llama-3.2-3B cast the values to
-FP8 directly, as the [matrix](#the-fp8-cast-of-the-values) does. The
-Qwen2.5-7B cells scale each value tensor before the cast; its runs with the
-direct cast are not finished.
+alone on GSM8K. The asymmetric KV cells of Llama-3.2-3B and Qwen3-8B cast
+the values to FP8 directly, as the [matrix](#the-fp8-cast-of-the-values)
+does. The Qwen2.5-7B cells scale each value tensor before the cast; its runs
+with the direct cast are not finished.
 
 All runs are in bfloat16. Llama-3.2-3B ran at knlp commit
 [`4aa007a2c`](https://github.com/mcgrof/knlp/commit/4aa007a2c) on one RTX
-4090 with PyTorch 2.10 and transformers 5.3.0. Qwen2.5-7B ran at
+4090 with PyTorch 2.10 and transformers 5.3.0. Qwen3-8B ran at the same
+commit on one Radeon Pro W7900 with PyTorch 2.9.1 and transformers 4.57.1.
+Qwen2.5-7B ran at
 [`dd3a68306`](https://github.com/mcgrof/knlp/commit/dd3a68306), with the
 certified-head cell at
 [`0d5fe72b6`](https://github.com/mcgrof/knlp/commit/0d5fe72b6): MMLU on the
-RTX 4090, and GSM8K on one Radeon Pro W7900 with PyTorch 2.9.1 and
-transformers 4.57.1.
+RTX 4090, and GSM8K on the W7900.
 
 The 16-bit references are close to the published scores of the models. The
 MMLU accuracy of Llama-3.2-3B averaged over the 57 subjects is 57.95%, and
@@ -237,7 +241,9 @@ with five examples. Qwen2.5-7B answers 74.25% of the MMLU items, or 75.46%
 averaged over the subjects, and the [Qwen2.5
 report](https://arxiv.org/abs/2412.15115) gives 74.2 with five examples. It
 solves 81.4% of GSM8K with the eight examples used here; the report gives
-85.4% with four examples of its own.
+85.4% with four examples of its own. Qwen3-8B solves 88.9% of GSM8K; the
+[Qwen3 report](https://arxiv.org/abs/2505.09388) gives 89.84 for its base
+model with four examples.
 
 ### Qwen2.5-7B
 
@@ -270,27 +276,55 @@ solves 81.4% of GSM8K with the eight examples used here; the report gives
 | MMLU, 14,042 items | int8 weights + asymmetric KV | 56.66% | +0.09 | -0.19 to +0.38 | 202 | 215 | 0.56 |
 | MMLU, 14,042 items | all three | 56.77% | +0.20 | -0.12 to +0.52 | 251 | 279 | 0.24 |
 
+### Qwen3-8B
+
+| task | cell | accuracy | difference, points | 95% interval | lost | gained | p |
+|---|---|---|---|---|---|---|---|
+| GSM8K, 1,319 items | 16-bit model | 88.93% | reference | | | | |
+| GSM8K, 1,319 items | int8 weights | 90.30% | +1.36 | +0.48 to +2.25 | 9 | 27 | 0.004 |
+| GSM8K, 1,319 items | asymmetric KV | 88.48% | -0.45 | -1.24 to +0.33 | 17 | 11 | 0.34 |
+| GSM8K, 1,319 items | int8 weights + asymmetric KV | 89.46% | +0.53 | -0.35 to +1.41 | 14 | 21 | 0.31 |
+
 "Lost" counts the items that the 16-bit model answers correctly and the cell
 does not; "gained" counts the reverse. The interval is the 95% interval of
 the paired difference in accuracy points. The p-value is the exact McNemar
-test on the lost and gained counts. The models are the base models, not the
-instruction-tuned ones, so the accuracy level is lower than chat-model
-reports.
+test on the lost and gained counts. Llama-3.2-3B and Qwen2.5-7B are the base
+models, not the instruction-tuned ones, so their accuracy level is lower
+than chat-model reports. Qwen3-8B is the released chat model, given the same
+plain few-shot prompt.
 
 The bricks do change single answers. An item flips when one of two cells
 answers it correctly and the other does not. Against the 16-bit model, 2.5%
 to 3.8% of the MMLU questions flip on Llama-3.2-3B and 1.0% to 1.2% on
-Qwen2.5-7B, and 4.2% to 8.6% of the GSM8K problems flip. The flips go both
-ways in almost equal numbers, which is what a small perturbation does to
-items that the model answers by a narrow margin.
+Qwen2.5-7B. On GSM8K, 4.2% to 8.6% of the problems flip on those two models
+and 2.1% to 2.7% on Qwen3-8B. In every cell but one, the flips go both ways
+in almost equal numbers, which is what a small perturbation does to items
+that the model answers by a narrow margin.
 
-The test resolves about 0.2 to 0.3 points on MMLU and 1.1 to 1.6 points on
+The test resolves about 0.2 to 0.3 points on MMLU and 0.8 to 1.6 points on
 GSM8K; a smaller effect would not show. On Qwen2.5-7B every difference is
 negative: 0.07 to 0.14 points on MMLU and 0.6 to 0.9 points on GSM8K. None
 is significant, and for int8 weights with the asymmetric cache the test
 cannot exclude a loss of 0.25 points on MMLU and 2.2 points on GSM8K. On
 Llama-3.2-3B the differences have both signs, and for the full stack the
 test cannot exclude a loss of 0.12 points on MMLU and 1.7 points on GSM8K.
+On Qwen3-8B the asymmetric cache is 0.45 points below the 16-bit model on
+GSM8K, and the test cannot exclude a loss of 1.2 points.
+
+### The one significant difference
+
+Int8 weights on Qwen3-8B solve 90.30% of GSM8K against 88.93% for the 16-bit
+model: 27 problems gained and 9 lost, p 0.004. Rounding the weights is not
+expected to raise accuracy, and the other models do not show it on this
+task: the same cell is 0.3 points above the 16-bit model on Llama-3.2-3B and
+0.9 points below it on Qwen2.5-7B. The cell with int8 weights and the
+asymmetric cache holds the same weights and is 0.5 points above the 16-bit
+model, which is not significant. With a Bonferroni correction over the cells
+of this model and task the gain stays significant; over the 20 comparisons
+of this section it does not (p 0.08). The evidence does not yet tell a
+chance result from a real effect of this rounding. A control is running: the
+same cell with two other int8 group sizes, which round the same weights to
+other grids.
 
 ### Controls: how much does a rounding change do?
 
@@ -321,10 +355,10 @@ perplexity, and they disagree on 6.3% of the GSM8K problems: on Llama-3.2-3B
 the asymmetric cache solves 28.9% with one cast and 30.2% with the other.
 One changed token can change the rest of a greedy completion.
 
-Int8 weights and the asymmetric cache, alone or together, flip 5.2% to 6.1%
-of the GSM8K problems and move accuracy by 0.9 points or less. A rounding
-change does as much. On these two models, the test cannot tell the effect of
-a brick from the effect of a rounding change.
+On Llama-3.2-3B and Qwen2.5-7B, int8 weights and the asymmetric cache, alone
+or together, flip 5.2% to 6.1% of the GSM8K problems and move accuracy by
+0.9 points or less. A rounding change does as much. On these two models, the
+test cannot tell the effect of a brick from the effect of a rounding change.
 
 ### Do the bricks compose on task accuracy?
 
@@ -340,6 +374,7 @@ alone. Every interval contains zero.
 | Llama-3.2-3B | GSM8K | all three | -1.44 | -3.86 to +0.98 |
 | Llama-3.2-3B | MMLU | int8 weights + asymmetric KV | +0.16 | -0.20 to +0.53 |
 | Llama-3.2-3B | MMLU | all three | +0.13 | -0.35 to +0.61 |
+| Qwen3-8B | GSM8K | int8 weights + asymmetric KV | -0.38 | -1.46 to +0.70 |
 
 ## Cartridges as a brick
 
@@ -568,9 +603,9 @@ compares the decode latency of the full stack with the byte model.
 
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
-task check covers Llama-3.2-3B and Qwen2.5-7B so far. The full stack is
-measured on tasks for Llama-3.2-3B only, and the Qwen2.5-7B cells use the
-per-tensor FP8 scale.
+task check is not complete: Qwen3-8B has GSM8K with four cells only, the
+full stack is measured on tasks for Llama-3.2-3B only, and the Qwen2.5-7B
+cells use the per-tensor FP8 scale.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
