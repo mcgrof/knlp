@@ -716,22 +716,34 @@ The test scores two Qwen3-8B cartridges, trained on two LongHealth patient
 records, on 256 self-study conversations each. The score is the trainer's
 own distillation loss against the full-document teacher. The same cartridge
 is read four ways, so the comparison is paired and carries no
-training-to-training variance. The stored values use FP8 with one scale per
-tensor.
+training-to-training variance. The stored values are cast to FP8 directly,
+as the [matrix](#the-fp8-cast-of-the-values) does.
 
 | reader weights | cartridge storage | loss, patient 1 | loss, patient 2 |
 |---|---|---:|---:|
 | 16-bit | 16-bit keys and values | 0.015102 | 0.016170 |
 | int8 | 16-bit keys and values | 0.015111 (+0.06%) | 0.016181 (+0.07%) |
 | 16-bit | 16-bit keys, FP8 values | 0.015106 (+0.03%) | 0.016177 (+0.04%) |
-| int8 | 16-bit keys, FP8 values | 0.015116 (+0.09%) | 0.016188 (+0.11%) |
-| int8 | FP8 keys and values | 0.015307 (+1.36%) | 0.016357 (+1.16%) |
+| int8 | 16-bit keys, FP8 values | 0.015118 (+0.11%) | 0.016191 (+0.13%) |
+| int8 | FP8 keys and values | 0.015310 (+1.38%) | 0.016385 (+1.33%) |
 | 16-bit, no cartridge | none | 0.043067 | 0.045057 |
 
-The cost of both bricks together equals the sum of the two costs alone, so
-they compose. The loss without a cartridge is 2.8 times higher with either
-reader, so the cartridge keeps its value under int8 weights. Symmetric FP8
-keys still cost more than 1%, the same penalty the
+With both bricks the loss is 0.11% and 0.13% above the 16-bit reading, with
+95% intervals from 0.08% to 0.15% and from 0.09% to 0.16%. The cost of both
+bricks minus the sum of the two costs alone is 0.02% of the loss for each
+document, with intervals from -0.02% to +0.06% and from -0.01% to +0.05%.
+Both intervals contain zero, so the two bricks compose within the resolution
+of the test. [`scripts/fdec_cart_cells.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cart_cells.py)
+computes the intervals with a bootstrap over the packed sequences of the
+test, 110 for patient 1 and 91 for patient 2. With one FP8 scale per value
+tensor, which this page used before, the cost of both bricks is 0.10% and
+0.11%. A second scoring of the 16-bit cartridge returns the same loss to
+every digit with both readers, so the differences in the table do not come
+from variation between runs.
+
+The loss without a cartridge is 2.8 to 2.9 times the loss with it, with
+either reader, so the cartridge keeps its value under int8 weights.
+Symmetric FP8 keys still cost more than 1%, the same penalty the
 [cartridge quantization study](cartridge-asymmetric-quantization.html)
 found with a full-precision reader.
 
@@ -899,8 +911,11 @@ certificate rank on held-out hidden states. The cartridge cells use
 [`cas_cart_loss.py`](https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_cart_loss.py)
 with `W8=1` for the int8 reader and
 [`cas_cart_quantize.py`](https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_cart_quantize.py)
-for the stored cartridge; they need a trained cartridge and its self-study
-conversations.
+with `SCALE=none` for the stored cartridge; they need a trained cartridge
+and its self-study conversations.
+[`scripts/fdec_cart_cells.py`](https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cart_cells.py)
+turns the two result files of a document into the cell table with its
+intervals.
 
 ## Adding a brick
 

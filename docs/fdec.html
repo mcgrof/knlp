@@ -124,16 +124,17 @@
 <section id="cartridges">
 <div class="eyebrow">06 / Cartridges as a brick</div><h2>A trained cartridge survives a quantized reader and quantized storage.</h2>
 <p>A cartridge is a KV prefix trained so that a frozen model answers questions about a document without reading it. It shortens the KV cache, so it is a byte movement brick for the KV pool. It was trained against the 16-bit model, which raises two questions. Does it survive a reader with int8 weights? Does it survive storage with FP8 values?</p>
-<p>The test scores two Qwen3-8B cartridges, trained on two patient records from the LongHealth benchmark, on 256 training conversations each. The score is the trainer's own distillation loss against a teacher that reads the full document. The same cartridge is read in each way, so the comparison is paired. The stored values use FP8 with one scale per tensor.</p>
+<p>The test scores two Qwen3-8B cartridges, trained on two patient records from the LongHealth benchmark, on 256 training conversations each. The score is the trainer's own distillation loss against a teacher that reads the full document. The same cartridge is read in each way, so the comparison is paired. The stored values are cast to FP8 directly, as the <a href="#fp8-scale">matrix</a> does.</p>
 <div class="table-wrap"><table><thead><tr><th>Reader weights</th><th>Cartridge storage</th><th class="num">Loss, patient 1</th><th class="num">Loss, patient 2</th></tr></thead><tbody>
 <tr><td>16-bit</td><td>16-bit keys and values</td><td class="num">0.015102</td><td class="num">0.016170</td></tr>
 <tr><td>int8</td><td>16-bit keys and values</td><td class="num">0.015111 (+0.06%)</td><td class="num">0.016181 (+0.07%)</td></tr>
 <tr><td>16-bit</td><td>16-bit keys, FP8 values</td><td class="num">0.015106 (+0.03%)</td><td class="num">0.016177 (+0.04%)</td></tr>
-<tr class="hl"><td>int8</td><td>16-bit keys, FP8 values</td><td class="num">0.015116 (+0.09%)</td><td class="num">0.016188 (+0.11%)</td></tr>
-<tr><td>int8</td><td>FP8 keys and values</td><td class="num">0.015307 (+1.36%)</td><td class="num">0.016357 (+1.16%)</td></tr>
+<tr class="hl"><td>int8</td><td>16-bit keys, FP8 values</td><td class="num">0.015118 (+0.11%)</td><td class="num">0.016191 (+0.13%)</td></tr>
+<tr><td>int8</td><td>FP8 keys and values</td><td class="num">0.015310 (+1.38%)</td><td class="num">0.016385 (+1.33%)</td></tr>
 <tr><td>16-bit, no cartridge</td><td>none</td><td class="num">0.043067</td><td class="num">0.045057</td></tr>
 </tbody></table></div>
-<p>The cost of both bricks together equals the sum of the two costs alone, so they compose. The loss without a cartridge is 2.8 times higher, so the cartridge keeps its value under int8 weights. Symmetric FP8 keys still cost more than 1%, the same penalty that the <a href="cartridge-asymmetric-quantization.html">cartridge quantization study</a> found with a 16-bit reader.</p>
+<p>With both bricks the loss is 0.11% and 0.13% above the 16-bit reading, with 95% intervals from 0.08% to 0.15% and from 0.09% to 0.16%. The cost of both bricks minus the sum of the two costs alone is 0.02% of the loss for each document, with intervals from &minus;0.02% to +0.06% and from &minus;0.01% to +0.05%. Both intervals contain zero, so the two bricks compose within the resolution of the test. <a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cart_cells.py"><code>scripts/fdec_cart_cells.py</code></a> computes the intervals with a bootstrap over the packed sequences of the test, 110 for patient 1 and 91 for patient 2. With one FP8 scale per value tensor, which this page used before, the cost of both bricks is 0.10% and 0.11%. A second scoring of the 16-bit cartridge returns the same loss to every digit with both readers, so the differences in the table do not come from variation between runs.</p>
+<p>The loss without a cartridge is 2.8 to 2.9 times the loss with it, with either reader, so the cartridge keeps its value under int8 weights. Symmetric FP8 keys still cost more than 1%, the same penalty that the <a href="cartridge-asymmetric-quantization.html">cartridge quantization study</a> found with a 16-bit reader.</p>
 <p>These cartridges saw the scored conversations during training, so the loss level is in-sample. The paired differences between readings do not depend on that. The certified head is exact for any hidden state, so it needs no separate cartridge test.</p>
 </section>
 
@@ -203,6 +204,7 @@ make fdec-report</code></pre>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_attn_precision.py"><code>fdec_attn_precision.py</code></a></td><td>Whether 16-bit attention scores degrade a model: perplexity, a GSM8K sample and the score error per layer</td></tr>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cert_latency.py"><code>fdec_cert_latency.py</code></a></td><td>Time per token of the certified head against the dense head</td></tr>
 <tr><td><a href="https://github.com/mcgrof/knlp/blob/main/research/cartridges_cas/scripts/cas_cart_loss.py"><code>cas_cart_loss.py</code></a> with <code>W8=1</code></td><td>A trained cartridge read by a model with int8 weights</td></tr>
+<tr><td><a href="https://github.com/mcgrof/knlp/blob/main/scripts/fdec_cart_cells.py"><code>fdec_cart_cells.py</code></a></td><td>The cartridge cells with their intervals, from the two result files of a document</td></tr>
 </tbody></table></div>
 <h3>Adding a brick</h3>
 <p>A new brick enters the stack in four steps. State the byte pool it reduces and its result alone on a held-out evaluation. Add it to <code>fdec_compose.py</code>, either as a transform that changes the model or its attention, or as a measurement that checks an exactness claim on the changed model. Add its factor to the byte model. Then run the matrix. The brick is in when every cell that contains it composes on at least two model families.</p>
