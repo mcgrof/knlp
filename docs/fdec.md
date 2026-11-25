@@ -205,9 +205,11 @@ solve 89.5% of GSM8K against 88.9%. Three intervals exclude zero. On
 Qwen2.5-7B, int8 weights with the asymmetric cache lose 0.21 points of MMLU
 accuracy, and the certified head alone loses 1.29 points of GSM8K accuracy.
 On Qwen3-8B, int8 weights alone gain 1.36 points of GSM8K accuracy. None of
-the three is significant after a correction for the 26 comparisons, and a
-control run is queued for each. One run is not finished: the certified-head
-cells of Qwen3-8B.
+the three is significant after a correction for the 26 comparisons. The
+control of the MMLU loss is done and does not reproduce it: three other
+roundings of the same pair of bricks have a mean difference of 0.00 points
+from the 16-bit model. The controls of the other two are queued. One run is
+not finished: the certified-head cells of Qwen3-8B.
 
 Perplexity and top-1 agreement are measured on running text. The task check
 asks what a user asks: does a model with the bricks answer as many questions
@@ -320,16 +322,18 @@ answers by a narrow margin.
 The test resolves about 0.2 to 0.3 points on MMLU and 0.8 to 1.6 points on
 GSM8K; a smaller effect would not show. On Qwen2.5-7B every cell with int8
 weights or the asymmetric cache is below the 16-bit model on MMLU, by 0.06
-to 0.21 points, and the interval of one of these cells excludes zero. On
-GSM8K the same cells have both signs, from 0.15 points below to 1.06 points
-above. For the full stack the test cannot exclude a loss of 0.27 points on
-MMLU and 1.5 points on GSM8K. On Llama-3.2-3B the differences have both
-signs, and for the full stack the test cannot exclude a loss of 0.12 points
-on MMLU and 1.7 points on GSM8K. On Qwen3-8B the three MMLU cells are within
-0.07 points of the 16-bit model. For int8 weights with the asymmetric cache,
-the test cannot exclude a loss of 0.10 points on MMLU and 0.35 points on
-GSM8K. On GSM8K the asymmetric cache alone is 0.45 points below the 16-bit
-model, and the test cannot exclude a loss of 1.2 points.
+to 0.21 points, and the interval of one of these cells excludes zero. With
+two other int8 group sizes, the two cells with int8 weights are from 0.05
+points below to 0.12 points above; the table of roundings below gives them.
+On GSM8K the same cells have both signs, from 0.15 points below to 1.06
+points above. For the full stack the test cannot exclude a loss of 0.27
+points on MMLU and 1.5 points on GSM8K. On Llama-3.2-3B the differences have
+both signs, and for the full stack the test cannot exclude a loss of 0.12
+points on MMLU and 1.7 points on GSM8K. On Qwen3-8B the three MMLU cells are
+within 0.07 points of the 16-bit model. For int8 weights with the asymmetric
+cache, the test cannot exclude a loss of 0.10 points on MMLU and 0.35 points
+on GSM8K. On GSM8K the asymmetric cache alone is 0.45 points below the
+16-bit model, and the test cannot exclude a loss of 1.2 points.
 
 ### The three intervals that exclude zero
 
@@ -339,7 +343,9 @@ losses and one gain. If the comparisons were independent, three or more
 would occur in about one set of seven; they are not independent, because the
 cells of one table share the 16-bit cell. With a Bonferroni correction over
 the 26 comparisons none of the three is significant: the smallest p-value
-becomes 0.10. Each of the three has a control run in the queue.
+becomes 0.10. Each of the three has a control run. The control of the first
+loss is done and does not reproduce it. The controls of the gain and of the
+second loss are in the queue.
 
 The gain: int8 weights on Qwen3-8B solve 90.30% of GSM8K against 88.93% for
 the 16-bit model, with 27 problems gained and 9 lost (p 0.004). Rounding the
@@ -359,19 +365,52 @@ round the same weights to other grids. The second runs the same cell on
 
 The first loss: int8 weights with the asymmetric cache on Qwen2.5-7B answer
 74.04% of the MMLU questions against 74.25%, with 99 questions lost and 70
-gained (p 0.03). The loss is close to the sum of the losses of the two
-bricks alone, 0.13 and 0.06 points, so it is not a conflict between the
-bricks. With a Bonferroni correction over the five cells of this model and
-task, which is the rule that `make fdec-report` applies, the loss is not
-significant (p 0.15). Two other measurements of the same pair of bricks are
-nearer to the 16-bit model. The same cell with one FP8 scale per tensor is
-0.07 points below it. The full stack holds the same weights and the same
-cache, adds only the float32 logits, and is 0.08 points below it. The mean
-of the three is 0.12 points below the 16-bit model; its 95% interval goes
-from 0.27 points below to 0.03 points above. The data are consistent with a
-cost of this pair on Qwen2.5-7B anywhere between zero and about 0.4 points
-of MMLU accuracy. A control is queued for this cell: the same cells with two
-other int8 group sizes.
+gained (p 0.03). Other roundings of the same cell do not reproduce the loss.
+The control was defined before it ran. It measures the same cell with int8
+group sizes 64 and 256, which round the same weights to other grids. The
+rule: if every rounding is below the 16-bit model and the mean is near 0.2
+points, the pair of bricks has a real cost; if the signs are mixed or the
+mean is near zero, the 0.21 points belong to one rounding. The table below
+gives four roundings of the cell: the run of the task table, the same
+weights with one FP8 scale per value tensor, and the two other group sizes.
+Three of the four are below the 16-bit model, by 0.21, 0.07 and 0.05 points,
+and the cell with group size 64 is 0.12 points above it. The signs are
+mixed. The mean of the four is 0.05 points below the 16-bit model, with a
+95% interval from 0.19 points below to 0.09 points above. The run of the
+task table was selected for its result and the three others were not; their
+mean is 0.00 points, with an interval from 0.14 points below to 0.14 points
+above. The loss does not follow the coarseness of the grid: group size 256
+has one scale for twice as many weights as group size 128, and it is 0.05
+points below the 16-bit model. Fewer than half of the 99 lost questions are
+wrong again with any other rounding: 36 to 48 of them. int8 weights alone
+give the same picture: 0.13 points below with group size 128, 0.01 points
+below with 64 and 0.01 points above with 256. By the rule, the 0.21 points
+belong to one rounding and are not a cost of the pair of bricks. The control
+does not prove a cost of zero: it cannot exclude a mean loss of 0.14 points.
+The correction over the five cells of this model and task, which is the rule
+that `make fdec-report` applies, gave the same answer for the run of the
+table (p 0.15).
+
+| model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
+|---|---|---|---|---|---|---|---|---|
+| Qwen2.5-7B, MMLU | int8 weights | group size 128, the run in the table | 74.12% | -0.13 | -0.31 to +0.05 | 95 | 77 | 0.19 |
+| Qwen2.5-7B, MMLU | int8 weights | group size 64 | 74.24% | -0.01 | -0.18 to +0.16 | 75 | 74 | 1.00 |
+| Qwen2.5-7B, MMLU | int8 weights | group size 256 | 74.26% | +0.01 | -0.17 to +0.19 | 83 | 84 | 1.00 |
+| Qwen2.5-7B, MMLU | int8 weights | mean of the three roundings | | -0.04 | -0.19 to +0.11 | | | |
+| Qwen2.5-7B, MMLU | int8 weights | mean of the two without the run in the table | | +0.00 | -0.16 to +0.16 | | | |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | group size 128, the run in the table | 74.04% | -0.21 | -0.39 to -0.03 | 99 | 70 | 0.03 |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | group size 128, one FP8 scale per tensor | 74.18% | -0.07 | -0.25 to +0.11 | 91 | 81 | 0.49 |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | group size 64 | 74.37% | +0.12 | -0.06 to +0.30 | 75 | 92 | 0.22 |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | group size 256 | 74.20% | -0.05 | -0.23 to +0.13 | 86 | 79 | 0.64 |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | mean of the four roundings | | -0.05 | -0.19 to +0.09 | | | |
+| Qwen2.5-7B, MMLU | int8 weights + asymmetric KV | mean of the three without the run in the table | | +0.00 | -0.14 to +0.14 | | | |
+
+Each row is one cell of a run of the 14,042 MMLU questions on the same RTX
+4090. The group size is the number of weights that share one int8 scale. The
+row with one FP8 scale per tensor has the int8 weights of the run in the
+table and another cast of the cached values. The 16-bit cell answers every
+question the same way in the four runs. A mean row gives the mean of the
+paired differences over the roundings of that cell.
 
 The second loss: the certified head alone on Qwen2.5-7B solves 79.83% of
 GSM8K against 81.12%, with 32 problems lost and 15 gained (p 0.019). This
@@ -444,8 +483,9 @@ counts agree: these cells flip 1.1% to 1.2% of the questions on Qwen2.5-7B
 and 2.5% to 3.0% on Llama-3.2-3B, and a rounding change flips 1.1% and 2.8%.
 On these two models, the count of flips cannot tell the effect of a brick
 from the effect of a rounding change. Only the balance of lost and gained
-items can, and it differs from an even split in the three cells of the
-subsection above.
+items can. It differs from an even split in the three cells of the
+subsection above, and in one of the three the imbalance does not repeat with
+other roundings of the same weights.
 
 ### Do the bricks compose on task accuracy?
 
