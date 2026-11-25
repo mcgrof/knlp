@@ -6,7 +6,8 @@ compose. A brick is one optimization that reduces the bytes a decode step moves:
 
   w8    int8 weights for every linear layer in the decoder blocks (group-wise
         symmetric scales, calibration-free). The LM head keeps its native type.
-  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8 (e4m3).
+  kv    asymmetric KV cache: keys stay 16-bit, values go to FP8 (e4m3), with
+        one scale per tensor or with a direct cast (`--kv-scale`).
   cert  certified LM-head decode: a low-rank int8 shadow of the output head
         gives an upper bound per token; vocabulary slabs open in bound order
         until the dense argmax is proven. The returned token is exact.
@@ -198,6 +199,13 @@ def main():
         help="shadow rank as a fraction of the hidden size; held-out hidden "
         "states need full rank before the certificate reads less than the head",
     )
+    ap.add_argument(
+        "--kv-scale",
+        choices=("tensor", "one"),
+        default="tensor",
+        help="how the values reach FP8: one scale per tensor (largest "
+        "magnitude over 448), or a direct cast, the vLLM default",
+    )
     ap.add_argument("--cert-bits", type=int, default=8)
     ap.add_argument("--cert-clusters", type=int, default=256)
     ap.add_argument("--ctx", type=int, default=32768, help="context for the byte model")
@@ -267,7 +275,7 @@ def main():
         try:
             if "w8" in s and weight_f == 1.0:
                 weight_f = quantize_weights_int8(model, args.w8_group)
-            saved = install_asym_kv(model) if "kv" in s else {}
+            saved = install_asym_kv(model, args.kv_scale) if "kv" in s else {}
             if "kv" in s:
                 assert saved, "kv brick did not patch any attention module"
             try:
@@ -355,6 +363,7 @@ def main():
         "calibration": {"source": "wikitext-2 train", "tokens": int(calib_ids.numel())},
         "cert": {"rank": r, "bits": args.cert_bits, "clusters": args.cert_clusters},
         "w8_group": args.w8_group,
+        "kv_scale": args.kv_scale,
         "attention": "float32 scores, softmax and value sum; output in model dtype",
         "dtype": args.dtype,
         "torch": torch.__version__,

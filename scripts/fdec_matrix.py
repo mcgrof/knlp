@@ -419,7 +419,7 @@ def smoothquant_transform(model, tok, calib, alpha, device, seqlen=1024, nsample
 
 
 def fp32_attention(
-    module, query, key, value, attention_mask, scaling, dropout=0.0, v_fp8=False, **kw
+    module, query, key, value, attention_mask, scaling, dropout=0.0, v_fp8=None, **kw
 ):
     """Eager attention with the arithmetic of a fused serving kernel.
 
@@ -441,12 +441,24 @@ def fp32_attention(
     Every cell of a comparison must use this function, the unmodified
     model included.
 
-    With v_fp8 the values pass through FP8 (e4m3) with one scale per tensor
-    and the keys stay at 16 bits: the asymmetric K16/V8 cache."""
+    With v_fp8 the values pass through FP8 (e4m3) and the keys stay at 16
+    bits: the asymmetric K16/V8 cache.  FP8 is a floating-point format, so
+    the scale matters only at the ends of its range: it rounds a magnitude
+    below 2^-6 on a coarse fixed grid and has no value above 448.
+
+      "tensor"  divide the values by one scale per tensor, the largest
+                magnitude over 448, before the cast.  The largest value
+                sits at the top of the range, which leaves the most room
+                below it.
+      "one"     cast the values as they are, limited to 448.  This is the
+                default of the vLLM FP8 cache (scale 1.0)."""
     g = module.num_key_value_groups
     ks = key.repeat_interleave(g, dim=1).float()
     vs = value.repeat_interleave(g, dim=1).float()
-    if v_fp8:
+    if v_fp8 == "one":
+        vs = vs.clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+    elif v_fp8:
+        assert v_fp8 in (True, "tensor"), v_fp8
         scale = vs.abs().amax().clamp(min=1e-6) / 448.0
         vs = (vs / scale).to(torch.float8_e4m3fn).float() * scale
     aw = torch.matmul(query.float(), ks.transpose(2, 3)).mul_(scaling)
@@ -460,9 +472,19 @@ def fp32_attention(
 def asym_kv_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):
-    """K16/V8: keep keys at 16 bits, pass values through FP8 (e4m3)."""
+    """K16/V8: keep keys at 16 bits, pass values through FP8 (e4m3) with
+    one scale per tensor."""
     return fp32_attention(
-        module, query, key, value, attention_mask, scaling, v_fp8=True
+        module, query, key, value, attention_mask, scaling, v_fp8="tensor"
+    )
+
+
+def asym_kv_direct_attention(
+    module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
+):
+    """K16/V8 with the values cast to FP8 (e4m3) as they are (scale 1.0)."""
+    return fp32_attention(
+        module, query, key, value, attention_mask, scaling, v_fp8="one"
     )
 
 
@@ -490,8 +512,13 @@ def install_fp32_attention(model):
     return saved
 
 
-def install_asym_kv(model):
-    return install_attention(model, asym_kv_attention)
+KV_SCALES = {"tensor": asym_kv_attention, "one": asym_kv_direct_attention}
+
+
+def install_asym_kv(model, scale="tensor"):
+    """Asymmetric K16/V8 cache in every attention layer.  scale selects how
+    the values reach FP8: "tensor" or "one", see fp32_attention."""
+    return install_attention(model, KV_SCALES[scale])
 
 
 def restore(saved):
