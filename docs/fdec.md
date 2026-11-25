@@ -383,16 +383,17 @@ of the 42 problems that only one of the two solves, they solve 33. The
 asymmetric cache is the highest cell of one table and the lowest cell of the
 other.
 
-The sample of problems does not explain these two ranges, and the test does
-not tell what does. A cell is one set of rounded numbers on one GPU. The
-test shows that two such sets differ in GSM8K accuracy; it does not show
-that a brick is the cause. On MMLU the control of the first loss below gives
-the scale for one cell: four roundings of the same pair of bricks span 0.33
-points, from 74.04% to 74.37%, which is more than the 0.24 points between
-the lowest and the highest cell of that table. The intervals in the tables
-cover the sample of items and not the choice of rounding. On GSM8K, a
-difference of 1 to 2 points between two cells of a Qwen model is therefore
-not, alone, evidence about a brick.
+At these p-values the sample of problems is an unlikely cause of the two
+ranges. The test does not exclude that cause, and it does not tell what the
+cause is. A cell is one set of rounded numbers on one GPU. The test is
+evidence that two such sets differ in GSM8K accuracy on the test problems;
+it does not show that a brick is the cause. On MMLU the control of the first
+loss below gives the scale for one cell: four roundings of the same pair of
+bricks span 0.33 points, from 74.04% to 74.37%, which is more than the 0.24
+points between the lowest and the highest cell of that table. The intervals
+in the tables cover the sample of items and not the choice of rounding. On
+GSM8K, a difference of 1 to 2 points between two cells of a Qwen model is
+therefore not, alone, evidence about a brick.
 
 A control for these two tables is in progress. It runs the cells in question
 on other GSM8K problems, which are training problems that are not prompt
