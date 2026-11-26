@@ -155,6 +155,37 @@ def fim_restore(model, orig):
                 m.weight.data = orig[n]
 
 
+def _gptq_inverse_factor(H, damp, idx):
+    """Upper Cholesky factor of the inverse of the damped Hessian H.
+
+    float32 is enough for most layers. A wide layer that is calibrated on
+    fewer tokens than it has inputs has a rank-deficient Hessian, and one
+    large direction can make the float32 factorization fail: the rounding
+    error then exceeds the damping. In that case the factorization runs in
+    float64. If that fails too, the damping grows tenfold per attempt."""
+    try:
+        L = torch.linalg.cholesky(H)
+        Hinv = torch.cholesky_inverse(L)
+        return torch.linalg.cholesky(Hinv, upper=True)
+    except torch.linalg.LinAlgError:
+        pass
+    H64 = H.double()
+    for attempt in range(4):
+        try:
+            L = torch.linalg.cholesky(H64)
+            Hinv = torch.cholesky_inverse(L)
+            U = torch.linalg.cholesky(Hinv, upper=True)
+            print(
+                f"  [gptq] float64 factorization for a layer with {H.shape[0]} "
+                f"inputs, damping x{10**attempt}",
+                flush=True,
+            )
+            return U.float()
+        except torch.linalg.LinAlgError:
+            H64[idx, idx] += 9.0 * float(damp) * 10**attempt
+    raise RuntimeError("GPTQ: the Hessian is not positive-definite after damping")
+
+
 @torch.no_grad()
 def _gptq_quant_layer(W, H, bits, group, percdamp=0.01):
     """Faithful GPTQ (Frantar et al. 2022) for one weight matrix W [out, in] given
@@ -175,9 +206,7 @@ def _gptq_quant_layer(W, H, bits, group, percdamp=0.01):
     damp = percdamp * torch.mean(torch.diag(H))
     H[idx, idx] += damp
     # upper-triangular inverse-Hessian factor (the auto-gptq trick)
-    L = torch.linalg.cholesky(H)
-    Hinv = torch.cholesky_inverse(L)
-    Hinv = torch.linalg.cholesky(Hinv, upper=True)
+    Hinv = _gptq_inverse_factor(H, damp, idx)
     bs = group if group > 0 else 128
     Q = torch.zeros_like(W)
     scales = {}
