@@ -132,7 +132,7 @@
           <h3><a href="dmabuf-tensor-alignment.html">Tensor alignment in DMA-BUF loads</a></h3>
           <div class="site-stage"><span class="site-stage-badge evaluation">Experimental R&amp;D</span><span>Copy out: no move · compute in place: 4096</span></div>
           <p>NVMe reads straight into GPU memory leave each tensor at its file position within a 4 KiB page. That costs nothing for an engine that copies weights into its own parameters and can halve the speed of a fused kernel that runs on the loaded buffer.</p>
-          <p class="site-card-progress"><strong>Finding</strong>The fastsafetensors DMA-BUF copier now moves nothing by default, 60 to 110 ms faster than nogds on a 25 GB vLLM-style load. In-place MoE loaders pack files at 4096 or ask for 4096, which matches a fresh copy.</p>
+          <p class="site-card-progress"><strong>Finding</strong>The fastsafetensors DMA-BUF copier now moves nothing by default, 60 to 110 ms faster than nogds on a 25 GB vLLM-style load under Linux's default 128 KiB NVMe command limit; with that limit lifted, the two load equally fast. In-place MoE loaders pack files at 4096 or ask for 4096, which matches a fresh copy.</p>
           <div class="site-card-links"><a href="dmabuf-tensor-alignment.html#guidance">Which setting</a><a href="dmabuf-tensor-alignment.html#measured">Measured</a><a href="dmabuf-tensor-alignment.html#how">How to set it</a></div>
         </article>
         <article class="site-card">
