@@ -228,9 +228,13 @@ within 0.14% of the 16-bit perplexity. The cells without the cache are
 identical in the two runs. `--kv-scale tensor` selects this variant. Both
 variants were also measured on one RTX 4090 with PyTorch 2.10, for
 Qwen2.5-7B and Llama-3.2-3B. Every cell composes there, and the two GPUs
-agree within 0.008 in perplexity and 0.004 in top-1 agreement in every
-cell. With the direct cast, the full stack on the RTX 4090 is within 0.17%
-and 0.10% of the 16-bit perplexity of the two models.
+agree within 0.008 in perplexity and 0.004 in top-1 agreement in every cell.
+With the direct cast, the full stack on the RTX 4090 is within 0.17% and
+0.10% of the 16-bit perplexity of the two models. The interaction term on
+that GPU is +0.0003 on Qwen2.5-7B, with a 95% interval from -0.0016 to
++0.0023, and -0.0003 on Llama-3.2-3B, with an interval from -0.0015 to
++0.0008. A second run there also repeats every perplexity, agreement and KL
+value.
 
 ## Task accuracy
 
