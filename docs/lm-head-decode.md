@@ -70,7 +70,7 @@ dense head for a token that does not certify.
 | Qwen2.5-7B | RTX 4090 | 1.166 ms | 1.087 ms | 1.07× | 1.23× | 1.17 → 2.11 ms | 12.5% | 88.0% | 73.1% |
 | Llama-3.2-3B | RTX 4090 | 0.867 ms | 0.678 ms | 1.28× | 1.30× | 0.87 → 0.67 ms | 6.25% | 98.6% | 57.6% |
 | Qwen3-8B | Radeon Pro W7900 | 2.002 ms | 1.978 ms | 1.01× | 1.16× | 2.01 → 3.68 ms | 12.5% | 87.5% | 73.5% |
-| Qwen2.5-0.5B | RTX 4090 | 0.311 ms | 0.315 ms | 0.99× | 1.04× | 0.32 → 0.58 ms | 12.5% | 95.0% | 67.1% |
+| Qwen2.5-0.5B | RTX 4090 | 0.311 ms | 0.315 ms | 0.99× | 1.04× | 0.31 → 0.58 ms | 12.5% | 95.0% | 67.1% |
 
 The table shows the fastest of three fetch budgets for each model. "Head bytes read"
 counts the whole head for a token that fell back. Such a token pays for the screen,
