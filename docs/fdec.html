@@ -41,7 +41,7 @@
 <tr><td>Certified output head</td><td>Output head</td><td>An int8 screen of the head gives an upper bound for every logit; the decoder then fetches only the rows that can still win</td><td>Exact argmax from 51% to 56% of the head (<a href="lm_head_decode.html">certified decode</a>)</td></tr>
 <tr><td>Trained cartridge</td><td>KV cache length</td><td>A trained KV prefix replaces a long document</td><td>A few hundred cache positions in place of the document (<a href="cartridges.html">cartridges</a>)</td></tr>
 </tbody></table></div>
-<p>The weight brick is int8 and not int4. The Fisher-sensitivity study that ranked which weights need more bits found int8 to be the point where quality holds without calibration. Int4 with activation-aware or second-order error compensation looked good on a six-prompt proxy and lost quality on a held-out evaluation, so it is not in the stack.</p>
+<p>The weight brick is int8 and not int4. The Fisher-sensitivity study that ranked which weights need more bits found int8 to be the point where quality holds without calibration. Int4 looked good on a six-prompt proxy. On a held-out evaluation it costs 5% to 19% in perplexity, with or without activation-aware scaling or second-order error compensation, so it is not in the stack.</p>
 <p>The KV brick keeps keys at 16 bits because keys are what break. Symmetric FP8 keys collapse on models with a large key bias (<a href="fp8-kv-failure-atlas.html">FP8 failure atlas</a>).</p>
 <p>Linear-attention models such as Gated DeltaNet, Mamba2 and RWKV remove the KV pool instead of shrinking it. They are a model class and not a brick. The KV and cartridge bricks do not apply to them, and the weight and head bricks are not yet measured on them.</p>
 </section>

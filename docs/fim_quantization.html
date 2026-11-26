@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FIM-Guided Weight Quantization — which weights need more bits, on a real eval</title>
-  <meta name="description" content="At decode, model weights are ~83% of the bytes, so weight quantization is the dominant lever. Diagonal Fisher (FIM) sensitivity says which weights need more bits. On a held-out cross-family eval (Qwen2.5-7B + Llama-3.2-3B), int8 is the near-lossless deployable knee (-41% decode bytes); FIM-guided int4 is usable with a quality hit; and the fancy quantizers (AWQ, GPTQ) that looked great on a small proxy do not deliver a free int4 win once measured honestly.">
+  <meta name="description" content="At decode, model weights are ~83% of the bytes, so weight quantization is the dominant lever. Diagonal Fisher (FIM) sensitivity says which weights need more bits. On a held-out cross-family eval (Qwen2.5-7B + Llama-3.2-3B), int8 is the near-lossless deployable knee (-41% decode bytes); FIM-guided int4 is usable with a quality hit; AWQ does not help on held-out text, GPTQ helps at int4 only with enough calibration, and neither closes the gap to int8.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -168,10 +168,10 @@
               ranks which weights matter: spend int8 on the sensitive ones, int4 on the rest. On a held-out cross-family eval,
               <strong className="text-white"> int8 weights are near-lossless</strong> (top-1 0.98 vs fp16, perplexity
               unchanged) for <strong className="text-white">−41%</strong> decode bytes, calibration-free. Pushing to int4
-              buys another <strong className="text-white">−20%</strong> but costs real quality. And the honest part: the
-              activation-aware tricks (AWQ, GPTQ) that turned a 6-prompt proxy into a int4 win <strong className="text-white"> do
-              not deliver a free win</strong> once you measure on held-out text across two model families &mdash; int8 is the
-              knee that holds up.
+              buys another <strong className="text-white">−20%</strong> but costs real quality. The quantizers that
+              turned a 6-prompt proxy into an int4 win <strong className="text-white">do not close the gap</strong> on
+              held-out text across two model families: AWQ does not help, and GPTQ helps at int4 only with enough
+              calibration &mdash; int8 is the knee that holds up.
             </p>
           </div>
 
@@ -318,14 +318,30 @@
               On the real held-out eval across two families, that win evaporates. Fixed-α AWQ
               {" "}<em>hurts</em> agreement (Qwen int4 0.843&rarr;0.830, Llama 0.886&rarr;0.873) and raises KL on both
               families. It also raises perplexity on Qwen (+16% to +19%) and leaves it flat on Llama &mdash; not a free
-              lunch on either family. The GPTQ runs below are from June; on Qwen2.5-7B they used the 16-bit attention
-              scores described above and were not measured again. GPTQ generalizes but does not beat int8,
-              and most of its apparent perplexity win was <strong>domain alignment</strong>: calibrate and evaluate on the
-              same corpus and it shines; calibrate on C4 and evaluate cross-domain and Qwen int8+GPTQ collapses back to plain
-              int8. So the corrected, honest knee is <strong>calibration-free int8</strong>, with GPTQ as optional fidelity
-              polish, not a structural win. The lesson is older than this page: a small proxy produces beautiful
-              reconstruction numbers and overstated conclusions; measure on held-out text, across families, before believing
-              a quantizer.
+              lunch on either family.
+            </p>
+            <p>
+              <strong>GPTQ, measured again in November 2026</strong> with float32 attention, on the same held-out text and
+              at the same weight bytes. At int8 it changes nothing that this evaluation can resolve: top-1 agreement is
+              0.978 to 0.982 on Qwen2.5-7B against 0.983 for plain int8, and 0.980 to 0.984 on Llama-3.2-3B against 0.980.
+              At int4 the result depends on the size of the calibration set. With 2 calibration sequences of 1,024 tokens,
+              GPTQ is worse than plain Fisher-guided int4 on both models: 0.814 to 0.827 against 0.843 on Qwen2.5-7B, and
+              0.845 to 0.864 against 0.886 on Llama-3.2-3B. With 32 sequences it is better: 0.854 to 0.859 and 0.891 to
+              0.897, and the perplexity cost falls from 15.8% to between 14.1% and 15.1% on Qwen2.5-7B, and from 5.9% to
+              between 4.9% and 5.3% on Llama-3.2-3B. Each range covers calibration on WikiText-2 train and on C4. The two
+              sources differ by 0.006 or less at int4 with 32 sequences.
+            </p>
+            <p>
+              An earlier version of this page said that GPTQ shines when it is calibrated on the evaluation corpus, and
+              that its win was domain alignment. This measurement does not show that. It shows that the calibration size
+              decides if GPTQ helps at int4, and the smaller set was too small for a fair comparison. The original method
+              calibrates on 128 sequences of 2,048 tokens, eight times the largest set measured here, so int4 with GPTQ
+              can still improve. Even so, int4 with GPTQ changes 10% to 15% of the predicted tokens where int8 changes
+              2%. The knee is still <strong>calibration-free int8</strong>. With 2 calibration sequences the GPTQ Hessian
+              of the widest layers of Qwen2.5-7B is rank-deficient, and it needed a float64 factorization
+              (<span className="kbd">scripts/fdec_matrix.py</span>). The lesson is older than this page: a small proxy
+              produces beautiful reconstruction numbers and overstated conclusions; measure on held-out text, across
+              families, and with a fair setting for each method, before believing a quantizer.
             </p>
           </Section>
 
@@ -336,8 +352,9 @@
               The deployable recipe today: <strong>int8 weights</strong> (near-lossless, −41% decode bytes, no calibration),
               with the Fisher map available to push the insensitive layers to int4 where the extra −20% is worth a measured
               quality hit. Keep the most Fisher-sensitive layers &mdash; led by <span className="kbd">W_v</span>, not the
-              cache &mdash; at higher precision. The activation-aware quantizers are optional polish, not the load-bearing
-              lever, once you hold them to a real eval.
+              cache &mdash; at higher precision. AWQ and GPTQ are optional, not the load-bearing lever: on held-out
+              text AWQ does not help, and GPTQ with enough calibration recovers about one point of top-1 agreement at
+              int4 and nothing at int8.
             </p>
             <p>
               Two honest caveats. The Fisher map and the int4 quality are measured on short-to-moderate context and top-1

@@ -74,10 +74,11 @@ The matrix on this page measures the byte movement bricks.
 | trained cartridge | KV cache length | a trained KV prefix replaces a long document | a few hundred cache positions in place of the document ([cartridges](cartridges.html)) |
 
 The weight brick is int8 and not int4. The Fisher-sensitivity study that
-ranked which weights need more bits found int8 to be the point where
-quality holds without calibration. Int4 with activation-aware or
-second-order error compensation looked good on a six-prompt proxy and lost
-quality on a held-out evaluation, so it is not in the stack.
+ranked which weights need more bits found int8 to be the point where quality
+holds without calibration. Int4 looked good on a six-prompt proxy. On a
+held-out evaluation it costs 5% to 19% in perplexity, with or without
+activation-aware scaling or second-order error compensation, so it is not in
+the stack.
 
 The KV brick keeps keys at 16 bits because keys are what break. Symmetric
 FP8 keys collapse on models with large key bias, and the damage follows the
