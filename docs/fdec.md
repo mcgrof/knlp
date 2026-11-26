@@ -260,8 +260,9 @@ and the 16-bit cell is between them.
 Control runs test these differences, each with a rule set before the run.
 The six controls are done, and none reproduces its difference. The table
 gives the result of each control. Two more runs ask why the two gains of
-Qwen3-8B appear on its test problems. The run with other batch sizes is done
-and does not explain them. The repeat on the second GPU is in the queue.
+Qwen3-8B appear on its test problems. The gains belong to the arithmetic of
+one run: on a second GPU the same two cells are 0.53 and 0.15 points above
+the 16-bit cell, with intervals that contain zero.
 
 | Difference in the task tables | Control | Result of the control | Outcome by the rule |
 |---|---|---|---|
@@ -532,7 +533,9 @@ Two causes remain for the range of each table: chance in the sample of test
 problems, or a difference that exists only on problems that the model has
 not seen. The controls cannot separate the two, because the other problems
 are training problems. For Qwen3-8B the arithmetic of the run on the W7900
-is a third possible cause, and a queued repeat on the second GPU tests it.
+is a third possible cause, and the repeat on the second GPU supports it:
+there the 16-bit cell, int8 weights and the certified head show no
+difference (p 0.45), where the same three cells give p 0.003 on the W7900.
 The first and the third cause say nothing about a brick. The second would
 matter to a user, and the evidence here cannot exclude it.
 
@@ -626,10 +629,9 @@ the asymmetric cache belong to the control of the test per table above.
 This control has two limits. It changes the GPU and the batch size together
 with the problems, so it does not tell if the gains belong to the test
 problems or to the arithmetic of the run on the W7900. The repeat on the RTX
-4090, which is in the queue, and the run with other batch sizes below tell
-that. And the other problems are training problems that the model may have
-seen: the 16-bit model solves 92.38% of them against 88.93% of the test
-problems.
+4090 and the run with other batch sizes, both below, tell that. And the
+other problems are training problems that the model may have seen: the
+16-bit model solves 92.38% of them against 88.93% of the test problems.
 
 The group-size control is done, and its result is mixed. With group size 64
 the gain does not return: int8 weights solve 89.01% of the test problems
@@ -698,18 +700,49 @@ points above, with an interval from 0.09 to 1.33 points. A change of the
 batch size is a smaller change than a brick: it alters the text of 133 and
 156 of the 1,319 completions, where int8 weights alter 440 to 469.
 
-The state of the two gains is this. They repeat on the test problems in the
-arithmetic of this run: a second run gives the same outcome on every
-problem, and other batch sizes of the 16-bit cell do not remove them. They
-are not reproduced on 2,638 other problems on the second GPU. The second and
-the third reading have no support. The first reading remains: the gains
-belong to these sets of rounded numbers on these test problems. It does not
-explain why two of the three group sizes gain on mostly the same problems.
-The repeat of the test problems on the second GPU tells if the gains follow
-the test problems or the GPU; it is in the queue. None of the four intervals
-that exclude zero is significant after the correction for the 30
-comparisons, and the result for the full stack does not depend on them: its
-interval contains zero on both tasks.
+The repeat of the test problems on the RTX 4090 is done, and the gains do
+not return there. In batches of 8 prompts on that GPU the 16-bit cell solves
+89.23%. int8 weights solve 89.76%, with 12 problems lost and 19 gained (p
+0.28). They are 0.53 points above, with a 95% interval from 0.30 points
+below to 1.36 points above. The certified head solves 89.39%, with 11
+problems lost and 13 gained (p 0.84). It is 0.15 points above, with an
+interval from 0.58 points below to 0.88 points above. Both intervals contain
+zero, so by the rule of every control here the gains are not reproduced:
+they do not follow the test problems, and they belong to the arithmetic of
+the run on the W7900. The test of equal accuracy over the three cells
+agrees: p 0.45 on the RTX 4090 against p 0.003 on the W7900.
+
+| Qwen3-8B, 1,319 test problems | 16-bit | int8 weights | Certified head |
+|---|---|---|---|
+| W7900, batches of 32, the task table | 88.93% | 90.30%, 1.36 points above (0.48 to 2.25 above) | 89.76%, 0.83 points above (0.22 to 1.44 above) |
+| RTX 4090, batches of 8 | 89.23% | 89.76%, 0.53 points above (0.30 below to 1.36 above) | 89.39%, 0.15 points above (0.58 below to 0.88 above) |
+
+Each cell with a brick is compared with the 16-bit cell of the same run; the
+range in parentheses is the 95% interval of the difference. Both runs use
+int8 group size 128 and the direct FP8 cast. The RTX 4090 run is at knlp
+commit [`913f411b5`](https://github.com/mcgrof/knlp/commit/913f411b5).
+
+This run has a limit too. Both differences on the second GPU are positive,
+and neither interval excludes a gain of the size seen on the W7900, so a
+smaller gain on these test problems is not excluded. Of the 27 problems that
+int8 weights gain on the W7900, 11 are among the 19 that they gain on the
+RTX 4090. The four 16-bit cells of the test problems, with three batch sizes
+on two GPUs, solve 88.93% to 89.23%, and the cell of the task table is the
+lowest of the four.
+
+The state of the two gains is this. They repeat in the arithmetic of the run
+on the W7900: a second run gives the same outcome on every problem, and
+other batch sizes of the 16-bit cell do not remove them. They are not
+reproduced on 2,638 other problems, and they are not reproduced on the same
+test problems in the arithmetic of a second GPU. The second and the third
+reading have no support. The first reading fits: a gain belongs to one set
+of rounded numbers, here one int8 grid or one head in the arithmetic of one
+GPU. Two points stay open. The first reading does not explain why two of the
+three group sizes gain on mostly the same problems, and the run on the
+second GPU does not exclude a smaller gain on the test problems. None of the
+four intervals that exclude zero is significant after the correction for the
+30 comparisons, and the result for the full stack does not depend on them:
+its interval contains zero on both tasks.
 
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
@@ -859,6 +892,7 @@ a weight or the storage format of the cache.
 | Second run of the 16-bit cell and of the int8 cell | Qwen2.5-7B | MMLU | 0 of 14,042 in each cell | 0.00 |
 | Second run of the 16-bit cell and of the int8 cell | Qwen3-8B | GSM8K | 0 of 1,319 in each cell | 0.00 |
 | 16-bit cell and int8 cell on another GPU, PyTorch version and batch size | Qwen2.5-7B | GSM8K | 58 and 56 of 1,319 (4.4% and 4.2%) | -0.30 and +0.45 |
+| 16-bit cell and int8 cell on another GPU, PyTorch version and batch size | Qwen3-8B | GSM8K | 22 and 19 of 1,319 (1.7% and 1.4%) | +0.30 and -0.53 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | GSM8K | 47 of 1,319 (3.6%) | -1.29 |
 | float32 logits in place of 16-bit logits (certified head) | Qwen2.5-7B | MMLU | 155 of 14,042 (1.1%) | +0.04 |
 | float32 logits in place of 16-bit logits (certified head) | Llama-3.2-3B | GSM8K | 87 of 1,319 (6.6%) | +0.23 |
@@ -872,19 +906,22 @@ a weight or the storage format of the cache.
 The accuracy change is the second condition minus the first. The second run
 used a later commit of the tool on the same GPU with the same batch size.
 The second run of Qwen3-8B is on the W7900, and the other second runs are on
-the RTX 4090. The run on another GPU is the earlier W7900 run of Qwen2.5-7B
-against the RTX 4090 run of the table; the row gives the 16-bit cell and the
-int8 cell. The certified head is compared with the 16-bit cell of the same
-run. The two FP8 casts are compared on the asymmetric KV cell.
+the RTX 4090. A row for another GPU compares two runs of the same cells and
+gives the 16-bit cell and the int8 cell: for Qwen2.5-7B the earlier W7900
+run and the RTX 4090 run of the table, and for Qwen3-8B the W7900 run of the
+table and its repeat on the RTX 4090. The certified head is compared with
+the 16-bit cell of the same run. The two FP8 casts are compared on the
+asymmetric KV cell.
 
 A second run of the same cell on the same GPU gives the same outcome on
 every item, on the RTX 4090 and on the W7900, so a flip comes from changed
 arithmetic and not from the run. A change of the GPU, with its PyTorch
 version and batch size, changes the arithmetic. The 16-bit Qwen2.5-7B, with
 no brick, answers 58 of the 1,319 GSM8K problems differently on the second
-GPU (4.4%), and its accuracy moves by 0.3 points. A change of the batch size
-alone changes 8 and 17 outcomes of the 16-bit Qwen3-8B. The difference of a
-cell from the 16-bit cell moves too: int8 weights are 0.91 points below the
+GPU (4.4%), and its accuracy moves by 0.3 points. The 16-bit Qwen3-8B
+answers 22 problems differently on the second GPU (1.7%). A change of the
+batch size alone changes 8 and 17 of its outcomes. The difference of a cell
+from the 16-bit cell moves too: int8 weights are 0.91 points below the
 16-bit model in the W7900 run and 0.15 points below in the RTX 4090 run.
 
 The certified head changes no weight and no cached value; it replaces the
@@ -1189,8 +1226,9 @@ The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
 task tables and their six control runs are complete. The controls on other
 GSM8K problems use training problems, which the models may have seen. The
-two gains of Qwen3-8B on its test problems have no explanation yet, and one
-run that tests a cause is not finished.
+two GSM8K gains of Qwen3-8B belong to the arithmetic of one run: they are
+not reproduced on other problems or on a second GPU. A smaller gain on the
+test problems is not excluded.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
