@@ -29,7 +29,7 @@
 <div class="hero">
 <span class="eyebrow">io_uring + DMA-BUF · Weight loading · Updated 24 November 2026</span>
 <h1>Which read sizes weight loading produces</h1>
-<p class="lead"><strong>No loader we traced asks the kernel for tensor-sized reads.</strong> vLLM's default reader maps each file and lets kernel readahead read it in 128 KiB commands. fastsafetensors' <code>nogds</code> reader asks for 516 KiB at a time, which reaches the drive as four 128 KiB commands and one 4 KiB command. Our DMA-BUF copier asks for 64 MiB at a time, straight into GPU memory, and the drive gets 2 MiB commands. Tensor sizes matter when a loader reads only part of a model, such as one expert of a mixture-of-experts layer: current MoE checkpoints store experts as 2 to 16 MiB tensors, and some store an expert's scales far from its weights, which adds a read of a few KiB.</p>
+<p class="lead"><strong>No loader we traced asks the kernel for tensor-sized reads.</strong> vLLM's default reader maps each file and lets kernel readahead read it in 128 KiB commands. fastsafetensors' <code>nogds</code> reader asks for 516 KiB at a time, which reaches the drive as four 128 KiB commands and one 4 KiB command under Linux's default limit. Our DMA-BUF copier asks for 64 MiB at a time, straight into GPU memory, and the drive gets 2 MiB commands. Tensor sizes matter when a loader reads only part of a model, such as one expert of a mixture-of-experts layer: current MoE checkpoints store experts as 2 to 16 MiB tensors, and some store an expert's scales far from its weights, which adds a read of a few KiB.</p>
 <nav class="toc" aria-label="On this page"><a href="#sizes">Three sizes</a><a href="#checkpoints">How checkpoints store bytes</a><a href="#loaders">What loaders ask for</a><a href="#experts">Fetching experts</a><a href="#stack">Software and kernel</a><a href="#reproduce">Reproduce</a><a href="#limits">Limits</a></nav>
 </div>
 
@@ -69,7 +69,10 @@ The queue therefore reports <code>max_hw_sectors_kb</code> and
 passthrough mode, this cap does not apply. The kernel branch used here
 also has an <code>nvme</code> module parameter,
 <code>lift_dma_opt_clamp</code>, that removes it. The parameter was off
-for every run on this page.</p>
+for every run on this page. With it on, normal reads may use 2 MiB
+commands too; the
+<a href="io-uring-dmabuf-weight-loading.html#clamp-lifted">weight-loading page</a>
+shows what that does to load times.</p>
 <p>A DMA-BUF read uses the IOMMU mapping made once, when the buffer is
 registered. It needs no new mapping per command, so the kernel branch
 limits it only by MDTS: <code>max_hw_dmabuf_sectors_kb</code> is 2048.
@@ -261,7 +264,9 @@ four 128 KiB commands and one 4 KiB command for each call. These 4 KiB
 commands are 20% of all its commands, and they make the drive read 0.8 to 0.9%
 more bytes than the files hold. This is the only place in a full load
 where we saw many small commands, and they come from the reader's
-alignment, not from the tensors.</p>
+alignment, not from the tensors. With the 128 KiB limit lifted, each
+call reaches the drive as one 516 KiB command, but the drive still reads
+0.8% more bytes than the files hold.</p>
 <h3>The DMA-BUF copier</h3>
 <p>The copier issues io_uring <code>READ_FIXED</code> requests of 64 MiB
 straight into GPU memory, with a shorter request at the end of each
@@ -270,8 +275,9 @@ largest DMA-BUF command on this drive. For the 15.2 GB model that is
 228 requests and 7,260 commands of 2 MiB, against 145,291 commands for
 <code>nogds</code>. The drive reads the file bytes to within 0.1%. Its
 only read calls are the 8-byte header length and the JSON header of
-each shard (9 to 72 KiB). The larger commands are why the copier is the
-fastest loader here; the
+each shard (9 to 72 KiB). With the default 128 KiB limit for normal
+reads, the larger commands are why the copier is the fastest loader
+here. With that limit lifted, <code>nogds</code> loads as fast; the
 <a href="io-uring-dmabuf-weight-loading.html#why-faster">weight-loading page</a>
 explains this with drive rates.</p>
 </section>

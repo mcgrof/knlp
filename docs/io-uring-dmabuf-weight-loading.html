@@ -90,7 +90,7 @@ case; see <a href="#value">why it matters at scale</a>.</p>
 <thead><tr><th scope="col">Part</th><th scope="col">Configuration</th></tr></thead>
 <tbody>
 <tr><td>GPU</td><td>AMD RDNA3 workstation GPU, PCIe Gen4 x16, ROCm 6.4.3, PyTorch 2.9.1</td></tr>
-<tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 4 KiB minimum controller page, MDTS 9 (2 MiB per command). Linux sends normal reads as commands of at most 128 KiB (IOMMU mapping cap) and DMA-BUF reads as commands of up to 2 MiB</td></tr>
+<tr><td>Drive</td><td>One consumer PCIe Gen4 x4 NVMe SSD, 4 TB class, about 7 GB/s rated sequential read, 512-byte logical blocks, 4 KiB minimum controller page, MDTS 9 (2 MiB per command). Linux sends normal reads as commands of at most 128 KiB (IOMMU mapping cap) and DMA-BUF reads as commands of up to 2 MiB. One test lifts the 128 KiB cap; see <a href="#clamp-lifted">the 128 KiB limit lifted</a></td></tr>
 <tr><td>File system</td><td>XFS</td></tr>
 <tr><td>Kernel</td><td>Linux 7.3-rc2 with the <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=2026-10-30-dmabuf-on-axboe-for-7.4">2026-10-30-dmabuf-on-axboe-for-7.4</a> branch; the rerun on the current fastsafetensors tip used the same branch plus unrelated NFS client patches (see <a href="#kernel">kernel requirements</a>)</td></tr>
 <tr><td>Model</td><td>Qwen2.5-7B-Instruct, BF16, four shards, 15.23 GB, 339 tensors</td></tr>
@@ -158,7 +158,8 @@ every tensor to a 16-byte boundary
 15 GB model and cut its lead to about 30 ms. A copy-out loader such as
 vLLM's should keep the default. On the newer kernel branch described
 under <a href="#kernel">kernel requirements</a>, the copier took 2.11 to
-2.14 s, 7 to 8% faster than <code>nogds</code>.</p>
+2.14 s, 7 to 8% faster than <code>nogds</code>. That lead comes from the
+Linux command limit, as the next two sections show.</p>
 <h3 id="why-faster">Why the copier is faster</h3>
 <p>The copier is faster because the drive gets larger commands. We traced
 cold loads of three checkpoints on the newer kernel branch. For each
@@ -194,6 +195,42 @@ matched the file digests. Tracing changed the load times by between -2%
 and +0.5%, which is less than the difference between the readers. The
 copier also makes far fewer system calls. We did not measure host CPU
 time, so we do not claim a CPU saving.</p>
+<h3 id="clamp-lifted">With the 128 KiB limit lifted</h3>
+<p>To test this explanation, we lifted the limit and repeated the traced
+loads. The kernel branch has an <code>nvme</code> module parameter,
+<code>lift_dma_opt_clamp</code>. With it set, the driver caps a normal
+command at the largest size the DMA layer can map, not at the IOMMU
+cache range. We booted with <code>nvme.lift_dma_opt_clamp=1</code>, with
+the IOMMU still translating, and the queue then reported
+<code>max_sectors_kb</code> 2048. In the same boot we ran three passes:
+<code>max_sectors_kb</code> 2048, then 128 as a control, then 2048 again.
+The kernel, the code and the checkpoints were the same as above.</p>
+<p>With 2 MiB allowed, each 516 KiB <code>pread64</code> call of
+<code>nogds</code> reaches the drive as one 516 KiB command: 29,105
+commands for Qwen2.5-7B instead of 145,321. Its drive rate rises from
+6.8 to 7.3 GB/s, and it loads as fast as the copier. At 128 the old
+commands and the old gap come back. The copier does not change, because
+the DMA-BUF limit applies to it in every pass.</p>
+<div class="scroll"><table>
+<caption>Mean of four cold loads per reader (two untraced, two traced), seconds</caption>
+<thead><tr><th scope="col">Checkpoint</th><th scope="col"><code>nogds</code>, 128 KiB limit</th><th scope="col"><code>nogds</code>, 2 MiB limit (two passes)</th><th scope="col">DMA-BUF copier (three passes)</th></tr></thead>
+<tbody>
+<tr><td>Qwen3-0.6B (1.5 GB)</td><td>0.244</td><td>0.241, 0.232</td><td class="yes">0.225 to 0.227</td></tr>
+<tr><td>Qwen2.5-7B (15.2 GB)</td><td>2.282</td><td class="yes">2.114, 2.104</td><td class="yes">2.120 to 2.125</td></tr>
+<tr><td>EMO 1b14b (27.1 GB)</td><td>3.977</td><td class="yes">3.738, 3.732</td><td class="yes">3.767 to 3.770</td></tr>
+</tbody></table></div>
+<p>On the two large checkpoints <code>nogds</code> is now 0.5 to 1% faster
+than the copier. On Qwen3-0.6B, a 0.23 s load, the copier keeps a 3 to
+6% lead; we did not trace why. All 72 loads matched the file digests.
+On this one drive, the copier's load-time lead therefore comes from the
+Linux command limit alone. That limit is the default when the IOMMU
+translates device addresses, so the lead is real on such hosts. A host
+that lifts the limit, or runs the IOMMU in passthrough mode where the
+cap does not apply, gets large commands from <code>nogds</code> too. The
+copier still reads straight into GPU memory with about 130 times fewer
+system calls, and it reads 0.8% fewer bytes from the drive. Those
+differences matter when several drives make the host copy the limit; see
+<a href="#value">why it matters at scale</a>.</p>
 <p>The <a href="io-uring-dmabuf-weight-io-sizes.html">read-size page</a>
 traces what each loader asks the kernel for, next to the NVMe commands,
 for four checkpoints and for single-expert fetches. It also shows how
