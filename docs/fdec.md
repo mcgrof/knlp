@@ -247,8 +247,9 @@ and the 16-bit cell is between them.
 
 Control runs test these differences, each with a rule set before the run.
 The six controls are done, and none reproduces its difference. The table
-gives the result of each control. Two more runs test why the two gains of
-Qwen3-8B appear on its test problems; they are not finished.
+gives the result of each control. Two more runs ask why the two gains of
+Qwen3-8B appear on its test problems. The first is done and does not explain
+them, and the second is in the queue.
 
 | Difference in the task tables | Control | Result of the control | Outcome by the rule |
 |---|---|---|---|
@@ -645,18 +646,44 @@ solve 302 of the 364 problems and neither solves 45; 14 are gained and 3 are
 lost. int8 weights change the text of 440 to 469 completions, by group size.
 At the first token that differs, the lower index is with the 16-bit cell in
 about half of them, 232 of 469 with group size 128, which is what a change
-of the logits with no preferred direction gives.
+of the logits with no preferred direction gives. On the other problems the
+head changes the text of 769 of the 2,638 completions, again with the lower
+index on the side of the 16-bit head in all of them, and the outcome of 32
+problems: 17 lost and 15 gained.
 
 One more control tests the first reading directly. It runs the 16-bit cell
 on the test problems in batches of 16 and of 24 prompts in place of 32, on
 the same GPU. The model and the prompts do not change, and there is no
 brick; only the padding of each prompt changes, and with it the arithmetic.
-The rule is set before the runs. If the mean of these variants is above the
+The rule was set before the runs. If the mean of these variants is above the
 16-bit cell of the table, with an interval that excludes zero, that cell is
 a low draw, and the two gains are not evidence about a brick. If the
 interval contains zero, this control gives no support to the first reading.
 A variant that changes the outcome of fewer than 10 problems is too small a
-change to test the reading. The runs are in progress.
+change to test the reading.
+
+This control gives no support to the first reading. In batches of 16 the
+16-bit cell solves 89.08% and the outcome of 8 problems changes, so by the
+rule that variant is too small a change. In batches of 24 it solves 89.16%,
+with 7 problems lost and 10 gained. That is 0.23 points above the cell of
+the table, with a 95% interval from 0.39 points below to 0.84 points above,
+which contains zero. The three 16-bit cells are within 0.23 points of each
+other, and the cell of the table is the lowest of the three. Against the
+mean of the three, int8 weights with group size 128 are 1.24 points above,
+with an interval from 0.40 to 2.07 points, and the certified head is 0.71
+points above, with an interval from 0.09 to 1.33 points. A change of the
+batch size is a smaller change than a brick: it alters the text of 133 and
+156 of the 1,319 completions, where int8 weights alter 440 to 469.
+
+The state of the two gains is this. They are exact on the test problems in
+the arithmetic of this run: a second run repeats them, and other batch sizes
+of the 16-bit cell do not remove them. They are not reproduced on 2,638
+other problems on the second GPU, and neither of the two readings has
+support. The second control repeats the test problems on that GPU and tells
+if the gains follow the test problems or the GPU; it is in the queue. None
+of the four intervals that exclude zero is significant after the correction
+for the 30 comparisons, and the result for the full stack does not depend on
+them: its interval contains zero on both tasks.
 
 | model and task | cell | rounding | accuracy | difference, points | 95% interval | lost | gained | p |
 |---|---|---|---|---|---|---|---|---|
@@ -1126,9 +1153,9 @@ compares the decode latency of the full stack with the byte model.
 The perplexity evaluation is WikiText-2 only. The weight study also used a
 cross-domain calibration check; the matrix does not yet repeat it. The
 task tables and their six control runs are complete. The controls on other
-GSM8K problems use training problems, which the models may have seen. Two
-runs that test why the two gains of Qwen3-8B appear on its test problems
-are not finished.
+GSM8K problems use training problems, which the models may have seen. The
+two gains of Qwen3-8B on its test problems have no explanation yet, and one
+run that tests a cause is not finished.
 
 Linear-attention models are not in the matrix. The cartridge cells cover
 one model and two documents.
